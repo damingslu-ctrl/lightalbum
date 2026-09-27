@@ -127,6 +127,12 @@ def op_gold(img):
     out['hdr'] = retouch._tone_map(img, 1.0)[0]
     out['structure'] = retouch._structure(img, 1.0)[0]
     out['dodge'] = retouch._dodge(img, 1.0)[0]
+    # P5-3：去雾 / 色差 / 人像美化
+    out['dehaze'] = retouch._dehaze(img, 1.0)[0]
+    out['chromatic'] = retouch._chromatic_correct(img, 1.0)[0]
+    pb, pi = retouch._portrait_beautify(img, 1.0)
+    out['portrait'] = pb
+    out['_portrait_skin'] = float((pi or {}).get('skin') or 0.0)
     return out
 
 

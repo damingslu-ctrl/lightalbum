@@ -61,7 +61,12 @@
   金样**逐算子独立**对拍：`LA_LUMEN_SMOKE` OPS 段 6 样本×8 算子 madMax=1.107 PASS
   （redeye mad=0.000 → 双方一致「无红眼不乱修」，门控语义一致）。
   颗粒(_add_grain) 为 PRNG 噪声无法字节对齐 → film 金样不含颗粒，已文档化。
-  剩余：dehaze/level/chromatic/lens/portrait 五个显式算子 + EditPlan 参数管线）
+- P5 引擎移植（第三批：dehaze / chromatic / portrait）：✅ 完成（dehaze=暗通道先验
+  (MinFilter15→暗通道→大气光 A→透射率 t(ω=0.95,t0=0.1)+高斯细化→复原)；chromatic=R 放大裁中心/
+  B 缩小镜像归位；portrait=YCbCr 肤色软掩膜(Chai&Ngan ramp)+Median5/Gauss 磨皮+美白门控
+  (skin_lum<0.62)；基础设施 minFilter/medianFilter(尺寸可配)/YCbCr 整数定点/areaResample。
+  金样：**11 算子 × 6 样本** madMax=1.107(vignette) PASS。
+  剩余：level(地平线 Hough) / lens(网格仿射畸变) 两个显式算子 + EditPlan 参数管线）
 
 ## index.html → C++ 模块映射（P1 起逐项迁移）
 

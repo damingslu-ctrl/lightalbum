@@ -75,6 +75,12 @@ public:
     static QImage structure(const QImage& rgb, double amount = 1.0);        // 明度细尺度 USM + 中调掩膜
     static QImage dodge(const QImage& rgb, double amount = 1.0);            // 局部暗部提亮
 
+    // ---- P5-3 显式算子（第三批）----
+    static QImage dehaze(const QImage& rgb, double strength = 1.0);         // 暗通道先验（He et al.）
+    static QImage chromaticCorrect(const QImage& rgb, double amount = 1.0); // 横向色差 / 紫边
+    static QImage portraitBeautify(const QImage& rgb, double strength = 1.0,
+                                   double* skinFrac = nullptr);             // 肤色掩膜磨皮 + 美白
+
     // ---- PIL 合成基础设施（P5-2）----
     static QImage blend(const QImage& a, const QImage& b, double f);        // a*(1-f)+b*f
     static QImage screen(const QImage& a, const QImage& b);                 // chop screen
@@ -82,6 +88,12 @@ public:
     static QImage channelGain(const QImage& rgb, double gr, double gg, double gb);
     static QImage enhanceContrastPil(const QImage& rgb, double f);          // 以 L 均值为轴心（PIL Contrast）
     static QImage addGrain(const QImage& rgb, double amount);               // PIL effect_noise 近似（PRNG）
+
+    // ---- PIL 基础设施（P5-3）----
+    static QImage minFilter(const QImage& src, int k);          // K×K 最小值滤波（Grayscale8 / RGB32）
+    static QImage medianFilter(const QImage& rgb, int size);    // size×size 中值（size 奇数）
+    static void   ycbcrSplit(const QImage& rgb, QImage* y, QImage* cb, QImage* cr);
+    static QImage skinMask(const QImage& rgb);                  // YCbCr 规则 + 亮度门 + 羽化
 
     // 降噪档位（EXIF 缺失时按画面噪声估计；与 Python _denoise_level_noise 一致）
     static int denoiseLevelByNoise(double noise) { return noise >= 0.070 ? 2 : (noise >= 0.045 ? 1 : 0); }

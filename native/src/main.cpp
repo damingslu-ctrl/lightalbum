@@ -76,7 +76,8 @@ int runLumenSmoke()
                  n, avg, madMax, stepsOk, n, (stepsOk == n && madMax <= kMadLimit) ? "PASS" : "FAIL");
 
     // ---- P5-2 显式算子逐算子对拍（隔离比对）----
-    static const char* kOps[] = {"film", "bw", "glow", "redeye", "vignette", "hdr", "structure", "dodge"};
+    static const char* kOps[] = {"film", "bw", "glow", "redeye", "vignette", "hdr", "structure",
+                                "dodge", "dehaze", "chromatic", "portrait"};
     for (int i = 0; i < n; ++i) {
         for (const char* op : kOps) {
             const QString inP = QDir(dir).filePath(QStringLiteral("in_%1.png").arg(i));
@@ -93,7 +94,10 @@ int runLumenSmoke()
             else if (opName == QStringLiteral("vignette")) out = LumenEngine::vignetteCorrect(in);
             else if (opName == QStringLiteral("hdr"))    out = LumenEngine::toneMapHdr(in);
             else if (opName == QStringLiteral("structure")) out = LumenEngine::structure(in);
-            else                                          out = LumenEngine::dodge(in);
+            else if (opName == QStringLiteral("dodge"))     out = LumenEngine::dodge(in);
+            else if (opName == QStringLiteral("dehaze"))    out = LumenEngine::dehaze(in);
+            else if (opName == QStringLiteral("chromatic")) out = LumenEngine::chromaticCorrect(in);
+            else                                            out = LumenEngine::portraitBeautify(in);
             double mad = 999;
             if (out.size() == gold.size()) {
                 QImage a = out.convertToFormat(QImage::Format_RGB32);
