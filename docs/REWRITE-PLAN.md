@@ -26,7 +26,9 @@
   before/after 预览 + 预设下拉 + 手动滑杆 + 导出副本，零云端；`LA_RETOUCH_SMOKE` 通过：
   `ok=1 srcW=512 autoOutW=512 sugChips=3 sugOutNull=0`；独立单测 ENGINE_TEST PASS 验证
   bw 全灰(通道差0)/warm R相对B升温/original 恒等）
-- P3 AI美图：⬜ 表单壳（原生「美图」导航项仍为占位，处理留待模型接入）
+- P3 AI美图（美图）：✅ 完成（BeautyPage 风格化预设画廊：复用 RetouchEngine 16 预设生成卡片缩略图 +
+  点选套用 + 大图 before/after 预览 + 智能增强 + 导出副本，零云端；`LA_BEAUTY_SMOKE` 通过：
+  `ok=1 presets=16 thumbs=16 nullOut=0`；深度 AI 处理留待模型接入）
 
 ## index.html → C++ 模块映射（P1 起逐项迁移）
 

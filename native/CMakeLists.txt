@@ -28,6 +28,8 @@ set(LA_SOURCES
     src/ui/CullPage.cpp
     src/ui/RetouchPage.h
     src/ui/RetouchPage.cpp
+    src/ui/BeautyPage.h
+    src/ui/BeautyPage.cpp
     src/ui/MainWindow.h
     src/ui/MainWindow.cpp
     src/core/CullEngine.h
