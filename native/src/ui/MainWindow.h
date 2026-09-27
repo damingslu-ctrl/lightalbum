@@ -11,6 +11,7 @@ class QLabel;
 class QListWidget;
 class QWidget;
 class GalleryPage;
+class MapPage;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -27,4 +28,5 @@ private:
     QStackedWidget* stack_ = nullptr;
     QWidget*        kpis_ = nullptr;
     GalleryPage*    gallery_ = nullptr;
+    MapPage*        map_ = nullptr;
 };

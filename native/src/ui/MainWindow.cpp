@@ -1,6 +1,7 @@
 #include "MainWindow.h"
 #include "Icons.h"
 #include "GalleryPage.h"
+#include "MapPage.h"
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QLabel>
@@ -105,7 +106,8 @@ MainWindow::MainWindow(const Library* lib, const QString& thumbsDir, QWidget* pa
     stack_ = new QStackedWidget(right);
     // 页序与 kNav 一致；P1 只实装「图库」，其余诚实占位
     stack_->addWidget(makePlaceholder(QStringLiteral("首页"), QString::fromUtf8(kNav[0].phase)));
-    stack_->addWidget(makePlaceholder(QStringLiteral("足迹"), QString::fromUtf8(kNav[1].phase)));
+    map_ = new MapPage(stack_);
+    stack_->addWidget(map_);
     gallery_ = new GalleryPage(&lib_->photos(), thumbsDir, stack_);
     stack_->addWidget(gallery_);
     stack_->addWidget(makePlaceholder(QStringLiteral("智能选片"), QString::fromUtf8(kNav[3].phase)));
