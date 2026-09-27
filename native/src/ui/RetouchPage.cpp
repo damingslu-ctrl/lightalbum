@@ -2,6 +2,7 @@
 #include "MaskCanvas.h"
 #include "CropCanvas.h"
 #include "CompareWidget.h"
+#include "../core/EraseBridge.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGridLayout>
@@ -298,6 +299,18 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
     brushSlider_->setToolTip(QStringLiteral("笔刷大小（像素）"));
     brushSlider_->setStyleSheet("QSlider::groove:horizontal{background:#181d1a;height:4px;border-radius:2px;}"
         "QSlider::handle:horizontal{background:#5a8f6b;width:12px;border-radius:6px;}");
+    // P4-4 AI 消除桥（表单壳：模型槽位留空，任务诚实挂起）
+    eraseBridge_ = new EraseBridge(this);
+    eraseBridge_->setModelSlot(qEnvironmentVariable("LA_INPAINT_MODEL"));
+    eraseBtn_ = mbtn(QStringLiteral("🧹 AI消除"), geoCss);
+    const QString slot = eraseBridge_->modelPath().isEmpty()
+        ? QStringLiteral("未配置")
+        : eraseBridge_->modelPath();
+    eraseSlotLbl_ = new QLabel(
+        QStringLiteral("模型槽位：%1 · 执行器未接入 · 零云端").arg(slot), mtools);
+    eraseSlotLbl_->setStyleSheet("color:#9fa8a3;");
+    ml->addWidget(eraseBtn_);
+    ml->addWidget(eraseSlotLbl_);
     ml->addWidget(maskBtn_);
     ml->addWidget(cropBtn_);
     ml->addWidget(compareBtn_);
@@ -371,6 +384,9 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
     // P4-3 裁剪 / 对比
     connect(cropBtn_, &QPushButton::toggled, this, &RetouchPage::onCropToggle);
     connect(compareBtn_, &QPushButton::toggled, this, &RetouchPage::onCompareToggle);
+    // P4-4 AI 消除桥
+    connect(eraseBtn_, &QPushButton::clicked, this, &RetouchPage::onEraseClicked);
+    connect(eraseBridge_, &EraseBridge::taskUpdated, this, &RetouchPage::onEraseTaskUpdated);
 
     applyTimer_ = new QTimer(this);
     applyTimer_->setSingleShot(true);
@@ -407,20 +423,34 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
             mmp.end();
             QImage mbl = blendMask(mb, mt, mm);
             const bool maskBlend = qRed(mbl.pixel(8, 16)) < 120 && qRed(mbl.pixel(24, 16)) == 120;
+            // P4-4 AI 消除桥：无模型 → blocked_no_model；回填通道 → done
+            EraseBridge eb;
+            eb.setModelSlot(QStringLiteral("D:/lightalbum_ai/inpaint"));
+            QImage m8(8, 8, QImage::Format_ARGB32); m8.fill(QColor(255, 255, 255, 255));
+            const int tid = eb.submit(geoSrc_, m8);
+            const bool blockedOk = eb.task(tid)
+                && eb.task(tid)->status == QStringLiteral("blocked_no_model")
+                && eb.task(tid)->result.isNull();
+            QImage res(geoSrc_.size(), QImage::Format_RGB32);
+            res.fill(qRgb(7, 8, 9));
+            const bool backfillOk = eb.applyResult(tid, res)
+                && eb.task(tid)->status == QStringLiteral("done")
+                && !eb.task(tid)->result.isNull();
             // P4-3 交互裁剪断言：归一化半幅裁剪 → 尺寸减半
             const QImage cn = applyGeometry(geoSrc_, 0, false, false, 0, 0, QRectF(0, 0, 0.5, 0.5));
             const bool cropNormOk = cn.width() == geoSrc_.width() / 2
                                  && cn.height() == geoSrc_.height() / 2;
             std::fprintf(stderr,
                 "LA_RETOUCH_SMOKE ok=1 srcW=%d srcH=%d rotSwap=%d sqOk=%d flipOk=%d "
-                "autoOutW=%d sugChips=%d sugOutNull=%d maskBlend=%d cropNormOk=%d\n",
+                "autoOutW=%d sugChips=%d sugOutNull=%d maskBlend=%d cropNormOk=%d eraseBridge=%d\n",
                 geoSrc_.width(), geoSrc_.height(),
                 (rot1.width() == geoSrc_.height() && rot1.height() == geoSrc_.width()) ? 1 : 0,
                 (sq.width() == sq.height()) ? 1 : 0,
                 (flip.size() == geoSrc_.size()) ? 1 : 0,
                 out.width(),
                 RetouchEngine::recommend(geoImg_).chips.size(), out2.isNull() ? 1 : 0,
-                maskBlend ? 1 : 0, cropNormOk ? 1 : 0);
+                maskBlend ? 1 : 0, cropNormOk ? 1 : 0,
+                (blockedOk && backfillOk) ? 1 : 0);
             std::fflush(stderr);
             QApplication::quit();
         });
@@ -587,6 +617,35 @@ void RetouchPage::onCompareToggle(bool on)
         badge_->setText(QStringLiteral("拖动金色分割线对比 · 零云端"));
     }
     midStack_->setCurrentIndex(on ? 3 : 0);
+}
+
+// ----------------------------------------------------------------- P4-4 AI 消除桥
+void RetouchPage::onEraseClicked()
+{
+    if (!canvas_->hasPaint()) {
+        badge_->setText(QStringLiteral("先用蒙版模式涂抹要消除的区域"));
+        return;
+    }
+    eraseBridge_->submit(geoImg_, canvas_->mask());
+    // 状态展示在 onEraseTaskUpdated 统一更新（submit 会同步触发信号）
+}
+
+void RetouchPage::onEraseTaskUpdated(int id)
+{
+    const EraseTask* t = eraseBridge_->task(id);
+    if (!t) return;
+    eraseSlotLbl_->setText(
+        QStringLiteral("任务#%1 %2 · %3").arg(id).arg(t->status, t->note));
+    if (t->status == QStringLiteral("done") && !t->result.isNull()) {
+        // 结果回填通道：模型接入后消除结果进 after 预览
+        localOut_ = t->result;
+        afterImg_ = t->result;
+        afterLbl_->setPixmap(QPixmap::fromImage(t->result).scaled(kPreviewW, kPreviewH,
+            Qt::KeepAspectRatio, Qt::SmoothTransformation));
+        if (maskMode_) maskBtn_->setChecked(false);
+        badge_->setText(QStringLiteral("AI消除结果已回填 · 零云端"));
+        prog_->setValue(100);
+    }
 }
 
 // ----------------------------------------------------------------- 页面槽

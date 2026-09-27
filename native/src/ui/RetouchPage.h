@@ -23,6 +23,7 @@ class QStackedLayout;
 class MaskCanvas;
 class CropCanvas;
 class CompareWidget;
+class EraseBridge;
 
 struct RtSlider {
     const char* key;
@@ -71,6 +72,10 @@ private slots:
     // P4-3 裁剪 / 对比
     void onCropToggle(bool on);
     void onCompareToggle(bool on);
+
+    // P4-4 AI 消除桥（表单壳）
+    void onEraseClicked();
+    void onEraseTaskUpdated(int id);
 
 private:
     void buildSlider(const RtSlider& def, class QGridLayout* gl);
@@ -137,4 +142,9 @@ private:
     bool           compareMode_ = false;
     QRectF         cropNorm_;                // 交互裁剪框（归一化 0..1；null=未裁）
     QImage         afterImg_;                // 最近修调结果（供对比视图）
+
+    // P4-4 AI 消除桥（表单壳：蒙版→任务→结果回填，模型槽位空）
+    EraseBridge*   eraseBridge_ = nullptr;
+    QPushButton*   eraseBtn_ = nullptr;
+    QLabel*        eraseSlotLbl_ = nullptr;
 };

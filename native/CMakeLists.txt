@@ -44,6 +44,8 @@ set(LA_SOURCES
     src/core/RetouchEngine.cpp
     src/core/LumenEngine.h
     src/core/LumenEngine.cpp
+    src/core/EraseBridge.h
+    src/core/EraseBridge.cpp
 )
 
 # P2 地图数据（零外链编进 exe）

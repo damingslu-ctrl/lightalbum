@@ -42,7 +42,12 @@
   暗色遮罩外区 + 金边 + 三分线 + aspect 锁定，提交为归一化 cropNorm 进入几何流水线
   （顺序 拉直→翻转→旋转→交互裁剪→比例居中裁剪，导出同序）；CompareWidget：单幅区域金色分割线
   拖拽对比，左原图右修后；RetouchPage 三模式互斥（🖌蒙版/✂裁剪/◐对比）；
-  `LA_RETOUCH_SMOKE cropNormOk=1`（归一化半幅裁剪断言）。P4 仅剩 AI消除桥（模型接入））
+  `LA_RETOUCH_SMOKE cropNormOk=1`（归一化半幅裁剪断言）。
+- P4 编辑台（收官刀：AI 消除桥表单壳）：✅ 完成（`EraseBridge.{h,cpp}`：蒙版→任务→结果回填全流程；
+  模型槽位读 LA_INPAINT_MODEL 环境变量，**执行器未接入 → isReady() 恒 false，任务诚实挂起
+  （blocked_no_model），绝不伪造消除结果**；applyResult 回填通道 + taskUpdated 信号；UI「🧹 AI消除」
+  + 槽位状态标签；`LA_RETOUCH_SMOKE eraseBridge=1`（挂起/回填断言）。**P4 全部完成**——
+  模型接入时仅需实现本地执行器消费 queued 任务）
 - P5 引擎移植（第一批：auto 管线核心 9 算子）：✅ 完成（`LumenEngine.{h,cpp}` 忠实移植
   Python core/retouch.py：测量(_stats/_measure_extra 全指标) + wb(SoG p=6 线性光 von Kries) +
   tone_curve(局部掩膜抬阴影/收高光) + auto_levels(有界 6..249) + brightness(0.46 收敛/p99.5 限幅) +
