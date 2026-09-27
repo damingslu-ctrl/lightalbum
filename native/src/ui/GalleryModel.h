@@ -16,6 +16,7 @@ public:
         SubRole,      // 日期 · 器材
         OrientRole,   // landscape/portrait
         MissingRole,
+        RatingRole,
         DimRole
     };
     explicit GalleryModel(QObject* parent = nullptr);

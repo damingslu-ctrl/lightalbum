@@ -3,6 +3,7 @@
 #include <QWidget>
 #include <QListView>
 #include <QLabel>
+#include <QTimer>
 #include "GalleryModel.h"
 #include "ThumbCache.h"
 
@@ -20,4 +21,7 @@ private:
     ThumbCache   cache_;
     QListView*   view_ = nullptr;
     QLabel*      count_ = nullptr;
+    QTimer*      prefetchTimer_ = nullptr;
+private slots:
+    void prefetch();
 };

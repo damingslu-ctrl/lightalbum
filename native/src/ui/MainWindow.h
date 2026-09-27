@@ -9,6 +9,7 @@ class QStackedWidget;
 class QLineEdit;
 class QLabel;
 class QListWidget;
+class QWidget;
 class GalleryPage;
 
 class MainWindow : public QMainWindow {
@@ -24,5 +25,6 @@ private:
     QLineEdit*      search_ = nullptr;
     QLabel*         title_ = nullptr;
     QStackedWidget* stack_ = nullptr;
+    QWidget*        kpis_ = nullptr;
     GalleryPage*    gallery_ = nullptr;
 };

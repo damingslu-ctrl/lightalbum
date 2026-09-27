@@ -56,6 +56,7 @@ QVariant GalleryModel::data(const QModelIndex& index, int role) const
     case SubRole:     return p.date + (p.cam.isEmpty() ? QString() : QStringLiteral(" · ") + p.cam);
     case OrientRole:  return p.orient;
     case MissingRole: return p.missing;
+    case RatingRole:  return p.rating;
     case DimRole:     return p.dim;
     default:          return QVariant();
     }

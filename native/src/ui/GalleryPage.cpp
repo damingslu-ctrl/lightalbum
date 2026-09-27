@@ -1,5 +1,6 @@
 #include "GalleryPage.h"
 #include <QVBoxLayout>
+#include <QScrollBar>
 #include <QPainter>
 #include <QStyledItemDelegate>
 
@@ -72,6 +73,18 @@ public:
             p->drawText(br, Qt::AlignCenter, b);
         }
 
+        // 评级星（右上角下侧小圆点：金实心=已评，空圈=未达；rating=0 不画，数据诚实）
+        const int rating = ix.data(GalleryModel::RatingRole).toInt();
+        if (rating > 0) {
+            const QPointF c0(card.right() - 14 - 4 * 9.0, card.bottom() - 44);
+            for (int i = 0; i < 5; ++i) {
+                const QPointF c(c0.x() + i * 9.0, c0.y());
+                if (i < rating) { p->setPen(Qt::NoPen); p->setBrush(QColor(0xc1, 0x9a, 0x4b)); }
+                else { p->setPen(QPen(QColor(0x4a, 0x55, 0x4f), 1)); p->setBrush(Qt::NoBrush); }
+                p->drawEllipse(c, 2.6, 2.6);
+            }
+        }
+
         // 标题 + 副行
         p->setPen(QColor(0xf2, 0xf5, 0xf3));
         QFont f = p->font(); f.setPointSizeF(9.5); f.setBold(false); p->setFont(f);
@@ -124,6 +137,14 @@ GalleryPage::GalleryPage(const QVector<Photo>* photos, const QString& thumbsDir,
     view_->setItemDelegate(new GalleryCardDelegate(view_));
     lay->addWidget(view_, 1);
 
+    // 缩略图预取节流：滚动停止 120ms 后，对可见区间前后各扩 6/24 行触发后台加载
+    prefetchTimer_ = new QTimer(this);
+    prefetchTimer_->setSingleShot(true);
+    prefetchTimer_->setInterval(120);
+    connect(view_->verticalScrollBar(), &QAbstractSlider::valueChanged,
+            prefetchTimer_, qOverload<>(&QTimer::start));
+    connect(prefetchTimer_, &QTimer::timeout, this, &GalleryPage::prefetch);
+
     applyFilter(QString());
 }
 
@@ -135,4 +156,17 @@ void GalleryPage::applyFilter(const QString& q)
     count_->setText(n == total
         ? QStringLiteral("显示 <b>%1</b> / %2 幅").arg(n).arg(total)
         : QStringLiteral("显示 <b>%1</b> / %2 幅（已筛）").arg(n).arg(total));
+}
+
+void GalleryPage::prefetch()
+{
+    const QRect vp = view_->viewport()->rect();
+    const QModelIndex first = view_->indexAt(vp.topLeft());
+    if (!first.isValid()) return;
+    const QModelIndex last = view_->indexAt(QPoint(vp.center().x(), vp.bottom()));
+    const int a = qMax(0, first.row() - 6);
+    const int b = qMin(model_.rowCount() - 1,
+                       (last.isValid() ? last.row() : first.row() + 30) + 24);
+    for (int r = a; r <= b; ++r)
+        model_.pixmapAt(r);          // request 幂等：已缓存/在途直接返回
 }

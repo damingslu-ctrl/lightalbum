@@ -1,4 +1,5 @@
 #include "MainWindow.h"
+#include "Icons.h"
 #include "GalleryPage.h"
 #include <QHBoxLayout>
 #include <QVBoxLayout>
@@ -33,13 +34,19 @@ MainWindow::MainWindow(const Library* lib, const QString& thumbsDir, QWidget* pa
     nav_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     nav_->setFrameShape(QFrame::NoFrame);
     nav_->setStyleSheet(QStringLiteral(
-        "QListWidget{background:#0b0e0c;border-right:1px solid #2a2f2c;outline:0;}"
-        "QListWidget::item{color:#9fa8a3;font-size:12px;height:44px;"
+        "QListWidget{background:#0b0e0c;border-right:1px solid #2a2f2c;outline:0;padding-top:6px;}"
+        "QListWidget::item{color:#9fa8a3;font-size:11px;height:52px;padding-left:4px;"
         "  border-bottom:1px solid rgba(255,255,255,.04);}"
         "QListWidget::item:selected{color:#f2f5f3;background:#1c2320;"
-        "  border-left:2px solid #c19a4b;}"));
-    for (const auto& n : kNav) {
-        nav_->addItem(QString::fromUtf8(n.label));
+        "  border-left:2px solid #c19a4b;}"
+        "QListWidget::item:selected .lbl{color:#f2f5f3;}"));
+    nav_->setIconSize(QSize(22, 22));
+    const char* kIcons[] = {"home", "map", "gallery", "cull", "retouch", "enhance", "log", "about"};
+    for (int i = 0; i < int(sizeof(kNav) / sizeof(kNav[0])); ++i) {
+        auto* it = new QListWidgetItem(QString::fromUtf8(kNav[i].label));
+        it->setIcon(Icons::make(QString::fromLatin1(kIcons[i]), QColor(0x9f, 0xa8, 0xa3)));
+        it->setTextAlignment(Qt::AlignHCenter | Qt::AlignVCenter);
+        nav_->addItem(it);
     }
     root->addWidget(nav_);
 
@@ -52,7 +59,7 @@ MainWindow::MainWindow(const Library* lib, const QString& thumbsDir, QWidget* pa
     auto* topbar = new QWidget(right);
     topbar->setObjectName("topbar");
     topbar->setStyleSheet(QStringLiteral(
-        "#topbar{background:#10151222;border-bottom:1px solid #2a2f2c;}"));
+        "#topbar{background:#101513;border-bottom:1px solid #2a2f2c;}"));
     auto* tl = new QHBoxLayout(topbar);
     tl->setContentsMargins(18, 10, 18, 10);
     title_ = new QLabel(QStringLiteral("光影集"), topbar);
@@ -69,6 +76,31 @@ MainWindow::MainWindow(const Library* lib, const QString& thumbsDir, QWidget* pa
     tl->addStretch(1);
     tl->addWidget(search_);
     rl->addWidget(topbar);
+
+    // ---- KPI 指标条（web 版 #kpiStrip 对应；收藏不进 P1：FAVS 属 web localStorage，原生侧不编造）----
+    kpis_ = new QWidget(right);
+    kpis_->setStyleSheet(QStringLiteral("background:#0b0e0c;"));
+    auto* kl = new QHBoxLayout(kpis_);
+    kl->setContentsMargins(18, 10, 18, 10);
+    kl->setSpacing(14);
+    const Kpi k = lib_->kpi();
+    const QString yearTxt = k.yearCount > 0
+        ? QStringLiteral("%1 跨 (%2\u2013%3)").arg(k.yearCount).arg(k.minYear).arg(k.maxYear)
+        : QStringLiteral("\u2014");
+    auto addKpi = [kl](const QString& v, const QString& label) {
+        auto* lb = new QLabel(QStringLiteral(
+            "<b style='font-size:16px;color:#f2f5f3;'>%1</b><br>"
+            "<span style='font-size:11px;color:#9fa8a3;'>%2</span>").arg(v, label));
+        lb->setStyleSheet(QStringLiteral(
+            "QLabel{background:#181d1a;border:1px solid #2a2f2c;border-radius:10px;"
+            "padding:8px 16px;}"));
+        kl->addWidget(lb);
+    };
+    addKpi(QString::number(k.total), QStringLiteral("作品总数"));
+    addKpi(yearTxt, QStringLiteral("拍摄年份"));
+    addKpi(QString::number(k.provCount), QStringLiteral("足迹省份"));
+    kl->addStretch(1);
+    rl->addWidget(kpis_);
 
     stack_ = new QStackedWidget(right);
     // 页序与 kNav 一致；P1 只实装「图库」，其余诚实占位
