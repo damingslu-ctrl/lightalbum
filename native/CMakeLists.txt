@@ -42,6 +42,8 @@ set(LA_SOURCES
     src/core/CullEngine.cpp
     src/core/RetouchEngine.h
     src/core/RetouchEngine.cpp
+    src/core/LumenEngine.h
+    src/core/LumenEngine.cpp
 )
 
 # P2 地图数据（零外链编进 exe）

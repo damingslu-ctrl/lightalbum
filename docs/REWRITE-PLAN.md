@@ -43,6 +43,15 @@
   （顺序 拉直→翻转→旋转→交互裁剪→比例居中裁剪，导出同序）；CompareWidget：单幅区域金色分割线
   拖拽对比，左原图右修后；RetouchPage 三模式互斥（🖌蒙版/✂裁剪/◐对比）；
   `LA_RETOUCH_SMOKE cropNormOk=1`（归一化半幅裁剪断言）。P4 仅剩 AI消除桥（模型接入））
+- P5 引擎移植（第一批：auto 管线核心 9 算子）：✅ 完成（`LumenEngine.{h,cpp}` 忠实移植
+  Python core/retouch.py：测量(_stats/_measure_extra 全指标) + wb(SoG p=6 线性光 von Kries) +
+  tone_curve(局部掩膜抬阴影/收高光) + auto_levels(有界 6..249) + brightness(0.46 收敛/p99.5 限幅) +
+  contrast(实测均值轴心) + clarity(V-USM lc 门控) + vibrance(S-LUT) + denoise(YCbCr 两级) +
+  sharpen(USM 噪声阈值) + 四门 audit(不过→轻力度重做→回退原图) + steps↔算子一一对应；
+  PIL 基础设施复刻：convert('L') 权重/HSV 整数六分区/ImageChops/USM/Median3/SMOOTH/面积加权降采样。
+  **金样对拍 PASS**：`_gold_lumen.py`（Python 金样）vs `LA_LUMEN_SMOKE`（C++）——
+  `n=6 madAvg=0.569 madMax=0.867(≈0.34%) stepsOk=6/6 PASS`。剩余：dehaze/level/vignette/chromatic/
+  lens/redeye/portrait/film/bw/glow 显式算子 + EditPlan 参数管线（P5 后续刀））
 
 ## index.html → C++ 模块映射（P1 起逐项迁移）
 
