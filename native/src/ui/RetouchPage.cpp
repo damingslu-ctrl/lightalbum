@@ -1,5 +1,7 @@
 #include "RetouchPage.h"
 #include "MaskCanvas.h"
+#include "CropCanvas.h"
+#include "CompareWidget.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGridLayout>
@@ -66,9 +68,9 @@ RetouchParams buildFromMap(const QMap<QString, double>& m)
 }
 
 // ----------------------------------------------------------------- P4-1 几何纯函数
-// 固定顺序：拉直 → 翻转 → 90°旋转 → 居中裁剪（确定性流水线，冒烟可断言）。
+// 固定顺序：拉直 → 翻转 → 90°旋转 → 交互裁剪(cropNorm 归一化) → 比例居中裁剪（确定性流水线）。
 QImage RetouchPage::applyGeometry(const QImage& src, int rot, bool flipH, bool flipV,
-                                  double angleDeg, double aspect)
+                                  double angleDeg, double aspect, const QRectF& cropNorm)
 {
     if (src.isNull()) return src;
     QImage img = src;
@@ -85,6 +87,16 @@ QImage RetouchPage::applyGeometry(const QImage& src, int rot, bool flipH, bool f
     if (r) {
         QTransform q; q.rotate(r * 90.0);
         img = img.transformed(q, Qt::FastTransformation);
+    }
+    // P4-3：交互裁剪框（归一化 0..1，null = 未裁）
+    if (cropNorm.isValid() && cropNorm.width() > 0 && cropNorm.height() > 0) {
+        const int w = img.width(), h = img.height();
+        int cw = int(cropNorm.width() * w + 0.5);
+        int ch = int(cropNorm.height() * h + 0.5);
+        int cx = int(cropNorm.left() * w + 0.5);
+        int cy = int(cropNorm.top() * h + 0.5);
+        cw = std::min(cw, w - cx); ch = std::min(ch, h - cy);
+        if (cw >= 1 && ch >= 1) img = img.copy(cx, cy, cw, ch);
     }
     if (aspect > 0) {
         const int w = img.width(), h = img.height();
@@ -193,14 +205,19 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
     auto* bl2 = new QVBoxLayout; bl2->setContentsMargins(0,0,0,0);
     bl2->addWidget(afterLbl_);  bl2->addWidget(new QLabel(QStringLiteral("修后"), this), 0, Qt::AlignHCenter);
     pv->addStretch(1); pv->addLayout(bl1); pv->addLayout(bl2); pv->addStretch(1);
-    // P4-2：预览 / 蒙版画布 二选一切换
+    // P4-2/P4-3：预览 / 蒙版画布 / 裁剪画布 / 对比视图 四选一切换
     auto* pvWrap = new QWidget(this);
     pvWrap->setLayout(pv);
     canvas_ = new MaskCanvas(this);
     canvas_->setMinimumHeight(360);
+    cropCanvas_ = new CropCanvas(this);
+    cropCanvas_->setMinimumHeight(360);
+    compareW_ = new CompareWidget(this);
     midStack_ = new QStackedLayout;
-    midStack_->addWidget(pvWrap);
-    midStack_->addWidget(canvas_);
+    midStack_->addWidget(pvWrap);       // 0
+    midStack_->addWidget(canvas_);      // 1
+    midStack_->addWidget(cropCanvas_);  // 2
+    midStack_->addWidget(compareW_);    // 3
     midStack_->setCurrentIndex(0);
     root->addLayout(midStack_, 1);
 
@@ -261,6 +278,16 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
         "padding:6px 12px;color:#f2f5f3;}"
         "QPushButton:checked{border:2px solid #5a8f6b;background:#12201a;}");
     maskBtn_->setCheckable(true);
+    cropBtn_ = mbtn(QStringLiteral("✂ 裁剪"),
+        "QPushButton{background:#181d1a;border:1px solid #2a2f2c;border-radius:8px;"
+        "padding:6px 12px;color:#f2f5f3;}"
+        "QPushButton:checked{border:2px solid #c19a4b;background:#231d12;}");
+    cropBtn_->setCheckable(true);
+    compareBtn_ = mbtn(QStringLiteral("◐ 对比"),
+        "QPushButton{background:#181d1a;border:1px solid #2a2f2c;border-radius:8px;"
+        "padding:6px 12px;color:#f2f5f3;}"
+        "QPushButton:checked{border:2px solid #c19a4b;background:#231d12;}");
+    compareBtn_->setCheckable(true);
     maskClearBtn_ = mbtn(QStringLiteral("清除蒙版"), geoCss);
     maskApplyBtn_ = mbtn(QStringLiteral("局部应用"),
         "QPushButton{background:#5a8f6b;border:none;border-radius:8px;padding:6px 14px;"
@@ -272,6 +299,8 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
     brushSlider_->setStyleSheet("QSlider::groove:horizontal{background:#181d1a;height:4px;border-radius:2px;}"
         "QSlider::handle:horizontal{background:#5a8f6b;width:12px;border-radius:6px;}");
     ml->addWidget(maskBtn_);
+    ml->addWidget(cropBtn_);
+    ml->addWidget(compareBtn_);
     ml->addWidget(new QLabel(QStringLiteral("笔刷"), mtools));
     ml->addWidget(brushSlider_);
     ml->addWidget(maskClearBtn_);
@@ -339,6 +368,9 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
     connect(maskClearBtn_, &QPushButton::clicked, this, &RetouchPage::onMaskClear);
     connect(maskApplyBtn_, &QPushButton::clicked, this, &RetouchPage::onMaskApply);
     connect(brushSlider_, &QSlider::valueChanged, canvas_, &MaskCanvas::setBrushSize);
+    // P4-3 裁剪 / 对比
+    connect(cropBtn_, &QPushButton::toggled, this, &RetouchPage::onCropToggle);
+    connect(compareBtn_, &QPushButton::toggled, this, &RetouchPage::onCompareToggle);
 
     applyTimer_ = new QTimer(this);
     applyTimer_->setSingleShot(true);
@@ -375,16 +407,20 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
             mmp.end();
             QImage mbl = blendMask(mb, mt, mm);
             const bool maskBlend = qRed(mbl.pixel(8, 16)) < 120 && qRed(mbl.pixel(24, 16)) == 120;
+            // P4-3 交互裁剪断言：归一化半幅裁剪 → 尺寸减半
+            const QImage cn = applyGeometry(geoSrc_, 0, false, false, 0, 0, QRectF(0, 0, 0.5, 0.5));
+            const bool cropNormOk = cn.width() == geoSrc_.width() / 2
+                                 && cn.height() == geoSrc_.height() / 2;
             std::fprintf(stderr,
                 "LA_RETOUCH_SMOKE ok=1 srcW=%d srcH=%d rotSwap=%d sqOk=%d flipOk=%d "
-                "autoOutW=%d sugChips=%d sugOutNull=%d maskBlend=%d\n",
+                "autoOutW=%d sugChips=%d sugOutNull=%d maskBlend=%d cropNormOk=%d\n",
                 geoSrc_.width(), geoSrc_.height(),
                 (rot1.width() == geoSrc_.height() && rot1.height() == geoSrc_.width()) ? 1 : 0,
                 (sq.width() == sq.height()) ? 1 : 0,
                 (flip.size() == geoSrc_.size()) ? 1 : 0,
                 out.width(),
                 RetouchEngine::recommend(geoImg_).chips.size(), out2.isNull() ? 1 : 0,
-                maskBlend ? 1 : 0);
+                maskBlend ? 1 : 0, cropNormOk ? 1 : 0);
             std::fflush(stderr);
             QApplication::quit();
         });
@@ -429,7 +465,7 @@ void RetouchPage::onSliderChanged()
 // ----------------------------------------------------------------- P4-1 几何槽
 void RetouchPage::rebuildGeo()
 {
-    geoImg_ = applyGeometry(geoSrc_, rot_, flipH_, flipV_, angle_, aspect_);
+    geoImg_ = applyGeometry(geoSrc_, rot_, flipH_, flipV_, angle_, aspect_, cropNorm_);
     if (geoImg_.isNull()) {
         beforeLbl_->setText(QStringLiteral("无缩略图"));
         return;
@@ -460,13 +496,25 @@ void RetouchPage::onGeoStraighten(int v)
 
 void RetouchPage::onGeoCropApply()
 {
-    aspect_ = aspectCombo_->currentData().toDouble();   // 0 = 自由
+    if (cropMode_) {
+        // P4-3：提交交互裁剪框（归一化，几何无关，导出缩放自动成立）
+        const QRectF r = cropCanvas_->cropRect();
+        const QImage b = cropCanvas_->baseImage();
+        if (r.isValid() && !b.isNull() && r.width() > 1 && r.height() > 1) {
+            cropNorm_ = QRectF(r.left() / b.width(), r.top() / b.height(),
+                               r.width() / b.width(), r.height() / b.height());
+        }
+        cropBtn_->setChecked(false);   // 退出裁剪模式回预览
+    } else {
+        aspect_ = aspectCombo_->currentData().toDouble();   // 0 = 自由
+    }
     rebuildGeo();
 }
 
 void RetouchPage::onGeoReset()
 {
     rot_ = 0; flipH_ = flipV_ = false; angle_ = 0.0; aspect_ = 0.0;
+    cropNorm_ = QRectF();   // P4-3：清除交互裁剪
     straighten_->blockSignals(true);
     straighten_->setValue(0);
     straighten_->blockSignals(false);
@@ -478,7 +526,11 @@ void RetouchPage::onGeoReset()
 void RetouchPage::onMaskToggle(bool on)
 {
     maskMode_ = on;
-    if (on) canvas_->setBase(geoImg_);   // 进入画布：以当前几何图重置蒙版
+    if (on) {
+        canvas_->setBase(geoImg_);   // 进入画布：以当前几何图重置蒙版
+        if (cropBtn_->isChecked())    cropBtn_->setChecked(false);     // 三模式互斥
+        if (compareBtn_->isChecked()) compareBtn_->setChecked(false);
+    }
     midStack_->setCurrentIndex(on ? 1 : 0);
     badge_->setText(on ? QStringLiteral("涂抹要调整的区域 · 零云端")
                        : QStringLiteral("退出蒙版 · 蒙版保留可再局部应用"));
@@ -505,8 +557,36 @@ void RetouchPage::onMaskApply()
     }
     afterLbl_->setPixmap(QPixmap::fromImage(localOut_).scaled(kPreviewW, kPreviewH,
         Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    afterImg_ = localOut_;                                   // P4-3：供对比视图
+    if (compareMode_) compareW_->setImages(geoImg_, afterImg_);
     badge_->setText(QStringLiteral("局部调整已应用 · 零云端"));
     prog_->setValue(100);
+}
+
+// ----------------------------------------------------------------- P4-3 裁剪 / 对比槽
+void RetouchPage::onCropToggle(bool on)
+{
+    cropMode_ = on;
+    if (on) {
+        if (maskBtn_->isChecked())    maskBtn_->setChecked(false);   // 互斥（同步触发其 false 槽）
+        if (compareBtn_->isChecked()) compareBtn_->setChecked(false);
+        cropCanvas_->setBase(geoImg_);
+        cropCanvas_->setAspect(aspect_);
+        badge_->setText(QStringLiteral("拖角缩放 / 框内拖移，「应用裁剪」提交 · 零云端"));
+    }
+    midStack_->setCurrentIndex(on ? 2 : 0);
+}
+
+void RetouchPage::onCompareToggle(bool on)
+{
+    compareMode_ = on;
+    if (on) {
+        if (maskBtn_->isChecked()) maskBtn_->setChecked(false);
+        if (cropBtn_->isChecked()) cropBtn_->setChecked(false);
+        compareW_->setImages(geoImg_, afterImg_);
+        badge_->setText(QStringLiteral("拖动金色分割线对比 · 零云端"));
+    }
+    midStack_->setCurrentIndex(on ? 3 : 0);
 }
 
 // ----------------------------------------------------------------- 页面槽
@@ -553,7 +633,7 @@ void RetouchPage::onExport()
     QImage work = full.isNull() ? geoSrc_ : full;
     if (work.width() > kMaxExport || work.height() > kMaxExport)
         work = work.scaled(kMaxExport, kMaxExport, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-    work = applyGeometry(work, rot_, flipH_, flipV_, angle_, aspect_);
+    work = applyGeometry(work, rot_, flipH_, flipV_, angle_, aspect_, cropNorm_);
     QImage out = RetouchEngine::apply(work, buildFromMap(cur_));
     if (canvas_->hasPaint())                     // P4-2：导出与预览同序合成蒙版
         out = blendMask(work, out, canvas_->mask());
@@ -611,8 +691,10 @@ void RetouchPage::doApply()
 {
     if (geoImg_.isNull()) { afterLbl_->setText(QStringLiteral("无缩略图")); return; }
     const QImage out = RetouchEngine::apply(geoImg_, buildFromMap(cur_));
+    afterImg_ = out;                                         // P4-3：供对比视图
     afterLbl_->setPixmap(QPixmap::fromImage(out).scaled(kPreviewW, kPreviewH,
         Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    if (compareMode_) compareW_->setImages(geoImg_, afterImg_);
     updateBadge();
     prog_->setValue(100);
 }

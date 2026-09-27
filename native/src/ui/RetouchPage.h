@@ -7,6 +7,7 @@
 #include <QVector>
 #include <QMap>
 #include <QString>
+#include <QRectF>
 #include "../core/Library.h"
 #include "../core/RetouchEngine.h"
 
@@ -20,6 +21,8 @@ class QScrollArea;
 class QGridLayout;
 class QStackedLayout;
 class MaskCanvas;
+class CropCanvas;
+class CompareWidget;
 
 struct RtSlider {
     const char* key;
@@ -37,7 +40,7 @@ public:
     // rot ∈ 0..3（顺时针 90° 步进）→ 拉直 angleDeg（-10..10，先于旋转）→ 翻转 → 居中裁剪 aspect(w/h，0=不裁)。
     // 顺序固定：拉直 → 翻转 → 90°旋转 → 裁剪（确定性流水线）。
     static QImage applyGeometry(const QImage& src, int rot, bool flipH, bool flipV,
-                                double angleDeg, double aspect);
+                                double angleDeg, double aspect, const QRectF& cropNorm = QRectF());
 
     // P4-2 蒙版混合纯函数：out = base*(1-f) + toned*f，f = mask alpha/255（蒙版尺寸可异，自动缩放）。
     static QImage blendMask(const QImage& base, const QImage& toned, const QImage& mask);
@@ -64,6 +67,10 @@ private slots:
     void onMaskToggle(bool on);
     void onMaskClear();
     void onMaskApply();
+
+    // P4-3 裁剪 / 对比
+    void onCropToggle(bool on);
+    void onCompareToggle(bool on);
 
 private:
     void buildSlider(const RtSlider& def, class QGridLayout* gl);
@@ -112,7 +119,7 @@ private:
     QComboBox*   aspectCombo_ = nullptr;
 
     // P4-2 蒙版
-    QStackedLayout* midStack_ = nullptr;     // 0=before/after 预览  1=蒙版画布
+    QStackedLayout* midStack_ = nullptr;     // 0=预览 1=蒙版画布 2=裁剪画布 3=对比视图
     MaskCanvas*   canvas_ = nullptr;
     QPushButton*  maskBtn_ = nullptr;
     QPushButton*  maskClearBtn_ = nullptr;
@@ -120,4 +127,14 @@ private:
     QSlider*      brushSlider_ = nullptr;
     bool          maskMode_ = false;
     QImage        localOut_;                 // 最近一次局部应用结果（预览展示）
+
+    // P4-3 裁剪 / 对比
+    CropCanvas*    cropCanvas_ = nullptr;
+    CompareWidget* compareW_ = nullptr;
+    QPushButton*   cropBtn_ = nullptr;
+    QPushButton*   compareBtn_ = nullptr;
+    bool           cropMode_ = false;
+    bool           compareMode_ = false;
+    QRectF         cropNorm_;                // 交互裁剪框（归一化 0..1；null=未裁）
+    QImage         afterImg_;                // 最近修调结果（供对比视图）
 };

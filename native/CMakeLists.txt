@@ -30,6 +30,10 @@ set(LA_SOURCES
     src/ui/RetouchPage.cpp
     src/ui/MaskCanvas.h
     src/ui/MaskCanvas.cpp
+    src/ui/CropCanvas.h
+    src/ui/CropCanvas.cpp
+    src/ui/CompareWidget.h
+    src/ui/CompareWidget.cpp
     src/ui/BeautyPage.h
     src/ui/BeautyPage.cpp
     src/ui/MainWindow.h

@@ -38,6 +38,11 @@
   RetouchPage 预览/画布 QStackedLayout 切换 + 笔刷大小/清除/局部应用；局部调整只在涂抹区生效、
   区外保原图；导出与预览同序合成；`LA_RETOUCH_SMOKE maskBlend=1`（蒙版内变/外不变断言）。
   AI消除桥留后续刀）
+- P4 编辑台（第三刀：交互裁剪 + 对比视图）：✅ 完成（CropCanvas：四角手柄缩放/框内拖移/空白新建 +
+  暗色遮罩外区 + 金边 + 三分线 + aspect 锁定，提交为归一化 cropNorm 进入几何流水线
+  （顺序 拉直→翻转→旋转→交互裁剪→比例居中裁剪，导出同序）；CompareWidget：单幅区域金色分割线
+  拖拽对比，左原图右修后；RetouchPage 三模式互斥（🖌蒙版/✂裁剪/◐对比）；
+  `LA_RETOUCH_SMOKE cropNormOk=1`（归一化半幅裁剪断言）。P4 仅剩 AI消除桥（模型接入））
 
 ## index.html → C++ 模块映射（P1 起逐项迁移）
 
