@@ -7,17 +7,27 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Widgets Sql)
 
 set(LA_SOURCES
     src/main.cpp
+    src/core/Library.h
+    src/core/Library.cpp
+    src/ui/DarkPalette.h
+    src/ui/ThumbCache.h
+    src/ui/ThumbCache.cpp
+    src/ui/GalleryModel.h
+    src/ui/GalleryModel.cpp
+    src/ui/GalleryPage.h
+    src/ui/GalleryPage.cpp
+    src/ui/MainWindow.h
+    src/ui/MainWindow.cpp
 )
 
 add_executable(LightAlbum WIN32 ${LA_SOURCES})
-target_link_libraries(LightAlbum PRIVATE Qt6::Widgets)
+target_link_libraries(LightAlbum PRIVATE Qt6::Widgets Qt6::Sql)
 
-# P1 起按模块加入（见 docs/REWRITE-PLAN.md 模块映射）
-# add_subdirectory(src/gallery)
+# P2 起按模块加入（见 docs/REWRITE-PLAN.md 模块映射）
 # add_subdirectory(src/map)
 # add_subdirectory(src/retouch)
 # add_subdirectory(src/engine/lumen)
