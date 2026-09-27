@@ -3,6 +3,7 @@
 #include "GalleryPage.h"
 #include "MapPage.h"
 #include "CullPage.h"
+#include "RetouchPage.h"
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QLabel>
@@ -113,7 +114,8 @@ MainWindow::MainWindow(const Library* lib, const QString& thumbsDir, QWidget* pa
     stack_->addWidget(gallery_);
     cull_ = new CullPage(&lib_->photos(), thumbsDir, stack_);
     stack_->addWidget(cull_);
-    stack_->addWidget(makePlaceholder(QStringLiteral("修图实验室"), QString::fromUtf8(kNav[4].phase)));
+    retouch_ = new RetouchPage(&lib_->photos(), thumbsDir, stack_);
+    stack_->addWidget(retouch_);
     stack_->addWidget(makePlaceholder(QStringLiteral("AI 美图"), QString::fromUtf8(kNav[5].phase)));
     stack_->addWidget(makePlaceholder(QStringLiteral("摄影日志"), QString::fromUtf8(kNav[6].phase)));
     stack_->addWidget(makePlaceholder(QStringLiteral("关于"), QString::fromUtf8(kNav[7].phase)));

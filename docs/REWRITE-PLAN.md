@@ -21,7 +21,12 @@
 - P2 足迹+日志：✅ 完成（QPainterPath 世界地图三级下钻 + 统计图，mapdata 零外链编进 exe）
 - P3 智能选片（culling）：✅ 完成（CullEngine 移植 MD5/pHash 去重 + 模糊/曝光 + RAW 豁免；
   CullPage 结果网格 + 7 项 KPI；`LA_CULL_SMOKE` 通过：`total=40 cand=25 rej=15 dup=2 blur=1 exp=11 unk=0 top=25`）
-- P3 修图实验室 / AI美图：⬜ 待做（修图引擎随 P5 统一迁移）
+- P3 修图实验室（retouch）：✅ 完成（功能型修图引擎 RetouchEngine：曝光/亮度/对比/清晰/自然饱和/饱和度/
+  白平衡/USM锐化/高光-阴影/暗角 纯像素运算；16 预设 + recommend() 启发式建议芯片；RetouchPage
+  before/after 预览 + 预设下拉 + 手动滑杆 + 导出副本，零云端；`LA_RETOUCH_SMOKE` 通过：
+  `ok=1 srcW=512 autoOutW=512 sugChips=3 sugOutNull=0`；独立单测 ENGINE_TEST PASS 验证
+  bw 全灰(通道差0)/warm R相对B升温/original 恒等）
+- P3 AI美图：⬜ 表单壳（原生「美图」导航项仍为占位，处理留待模型接入）
 
 ## index.html → C++ 模块映射（P1 起逐项迁移）
 

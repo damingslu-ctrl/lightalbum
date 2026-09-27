@@ -13,6 +13,7 @@ class QWidget;
 class GalleryPage;
 class MapPage;
 class CullPage;
+class RetouchPage;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -31,4 +32,5 @@ private:
     GalleryPage*    gallery_ = nullptr;
     MapPage*        map_ = nullptr;
     CullPage*       cull_ = nullptr;
+    RetouchPage*     retouch_ = nullptr;
 };

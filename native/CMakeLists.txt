@@ -26,10 +26,14 @@ set(LA_SOURCES
     src/ui/MapPage.cpp
     src/ui/CullPage.h
     src/ui/CullPage.cpp
+    src/ui/RetouchPage.h
+    src/ui/RetouchPage.cpp
     src/ui/MainWindow.h
     src/ui/MainWindow.cpp
     src/core/CullEngine.h
     src/core/CullEngine.cpp
+    src/core/RetouchEngine.h
+    src/core/RetouchEngine.cpp
 )
 
 # P2 地图数据（零外链编进 exe）
