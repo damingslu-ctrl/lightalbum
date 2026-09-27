@@ -37,12 +37,14 @@
 
 ```bat
 pip install aqtinstall
-aqt list-qt windows desktop --arch 6.8          :: 核对 win64_mingw 存在
-aqt install-qt windows desktop 6.8.3 win64_mingw -O D:\qt --archives qtbase qttools icu
-aqt install-tool windows desktop tools_mingw90 qt.tools.win64_mingw900 -O D:\qt   :: 名字以 list-tool 为准
+aqt list-qt windows desktop --arch 6.8.3      :: 实测存在 win64_mingw ✓
+aqt install-tool windows desktop tools_mingw1310 qt.tools.win64_mingw1310 -O D:\qt   :: MinGW 13.1.0（实测名）
+aqt install-qt windows desktop 6.8.3 win64_mingw -O D:\qt
 ```
 
 - 构建：`cmake -G "MinGW Makefiles" -DCMAKE_PREFIX_PATH=D:\qt\6.8.3\mingw_64 ..`
+- aqt 环境已隔离装好：`C:\Users\damin\.workbuddy\binaries\python\envs\aqt\Scripts\aqt.exe`；
+  下载临时目录钉 `D:\tmp`（遵守下载不进 C 盘）。
 
 ## 工程纪律（沿用本项目铁律的 C++ 版）
 
