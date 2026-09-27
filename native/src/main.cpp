@@ -33,8 +33,9 @@ int main(int argc, char *argv[])
     win.resize(1440, 940);
     win.show();
 
-    // 冒烟探针门控：载入真库 + 页面栈就位后自动退出（offscreen/CI 可用）
-    if (qEnvironmentVariableIsSet("LA_SMOKE")) {
+    // 冒烟探针门控：载入真库 + 页面栈就位后自动退出（offscreen/CI 可用）。
+    // 选片自测（LA_CULL_SMOKE）由 CullPage 自行驱动退出，这里不抢跑。
+    if (qEnvironmentVariableIsSet("LA_SMOKE") && qEnvironmentVariableIsEmpty("LA_CULL_SMOKE")) {
         QTimer::singleShot(600, &app, [&lib]{
             const Kpi& k = lib.kpi();
             std::fprintf(stderr, "LA_P1_SMOKE_OK photos=%d years=%d provs=%d span=%d-%d\n",

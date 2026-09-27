@@ -2,6 +2,7 @@
 #include "Icons.h"
 #include "GalleryPage.h"
 #include "MapPage.h"
+#include "CullPage.h"
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QLabel>
@@ -110,7 +111,8 @@ MainWindow::MainWindow(const Library* lib, const QString& thumbsDir, QWidget* pa
     stack_->addWidget(map_);
     gallery_ = new GalleryPage(&lib_->photos(), thumbsDir, stack_);
     stack_->addWidget(gallery_);
-    stack_->addWidget(makePlaceholder(QStringLiteral("智能选片"), QString::fromUtf8(kNav[3].phase)));
+    cull_ = new CullPage(&lib_->photos(), thumbsDir, stack_);
+    stack_->addWidget(cull_);
     stack_->addWidget(makePlaceholder(QStringLiteral("修图实验室"), QString::fromUtf8(kNav[4].phase)));
     stack_->addWidget(makePlaceholder(QStringLiteral("AI 美图"), QString::fromUtf8(kNav[5].phase)));
     stack_->addWidget(makePlaceholder(QStringLiteral("摄影日志"), QString::fromUtf8(kNav[6].phase)));

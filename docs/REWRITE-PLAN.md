@@ -14,6 +14,15 @@
 | P5 引擎移植 | Lumen → C++：白平衡/色阶/曲线/clarity/vibrance/降噪/USM/去雾/畸变/红眼/HDR/风格……+ `_audit` 自检降级语义 | 金样比对（1.9.39 输出 vs C++ 输出，SSIM/直方图阈值） |
 | P6 打包 | 静态/动态 Qt 部署，删除 QtWebEngine 依赖 | 包体积、启动、内存三项对比报告 |
 
+## 原生实装进度（native/）
+
+- P0 工具链与骨架：✅ 完成（Qt6.8.3 + MinGW13.1，首版 exe 101KB，offscreen 冒烟）
+- P1 外壳：✅ 完成（主窗口/SQLite 直读/图库网格/胶片条/灯箱）
+- P2 足迹+日志：✅ 完成（QPainterPath 世界地图三级下钻 + 统计图，mapdata 零外链编进 exe）
+- P3 智能选片（culling）：✅ 完成（CullEngine 移植 MD5/pHash 去重 + 模糊/曝光 + RAW 豁免；
+  CullPage 结果网格 + 7 项 KPI；`LA_CULL_SMOKE` 通过：`total=40 cand=25 rej=15 dup=2 blur=1 exp=11 unk=0 top=25`）
+- P3 修图实验室 / AI美图：⬜ 待做（修图引擎随 P5 统一迁移）
+
 ## index.html → C++ 模块映射（P1 起逐项迁移）
 
 | 现有（index.html 1.9.39） | 目标（native/） |

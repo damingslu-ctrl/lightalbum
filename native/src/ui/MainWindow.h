@@ -12,6 +12,7 @@ class QListWidget;
 class QWidget;
 class GalleryPage;
 class MapPage;
+class CullPage;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -29,4 +30,5 @@ private:
     QWidget*        kpis_ = nullptr;
     GalleryPage*    gallery_ = nullptr;
     MapPage*        map_ = nullptr;
+    CullPage*       cull_ = nullptr;
 };
