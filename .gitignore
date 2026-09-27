@@ -1,0 +1,16 @@
+# 构建产物 / 虚拟环境 / 缓存
+client/venv/
+client/build/
+client/dist/
+__pycache__/
+*.pyc
+venv*/
+envs/
+
+# WorkBuddy 项目数据（工作日志不入库）
+.workbuddy/
+
+# 临时 / 探针产物
+*.log
+probe_*.py.out
+/tmp/
