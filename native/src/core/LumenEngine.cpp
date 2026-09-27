@@ -2,6 +2,7 @@
 #include <cmath>
 #include <cstring>
 #include <algorithm>
+#include <random>
 
 // ============================================================ 预设
 LumenPreset LumenPreset::byName(const QString& name)
@@ -796,6 +797,379 @@ QImage LumenEngine::sharpen(const QImage& rgb, double k, double noise, bool port
     if (portrait) percent = int(percent * 0.7);
     const int threshold = noise >= 0.035 ? 5 : 2;
     return unsharpMask(rgb, r, percent, threshold);
+}
+
+// ============================================================ PIL 合成基础设施（P5-2）
+QImage LumenEngine::blend(const QImage& a, const QImage& b, double f)
+{
+    QImage ia = a.convertToFormat(QImage::Format_RGB32);
+    QImage ib = b.convertToFormat(QImage::Format_RGB32);
+    if (ia.size() != ib.size()) return ia;
+    for (int y = 0; y < ia.height(); ++y) {
+        const QRgb* pa = reinterpret_cast<const QRgb*>(ia.constScanLine(y));
+        const QRgb* pb = reinterpret_cast<const QRgb*>(ib.constScanLine(y));
+        QRgb* d = reinterpret_cast<QRgb*>(ia.scanLine(y));
+        for (int x = 0; x < ia.width(); ++x)
+            d[x] = qRgb(clamp255(int(qRed(pa[x]) * (1 - f) + qRed(pb[x]) * f + 0.5)),
+                        clamp255(int(qGreen(pa[x]) * (1 - f) + qGreen(pb[x]) * f + 0.5)),
+                        clamp255(int(qBlue(pa[x]) * (1 - f) + qBlue(pb[x]) * f + 0.5)));
+    }
+    return ia;
+}
+
+QImage LumenEngine::screen(const QImage& a, const QImage& b)
+{
+    QImage ia = a.convertToFormat(QImage::Format_RGB32);
+    QImage ib = b.convertToFormat(QImage::Format_RGB32);
+    if (ia.size() != ib.size()) return ia;
+    for (int y = 0; y < ia.height(); ++y) {
+        const QRgb* pa = reinterpret_cast<const QRgb*>(ia.constScanLine(y));
+        const QRgb* pb = reinterpret_cast<const QRgb*>(ib.constScanLine(y));
+        QRgb* d = reinterpret_cast<QRgb*>(ia.scanLine(y));
+        for (int x = 0; x < ia.width(); ++x)
+            d[x] = qRgb(255 - ((255 - qRed(pa[x])) * (255 - qRed(pb[x]))) / 255,
+                        255 - ((255 - qGreen(pa[x])) * (255 - qGreen(pb[x]))) / 255,
+                        255 - ((255 - qBlue(pa[x])) * (255 - qBlue(pb[x]))) / 255);
+    }
+    return ia;
+}
+
+QImage LumenEngine::composite(const QImage& a, const QImage& b, const QImage& mask)
+{
+    const QImage ia = a.convertToFormat(QImage::Format_RGB32);
+    const QImage ib = b.convertToFormat(QImage::Format_RGB32);
+    const QImage m = mask.convertToFormat(QImage::Format_Grayscale8);
+    QImage out(ia.size(), QImage::Format_RGB32);
+    for (int y = 0; y < ia.height(); ++y) {
+        const QRgb* pa = reinterpret_cast<const QRgb*>(ia.constScanLine(y));
+        const QRgb* pb = reinterpret_cast<const QRgb*>(ib.constScanLine(y));
+        const uchar* pm = m.constScanLine(y);
+        QRgb* d = reinterpret_cast<QRgb*>(out.scanLine(y));
+        for (int x = 0; x < ia.width(); ++x) {
+            const int w = pm[x];
+            d[x] = qRgb(clamp255((qRed(pa[x]) * w + qRed(pb[x]) * (255 - w)) / 255),
+                        clamp255((qGreen(pa[x]) * w + qGreen(pb[x]) * (255 - w)) / 255),
+                        clamp255((qBlue(pa[x]) * w + qBlue(pb[x]) * (255 - w)) / 255));
+        }
+    }
+    return out;
+}
+
+QImage LumenEngine::channelGain(const QImage& rgb, double gr, double gg, double gb)
+{
+    QImage img = rgb.convertToFormat(QImage::Format_RGB32);
+    for (int y = 0; y < img.height(); ++y) {
+        QRgb* d = reinterpret_cast<QRgb*>(img.scanLine(y));
+        for (int x = 0; x < img.width(); ++x)
+            d[x] = qRgb(clamp255(int(qRed(d[x]) * gr + 0.5)),
+                        clamp255(int(qGreen(d[x]) * gg + 0.5)),
+                        clamp255(int(qBlue(d[x]) * gb + 0.5)));
+    }
+    return img;
+}
+
+QImage LumenEngine::enhanceContrastPil(const QImage& rgb, double f)
+{
+    // PIL Contrast：blend(均值灰, img, f) → mean + (v-mean)*f（mean 取 L 通道均值）
+    const QImage gray = toL8(rgb);
+    long sum = 0, n = 0;
+    for (int y = 0; y < gray.height(); ++y) {
+        const uchar* p = gray.constScanLine(y);
+        for (int x = 0; x < gray.width(); ++x) { sum += p[x]; ++n; }
+    }
+    const double mean = n ? double(sum) / n : 128.0;
+    QImage img = rgb.convertToFormat(QImage::Format_RGB32);
+    for (int y = 0; y < img.height(); ++y) {
+        QRgb* d = reinterpret_cast<QRgb*>(img.scanLine(y));
+        for (int x = 0; x < img.width(); ++x)
+            d[x] = qRgb(clamp255(int(mean + (qRed(d[x]) - mean) * f + 0.5)),
+                        clamp255(int(mean + (qGreen(d[x]) - mean) * f + 0.5)),
+                        clamp255(int(mean + (qBlue(d[x]) - mean) * f + 0.5)));
+    }
+    return img;
+}
+
+QImage LumenEngine::addGrain(const QImage& rgb, double amount)
+{
+    // PIL effect_noise(sigma=32) 近似：均值 128、σ=32 的高斯噪；随亮度耦合（三角窗）
+    if (amount <= 0) return rgb.convertToFormat(QImage::Format_RGB32);
+    QImage img = rgb.convertToFormat(QImage::Format_RGB32);
+    const QImage gray = toL8(img);
+    const double k = std::min(3.0, amount * 1.6);
+    for (int y = 0; y < img.height(); ++y) {
+        const uchar* g = gray.constScanLine(y);
+        QRgb* d = reinterpret_cast<QRgb*>(img.scanLine(y));
+        for (int x = 0; x < img.width(); ++x) {
+            // 高斯噪（Box-Muller，σ=32）
+            static thread_local std::mt19937 gen(1234567);
+            std::normal_distribution<double> nd(128.0, 32.0);
+            const double nv = 128.0 + (nd(gen) - 128.0) * k;
+            const double lw = 255.0 * (1.0 - std::abs(g[x] - 128) / 128.0);
+            const double scaled = (nv * lw + (255.0 - lw) * 128.0) / 255.0;
+            const int delta = int(scaled - 128.0 + 0.5);
+            d[x] = qRgb(clamp255(qRed(d[x]) + delta),
+                        clamp255(qGreen(d[x]) + delta),
+                        clamp255(qBlue(d[x]) + delta));
+        }
+    }
+    return img;
+}
+
+// ============================================================ P5-2 显式算子
+QImage LumenEngine::filmStyle(const QImage& rgb, bool withGrain, double lift, double rolloff)
+{
+    QImage img = rgb.convertToFormat(QImage::Format_RGB32);
+    // 1) 胶片影调 LUT：高光肩部滚降 + 抬黑场
+    const double knee = 200.0;
+    int lut[256];
+    for (int v = 0; v < 256; ++v) {
+        double v1 = double(v);
+        if (v > knee) {
+            const double t = (v - knee) / (255.0 - knee);
+            const double y = t - rolloff * t * (1.0 - t);
+            v1 = knee + y * (255.0 - knee);
+        }
+        const double lo = lift * 255.0;
+        const double v2 = lo + v1 * (255.0 - lo) / 255.0;
+        lut[v] = clamp255(int(std::lround(v2)));
+    }
+    img = pointRgb(img, lut);
+    // 2) 分离色调：阴影冷(0.96,1.0,1.05) / 高光暖(1.05,1.0,0.95)，amount=0.55，balance=0.5
+    const QImage l = toL8(img);
+    const int bp = int(std::lround(0.5 * 255));   // 128
+    int swLut[256], hwLut[256];
+    for (int v = 0; v < 256; ++v) {
+        swLut[v] = clamp255(255 - std::min(255, int(255.0 * v / bp)));
+        hwLut[v] = clamp255(std::max(0, std::min(255, int(255.0 * (v - bp) / (255 - bp)))));
+    }
+    const double amount = 0.55;
+    int amLut[256];
+    for (int v = 0; v < 256; ++v) amLut[v] = int(v * amount);
+    QImage sw = pointGray(l, swLut);
+    QImage hw = pointGray(l, hwLut);
+    sw = pointGray(sw, amLut);
+    hw = pointGray(hw, amLut);
+    img = composite(channelGain(img, 0.96, 1.0, 1.05), img, sw);
+    img = composite(channelGain(img, 1.05, 1.0, 0.95), img, hw);
+    // 3) 饱和度略降
+    img = enhanceColor(img, 0.92);
+    // 4) 颗粒（PRNG，金样比对不参与）
+    if (withGrain) img = addGrain(img, 0.55);
+    return img;
+}
+
+QImage LumenEngine::blackWhite(const QImage& rgb, double contrast)
+{
+    QImage img = rgb.convertToFormat(QImage::Format_RGB32);
+    for (int y = 0; y < img.height(); ++y) {
+        QRgb* d = reinterpret_cast<QRgb*>(img.scanLine(y));
+        for (int x = 0; x < img.width(); ++x) {
+            const int g = clamp255(int(std::lround(qRed(d[x]) * 0.30
+                                                  + qGreen(d[x]) * 0.59
+                                                  + qBlue(d[x]) * 0.11)));
+            d[x] = qRgb(g, g, g);
+        }
+    }
+    return enhanceContrastPil(img, contrast);
+}
+
+QImage LumenEngine::glowStyle(const QImage& rgb, double amount)
+{
+    const double rr = std::max(6.0, std::min(rgb.width(), rgb.height()) / 45.0);
+    const QImage blur = enhanceBrightness(gaussianBlur(rgb, rr), 1.12);
+    const QImage scr = screen(rgb, blur);
+    return blend(rgb, scr, std::max(0.0, std::min(0.9, amount)));
+}
+
+QImage LumenEngine::redeyeRemove(const QImage& rgb, int* pixels)
+{
+    if (pixels) *pixels = 0;
+    QImage img = rgb.convertToFormat(QImage::Format_RGB32);
+    const int w = img.width(), h = img.height();
+    if (w < 32 || h < 32) return img;
+    QVector<uchar> hit(w * h, 0);
+    int cnt = 0;
+    for (int y = 0; y < h; ++y) {
+        const QRgb* s = reinterpret_cast<const QRgb*>(img.constScanLine(y));
+        for (int x = 0; x < w; ++x) {
+            const int r = qRed(s[x]), g = qGreen(s[x]), b = qBlue(s[x]);
+            if (r < 120 || g > 110 || b > 110) continue;
+            if (r < 2.2 * g || r < 2.2 * b) continue;
+            hit[y * w + x] = 1; ++cnt;
+        }
+    }
+    const long area = long(w) * h;
+    if (cnt < 20 || cnt > 0.06 * area) return img;   // 面积闸门：太少无红眼 / 太多疑似整片红
+    for (int y = 0; y < h; ++y) {
+        QRgb* d = reinterpret_cast<QRgb*>(img.scanLine(y));
+        for (int x = 0; x < w; ++x) {
+            if (!hit[y * w + x]) continue;
+            const int g = qGreen(d[x]), b = qBlue(d[x]);
+            const int v = int(g * 0.35);
+            d[x] = qRgb(v, v, int(b * 0.35));
+        }
+    }
+    if (pixels) *pixels = cnt;
+    return img;
+}
+
+QImage LumenEngine::vignetteCorrect(const QImage& rgb, double strength, double* kOut)
+{
+    if (kOut) *kOut = 0;
+    // 1) 估计径向压暗 k（稳健环带 + r² 最小二乘）
+    const QImage small = boxDownscale(toL8(rgb), 256);
+    const int sw = small.width(), sh = small.height();
+    if (sw < 16 || sh < 16) return rgb.convertToFormat(QImage::Format_RGB32);
+    const double cx = (sw - 1) / 2.0, cy = (sh - 1) / 2.0;
+    const double rmax = std::hypot(cx, cy);
+    if (rmax < 1.0) return rgb.convertToFormat(QImage::Format_RGB32);
+    const int bins = 12;
+    QVector<double> sums(bins, 0.0);
+    QVector<long> cnts(bins, 0);
+    for (int y = 0; y < sh; ++y) {
+        const uchar* p = small.constScanLine(y);
+        const double dy = y - cy;
+        for (int x = 0; x < sw; ++x) {
+            const double r = std::hypot(x - cx, dy) / rmax;
+            const int bi = (r >= 1.0) ? bins - 1 : int(r * bins);
+            sums[bi] += p[x]; ++cnts[bi];
+        }
+    }
+    QVector<double> prof, rr;
+    for (int b = 0; b < bins; ++b)
+        if (cnts[b] >= 8) { prof.append(sums[b] / cnts[b]); rr.append(std::pow((b + 0.5) / bins, 2)); }
+    if (prof.size() < 4) return rgb.convertToFormat(QImage::Format_RGB32);
+    const double ref = *std::max_element(prof.constBegin(), prof.constEnd());
+    if (ref <= 1e-6) return rgb.convertToFormat(QImage::Format_RGB32);
+    double num = 0, den = 0;
+    for (int i = 0; i < prof.size(); ++i) {
+        const double rel = prof[i] / ref;
+        num += rr[i] * (1.0 - rel);
+        den += rr[i] * rr[i];
+    }
+    double k = std::max(0.0, num / std::max(1e-9, den));
+    if (k < 0.05) return rgb.convertToFormat(QImage::Format_RGB32);   // 无明显暗角不乱修
+    k = std::min(0.60, k * strength);
+    const double gmax = std::min(1.8, 1.0 / std::max(0.35, 1.0 - k));
+    if (kOut) *kOut = std::round(k * 1000.0) / 1000.0;
+    // 2) 全分辨率径向增益（解析式，等价低分辨率掩膜双线性放大）
+    QImage img = rgb.convertToFormat(QImage::Format_RGB32);
+    const int w = img.width(), h = img.height();
+    const double cx2 = (w - 1) / 2.0, cy2 = (h - 1) / 2.0;
+    const double rmax2 = cx2 * cx2 + cy2 * cy2;
+    if (rmax2 < 1.0) return img;
+    for (int y = 0; y < h; ++y) {
+        QRgb* d = reinterpret_cast<QRgb*>(img.scanLine(y));
+        const double dy = y - cy2;
+        for (int x = 0; x < w; ++x) {
+            const double dx = x - cx2;
+            const double r2 = (dx * dx + dy * dy) / rmax2;
+            const double inv = std::max(0.35, 1.0 - k * r2);
+            const double gain = std::min(gmax, 1.0 / inv);
+            d[x] = qRgb(clamp255(int(qRed(d[x]) * gain + 0.5)),
+                        clamp255(int(qGreen(d[x]) * gain + 0.5)),
+                        clamp255(int(qBlue(d[x]) * gain + 0.5)));
+        }
+    }
+    return img;
+}
+
+QImage LumenEngine::toneMapHdr(const QImage& rgb, double amount)
+{
+    QImage img = rgb.convertToFormat(QImage::Format_RGB32);
+    const int w = img.width(), h = img.height();
+    if (w < 32 || h < 32 || amount <= 0) return img;
+    QImage hI, sI, vI;
+    rgb2hsv(img, &hI, &sI, &vI);
+    const double R = std::max(4.0, std::min(w, h) / 10.0);
+    const QImage m = gaussianBlur(vI, R);
+    const double HI = 1.55;
+    int gl[256], hiLut[256], kneeLut[256];
+    for (int x = 0; x < 256; ++x) {
+        const double g = std::clamp(std::pow(128.0 / (x + 1.0), 0.25), 0.62, HI);
+        gl[x] = clamp255(int(std::lround(255.0 * g / HI)));
+        hiLut[x] = std::min(255, int(std::lround(x * HI)));
+        if (x <= 196) kneeLut[x] = x;
+        else {
+            const double t = (x - 196.0) / 59.0;
+            const double y = 1.0 - std::pow(1.0 - t, 1.6);
+            kneeLut[x] = clamp255(int(std::lround(196.0 + y * 59.0 * 0.95)));
+        }
+    }
+    QImage v1 = pointGray(chopGray(vI, pointGray(m, gl), 0), hiLut);
+    v1 = pointGray(v1, kneeLut);
+    // 灰度 blend(vv, v1, amount)
+    QImage outV(vI.size(), QImage::Format_Grayscale8);
+    for (int y = 0; y < vI.height(); ++y) {
+        const uchar* pa = vI.constScanLine(y);
+        const uchar* pb = v1.constScanLine(y);
+        uchar* d = outV.scanLine(y);
+        for (int x = 0; x < vI.width(); ++x)
+            d[x] = uchar(clamp255(int(pa[x] * (1 - amount) + pb[x] * amount + 0.5)));
+    }
+    return hsv2rgb(hI, sI, outV);
+}
+
+QImage LumenEngine::structure(const QImage& rgb, double amount)
+{
+    QImage img = rgb.convertToFormat(QImage::Format_RGB32);
+    if (std::min(img.width(), img.height()) < 24 || amount <= 0) return img;
+    QImage hI, sI, vI;
+    rgb2hsv(img, &hI, &sI, &vI);
+    const double R = std::max(1.0, std::min(img.width(), img.height()) / 150.0);
+    const int pct = int(std::lround(std::min(0.55, 0.25 + 0.35 * amount) * 100));
+    // 明度通道细尺度 USM（借 RGB32 等价实现）
+    QImage vRgb(vI.size(), QImage::Format_RGB32);
+    for (int y = 0; y < vI.height(); ++y) {
+        const uchar* g = vI.constScanLine(y);
+        QRgb* d = reinterpret_cast<QRgb*>(vRgb.scanLine(y));
+        for (int x = 0; x < vI.width(); ++x) d[x] = qRgb(g[x], g[x], g[x]);
+    }
+    const QImage usm = unsharpMask(vRgb, std::max(1.0, std::round(R)), pct, 3);
+    QImage vSharp(vI.size(), QImage::Format_Grayscale8);
+    for (int y = 0; y < vI.height(); ++y) {
+        const QRgb* s = reinterpret_cast<const QRgb*>(usm.constScanLine(y));
+        uchar* d = vSharp.scanLine(y);
+        for (int x = 0; x < vI.width(); ++x) d[x] = uchar(qRed(s[x]));
+    }
+    // 中调掩膜：V≈128 权重 1，两端趋 0
+    int maskLut[256];
+    for (int x = 0; x < 256; ++x)
+        maskLut[x] = clamp255(int(255 * std::pow(std::max(0.0, 1.0 - std::abs(x - 128) / 128.0), 0.8)));
+    const QImage mask = pointGray(vI, maskLut);
+    // 灰度 composite(vSharp, vv, mask)
+    QImage outV(vI.size(), QImage::Format_Grayscale8);
+    for (int y = 0; y < vI.height(); ++y) {
+        const uchar* pa = vSharp.constScanLine(y);
+        const uchar* pb = vI.constScanLine(y);
+        const uchar* pm = mask.constScanLine(y);
+        uchar* d = outV.scanLine(y);
+        for (int x = 0; x < vI.width(); ++x)
+            d[x] = uchar(clamp255((pa[x] * pm[x] + pb[x] * (255 - pm[x])) / 255));
+    }
+    return hsv2rgb(hI, sI, outV);
+}
+
+QImage LumenEngine::dodge(const QImage& rgb, double amount)
+{
+    QImage img = rgb.convertToFormat(QImage::Format_RGB32);
+    if (img.width() < 32 || img.height() < 32 || amount <= 0) return img;
+    QImage hI, sI, vI;
+    rgb2hsv(img, &hI, &sI, &vI);
+    const double R = std::max(4.0, std::min(img.width(), img.height()) / 8.0);
+    const QImage m = gaussianBlur(vI, R);
+    const double lift = std::clamp(amount, 0.0, 1.0) * 0.28;
+    int wlLut[256], rampLut[256], capLut[256];
+    for (int x = 0; x < 256; ++x) {
+        wlLut[x] = clamp255(int(std::lround(255.0 * lift * std::pow(1.0 - x / 255.0, 1.5))));
+        rampLut[x] = std::min(255, int(qint64(x) * 255 / 24));
+        capLut[x] = std::min(x, 80);
+    }
+    QImage add = chopGray(chopGray(invertGray(vI), pointGray(m, wlLut), 0),
+                          pointGray(vI, rampLut), 0);
+    add = pointGray(add, capLut);
+    const QImage outV = chopGray(vI, add, 1);
+    return hsv2rgb(hI, sI, outV);
 }
 
 // ============================================================ 审计

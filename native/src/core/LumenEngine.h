@@ -64,6 +64,25 @@ public:
     static QImage denoise(const QImage& rgb, int level);              // 0/1/2（L2 含 median+smooth）
     static QImage sharpen(const QImage& rgb, double k, double noise, bool portrait = false);
 
+    // ---- P5-2 显式算子（**仅显式预设触发，绝不 auto**；Python 同语义）----
+    static QImage filmStyle(const QImage& rgb, bool withGrain = false,
+                            double lift = 0.055, double rolloff = 0.42);   // 影调+分离色调+饱和0.92(+颗粒)
+    static QImage blackWhite(const QImage& rgb, double contrast = 1.05);    // 通道混合 + 轻微加对比
+    static QImage glowStyle(const QImage& rgb, double amount = 0.5);        // Orton 柔焦
+    static QImage redeyeRemove(const QImage& rgb, int* pixels = nullptr);   // 保守启发式（面积闸门）
+    static QImage vignetteCorrect(const QImage& rgb, double strength = 1.0, double* kOut = nullptr);
+    static QImage toneMapHdr(const QImage& rgb, double amount = 1.0);       // 局部光照引导 + 高光软膝
+    static QImage structure(const QImage& rgb, double amount = 1.0);        // 明度细尺度 USM + 中调掩膜
+    static QImage dodge(const QImage& rgb, double amount = 1.0);            // 局部暗部提亮
+
+    // ---- PIL 合成基础设施（P5-2）----
+    static QImage blend(const QImage& a, const QImage& b, double f);        // a*(1-f)+b*f
+    static QImage screen(const QImage& a, const QImage& b);                 // chop screen
+    static QImage composite(const QImage& a, const QImage& b, const QImage& mask);
+    static QImage channelGain(const QImage& rgb, double gr, double gg, double gb);
+    static QImage enhanceContrastPil(const QImage& rgb, double f);          // 以 L 均值为轴心（PIL Contrast）
+    static QImage addGrain(const QImage& rgb, double amount);               // PIL effect_noise 近似（PRNG）
+
     // 降噪档位（EXIF 缺失时按画面噪声估计；与 Python _denoise_level_noise 一致）
     static int denoiseLevelByNoise(double noise) { return noise >= 0.070 ? 2 : (noise >= 0.045 ? 1 : 0); }
 

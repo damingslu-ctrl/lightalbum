@@ -14,7 +14,7 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(ROOT, 'client'))
 
 from lightalbum.core import retouch  # noqa: E402
-from PIL import Image  # noqa: E402
+from PIL import Image, ImageEnhance  # noqa: E402
 
 GOLD_DIR = os.path.join(ROOT, '_gold_lumen')
 THUMBS_DIR = os.environ.get('LA_THUMBS', r'D:\lightalbum\thumbs')
@@ -100,6 +100,36 @@ def auto_subset(img):
     return out, steps, reverted
 
 
+def op_gold(img):
+    """P5-2：显式算子**逐算子独立**金样（隔离比对，避免 auto 管线差异累积）。
+    颗粒(_add_grain)为 PRNG 噪声，C++ 无法字节对齐 → film 金样不含颗粒（文档化）。
+    """
+    out = {}
+    # film：影调 LUT + 分离色调 + 饱和 0.92（不含颗粒）
+    f = retouch._film_tone(img)
+    f = retouch._split_tone(f, amount=0.55)
+    f = ImageEnhance.Color(f).enhance(0.92)
+    out['film'] = f
+    # bw：通道混合 + 轻微加对比
+    b = retouch._black_white(img)
+    out['bw'] = ImageEnhance.Contrast(b).enhance(1.05)
+    # glow：Orton
+    out['glow'] = retouch._glow(img, amount=0.5)
+    # redeye：启发式（多数图无红眼 → 返回原图，用于验证「不乱修」）
+    re_img, re_info = retouch._redeye_remove(img, 1.0)
+    out['redeye'] = re_img
+    out['_redeye_px'] = int((re_info or {}).get('pixels') or 0)
+    # vignette：无暗角则原图（验证 VIGNETTE_MIN_K 门控）
+    vg, vd = retouch._vignette_correct(img)
+    out['vignette'] = vg
+    out['_vignette_k'] = float((vd or {}).get('k') or 0.0)
+    # hdr / structure / dodge
+    out['hdr'] = retouch._tone_map(img, 1.0)[0]
+    out['structure'] = retouch._structure(img, 1.0)[0]
+    out['dodge'] = retouch._dodge(img, 1.0)[0]
+    return out
+
+
 def main():
     os.makedirs(GOLD_DIR, exist_ok=True)
     inputs = pick_inputs(N)
@@ -118,6 +148,12 @@ def main():
             json.dump({'keys': steps, 'reverted': reverted}, f, ensure_ascii=False)
         manifest.append({'in': in_path, 'gold': gold_path, 'meta': meta_path})
         print('GOLD %d steps=%s reverted=%s' % (i, ','.join(steps), reverted))
+        # P5-2 显式算子独立金样
+        for name, oimg in op_gold(im).items():
+            if name.startswith('_'):
+                continue
+            oimg.save(os.path.join(GOLD_DIR, 'op_%s_%d.png' % (name, i)))
+        print('  OPS film/bw/glow/redeye/vignette/hdr/structure/dodge ok')
     with open(os.path.join(GOLD_DIR, 'manifest.json'), 'w', encoding='utf-8') as f:
         json.dump(manifest, f)
     print('GOLD_GEN_OK n=%d' % len(inputs))

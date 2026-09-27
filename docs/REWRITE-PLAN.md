@@ -55,8 +55,13 @@
   sharpen(USM 噪声阈值) + 四门 audit(不过→轻力度重做→回退原图) + steps↔算子一一对应；
   PIL 基础设施复刻：convert('L') 权重/HSV 整数六分区/ImageChops/USM/Median3/SMOOTH/面积加权降采样。
   **金样对拍 PASS**：`_gold_lumen.py`（Python 金样）vs `LA_LUMEN_SMOKE`（C++）——
-  `n=6 madAvg=0.569 madMax=0.867(≈0.34%) stepsOk=6/6 PASS`。剩余：dehaze/level/vignette/chromatic/
-  lens/redeye/portrait/film/bw/glow 显式算子 + EditPlan 参数管线（P5 后续刀））
+  `n=6 madAvg=0.569 madMax=0.867(≈0.34%) stepsOk=6/6 PASS`）
+- P5 引擎移植（第二批：8 个显式算子）：✅ 完成（film/bw/glow/redeye/vignette/hdr/structure/dodge
+  全部移植 + 基础设施 screen/blend/composite/channelGain/PIL Contrast 均值轴心/addGrain；
+  金样**逐算子独立**对拍：`LA_LUMEN_SMOKE` OPS 段 6 样本×8 算子 madMax=1.107 PASS
+  （redeye mad=0.000 → 双方一致「无红眼不乱修」，门控语义一致）。
+  颗粒(_add_grain) 为 PRNG 噪声无法字节对齐 → film 金样不含颗粒，已文档化。
+  剩余：dehaze/level/chromatic/lens/portrait 五个显式算子 + EditPlan 参数管线）
 
 ## index.html → C++ 模块映射（P1 起逐项迁移）
 

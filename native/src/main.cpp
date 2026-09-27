@@ -71,9 +71,49 @@ int runLumenSmoke()
                      qPrintable(goldKeys.join(',')));
     }
     const double avg = n ? madSum / n : 999;
-    const bool pass = n > 0 && stepsOk == n && madMax <= kMadLimit;
-    std::fprintf(stderr, "LA_LUMEN_SMOKE n=%d madAvg=%.3f madMax=%.3f stepsOk=%d/%d %s\n",
-                 n, avg, madMax, stepsOk, n, pass ? "PASS" : "FAIL");
+    bool pass = n > 0 && stepsOk == n && madMax <= kMadLimit;
+    std::fprintf(stderr, "LA_LUMEN_SMOKE_SUBSET n=%d madAvg=%.3f madMax=%.3f stepsOk=%d/%d %s\n",
+                 n, avg, madMax, stepsOk, n, (stepsOk == n && madMax <= kMadLimit) ? "PASS" : "FAIL");
+
+    // ---- P5-2 显式算子逐算子对拍（隔离比对）----
+    static const char* kOps[] = {"film", "bw", "glow", "redeye", "vignette", "hdr", "structure", "dodge"};
+    for (int i = 0; i < n; ++i) {
+        for (const char* op : kOps) {
+            const QString inP = QDir(dir).filePath(QStringLiteral("in_%1.png").arg(i));
+            const QString gP = QDir(dir).filePath(
+                QStringLiteral("op_%1_%2.png").arg(QString::fromLatin1(op)).arg(i));
+            const QImage in(inP), gold(gP);
+            if (in.isNull() || gold.isNull()) continue;
+            QImage out;
+            const QString opName = QString::fromLatin1(op);
+            if (opName == QStringLiteral("film"))        out = LumenEngine::filmStyle(in, false);
+            else if (opName == QStringLiteral("bw"))     out = LumenEngine::blackWhite(in);
+            else if (opName == QStringLiteral("glow"))   out = LumenEngine::glowStyle(in);
+            else if (opName == QStringLiteral("redeye")) out = LumenEngine::redeyeRemove(in);
+            else if (opName == QStringLiteral("vignette")) out = LumenEngine::vignetteCorrect(in);
+            else if (opName == QStringLiteral("hdr"))    out = LumenEngine::toneMapHdr(in);
+            else if (opName == QStringLiteral("structure")) out = LumenEngine::structure(in);
+            else                                          out = LumenEngine::dodge(in);
+            double mad = 999;
+            if (out.size() == gold.size()) {
+                QImage a = out.convertToFormat(QImage::Format_RGB32);
+                QImage b = gold.convertToFormat(QImage::Format_RGB32);
+                long long sum = 0;
+                for (int y = 0; y < a.height(); ++y) {
+                    const QRgb* pa = reinterpret_cast<const QRgb*>(a.constScanLine(y));
+                    const QRgb* pb = reinterpret_cast<const QRgb*>(b.constScanLine(y));
+                    for (int x = 0; x < a.width(); ++x)
+                        sum += std::abs(qRed(pa[x]) - qRed(pb[x]))
+                             + std::abs(qGreen(pa[x]) - qGreen(pb[x]))
+                             + std::abs(qBlue(pa[x]) - qBlue(pb[x]));
+                }
+                mad = double(sum) / (a.width() * a.height() * 3.0);
+            }
+            std::fprintf(stderr, "LUMEN_OP %d %s mad=%.3f\n", i, op, mad);
+            if (mad > kMadLimit) pass = false;
+        }
+    }
+    std::fprintf(stderr, "LA_LUMEN_SMOKE %s\n", pass ? "PASS" : "FAIL");
     std::fflush(stderr);
     return pass ? 0 : 1;
 }
