@@ -2,6 +2,7 @@
 client/venv/
 client/build/
 client/dist/
+native/build/
 __pycache__/
 *.pyc
 venv*/

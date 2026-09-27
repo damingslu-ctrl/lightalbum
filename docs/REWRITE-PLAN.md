@@ -46,6 +46,16 @@ aqt install-qt windows desktop 6.8.3 win64_mingw -O D:\qt
 - aqt 环境已隔离装好：`C:\Users\damin\.workbuddy\binaries\python\envs\aqt\Scripts\aqt.exe`；
   下载临时目录钉 `D:\tmp`（遵守下载不进 C 盘）。
 
+## P1 数据层事实（2026-09-27 只读探查 D:\lightalbum\library.db 实测）
+
+- `photos` 6424 行：`path`(PK)/root/rel/src/size/mtime/thumb/`exif_json`(全部 EXIF 打包为 JSON)/
+  missing/seen_at/category/cat_score/cat_at/rating/person。
+  → C++ 侧 `QJsonDocument` 解 exif_json 即可，无需第三方 JSON 库。
+- `meta` 键值表（last_scan 等）；`vault`（id/path/name/enc/thumb/size/mtime/created_at）。
+- SQLite 接入选型：默认 **sqlite3 amalgamation 静态编入**（单文件零依赖，exe 自包含）；
+  备选 Qt6::Sql 的 qsqlite 插件（win64_mingw 默认含）。P1 动工时定夺。
+- 数据诚实铁律平移：exif_json 字段缺失 = null/0/'' → UI 显示 `—`，统计跳过，严禁编造默认值。
+
 ## 工程纪律（沿用本项目铁律的 C++ 版）
 
 1. 渲染单向：`refresh(Section)` 派发，禁止渲染函数互调（对应 web 版 G 节铁律）；
