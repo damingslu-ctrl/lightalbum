@@ -1,8 +1,10 @@
 #include "RetouchPage.h"
+#include "MaskCanvas.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGridLayout>
 #include <QFormLayout>
+#include <QStackedLayout>
 #include <QComboBox>
 #include <QLabel>
 #include <QPushButton>
@@ -17,6 +19,7 @@
 #include <QTimer>
 #include <QApplication>
 #include <QPixmap>
+#include <QPainter>
 #include <QTransform>
 #include <algorithm>
 #include <cmath>
@@ -94,6 +97,33 @@ QImage RetouchPage::applyGeometry(const QImage& src, int rot, bool flipH, bool f
     return img;
 }
 
+// ----------------------------------------------------------------- P4-2 蒙版混合纯函数
+// out = base*(1-f) + toned*f，f = mask alpha/255；toned/mask 尺寸可异，自动缩放到 base。
+QImage RetouchPage::blendMask(const QImage& base, const QImage& toned, const QImage& mask)
+{
+    if (base.isNull() || toned.isNull() || mask.isNull()) return QImage();
+    QImage b = base.convertToFormat(QImage::Format_ARGB32);
+    QImage t = toned.convertToFormat(QImage::Format_ARGB32);
+    QImage m = mask.convertToFormat(QImage::Format_ARGB32);
+    if (t.size() != b.size()) t = t.scaled(b.size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    if (m.size() != b.size()) m = m.scaled(b.size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    QImage out(b.size(), QImage::Format_ARGB32);
+    for (int y = 0; y < b.height(); ++y) {
+        const QRgb* pb = reinterpret_cast<const QRgb*>(b.constScanLine(y));
+        const QRgb* pt = reinterpret_cast<const QRgb*>(t.constScanLine(y));
+        const QRgb* pm = reinterpret_cast<const QRgb*>(m.constScanLine(y));
+        QRgb* po = reinterpret_cast<QRgb*>(out.scanLine(y));
+        for (int x = 0; x < b.width(); ++x) {
+            const double f = qAlpha(pm[x]) / 255.0;
+            const int r  = int(qRed(pb[x])   * (1 - f) + qRed(pt[x])   * f + 0.5);
+            const int g  = int(qGreen(pb[x]) * (1 - f) + qGreen(pt[x]) * f + 0.5);
+            const int bl = int(qBlue(pb[x])  * (1 - f) + qBlue(pt[x])  * f + 0.5);
+            po[x] = qRgba(r, g, bl, 255);
+        }
+    }
+    return out;
+}
+
 RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidget* parent)
     : QWidget(parent), photos_(photos), thumbsDir_(thumbsDir)
 {
@@ -163,7 +193,16 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
     auto* bl2 = new QVBoxLayout; bl2->setContentsMargins(0,0,0,0);
     bl2->addWidget(afterLbl_);  bl2->addWidget(new QLabel(QStringLiteral("修后"), this), 0, Qt::AlignHCenter);
     pv->addStretch(1); pv->addLayout(bl1); pv->addLayout(bl2); pv->addStretch(1);
-    root->addLayout(pv);
+    // P4-2：预览 / 蒙版画布 二选一切换
+    auto* pvWrap = new QWidget(this);
+    pvWrap->setLayout(pv);
+    canvas_ = new MaskCanvas(this);
+    canvas_->setMinimumHeight(360);
+    midStack_ = new QStackedLayout;
+    midStack_->addWidget(pvWrap);
+    midStack_->addWidget(canvas_);
+    midStack_->setCurrentIndex(0);
+    root->addLayout(midStack_, 1);
 
     // ---- P4-1 几何编辑条 ----
     auto* geo = new QWidget(this);
@@ -206,6 +245,39 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
     gl2->addWidget(geoResetBtn_);
     gl2->addStretch(1);
     root->addWidget(geo);
+
+    // ---- P4-2 蒙版工具条 ----
+    auto* mtools = new QWidget(this);
+    auto* ml = new QHBoxLayout(mtools);
+    ml->setContentsMargins(0, 0, 0, 0);
+    ml->setSpacing(8);
+    auto mbtn = [mtools](const QString& t, const char* css){
+        auto* b = new QPushButton(t, mtools);
+        b->setStyleSheet(QString::fromLatin1(css));
+        return b;
+    };
+    maskBtn_ = mbtn(QStringLiteral("🖌 蒙版模式"),
+        "QPushButton{background:#181d1a;border:1px solid #2a2f2c;border-radius:8px;"
+        "padding:6px 12px;color:#f2f5f3;}"
+        "QPushButton:checked{border:2px solid #5a8f6b;background:#12201a;}");
+    maskBtn_->setCheckable(true);
+    maskClearBtn_ = mbtn(QStringLiteral("清除蒙版"), geoCss);
+    maskApplyBtn_ = mbtn(QStringLiteral("局部应用"),
+        "QPushButton{background:#5a8f6b;border:none;border-radius:8px;padding:6px 14px;"
+        "color:#f2f5f3;font-weight:bold;}");
+    brushSlider_ = new QSlider(Qt::Horizontal, mtools);
+    brushSlider_->setRange(4, 80); brushSlider_->setValue(24);
+    brushSlider_->setFixedWidth(120);
+    brushSlider_->setToolTip(QStringLiteral("笔刷大小（像素）"));
+    brushSlider_->setStyleSheet("QSlider::groove:horizontal{background:#181d1a;height:4px;border-radius:2px;}"
+        "QSlider::handle:horizontal{background:#5a8f6b;width:12px;border-radius:6px;}");
+    ml->addWidget(maskBtn_);
+    ml->addWidget(new QLabel(QStringLiteral("笔刷"), mtools));
+    ml->addWidget(brushSlider_);
+    ml->addWidget(maskClearBtn_);
+    ml->addWidget(maskApplyBtn_);
+    ml->addStretch(1);
+    root->addWidget(mtools);
 
     // ---- 建议芯片行 ----
     auto* chipWrap = new QWidget(this);
@@ -262,6 +334,11 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
     connect(straighten_, &QSlider::valueChanged, this, &RetouchPage::onGeoStraighten);
     connect(geoCropBtn_, &QPushButton::clicked, this, &RetouchPage::onGeoCropApply);
     connect(geoResetBtn_, &QPushButton::clicked, this, &RetouchPage::onGeoReset);
+    // P4-2 蒙版
+    connect(maskBtn_, &QPushButton::toggled, this, &RetouchPage::onMaskToggle);
+    connect(maskClearBtn_, &QPushButton::clicked, this, &RetouchPage::onMaskClear);
+    connect(maskApplyBtn_, &QPushButton::clicked, this, &RetouchPage::onMaskApply);
+    connect(brushSlider_, &QSlider::valueChanged, canvas_, &MaskCanvas::setBrushSize);
 
     applyTimer_ = new QTimer(this);
     applyTimer_->setSingleShot(true);
@@ -288,15 +365,26 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
             RetouchParams s = RetouchEngine::recommend(geoImg_).params;
             QImage out = RetouchEngine::apply(geoImg_, p);
             QImage out2 = RetouchEngine::apply(geoImg_, s);
+            // P4-2 蒙版混合断言：左半应用变暗调整，右半保持原样
+            QImage mb(32, 32, QImage::Format_RGB32); mb.fill(qRgb(120, 120, 120));
+            RetouchParams bp; bp.brightness = -0.5;
+            QImage mt = RetouchEngine::apply(mb, bp);
+            QImage mm(32, 32, QImage::Format_ARGB32); mm.fill(Qt::transparent);
+            QPainter mmp(&mm);
+            mmp.fillRect(0, 0, 16, 32, QColor(255, 255, 255, 255));
+            mmp.end();
+            QImage mbl = blendMask(mb, mt, mm);
+            const bool maskBlend = qRed(mbl.pixel(8, 16)) < 120 && qRed(mbl.pixel(24, 16)) == 120;
             std::fprintf(stderr,
                 "LA_RETOUCH_SMOKE ok=1 srcW=%d srcH=%d rotSwap=%d sqOk=%d flipOk=%d "
-                "autoOutW=%d sugChips=%d sugOutNull=%d\n",
+                "autoOutW=%d sugChips=%d sugOutNull=%d maskBlend=%d\n",
                 geoSrc_.width(), geoSrc_.height(),
                 (rot1.width() == geoSrc_.height() && rot1.height() == geoSrc_.width()) ? 1 : 0,
                 (sq.width() == sq.height()) ? 1 : 0,
                 (flip.size() == geoSrc_.size()) ? 1 : 0,
                 out.width(),
-                RetouchEngine::recommend(geoImg_).chips.size(), out2.isNull() ? 1 : 0);
+                RetouchEngine::recommend(geoImg_).chips.size(), out2.isNull() ? 1 : 0,
+                maskBlend ? 1 : 0);
             std::fflush(stderr);
             QApplication::quit();
         });
@@ -348,6 +436,7 @@ void RetouchPage::rebuildGeo()
     }
     srcPm_ = QPixmap::fromImage(geoImg_);
     beforeLbl_->setPixmap(srcPm_.scaled(kPreviewW, kPreviewH, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    if (canvas_) canvas_->setBase(geoImg_);   // 几何变更使旧蒙版失效（蒙版按图像坐标存储）
     doApply();
 }
 
@@ -383,6 +472,41 @@ void RetouchPage::onGeoReset()
     straighten_->blockSignals(false);
     aspectCombo_->setCurrentIndex(0);
     rebuildGeo();
+}
+
+// ----------------------------------------------------------------- P4-2 蒙版槽
+void RetouchPage::onMaskToggle(bool on)
+{
+    maskMode_ = on;
+    if (on) canvas_->setBase(geoImg_);   // 进入画布：以当前几何图重置蒙版
+    midStack_->setCurrentIndex(on ? 1 : 0);
+    badge_->setText(on ? QStringLiteral("涂抹要调整的区域 · 零云端")
+                       : QStringLiteral("退出蒙版 · 蒙版保留可再局部应用"));
+}
+
+void RetouchPage::onMaskClear()
+{
+    canvas_->clearMask();
+    badge_->setText(QStringLiteral("蒙版已清除 · 零云端"));
+}
+
+void RetouchPage::onMaskApply()
+{
+    if (!canvas_->hasPaint()) {
+        badge_->setText(QStringLiteral("先在蒙版模式涂抹要调整的区域"));
+        return;
+    }
+    const QImage base = geoImg_;
+    const QImage toned = RetouchEngine::apply(base, buildFromMap(cur_));
+    localOut_ = blendMask(base, toned, canvas_->mask());
+    if (localOut_.isNull()) { badge_->setText(QStringLiteral("局部应用失败")); return; }
+    if (maskMode_) {
+        maskBtn_->setChecked(false);   // 触发 onMaskToggle(false)：退回预览、蒙版保留
+    }
+    afterLbl_->setPixmap(QPixmap::fromImage(localOut_).scaled(kPreviewW, kPreviewH,
+        Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    badge_->setText(QStringLiteral("局部调整已应用 · 零云端"));
+    prog_->setValue(100);
 }
 
 // ----------------------------------------------------------------- 页面槽
@@ -430,7 +554,9 @@ void RetouchPage::onExport()
     if (work.width() > kMaxExport || work.height() > kMaxExport)
         work = work.scaled(kMaxExport, kMaxExport, Qt::KeepAspectRatio, Qt::SmoothTransformation);
     work = applyGeometry(work, rot_, flipH_, flipV_, angle_, aspect_);
-    const QImage out = RetouchEngine::apply(work, buildFromMap(cur_));
+    QImage out = RetouchEngine::apply(work, buildFromMap(cur_));
+    if (canvas_->hasPaint())                     // P4-2：导出与预览同序合成蒙版
+        out = blendMask(work, out, canvas_->mask());
 
     const QString fname = QFileDialog::getSaveFileName(this, QStringLiteral("导出修后副本"),
         QDir::homePath() + "/" + QFileInfo(ph.path).baseName() + "_retouched.jpg",

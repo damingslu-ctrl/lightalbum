@@ -28,6 +28,8 @@ set(LA_SOURCES
     src/ui/CullPage.cpp
     src/ui/RetouchPage.h
     src/ui/RetouchPage.cpp
+    src/ui/MaskCanvas.h
+    src/ui/MaskCanvas.cpp
     src/ui/BeautyPage.h
     src/ui/BeautyPage.cpp
     src/ui/MainWindow.h

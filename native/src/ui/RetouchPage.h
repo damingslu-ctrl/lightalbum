@@ -18,6 +18,8 @@ class QProgressBar;
 class QTimer;
 class QScrollArea;
 class QGridLayout;
+class QStackedLayout;
+class MaskCanvas;
 
 struct RtSlider {
     const char* key;
@@ -37,6 +39,9 @@ public:
     static QImage applyGeometry(const QImage& src, int rot, bool flipH, bool flipV,
                                 double angleDeg, double aspect);
 
+    // P4-2 蒙版混合纯函数：out = base*(1-f) + toned*f，f = mask alpha/255（蒙版尺寸可异，自动缩放）。
+    static QImage blendMask(const QImage& base, const QImage& toned, const QImage& mask);
+
 private slots:
     void onPhotoChanged(int idx);
     void onSliderChanged();
@@ -54,6 +59,11 @@ private slots:
     void onGeoStraighten(int v);
     void onGeoCropApply();
     void onGeoReset();
+
+    // P4-2 蒙版
+    void onMaskToggle(bool on);
+    void onMaskClear();
+    void onMaskApply();
 
 private:
     void buildSlider(const RtSlider& def, class QGridLayout* gl);
@@ -100,4 +110,14 @@ private:
     QPushButton* geoResetBtn_ = nullptr;
     QSlider*     straighten_ = nullptr;
     QComboBox*   aspectCombo_ = nullptr;
+
+    // P4-2 蒙版
+    QStackedLayout* midStack_ = nullptr;     // 0=before/after 预览  1=蒙版画布
+    MaskCanvas*   canvas_ = nullptr;
+    QPushButton*  maskBtn_ = nullptr;
+    QPushButton*  maskClearBtn_ = nullptr;
+    QPushButton*  maskApplyBtn_ = nullptr;
+    QSlider*      brushSlider_ = nullptr;
+    bool          maskMode_ = false;
+    QImage        localOut_;                 // 最近一次局部应用结果（预览展示）
 };

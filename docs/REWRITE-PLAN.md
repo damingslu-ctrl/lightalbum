@@ -33,6 +33,11 @@
   按比例居中裁剪(自由/1:1/4:3/3:2/16:9)/重置几何；`applyGeometry` 纯函数固定流水线
   拉直→翻转→旋转→裁剪，导出与预览同序；`LA_RETOUCH_SMOKE` 几何断言通过：
   `rotSwap=1 sqOk=1 flipOk=1`。画笔蒙版/AI消除桥（QGraphicsScene 重写 fabric）留后续刀）
+- P4 编辑台（第二刀：画笔蒙版）：✅ 完成（MaskCanvas：QGraphicsScene 底图+翡翠叠加双层，
+  笔刷写入 ARGB32 蒙版 alpha，1:1 坐标映射；blendMask 纯函数 out=base*(1-f)+toned*f；
+  RetouchPage 预览/画布 QStackedLayout 切换 + 笔刷大小/清除/局部应用；局部调整只在涂抹区生效、
+  区外保原图；导出与预览同序合成；`LA_RETOUCH_SMOKE maskBlend=1`（蒙版内变/外不变断言）。
+  AI消除桥留后续刀）
 
 ## index.html → C++ 模块映射（P1 起逐项迁移）
 
