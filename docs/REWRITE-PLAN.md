@@ -29,6 +29,10 @@
 - P3 AI美图（美图）：✅ 完成（BeautyPage 风格化预设画廊：复用 RetouchEngine 16 预设生成卡片缩略图 +
   点选套用 + 大图 before/after 预览 + 智能增强 + 导出副本，零云端；`LA_BEAUTY_SMOKE` 通过：
   `ok=1 presets=16 thumbs=16 nullOut=0`；深度 AI 处理留待模型接入）
+- P4 编辑台（第一刀：几何编辑）：✅ 完成（并入 RetouchPage：旋转90°⟲⟳/水平垂直翻转/拉直±10°滑杆/
+  按比例居中裁剪(自由/1:1/4:3/3:2/16:9)/重置几何；`applyGeometry` 纯函数固定流水线
+  拉直→翻转→旋转→裁剪，导出与预览同序；`LA_RETOUCH_SMOKE` 几何断言通过：
+  `rotSwap=1 sqOk=1 flipOk=1`。画笔蒙版/AI消除桥（QGraphicsScene 重写 fabric）留后续刀）
 
 ## index.html → C++ 模块映射（P1 起逐项迁移）
 

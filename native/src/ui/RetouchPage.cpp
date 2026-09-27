@@ -17,7 +17,9 @@
 #include <QTimer>
 #include <QApplication>
 #include <QPixmap>
+#include <QTransform>
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 
 namespace {
@@ -60,6 +62,38 @@ RetouchParams buildFromMap(const QMap<QString, double>& m)
     return p;
 }
 
+// ----------------------------------------------------------------- P4-1 几何纯函数
+// 固定顺序：拉直 → 翻转 → 90°旋转 → 居中裁剪（确定性流水线，冒烟可断言）。
+QImage RetouchPage::applyGeometry(const QImage& src, int rot, bool flipH, bool flipV,
+                                  double angleDeg, double aspect)
+{
+    if (src.isNull()) return src;
+    QImage img = src;
+
+    if (std::fabs(angleDeg) > 1e-6) {
+        QTransform t; t.rotate(angleDeg);
+        img = img.transformed(t, Qt::SmoothTransformation);
+    }
+    if (flipH || flipV) {
+        QTransform f; f.scale(flipH ? -1.0 : 1.0, flipV ? -1.0 : 1.0);
+        img = img.transformed(f);
+    }
+    const int r = ((rot % 4) + 4) % 4;
+    if (r) {
+        QTransform q; q.rotate(r * 90.0);
+        img = img.transformed(q, Qt::FastTransformation);
+    }
+    if (aspect > 0) {
+        const int w = img.width(), h = img.height();
+        const double cur = double(w) / double(h);
+        int cw = w, ch = h;
+        if (cur > aspect) cw = int(h * aspect + 0.5);
+        else              ch = int(w / aspect + 0.5);
+        img = img.copy((w - cw) / 2, (h - ch) / 2, cw, ch);
+    }
+    return img;
+}
+
 RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidget* parent)
     : QWidget(parent), photos_(photos), thumbsDir_(thumbsDir)
 {
@@ -93,15 +127,16 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
         b->setStyleSheet(QString::fromLatin1(css));
         return b;
     };
+    const char* goldCss =
+        "QPushButton{background:#c19a4b;border:none;border-radius:8px;padding:8px 16px;"
+        "color:#10130f;font-weight:bold;}";
     autoBtn_   = mkBtn(QStringLiteral("智能增强"),
         "QPushButton{background:#5a8f6b;border:none;border-radius:8px;padding:8px 16px;"
         "color:#f2f5f3;font-weight:bold;} QPushButton:disabled{background:#5a5f5b;}");
     resetBtn_  = mkBtn(QStringLiteral("重置"),
         "QPushButton{background:#181d1a;border:1px solid #2a2f2c;border-radius:8px;"
         "padding:8px 16px;color:#f2f5f3;}");
-    exportBtn_ = mkBtn(QStringLiteral("导出副本"),
-        "QPushButton{background:#c19a4b;border:none;border-radius:8px;padding:8px 16px;"
-        "color:#10130f;font-weight:bold;}");
+    exportBtn_ = mkBtn(QStringLiteral("导出副本"), goldCss);
 
     bl->addWidget(new QLabel(QStringLiteral("照片"), bar));
     bl->addWidget(photoCombo_);
@@ -129,6 +164,48 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
     bl2->addWidget(afterLbl_);  bl2->addWidget(new QLabel(QStringLiteral("修后"), this), 0, Qt::AlignHCenter);
     pv->addStretch(1); pv->addLayout(bl1); pv->addLayout(bl2); pv->addStretch(1);
     root->addLayout(pv);
+
+    // ---- P4-1 几何编辑条 ----
+    auto* geo = new QWidget(this);
+    auto* gl2 = new QHBoxLayout(geo);
+    gl2->setContentsMargins(0, 0, 0, 0);
+    gl2->setSpacing(8);
+    const char* geoCss =
+        "QPushButton{background:#181d1a;border:1px solid #2a2f2c;border-radius:8px;"
+        "padding:6px 12px;color:#f2f5f3;}";
+    auto gbtn = [geo, geoCss](const QString& t){
+        auto* b = new QPushButton(t, geo);
+        b->setStyleSheet(QString::fromLatin1(geoCss));
+        return b;
+    };
+    geoRotLBtn_ = gbtn(QStringLiteral("旋转⟲"));
+    geoRotRBtn_ = gbtn(QStringLiteral("旋转⟳"));
+    geoFlipHBtn_ = gbtn(QStringLiteral("⇋ 水平"));
+    geoFlipVBtn_ = gbtn(QStringLiteral("⇅ 垂直"));
+    straighten_ = new QSlider(Qt::Horizontal, geo);
+    straighten_->setRange(-100, 100); straighten_->setValue(0);
+    straighten_->setFixedWidth(160);
+    straighten_->setToolTip(QStringLiteral("拉直 ±10°"));
+    straighten_->setStyleSheet("QSlider::groove:horizontal{background:#181d1a;height:4px;border-radius:2px;}"
+        "QSlider::handle:horizontal{background:#c19a4b;width:12px;border-radius:6px;}");
+    aspectCombo_ = new QComboBox(geo);
+    aspectCombo_->addItem(QStringLiteral("自由"), 0.0);
+    aspectCombo_->addItem(QStringLiteral("1:1"),  1.0);
+    aspectCombo_->addItem(QStringLiteral("4:3"),  4.0 / 3.0);
+    aspectCombo_->addItem(QStringLiteral("3:2"),  1.5);
+    aspectCombo_->addItem(QStringLiteral("16:9"), 16.0 / 9.0);
+    geoCropBtn_ = gbtn(QStringLiteral("应用裁剪"));
+    geoResetBtn_ = gbtn(QStringLiteral("重置几何"));
+    gl2->addWidget(geoRotLBtn_); gl2->addWidget(geoRotRBtn_);
+    gl2->addWidget(geoFlipHBtn_); gl2->addWidget(geoFlipVBtn_);
+    gl2->addWidget(new QLabel(QStringLiteral("拉直"), geo));
+    gl2->addWidget(straighten_);
+    gl2->addWidget(new QLabel(QStringLiteral("裁剪"), geo));
+    gl2->addWidget(aspectCombo_);
+    gl2->addWidget(geoCropBtn_);
+    gl2->addWidget(geoResetBtn_);
+    gl2->addStretch(1);
+    root->addWidget(geo);
 
     // ---- 建议芯片行 ----
     auto* chipWrap = new QWidget(this);
@@ -177,19 +254,26 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
     connect(autoBtn_, &QPushButton::clicked, this, &RetouchPage::onAutoEnhance);
     connect(resetBtn_, &QPushButton::clicked, this, &RetouchPage::onReset);
     connect(exportBtn_, &QPushButton::clicked, this, &RetouchPage::onExport);
+    // P4-1 几何
+    connect(geoRotLBtn_, &QPushButton::clicked, this, [this]{ onGeoRotate(true); });
+    connect(geoRotRBtn_, &QPushButton::clicked, this, [this]{ onGeoRotate(false); });
+    connect(geoFlipHBtn_, &QPushButton::clicked, this, [this]{ onGeoFlip(true); });
+    connect(geoFlipVBtn_, &QPushButton::clicked, this, [this]{ onGeoFlip(false); });
+    connect(straighten_, &QSlider::valueChanged, this, &RetouchPage::onGeoStraighten);
+    connect(geoCropBtn_, &QPushButton::clicked, this, &RetouchPage::onGeoCropApply);
+    connect(geoResetBtn_, &QPushButton::clicked, this, &RetouchPage::onGeoReset);
 
     applyTimer_ = new QTimer(this);
     applyTimer_->setSingleShot(true);
     connect(applyTimer_, &QTimer::timeout, this, &RetouchPage::doApply);
 
-    // 载入首张
+    // 载入首张（rebuildGeo 内已做首次 doApply）
     if (!usableIdx_.isEmpty()) {
         loadPhoto(0);
         refreshChips();
-        doApply();
     }
 
-    // 自测钩子
+    // 自测钩子：修调 + 几何断言
     if (!qEnvironmentVariableIsEmpty("LA_RETOUCH_SMOKE")) {
         QTimer::singleShot(0, this, [this]{
             if (usableIdx_.isEmpty()) {
@@ -197,14 +281,22 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
                 std::fflush(stderr); QApplication::quit(); return;
             }
             loadPhoto(0);
+            const QImage rot1 = applyGeometry(geoSrc_, 1, false, false, 0, 0);
+            const QImage sq   = applyGeometry(geoSrc_, 0, false, false, 0, 1.0);
+            const QImage flip = applyGeometry(geoSrc_, 0, true, false, 0, 0);
             RetouchParams p = RetouchEngine::preset(QStringLiteral("auto"));
-            RetouchParams s = RetouchEngine::recommend(srcImg_).params;
-            QImage out = RetouchEngine::apply(srcImg_, p);
-            QImage out2 = RetouchEngine::apply(srcImg_, s);
+            RetouchParams s = RetouchEngine::recommend(geoImg_).params;
+            QImage out = RetouchEngine::apply(geoImg_, p);
+            QImage out2 = RetouchEngine::apply(geoImg_, s);
             std::fprintf(stderr,
-                "LA_RETOUCH_SMOKE ok=1 srcW=%d srcH=%d autoOutW=%d sugChips=%d sugOutNull=%d\n",
-                srcImg_.width(), srcImg_.height(), out.width(),
-                RetouchEngine::recommend(srcImg_).chips.size(), out2.isNull() ? 1 : 0);
+                "LA_RETOUCH_SMOKE ok=1 srcW=%d srcH=%d rotSwap=%d sqOk=%d flipOk=%d "
+                "autoOutW=%d sugChips=%d sugOutNull=%d\n",
+                geoSrc_.width(), geoSrc_.height(),
+                (rot1.width() == geoSrc_.height() && rot1.height() == geoSrc_.width()) ? 1 : 0,
+                (sq.width() == sq.height()) ? 1 : 0,
+                (flip.size() == geoSrc_.size()) ? 1 : 0,
+                out.width(),
+                RetouchEngine::recommend(geoImg_).chips.size(), out2.isNull() ? 1 : 0);
             std::fflush(stderr);
             QApplication::quit();
         });
@@ -246,18 +338,63 @@ void RetouchPage::onSliderChanged()
     applyTimer_->start(40);
 }
 
-void RetouchPage::onPhotoChanged(int idx)
+// ----------------------------------------------------------------- P4-1 几何槽
+void RetouchPage::rebuildGeo()
 {
-    Q_UNUSED(idx);
-    if (photoCombo_->currentIndex() < 0) return;
-    loadPhoto(photoCombo_->currentIndex());
-    refreshChips();
+    geoImg_ = applyGeometry(geoSrc_, rot_, flipH_, flipV_, angle_, aspect_);
+    if (geoImg_.isNull()) {
+        beforeLbl_->setText(QStringLiteral("无缩略图"));
+        return;
+    }
+    srcPm_ = QPixmap::fromImage(geoImg_);
+    beforeLbl_->setPixmap(srcPm_.scaled(kPreviewW, kPreviewH, Qt::KeepAspectRatio, Qt::SmoothTransformation));
     doApply();
 }
 
-void RetouchPage::onPresetChanged(int idx)
+void RetouchPage::onGeoRotate(bool left)
 {
-    Q_UNUSED(idx);
+    rot_ = (rot_ + (left ? 3 : 1)) % 4;
+    rebuildGeo();
+}
+
+void RetouchPage::onGeoFlip(bool horizontal)
+{
+    if (horizontal) flipH_ = !flipH_; else flipV_ = !flipV_;
+    rebuildGeo();
+}
+
+void RetouchPage::onGeoStraighten(int v)
+{
+    angle_ = v / 10.0;               // -10..10°
+    rebuildGeo();
+}
+
+void RetouchPage::onGeoCropApply()
+{
+    aspect_ = aspectCombo_->currentData().toDouble();   // 0 = 自由
+    rebuildGeo();
+}
+
+void RetouchPage::onGeoReset()
+{
+    rot_ = 0; flipH_ = flipV_ = false; angle_ = 0.0; aspect_ = 0.0;
+    straighten_->blockSignals(true);
+    straighten_->setValue(0);
+    straighten_->blockSignals(false);
+    aspectCombo_->setCurrentIndex(0);
+    rebuildGeo();
+}
+
+// ----------------------------------------------------------------- 页面槽
+void RetouchPage::onPhotoChanged(int)
+{
+    if (photoCombo_->currentIndex() < 0) return;
+    loadPhoto(photoCombo_->currentIndex());
+    refreshChips();
+}
+
+void RetouchPage::onPresetChanged(int)
+{
     onApplyPreset();
 }
 
@@ -272,7 +409,7 @@ void RetouchPage::onApplyPreset()   // rlRun
 void RetouchPage::onAutoEnhance()   // rlAi
 {
     refreshChips();
-    setParams(RetouchEngine::recommend(srcImg_).params);
+    setParams(RetouchEngine::recommend(geoImg_).params);
     doApply();
 }
 
@@ -285,13 +422,14 @@ void RetouchPage::onReset()
 
 void RetouchPage::onExport()
 {
-    if (srcImg_.isNull()) return;
+    if (geoSrc_.isNull()) return;
     const Photo& ph = (*photos_)[usableIdx_[photoCombo_->currentIndex()]];
-    // 优先用原始全分辨率文件（仍零云端，纯本地）
+    // 优先用原始全分辨率文件（仍零云端，纯本地）：先几何后修调，与预览同序
     QImage full = QImage(ph.path);
-    QImage work = full.isNull() ? srcImg_ : full;
+    QImage work = full.isNull() ? geoSrc_ : full;
     if (work.width() > kMaxExport || work.height() > kMaxExport)
         work = work.scaled(kMaxExport, kMaxExport, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    work = applyGeometry(work, rot_, flipH_, flipV_, angle_, aspect_);
     const QImage out = RetouchEngine::apply(work, buildFromMap(cur_));
 
     const QString fname = QFileDialog::getSaveFileName(this, QStringLiteral("导出修后副本"),
@@ -333,21 +471,20 @@ void RetouchPage::loadPhoto(int idx)
     const QString path = QDir(thumbsDir_).filePath(ph.thumbFile);
     QImage img(path);
     if (img.isNull()) {
-        srcImg_ = QImage();
+        geoSrc_ = QImage(); geoImg_ = QImage();
         beforeLbl_->setText(QStringLiteral("无缩略图"));
         return;
     }
     if (img.width() > kMaxSrc || img.height() > kMaxSrc)
         img = img.scaled(kMaxSrc, kMaxSrc, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-    srcImg_ = img;
-    srcPm_ = QPixmap::fromImage(img);
-    beforeLbl_->setPixmap(srcPm_.scaled(kPreviewW, kPreviewH, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    geoSrc_ = img;
+    rebuildGeo();
 }
 
 void RetouchPage::doApply()
 {
-    if (srcImg_.isNull()) { afterLbl_->setText(QStringLiteral("无缩略图")); return; }
-    const QImage out = RetouchEngine::apply(srcImg_, buildFromMap(cur_));
+    if (geoImg_.isNull()) { afterLbl_->setText(QStringLiteral("无缩略图")); return; }
+    const QImage out = RetouchEngine::apply(geoImg_, buildFromMap(cur_));
     afterLbl_->setPixmap(QPixmap::fromImage(out).scaled(kPreviewW, kPreviewH,
         Qt::KeepAspectRatio, Qt::SmoothTransformation));
     updateBadge();
@@ -364,7 +501,7 @@ void RetouchPage::refreshChips()
     auto* hl = qobject_cast<QHBoxLayout*>(chipRow_->layout());
     if (!hl) return;
     while (hl->count()) { QLayoutItem* it = hl->takeAt(0); delete it->widget(); delete it; }
-    const RetouchSuggest s = RetouchEngine::recommend(srcImg_);
+    const RetouchSuggest s = RetouchEngine::recommend(geoImg_);
     if (!s.valid || s.chips.isEmpty()) {
         auto* t = new QLabel(QStringLiteral("曝光均衡，无需修正"), chipRow_);
         t->setStyleSheet("color:#9fa8a3;");
