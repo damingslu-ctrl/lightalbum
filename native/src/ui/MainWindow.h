@@ -22,8 +22,12 @@ public:
     MainWindow(const Library* lib, const QString& thumbsDir,
                const QString& dbPath = QString(), QWidget* parent = nullptr);
 
+    // P11 UI 截图探针：逐导航页 setCurrentRow → grab() 存 PNG 到 dir；返回 0。
+    int shootPages(const QString& dir);
+
 private:
     QWidget* makePlaceholder(const QString& secName, const QString& phase) const;
+
     void startImport();          // P8：选目录 → 后台扫描入库 → 汇总/重启
 
     const Library* lib_;

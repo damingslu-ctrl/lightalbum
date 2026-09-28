@@ -32,9 +32,9 @@ QRect CompareWidget::dispRect() const
 void CompareWidget::paintEvent(QPaintEvent*)
 {
     QPainter p(this);
-    p.fillRect(rect(), QColor(0x0b, 0x0e, 0x0c));
+    p.fillRect(rect(), QColor(0x06, 0x08, 0x06));
     if (before_.isNull()) {
-        p.setPen(QColor(0x9f, 0xa8, 0xa3));
+        p.setPen(QColor(0x8d, 0xa3, 0x96));
         p.drawText(rect(), Qt::AlignCenter, QStringLiteral("无图像"));
         return;
     }
@@ -52,10 +52,10 @@ void CompareWidget::paintEvent(QPaintEvent*)
     p.drawImage(d, before_);
     p.restore();
     // 分割线
-    p.setPen(QPen(QColor(0xc1, 0x9a, 0x4b), 2));
+    p.setPen(QPen(QColor(0xd9, 0xa9, 0x4e), 2));
     p.drawLine(splitX, d.top(), splitX, d.bottom());
     // 角标
-    p.setPen(QColor(0xf2, 0xf5, 0xf3));
+    p.setPen(QColor(0xf4, 0xf7, 0xf4));
     QFont f = p.font(); f.setPointSizeF(10); p.setFont(f);
     p.drawText(QRect(d.left() + 8, d.top() + 6, 80, 20), Qt::AlignLeft, QStringLiteral("原图"));
     p.drawText(QRect(d.right() - 88, d.top() + 6, 80, 20), Qt::AlignRight, QStringLiteral("修后"));

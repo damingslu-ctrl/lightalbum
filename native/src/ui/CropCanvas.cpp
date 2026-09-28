@@ -18,7 +18,7 @@ CropCanvas::CropCanvas(QWidget* parent)
     : QGraphicsView(parent)
 {
     setScene(new QGraphicsScene(this));
-    setBackgroundBrush(QColor(0x0b, 0x0e, 0x0c));
+    setBackgroundBrush(QColor(0x06, 0x08, 0x06));
     setFrameShape(QFrame::NoFrame);
     setRenderHint(QPainter::Antialiasing, true);
     setRenderHint(QPainter::SmoothPixmapTransform, true);
@@ -39,7 +39,7 @@ void CropCanvas::setBase(const QImage& img)
     shadeItem_ = scene()->addPixmap(QPixmap());
     shadeItem_->setZValue(1);
 
-    borderItem_ = scene()->addRect(QRectF(), QPen(QColor(0xc1, 0x9a, 0x4b), 2), Qt::NoBrush);
+    borderItem_ = scene()->addRect(QRectF(), QPen(QColor(0xd9, 0xa9, 0x4e), 2), Qt::NoBrush);
     borderItem_->setZValue(2);
 
     QPen dash(QColor(255, 255, 255, 90), 1, Qt::DashLine);

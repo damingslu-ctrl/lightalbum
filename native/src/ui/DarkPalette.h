@@ -1,18 +1,18 @@
 #pragma once
-// 「雾隐·墨韵」深色主题（与 web 版 body.dark 色板一致：charcoal + 金强调 + 翡翠语义）
+// 「曜石·流明」深色主题 P11（与 ui/Theme.h token 同步：charcoal + 翡翠 + 金）
 #include <QApplication>
 #include <QPalette>
 #include <QColor>
 
 namespace Dark {
-inline constexpr QColor Bg      = QColor(0x0b, 0x0e, 0x0c);   // 页面底
-inline constexpr QColor Card    = QColor(0x18, 0x1d, 0x1a);   // 卡片
-inline constexpr QColor Inset   = QColor(0x12, 0x18, 0x14);   // 内嵌控件
-inline constexpr QColor Ink     = QColor(0xf2, 0xf5, 0xf3);   // 主文字
-inline constexpr QColor Muted   = QColor(0x9f, 0xa8, 0xa3);   // 次文字
-inline constexpr QColor Line    = QColor(0x2a, 0x2f, 0x2c);   // 描边
-inline constexpr QColor Gold    = QColor(0xc1, 0x9a, 0x4b);   // 强调（金）
-inline constexpr QColor Emerald = QColor(0x5a, 0x8f, 0x6b);   // AI/成功语义（翡翠，唯一语义色）
+inline constexpr QColor Bg      = QColor(0x06, 0x08, 0x06);   // 页面底
+inline constexpr QColor Card    = QColor(0x13, 0x1a, 0x15);   // 卡片
+inline constexpr QColor Inset   = QColor(0x0e, 0x14, 0x10);   // 内嵌控件
+inline constexpr QColor Ink     = QColor(0xf4, 0xf7, 0xf4);   // 主文字
+inline constexpr QColor Muted   = QColor(0x8d, 0xa3, 0x96);   // 次文字
+inline constexpr QColor Line    = QColor(0x26, 0x31, 0x2a);   // 描边
+inline constexpr QColor Gold    = QColor(0xd9, 0xa9, 0x4e);   // 强调（金）
+inline constexpr QColor Emerald = QColor(0x4f, 0xc0, 0x8a);   // 主操作（翡翠）
 
 inline void apply(QApplication& app)
 {

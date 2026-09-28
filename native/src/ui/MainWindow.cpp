@@ -1,5 +1,6 @@
 #include "MainWindow.h"
 #include "Icons.h"
+#include "Theme.h"
 #include "GalleryPage.h"
 #include "MapPage.h"
 #include "CullPage.h"
@@ -20,9 +21,12 @@
 #include <QProcess>
 #include <QApplication>
 #include <QPointer>
+#include <QDir>
+#include <QPixmap>
 #include <QtConcurrent/QtConcurrentRun>
 #include <QFutureWatcher>
 #include <atomic>
+#include <cstdio>
 
 namespace {
 struct NavItem { const char* label; const char* phase; };
@@ -43,20 +47,23 @@ MainWindow::MainWindow(const Library* lib, const QString& thumbsDir,
     root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(0);
 
-    // ---- 左侧图标栏（web 版 #sidebar 的原生对应；P1 用双字短标签，图标随 P2 起补）----
+    // ---- 左侧图标栏（P11：胶囊选中态 + 翡翠渐变，圆角导航大胆化）----
     nav_ = new QListWidget(central);
-    nav_->setFixedWidth(64);
+    nav_->setFixedWidth(68);
     nav_->setViewMode(QListView::ListMode);
     nav_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     nav_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     nav_->setFrameShape(QFrame::NoFrame);
     nav_->setStyleSheet(QStringLiteral(
-        "QListWidget{background:#0b0e0c;border-right:1px solid #2a2f2c;outline:0;padding-top:6px;}"
-        "QListWidget::item{color:#9fa8a3;font-size:11px;height:52px;padding-left:4px;"
-        "  border-bottom:1px solid rgba(255,255,255,.04);}"
-        "QListWidget::item:selected{color:#f2f5f3;background:#1c2320;"
-        "  border-left:2px solid #c19a4b;}"
-        "QListWidget::item:selected .lbl{color:#f2f5f3;}"));
+        "QListWidget{background:#0c100d;border-right:1px solid #26312a;outline:0;padding-top:8px;}"
+        "QListWidget::item{color:#8da396;font-size:11px;height:52px;"
+        "  margin:3px 8px;border-radius:10px;}"
+        "QListWidget::item:hover{background:#131a15;color:#f4f7f4;}"
+        "QListWidget::item:selected{color:#f4f7f4;"
+        "  background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
+        "  stop:0 rgba(79,192,138,52), stop:1 rgba(79,192,138,10));"
+        "  border-left:2px solid #d9a94e;}"
+        "QListWidget::item:selected .lbl{color:#f4f7f4;}"));
     nav_->setIconSize(QSize(22, 22));
     const char* kIcons[] = {"home", "map", "gallery", "cull", "retouch", "enhance", "log", "about"};
     for (int i = 0; i < int(sizeof(kNav) / sizeof(kNav[0])); ++i) {
@@ -76,55 +83,56 @@ MainWindow::MainWindow(const Library* lib, const QString& thumbsDir,
     auto* topbar = new QWidget(right);
     topbar->setObjectName("topbar");
     topbar->setStyleSheet(QStringLiteral(
-        "#topbar{background:#101513;border-bottom:1px solid #2a2f2c;}"));
+        "#topbar{background:#0c100d;}"));
     auto* tl = new QHBoxLayout(topbar);
-    tl->setContentsMargins(18, 10, 18, 10);
-    title_ = new QLabel(QStringLiteral("光影集"), topbar);
-    QFont tf = title_->font(); tf.setPointSizeF(13); tf.setBold(true);
+    tl->setContentsMargins(20, 12, 20, 12);
+    title_ = new QLabel(QString::fromUtf8("光影集"), topbar);
+    QFont tf = title_->font(); tf.setPointSizeF(15); tf.setBold(true);
+    tf.setLetterSpacing(QFont::AbsoluteSpacing, 2.0);
     title_->setFont(tf);
-    title_->setStyleSheet("color:#f2f5f3;");
+    title_->setStyleSheet("color:#f4f7f4;");
     search_ = new QLineEdit(topbar);
-    search_->setPlaceholderText(QStringLiteral("搜索标题 / 文件名 / 器材…"));
+    search_->setPlaceholderText(QString::fromUtf8("搜索标题 / 文件名 / 器材…"));
     search_->setFixedWidth(300);
-    search_->setStyleSheet(QStringLiteral(
-        "QLineEdit{background:#12181a;border:1px solid #2a2f2c;border-radius:8px;"
-        "padding:6px 12px;color:#f2f5f3;}"));
+    search_->setStyleSheet(Lumen::input());
     tl->addWidget(title_);
     tl->addStretch(1);
     // P8：原生导入器入口（补齐 P7 审计的唯一硬缺口）
-    auto* importBtn = new QPushButton(QStringLiteral("导入目录"), topbar);
+    auto* importBtn = new QPushButton(QString::fromUtf8("导入目录"), topbar);
     importBtn->setCursor(Qt::PointingHandCursor);
-    importBtn->setStyleSheet(QStringLiteral(
-        "QPushButton{background:#1c2320;border:1px solid #2a2f2c;border-radius:8px;"
-        "padding:6px 14px;color:#c19a4b;font-size:12px;}"
-        "QPushButton:hover{background:#242c28;}"));
+    importBtn->setStyleSheet(Lumen::btnGold());
     connect(importBtn, &QPushButton::clicked, this, &MainWindow::startImport);
     tl->addWidget(importBtn);
     tl->addWidget(search_);
     rl->addWidget(topbar);
+    // 顶栏底部翡翠→金渐变发丝线（大胆点：品牌双色的呼吸缝）
+    auto* seam = new QFrame(right);
+    seam->setFixedHeight(2);
+    seam->setStyleSheet(QStringLiteral(
+        "background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
+        "stop:0 #4fc08a, stop:0.55 #d9a94e, stop:1 rgba(217,169,78,0));"));
+    rl->addWidget(seam);
 
-    // ---- KPI 指标条（web 版 #kpiStrip 对应；收藏不进 P1：FAVS 属 web localStorage，原生侧不编造）----
+    // ---- KPI 指标条（P11：语义色竖条卡 —— 总数翡翠 / 年份金 / 足迹紫罗兰）----
     kpis_ = new QWidget(right);
-    kpis_->setStyleSheet(QStringLiteral("background:#0b0e0c;"));
+    kpis_->setStyleSheet(QStringLiteral("background:#060806;"));
     auto* kl = new QHBoxLayout(kpis_);
-    kl->setContentsMargins(18, 10, 18, 10);
+    kl->setContentsMargins(20, 12, 20, 12);
     kl->setSpacing(14);
     const Kpi k = lib_->kpi();
     const QString yearTxt = k.yearCount > 0
         ? QStringLiteral("%1 跨 (%2\u2013%3)").arg(k.yearCount).arg(k.minYear).arg(k.maxYear)
         : QStringLiteral("\u2014");
-    auto addKpi = [kl](const QString& v, const QString& label) {
+    auto addKpi = [kl](const QString& v, const QString& label, const QColor& accent) {
         auto* lb = new QLabel(QStringLiteral(
-            "<b style='font-size:16px;color:#f2f5f3;'>%1</b><br>"
-            "<span style='font-size:11px;color:#9fa8a3;'>%2</span>").arg(v, label));
-        lb->setStyleSheet(QStringLiteral(
-            "QLabel{background:#181d1a;border:1px solid #2a2f2c;border-radius:10px;"
-            "padding:8px 16px;}"));
+            "<b style='font-size:18px;color:#f4f7f4;'>%1</b><br>"
+            "<span style='font-size:11px;color:#8da396;'>%2</span>").arg(v, label));
+        lb->setStyleSheet(Lumen::kpiCard(accent));
         kl->addWidget(lb);
     };
-    addKpi(QString::number(k.total), QStringLiteral("作品总数"));
-    addKpi(yearTxt, QStringLiteral("拍摄年份"));
-    addKpi(QString::number(k.provCount), QStringLiteral("足迹省份"));
+    addKpi(QString::number(k.total), QStringLiteral("作品总数"), Lumen::EMERALD);
+    addKpi(yearTxt, QStringLiteral("拍摄年份"), Lumen::GOLD);
+    addKpi(QString::number(k.provCount), QStringLiteral("足迹省份"), Lumen::VIOLET);
     kl->addStretch(1);
     rl->addWidget(kpis_);
 
@@ -157,14 +165,36 @@ QWidget* MainWindow::makePlaceholder(const QString& secName, const QString& phas
     auto* w = new QWidget;
     auto* l = new QVBoxLayout(w);
     l->setAlignment(Qt::AlignCenter);
+    l->setSpacing(10);
     auto* t = new QLabel(secName, w);
-    QFont f = t->font(); f.setPointSizeF(20); f.setBold(true); t->setFont(f);
-    t->setStyleSheet("color:#f2f5f3;");
-    auto* s = new QLabel(QStringLiteral("该区段将在 %1 迁移 · 见 docs/REWRITE-PLAN.md").arg(phase), w);
-    s->setStyleSheet("color:#9fa8a3;");
+    QFont f = t->font(); f.setPointSizeF(22); f.setBold(true);
+    f.setLetterSpacing(QFont::AbsoluteSpacing, 4.0);
+    t->setFont(f);
+    t->setStyleSheet("color:#f4f7f4;");
+    auto* s = new QLabel(QString::fromUtf8("该区段将在 %1 迁移 · 见 docs/REWRITE-PLAN.md").arg(phase), w);
+    s->setStyleSheet("color:#8da396;");
     l->addWidget(t, 0, Qt::AlignHCenter);
     l->addWidget(s, 0, Qt::AlignHCenter);
     return w;
+}
+
+// P11 UI 截图探针：逐导航页切换 → grab() 存 PNG（offscreen 冒烟可用）。
+int MainWindow::shootPages(const QString& dir)
+{
+    QDir().mkpath(dir);
+    for (int i = 0; i < nav_->count(); ++i) {
+        nav_->setCurrentRow(i);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 120);
+        const QPixmap pm = grab();
+        const QString path = QDir(dir).filePath(
+            QStringLiteral("page-%1-%2.png").arg(i, 2, 10, QLatin1Char('0'))
+                .arg(QString::fromUtf8(kNav[i].label)));
+        pm.save(path);
+        std::fprintf(stderr, "LA_UI_SHOT %s %dx%d\n", qPrintable(path),
+                     pm.width(), pm.height());
+        std::fflush(stderr);
+    }
+    return 0;
 }
 
 // P8 原生导入器：选目录 → QtConcurrent 后台 Scanner::syncRoot → 进度/取消 → 汇总。

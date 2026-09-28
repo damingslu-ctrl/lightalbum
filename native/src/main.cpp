@@ -19,6 +19,7 @@
 #include "core/Scanner.h"
 #include "ui/MainWindow.h"
 #include "ui/DarkPalette.h"
+#include "ui/Theme.h"
 
 namespace {
 // P9 AI 修图智能体冒烟：合成「偏暗偏暖发灰」样张 → 测量 → 决策 → 执行。
@@ -301,6 +302,7 @@ int main(int argc, char *argv[])
     app.setApplicationName(QStringLiteral("LightAlbum"));
     app.setOrganizationName(QStringLiteral("lightalbum"));
     Dark::apply(app);
+    Lumen::applyAppFont(app);   // P11：中文优先雅黑（发虚/缺字防线）
 
     // P5 金样对拍冒烟（无需库文件，最先跑）
     if (qEnvironmentVariableIsSet("LA_LUMEN_SMOKE"))
@@ -347,6 +349,11 @@ int main(int argc, char *argv[])
     win.setWindowTitle(QStringLiteral("光影集 LightAlbum " LA_VERSION));
     win.resize(1440, 940);
     win.show();
+
+    // P11 UI 截图探针：LA_UI_SHOT=<dir> 时逐页 widget.grab() 存 PNG（offscreen 可用，
+    // 用于颜色/乱码真实验证——颜色校验铁律：必须实测不许猜）。
+    if (qEnvironmentVariableIsSet("LA_UI_SHOT"))
+        return win.shootPages(qEnvironmentVariable("LA_UI_SHOT"));
 
     // 冒烟探针门控：载入真库 + 页面栈就位后自动退出（offscreen/CI 可用）。
     // 选片自测（LA_CULL_SMOKE）/ 修图自测（LA_RETOUCH_SMOKE）/ 美图自测（LA_BEAUTY_SMOKE）

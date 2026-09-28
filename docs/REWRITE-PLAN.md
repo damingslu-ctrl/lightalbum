@@ -145,6 +145,18 @@ P10 足迹点亮（离线逆地理编码）：✅ 完成
     打进发行包（ASCII 通配符匹配，规避 ps1 中文编码坑）。
   - 发行物：native/LightAlbum-2.0.0-win64.zip（16.6 MB，含说明书；staging exe 冒烟终验通过）。
 
+P11 全量 UI 重设计「曜石·流明」：✅ 完成
+  - 新增 ui/Theme.h 设计系统：曜石炭黑阶（BG #060806/CARD #131a15）+ 翡翠主操作（#4fc08a 渐变）
+    + 琥珀金品牌强调（#d9a94e 渐变）+ 紫罗兰 AI 专属语义（#a88be5）+ 珊瑚警示；渐变只用于
+    选中/主按钮/进度三类强语义；app 级 Microsoft YaHei UI（中文发虚防线）。
+  - 全页面应用：导航胶囊选中态+金条、顶栏翡翠→金渐变发丝线、KPI 语义竖条卡（翡翠/金/紫罗兰）、
+    Gallery 自绘 delegate/MapView/CropCanvas/MaskCanvas/CompareWidget 画笔色全对齐；
+    旧色 token 全库清零（grep 校验）。
+  - **真乱码修复**：RetouchPage 滑杆标签 fromLatin1→fromUtf8（P3 时代遗留，UTF-8 中文被 Latin-1 解）。
+  - **验证创新**：main.cpp 加 LA_UI_SHOT 截图探针（逐页 grab() 存 PNG）；offscreen 平台无 CJK
+    字体必豆腐（探针须用 QT_QPA_PLATFORM=windows 真机跑）；八页人工走查通过。
+  - 七路冒烟回归全绿；发行 zip 重出（exe 更新）。
+
 ## index.html → C++ 模块映射（P1 起逐项迁移）
 
 | 现有（index.html 1.9.39） | 目标（native/） |

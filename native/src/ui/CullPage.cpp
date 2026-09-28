@@ -130,9 +130,9 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
                                 QStringLiteral("模糊"), QStringLiteral("曝光"),
                                 QStringLiteral("解码失败")};
     for (const QString& l : labels) {
-        auto* lb = new QLabel(QStringLiteral("<b style='font-size:15px;color:#f2f5f3;'>—</b><br>"
-            "<span style='font-size:11px;color:#9fa8a3;'>%1</span>").arg(l), kp);
-        lb->setStyleSheet(QStringLiteral("QLabel{background:#181d1a;border:1px solid #2a2f2c;"
+        auto* lb = new QLabel(QStringLiteral("<b style='font-size:15px;color:#f4f7f4;'>—</b><br>"
+            "<span style='font-size:11px;color:#8da396;'>%1</span>").arg(l), kp);
+        lb->setStyleSheet(QStringLiteral("QLabel{background:#131a15;border:1px solid #26312a;"
             "border-radius:10px;padding:8px 14px;}"));
         kpis_.append(lb);
         kl->addWidget(lb);
@@ -146,11 +146,11 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     bl->setContentsMargins(0, 0, 0, 0);
     runBtn_ = new QPushButton(QStringLiteral("开始分析"), bar);
     runBtn_->setStyleSheet(QStringLiteral(
-        "QPushButton{background:#c9a24b;border:none;border-radius:8px;"
+        "QPushButton{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #f0d08a, stop:1 #b0863a);border:none;border-radius:9px;"
         "padding:8px 18px;color:#10130f;font-weight:bold;}"
-        "QPushButton:disabled{background:#5a5f5b;color:#ccc;}"));
+        "QPushButton:disabled{background:#2a332d;color:#5a6b60;}"));
     progress_ = new QLabel(QStringLiteral("基于本地缩略图 · 零云端 · 失败即放行"), bar);
-    progress_->setStyleSheet("color:#9fa8a3;");
+    progress_->setStyleSheet("color:#8da396;");
     bl->addWidget(runBtn_);
     bl->addWidget(progress_);
     bl->addStretch(1);
@@ -163,8 +163,8 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     view->setSpacing(4);
     view->setGridSize(QSize(232, 268));
     view->setWordWrap(false);
-    view->setStyleSheet("QListView{background:#0b0e0c;border:1px solid #2a2f2c;"
-        "border-radius:10px;} QListView::item:selected{background:transparent;}");
+    view->setStyleSheet("QListView{background:#0c100d;border:1px solid #26312a;"
+        "border-radius:12px;} QListView::item:selected{background:transparent;}");
     model_ = new CullModel(this);
     view->setModel(model_);
     view->setItemDelegate(new CullCardDelegate(view));
@@ -180,8 +180,8 @@ void CullPage::setKpi(int idx, const QString& v, const QString& label)
 {
     if (idx < 0 || idx >= kpis_.size()) return;
     kpis_[idx]->setText(QStringLiteral(
-        "<b style='font-size:15px;color:#f2f5f3;'>%1</b><br>"
-        "<span style='font-size:11px;color:#9fa8a3;'>%2</span>").arg(v, label));
+        "<b style='font-size:15px;color:#f4f7f4;'>%1</b><br>"
+        "<span style='font-size:11px;color:#8da396;'>%2</span>").arg(v, label));
 }
 
 void CullPage::onAnalyze()

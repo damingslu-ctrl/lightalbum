@@ -12,18 +12,18 @@ MapPage::MapPage(QWidget* parent) : QWidget(parent)
 
     // 顶部面包屑条
     auto* bar = new QWidget(this);
-    bar->setStyleSheet(QStringLiteral("background:#0b0e0c;border-bottom:1px solid #2a2f2c;"));
+    bar->setStyleSheet(QStringLiteral("background:#0c100d;border-bottom:1px solid #26312a;"));
     auto* bl = new QHBoxLayout(bar);
     bl->setContentsMargins(16, 8, 16, 8);
 
     back_ = new QPushButton(QStringLiteral("\u2190 返回"), bar);
     back_->setEnabled(false);
     back_->setStyleSheet(QStringLiteral(
-        "QPushButton{background:#181d1a;border:1px solid #2a2f2c;border-radius:8px;"
-        "padding:5px 12px;color:#c9a24b;}"
-        "QPushButton:disabled{color:#5a5f5b;}"));
+        "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:9px;"
+        "padding:5px 12px;color:#d9a94e;}"
+        "QPushButton:disabled{color:#5a6b60;}"));
     crumb_ = new QLabel(QStringLiteral("世界"), bar);
-    crumb_->setStyleSheet(QStringLiteral("color:#e8e2d4;font-size:13px;"));
+    crumb_->setStyleSheet(QStringLiteral("color:#f0d08a;font-size:13px;"));
     bl->addWidget(back_);
     bl->addWidget(crumb_);
     bl->addStretch(1);

@@ -59,11 +59,15 @@ BeautyPage::BeautyPage(const QVector<Photo>* photos, const QString& thumbsDir, Q
         return b;
     };
     autoBtn_ = mkBtn(QStringLiteral("智能增强"),
-        "QPushButton{background:#5a8f6b;border:none;border-radius:8px;padding:8px 16px;"
-        "color:#f2f5f3;font-weight:bold;}");
+        "QPushButton{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #6adba6, stop:1 #2f7d57);"
+        "border:none;border-radius:9px;padding:8px 16px;"
+        "color:#06130c;font-weight:bold;}"
+        "QPushButton:disabled{background:#2a332d;color:#5a6b60;}");
     exportBtn_ = mkBtn(QStringLiteral("导出副本"),
-        "QPushButton{background:#c19a4b;border:none;border-radius:8px;padding:8px 16px;"
-        "color:#10130f;font-weight:bold;}");
+        "QPushButton{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #f0d08a, stop:1 #b0863a);"
+        "border:none;border-radius:9px;padding:8px 16px;"
+        "color:#1a1204;font-weight:bold;}"
+        "QPushButton:disabled{background:#2a332d;color:#5a6b60;}");
     bl->addWidget(new QLabel(QStringLiteral("照片"), bar));
     bl->addWidget(photoCombo_);
     bl->addWidget(autoBtn_);
@@ -77,10 +81,10 @@ BeautyPage::BeautyPage(const QVector<Photo>* photos, const QString& thumbsDir, Q
     for (QLabel* l : {beforeLbl_, afterLbl_}) {
         l->setFixedSize(kPreviewW, kPreviewH);
         l->setAlignment(Qt::AlignCenter);
-        l->setStyleSheet("QLabel{background:#000;border:1px solid #2a2f2c;border-radius:10px;}");
+        l->setStyleSheet("QLabel{background:#000;border:1px solid #26312a;border-radius:12px;}");
     }
     selName_ = new QLabel(QStringLiteral("原图"), this);
-    selName_->setStyleSheet("color:#f2f5f3;font-weight:bold;");
+    selName_->setStyleSheet("color:#f4f7f4;font-weight:bold;");
     auto* bl1 = new QVBoxLayout; bl1->setContentsMargins(0,0,0,0);
     bl1->addWidget(beforeLbl_); bl1->addWidget(new QLabel(QStringLiteral("原图"), this), 0, Qt::AlignHCenter);
     auto* bl2 = new QVBoxLayout; bl2->setContentsMargins(0,0,0,0);
@@ -101,8 +105,8 @@ BeautyPage::BeautyPage(const QVector<Photo>* photos, const QString& thumbsDir, Q
         card->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
         card->setIconSize(QSize(kCardIcon, kCardIcon));
         card->setText(presets_[i].name);
-        card->setStyleSheet("QToolButton{background:#181d1a;border:2px solid #2a2f2c;"
-            "border-radius:10px;color:#f2f5f3;padding:4px;}");
+        card->setStyleSheet("QToolButton{background:#131a15;border:2px solid #26312a;"
+            "border-radius:12px;color:#f4f7f4;padding:4px;}");
         connect(card, &QToolButton::clicked, this, [this, i]{ onCardClicked(i); });
         gl->addWidget(card, i / kCardCols, i % kCardCols);
         cards_.append(card);
@@ -117,10 +121,11 @@ BeautyPage::BeautyPage(const QVector<Photo>* photos, const QString& thumbsDir, Q
     prog_ = new QProgressBar(foot);
     prog_->setRange(0, 100); prog_->setValue(0);
     prog_->setTextVisible(false);
-    prog_->setStyleSheet("QProgressBar{background:#181d1a;border:1px solid #2a2f2c;"
-        "border-radius:6px;height:8px;} QProgressBar::chunk{background:#c19a4b;border-radius:6px;}");
+    prog_->setStyleSheet("QProgressBar{background:#0e1410;border:1px solid #26312a;"
+        "border-radius:6px;height:8px;} QProgressBar::chunk{border-radius:6px;"
+        "background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #4fc08a, stop:1 #6adba6);}");
     badge_ = new QLabel(QStringLiteral("选择下方风格卡 · 零云端"), foot);
-    badge_->setStyleSheet("color:#9fa8a3;");
+    badge_->setStyleSheet("color:#8da396;");
     fl->addWidget(prog_, 1);
     fl->addWidget(badge_);
     root->addWidget(foot);
@@ -188,8 +193,8 @@ void BeautyPage::onCardClicked(int i)
     for (int k = 0; k < cards_.size(); ++k) {
         cards_[k]->setStyleSheet(QString::fromLatin1(
             k == sel_
-            ? "QPushButton{background:#1c2320;border:2px solid #c19a4b;border-radius:10px;color:#f2f5f3;padding:4px;}"
-            : "QPushButton{background:#181d1a;border:2px solid #2a2f2c;border-radius:10px;color:#f2f5f3;padding:4px;}"));
+            ? "QPushButton{background:#1a231d;border:2px solid #4fc08a;border-radius:12px;color:#f4f7f4;padding:4px;}"
+            : "QPushButton{background:#131a15;border:2px solid #26312a;border-radius:12px;color:#f4f7f4;padding:4px;}"));
     }
     selName_->setText(presets_[i].name);
     updatePreview();
@@ -202,8 +207,8 @@ void BeautyPage::onAutoEnhance()   // rlAi
     selName_->setText(QStringLiteral("智能增强"));
     // 取消卡片高亮（AI 非预设）
     for (auto* c : cards_)
-        c->setStyleSheet("QPushButton{background:#181d1a;border:2px solid #2a2f2c;"
-            "border-radius:10px;color:#f2f5f3;padding:4px;}");
+        c->setStyleSheet("QPushButton{background:#131a15;border:2px solid #26312a;"
+            "border-radius:12px;color:#f4f7f4;padding:4px;}");
     updatePreview();
 }
 
