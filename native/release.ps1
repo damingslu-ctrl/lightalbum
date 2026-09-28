@@ -29,8 +29,12 @@ New-Item -ItemType Directory -Path $staging | Out-Null
 Copy-Item $exeSrc (Join-Path $staging "LightAlbum.exe") -Force
 
 # 2) deploy Qt via windeployqt (clean: only required DLLs + plugins)
+#    --force: 必须加 —— 中断过的 windeployqt 会留下「同尺寸但损坏」的 DLL，
+#    重跑默认按时间戳/尺寸跳过，导致 0xC000012F 启动失败（P13 实证）。
 $env:PATH = "D:/qt/6.8.3/mingw_64/bin;" + $env:PATH
-windeployqt.exe --release --no-translations --no-qml --no-opengl-sw (Join-Path $staging "LightAlbum.exe") | Out-Null
+$ErrorActionPreference = "Continue"
+windeployqt.exe --release --force --no-translations --no-qml --no-opengl-sw (Join-Path $staging "LightAlbum.exe") 2>&1 | Out-Null
+$ErrorActionPreference = "Stop"
 
 # 3) offscreen platform plugin for CI/smoke
 Copy-Item "D:/qt/6.8.3/mingw_64/plugins/platforms/qoffscreen.dll" (Join-Path $staging "platforms/qoffscreen.dll") -Force

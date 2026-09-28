@@ -27,8 +27,13 @@
 #include <QToolButton>
 #include <QPainter>
 #include <QPainterPath>
+#include <QGradient>
+#include <QGraphicsOpacityEffect>
+#include <QPropertyAnimation>
+#include <QParallelAnimationGroup>
 #include <QtConcurrent/QtConcurrentRun>
 #include <QFutureWatcher>
+#include <cmath>
 #include <atomic>
 #include <algorithm>
 #include <cstdio>
@@ -117,6 +122,18 @@ MainWindow::MainWindow(const Library* lib, const QString& thumbsDir,
         cv->addWidget(ic);
         cv->addWidget(tx);
         nav_->setItemWidget(it, cell);
+        navCells_.append(cell);
+        // 激活金条（呼吸由 tickBreath 驱动），默认隐藏
+        auto* bar = new QFrame(cell);
+        bar->setObjectName(QStringLiteral("navBar"));
+        bar->setFixedSize(2, 26);
+        bar->setStyleSheet(QStringLiteral("background:#d9a94e;border-radius:1px;"));
+        bar->move(3, (52 - 26) / 2);
+        bar->hide();
+        auto* be = new QGraphicsOpacityEffect(bar);
+        be->setOpacity(0.9);
+        bar->setGraphicsEffect(be);
+        navBars_.append(bar);
     }
     root->addWidget(nav_);
 
@@ -152,12 +169,14 @@ MainWindow::MainWindow(const Library* lib, const QString& thumbsDir,
     tl->addWidget(search_);
     rl->addWidget(topbar);
     // 顶栏底部翡翠→金渐变发丝线（大胆点：品牌双色的呼吸缝）
-    auto* seam = new QFrame(right);
-    seam->setFixedHeight(2);
-    seam->setStyleSheet(QStringLiteral(
+    seam_ = new QFrame(right);
+    seam_->setFixedHeight(2);
+    seam_->setStyleSheet(QStringLiteral(
         "background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
         "stop:0 #4fc08a, stop:0.55 #d9a94e, stop:1 rgba(217,169,78,0));"));
-    rl->addWidget(seam);
+    seamEff_ = new QGraphicsOpacityEffect(seam_);
+    seam_->setGraphicsEffect(seamEff_);
+    rl->addWidget(seam_);
 
     // ---- KPI 指标条（P11：语义色竖条卡 —— 总数翡翠 / 年份金 / 足迹紫罗兰）----
     kpis_ = new QWidget(right);
@@ -202,9 +221,108 @@ MainWindow::MainWindow(const Library* lib, const QString& thumbsDir,
     root->addWidget(right, 1);
 
     setCentralWidget(central);
-    connect(nav_, &QListWidget::currentRowChanged, stack_, &QStackedWidget::setCurrentIndex);
+    connect(nav_, &QListWidget::currentRowChanged, this, &MainWindow::onNav);
     connect(search_, &QLineEdit::textChanged, gallery_, &GalleryPage::applyFilter);
+    animEnabled_ = uiAnimEnabled();
+    // 拿到首页 hero 光晕指针（makeHome 内以 objectName 标注）
+    heroGlow_ = stack_->widget(0)->findChild<QLabel*>(QStringLiteral("heroGlow"));
+    setupBreathing();
     nav_->setCurrentRow(2);   // 默认落在图库（P1 唯一实装页）
+}
+
+// P13：LA_* 冒烟/截图场景关闭所有动效，保证截图与冒烟确定性。
+bool MainWindow::uiAnimEnabled() const
+{
+    return !qEnvironmentVariableIsSet("LA_SMOKE")
+        && !qEnvironmentVariableIsSet("LA_UI_SHOT")
+        && !qEnvironmentVariableIsSet("LA_CULL_SMOKE")
+        && !qEnvironmentVariableIsSet("LA_RETOUCH_SMOKE")
+        && !qEnvironmentVariableIsSet("LA_BEAUTY_SMOKE");
+}
+
+// P13：全客户端呼吸感 —— 单一 30fps 定时器正弦驱动若干受控元素。
+void MainWindow::setupBreathing()
+{
+    if (!animEnabled_) return;
+    breathTimer_ = new QTimer(this);
+    breathTimer_->setInterval(33);
+    connect(breathTimer_, &QTimer::timeout, this, &MainWindow::tickBreath);
+    breathTimer_->start();
+}
+
+void MainWindow::tickBreath()
+{
+    breathPhase_ += 0.045;
+    const double s = std::sin(breathPhase_);          // -1..1
+    const double k = 0.5 + 0.5 * s;                    // 0..1
+    if (heroGlow_ && heroGlow_->graphicsEffect())
+        static_cast<QGraphicsOpacityEffect*>(heroGlow_->graphicsEffect())
+            ->setOpacity(0.34 + 0.26 * k);
+    if (seamEff_)
+        seamEff_->setOpacity(0.72 + 0.28 * k);
+    if (activeNavRow_ >= 0 && activeNavRow_ < navBars_.size()) {
+        QFrame* bar = navBars_.at(activeNavRow_);
+        if (bar->isVisible() && bar->graphicsEffect())
+            static_cast<QGraphicsOpacityEffect*>(bar->graphicsEffect())
+                ->setOpacity(0.55 + 0.45 * k);
+    }
+}
+
+// P13：高亮当前导航项（显示对应金条），并更新呼吸目标行。
+void MainWindow::updateNavActive(int row)
+{
+    activeNavRow_ = row;
+    for (int i = 0; i < navBars_.size(); ++i)
+        navBars_.at(i)->setVisible(i == row);
+}
+
+// P13：导航切换联动动效（淡出 → 换页 → 淡入+轻微上滑）。
+// 冒烟/截图或窗口尚未可见（开场动画期间）时直接换页，避免不确定性。
+// 效果只在过渡期间 enabled；静置时 disabled 走原生渲染（避免中间 pixmap 发虚）。
+void MainWindow::onNav(int row)
+{
+    if (row < 0 || row >= stack_->count()) return;
+    updateNavActive(row);
+    if (!animEnabled_ || !isVisible() || row == stack_->currentIndex()) {
+        stack_->setCurrentIndex(row);
+        return;
+    }
+    auto* eff = qobject_cast<QGraphicsOpacityEffect*>(stack_->graphicsEffect());
+    if (!eff) {
+        eff = new QGraphicsOpacityEffect(stack_);
+        eff->setEnabled(false);
+        stack_->setGraphicsEffect(eff);
+    }
+    eff->setEnabled(true);   // 过渡期间启用
+    auto* fade = new QPropertyAnimation(eff, "opacity");
+    fade->setDuration(150);
+    fade->setStartValue(1.0);
+    fade->setEndValue(0.0);
+    fade->setEasingCurve(QEasingCurve::InQuad);
+    connect(fade, &QPropertyAnimation::finished, this, [this, row, eff] {
+        stack_->setCurrentIndex(row);
+        QWidget* nxt = stack_->widget(row);
+        const QPoint home = nxt->pos();
+        nxt->move(home.x(), home.y() + 14);          // 轻微上滑入场
+        auto* slide = new QPropertyAnimation(nxt, "pos");
+        slide->setDuration(260);
+        slide->setStartValue(nxt->pos());
+        slide->setEndValue(home);
+        slide->setEasingCurve(QEasingCurve::OutCubic);
+        auto* in = new QPropertyAnimation(eff, "opacity");
+        in->setDuration(260);
+        in->setStartValue(0.0);
+        in->setEndValue(1.0);
+        in->setEasingCurve(QEasingCurve::OutCubic);
+        connect(in, &QPropertyAnimation::finished, this, [eff] {
+            eff->setEnabled(false);   // 静置恢复无损原生渲染
+        });
+        auto* g = new QParallelAnimationGroup(this);
+        g->addAnimation(slide);
+        g->addAnimation(in);
+        g->start(QAbstractAnimation::DeleteWhenStopped);
+    });
+    fade->start(QAbstractAnimation::DeleteWhenStopped);
 }
 
 // P12「美术馆策展」首页：对角渐变 hero 大字 + 功能入口卡 + 最近作品胶片带。
@@ -256,6 +374,28 @@ QWidget* MainWindow::makeHome(const QString& thumbsDir) const
                               QColor(0x4f, 0xc0, 0x8a, 36), 116).pixmap(116, 116));
     wm->setAlignment(Qt::AlignVCenter);
     hl->addWidget(wm);
+    // P13 呼吸光晕：柔翡翠径向光，置于 hero 左后方，由 tickBreath 正弦驱动透明度
+    auto* glow = new QLabel(hero);
+    glow->setObjectName(QStringLiteral("heroGlow"));
+    glow->setAttribute(Qt::WA_TransparentForMouseEvents);
+    {
+        QPixmap gp(460, 460);
+        gp.fill(Qt::transparent);
+        QPainter p(&gp);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        QRadialGradient rg(230, 230, 230);
+        rg.setColorAt(0.0, QColor(0x4f, 0xc0, 0x8a, 130));
+        rg.setColorAt(0.5, QColor(0x4f, 0xc0, 0x8a, 40));
+        rg.setColorAt(1.0, QColor(0x4f, 0xc0, 0x8a, 0));
+        p.setBrush(rg);
+        p.setPen(Qt::NoPen);
+        p.drawEllipse(0, 0, 460, 460);
+        glow->setPixmap(gp);
+    }
+    glow->setGeometry(20, -70, 460, 460);
+    auto* ge = new QGraphicsOpacityEffect(glow);
+    ge->setOpacity(0.4);
+    glow->setGraphicsEffect(ge);
     outer->addWidget(hero);
 
     // ---- 功能入口：四张语义色卡，hover 点亮，点击直达 ----

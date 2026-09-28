@@ -3,6 +3,7 @@
 // 分期计划：docs/REWRITE-PLAN.md
 // 冒烟：LA_SMOKE=1 + QT_QPA_PLATFORM=offscreen → 载入真库后自动退出并打 LA_P1_SMOKE_OK
 #include <QApplication>
+#include <QScreen>
 #include <QTimer>
 #include <QDir>
 #include <QFileInfo>
@@ -20,6 +21,8 @@
 #include "ui/MainWindow.h"
 #include "ui/DarkPalette.h"
 #include "ui/Theme.h"
+#include "ui/Splash.h"
+#include <QPropertyAnimation>
 
 namespace {
 // P9 AI 修图智能体冒烟：合成「偏暗偏暖发灰」样张 → 测量 → 决策 → 执行。
@@ -348,6 +351,62 @@ int main(int argc, char *argv[])
     MainWindow win(&lib, thumbsDir, dbPath);
     win.setWindowTitle(QStringLiteral("光影集 LightAlbum " LA_VERSION));
     win.resize(1440, 940);
+
+    // P13 开场动画：仅在真实启动（非冒烟/截图）时播放，保证 CI 确定性。
+    const bool animOk = !qEnvironmentVariableIsSet("LA_SMOKE")
+        && !qEnvironmentVariableIsSet("LA_UI_SHOT")
+        && !qEnvironmentVariableIsSet("LA_CULL_SMOKE")
+        && !qEnvironmentVariableIsSet("LA_RETOUCH_SMOKE")
+        && !qEnvironmentVariableIsSet("LA_BEAUTY_SMOKE");
+
+    QRect avail = QApplication::primaryScreen()->availableGeometry();
+    QRect fullRect((avail.width() - 1440) / 2, (avail.height() - 940) / 2, 1440, 940);
+
+    // P13 开场动画探针：LA_SPLASH_SHOT=<dir> 时抓 3 帧（完整/收缩中/成缝）存 PNG 后退出。
+    if (qEnvironmentVariableIsSet("LA_SPLASH_SHOT")) {
+        const QString dir = qEnvironmentVariable("LA_SPLASH_SHOT");
+        QDir().mkpath(dir);
+        SplashWindow sp(fullRect);
+        QTimer::singleShot(900, &app, [&sp, &dir] {
+            sp.grab().save(QDir(dir).filePath(QStringLiteral("splash-1-full.png")));
+            std::fprintf(stderr, "LA_SPLASH_SHOT full saved\n"); std::fflush(stderr);
+        });
+        QTimer::singleShot(1850, &app, [&sp, &dir] {
+            sp.grab().save(QDir(dir).filePath(QStringLiteral("splash-2-contract.png")));
+            std::fprintf(stderr, "LA_SPLASH_SHOT contract saved\n"); std::fflush(stderr);
+        });
+        QTimer::singleShot(2450, &app, [&sp, &dir] {
+            sp.grab().save(QDir(dir).filePath(QStringLiteral("splash-3-slit.png")));
+            std::fprintf(stderr, "LA_SPLASH_SHOT slit saved\n"); std::fflush(stderr);
+            QApplication::quit();
+        });
+        sp.play();
+        return app.exec();
+    }
+
+    if (animOk) {
+        // 开场：splash 播放 → 收缩成缝 → 客户端从缝中向上下展开
+        SplashWindow splash(fullRect);
+        QObject::connect(&splash, &SplashWindow::finished, [&]() {
+            splash.close();
+            // 先以「缝」形态出现，再向上下展开（避免 show() 全尺寸单帧闪现）
+            const QRect slit(fullRect.x(), fullRect.center().y() - 1,
+                             fullRect.width(), 2);
+            win.setGeometry(slit);
+            win.show();
+            auto* a = new QPropertyAnimation(&win, "geometry");
+            a->setDuration(620);
+            a->setStartValue(slit);
+            a->setEndValue(fullRect);
+            a->setEasingCurve(QEasingCurve::OutCubic);
+            a->start(QAbstractAnimation::DeleteWhenStopped);
+        });
+        splash.play();
+        return app.exec();
+    }
+
+    // 非动画（冒烟/截图）：直接显示并保留原有门控
+    win.setGeometry(fullRect);
     win.show();
 
     // P11 UI 截图探针：LA_UI_SHOT=<dir> 时逐页 widget.grab() 存 PNG（offscreen 可用，

@@ -48,6 +48,8 @@ set(LA_SOURCES
     src/ui/BeautyPage.cpp
     src/ui/MainWindow.h
     src/ui/MainWindow.cpp
+    src/ui/Splash.h
+    src/ui/Splash.cpp
     src/core/CullEngine.h
     src/core/CullEngine.cpp
     src/core/RetouchEngine.h

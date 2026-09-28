@@ -3,6 +3,10 @@
 // 架构决策（与 web 版唯一有意差异）：web 是单页长滚动 + 滚动高亮；原生用页面栈——
 // 每页独立，未激活页面不参与绘制（性能上严格优于长滚动）。
 #include <QMainWindow>
+#include <QGraphicsOpacityEffect>
+#include <QTimer>
+#include <QVector>
+#include <QFrame>
 #include "../core/Library.h"
 
 class QStackedWidget;
@@ -25,6 +29,9 @@ public:
     // P11 UI 截图探针：逐导航页 setCurrentRow → grab() 存 PNG 到 dir；返回 0。
     int shootPages(const QString& dir);
 
+    // P13：导航切换联动动效（淡出→换页→淡入+轻微上滑）
+    void onNav(int row);
+
 private:
     // P12「美术馆策展」：首页为艺术 hero 仪表盘（hero 渐变 + 功能入口 + 最近作品胶片带）
     QWidget* makeHome(const QString& thumbsDir) const;
@@ -35,6 +42,12 @@ private:
 
     void startImport();          // P8：选目录 → 后台扫描入库 → 汇总/重启
 
+    // P13：全客户端呼吸感 + 导航激活态管理
+    bool  uiAnimEnabled() const;            // LA_* 冒烟/截图场景关闭动画
+    void  setupBreathing();                 // 呼吸定时器与受控元素
+    void  tickBreath();                     // 正弦驱动 hero 光晕/seam/激活条
+    void  updateNavActive(int row);         // 高亮当前导航项 + 激活呼吸条
+
     const Library* lib_;
     QString         dbPath_;
     QListWidget*    nav_ = nullptr;
@@ -42,6 +55,18 @@ private:
     QLabel*         title_ = nullptr;
     QStackedWidget* stack_ = nullptr;
     QWidget*        kpis_ = nullptr;
+
+    // P13 呼吸感受控元素
+    QFrame*                  seam_ = nullptr;       // 顶栏发丝线
+    QGraphicsOpacityEffect*  seamEff_ = nullptr;
+    QLabel*                  heroGlow_ = nullptr;   // 首页 hero 径向光晕
+    QTimer*                  breathTimer_ = nullptr;
+    double                   breathPhase_ = 0;
+    int                      activeNavRow_ = 0;
+    QVector<QWidget*>        navCells_;             // 各导航自绘单元格
+    QVector<QFrame*>         navBars_;              // 各导航激活金条
+    bool                     animEnabled_ = true;
+
     GalleryPage*    gallery_ = nullptr;
     MapPage*        map_ = nullptr;
     CullPage*       cull_ = nullptr;
