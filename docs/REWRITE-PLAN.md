@@ -74,6 +74,14 @@
   PLAN(13 参数 madMax=3.010 < 4.0) + LEVEL(角度自检 angErr=0.00, madMax=1.001) 全部通过；
   P1/Cull/Retouch/Beauty 四路冒烟无回归。**P5 全部完成**，下一步进入 P6 打包对比。
 
+- P6 打包对比：✅ 完成（见 `docs/P6-PACKAGING.md`）。native 60 MB（动态 Qt 部署，目录式，无 WebEngine/3D）
+  vs 旧 Python PyInstaller 单文件 641 MB（PySide6 536M 含 QtWebEngine 200M + Qt3D 16M）≈ **10.7×**；
+  启动 native ≈0.43–0.65 s（主窗就绪）vs Python ≥2 s 引擎就绪且库在 headless 下持续加载数分钟；
+  常驻内存 native ≈61 MB（平稳）vs Python ≈450–540 MB（持续爬升）≈ **7–9×**。
+  关键发现：移除 QtWebEngine 一举消除 200M 包体 + Chromium 基线内存；native 因无 WebEngine 可干净
+  offscreen 冒烟（LA_SMOKE / LA_LUMEN_SMOKE），旧 Python 在无 GPU 下 Chromium 报 GPU Context lost
+  无法等价无头自测。**P6 全部完成 → 路线 B 重写收官，native 为唯一正式分发形态。**
+
 ## index.html → C++ 模块映射（P1 起逐项迁移）
 
 | 现有（index.html 1.9.39） | 目标（native/） |
