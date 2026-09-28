@@ -10,9 +10,11 @@
 #include <QRectF>
 #include "../core/Library.h"
 #include "../core/RetouchEngine.h"
+#include "../core/LumenAgent.h"
 
 class QComboBox;
 class QLabel;
+class QLineEdit;
 class QPushButton;
 class QSlider;
 class QProgressBar;
@@ -51,6 +53,7 @@ private slots:
     void onSliderChanged();
     void onPresetChanged(int idx);
     void onAutoEnhance();   // rlAi
+    void onAgentRun();      // P9 AI 修图智能体（Lumen × Ollama）
     void onApplyPreset();   // rlRun
     void onReset();
     void onExport();
@@ -80,6 +83,8 @@ private slots:
 private:
     void buildSlider(const RtSlider& def, class QGridLayout* gl);
     void setParams(const RetouchParams& p);   // 同步滑杆 + 数值
+    void syncSlidersFromCur();                // cur_ → 滑杆显示（blockSignals）
+    void exitAgentMode();                     // 手动/预设操作即退出智能体模式
     void loadPhoto(int idx);
     void updateBadge();
     void rebuildGeo();                        // geoSrc_ → geoImg_（几何重算）+ before 刷新
@@ -100,6 +105,12 @@ private:
     QPushButton* autoBtn_    = nullptr;
     QPushButton* resetBtn_   = nullptr;
     QPushButton* exportBtn_  = nullptr;
+    // P9 AI 修图智能体（Lumen × Ollama；决策层 → retouchWithPlan 执行）
+    QPushButton* agentBtn_   = nullptr;
+    QLineEdit*   goalEdit_   = nullptr;      // 可选用户目标（自然语言）
+    QMap<QString, double> agentPlan_;        // 生效中的 13 项计划
+    bool         agentMode_ = false;         // true=doApply/export 走 retouchWithPlan
+    QString      agentNote_;                 // 徽章展示（来源+意图+依据）
     QTimer*       applyTimer_ = nullptr;
 
     QMap<QString, double> cur_;              // 当前修调参数（归一量）

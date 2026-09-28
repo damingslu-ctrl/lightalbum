@@ -3,6 +3,7 @@
 #include "CropCanvas.h"
 #include "CompareWidget.h"
 #include "../core/EraseBridge.h"
+#include "../core/LumenEngine.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGridLayout>
@@ -24,9 +25,12 @@
 #include <QPixmap>
 #include <QPainter>
 #include <QTransform>
+#include <QLineEdit>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <QtConcurrent/QtConcurrentRun>
+#include <QFutureWatcher>
 
 namespace {
 constexpr int kPreviewW = 460, kPreviewH = 520, kMaxSrc = 1024, kMaxExport = 2400;
@@ -176,6 +180,16 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
     autoBtn_   = mkBtn(QStringLiteral("智能增强"),
         "QPushButton{background:#5a8f6b;border:none;border-radius:8px;padding:8px 16px;"
         "color:#f2f5f3;font-weight:bold;} QPushButton:disabled{background:#5a5f5b;}");
+    // P9 AI 修图智能体（Lumen × Ollama 决策 → retouchWithPlan 执行；Ollama 缺席自动本地规则兜底）
+    agentBtn_  = mkBtn(QStringLiteral("AI 智能体"),
+        "QPushButton{background:#3f6f9f;border:none;border-radius:8px;padding:8px 16px;"
+        "color:#f2f5f3;font-weight:bold;} QPushButton:disabled{background:#555f6b;}");
+    goalEdit_ = new QLineEdit(bar);
+    goalEdit_->setPlaceholderText(QStringLiteral("目标（可选）：如 风光通透 / 胶片感"));
+    goalEdit_->setFixedWidth(200);
+    goalEdit_->setStyleSheet(QStringLiteral(
+        "QLineEdit{background:#12181a;border:1px solid #2a2f2c;border-radius:8px;"
+        "padding:6px 10px;color:#f2f5f3;}"));
     resetBtn_  = mkBtn(QStringLiteral("重置"),
         "QPushButton{background:#181d1a;border:1px solid #2a2f2c;border-radius:8px;"
         "padding:8px 16px;color:#f2f5f3;}");
@@ -186,6 +200,8 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
     bl->addWidget(new QLabel(QStringLiteral("预设"), bar));
     bl->addWidget(presetCombo_);
     bl->addWidget(autoBtn_);
+    bl->addWidget(agentBtn_);
+    bl->addWidget(goalEdit_);
     bl->addWidget(resetBtn_);
     bl->addWidget(exportBtn_);
     bl->addStretch(1);
@@ -366,6 +382,7 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
     connect(photoCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &RetouchPage::onPhotoChanged);
     connect(presetCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &RetouchPage::onPresetChanged);
     connect(autoBtn_, &QPushButton::clicked, this, &RetouchPage::onAutoEnhance);
+    connect(agentBtn_, &QPushButton::clicked, this, &RetouchPage::onAgentRun);
     connect(resetBtn_, &QPushButton::clicked, this, &RetouchPage::onReset);
     connect(exportBtn_, &QPushButton::clicked, this, &RetouchPage::onExport);
     // P4-1 几何
@@ -481,6 +498,7 @@ void RetouchPage::buildSlider(const RtSlider& def, QGridLayout* gl)
 
 void RetouchPage::onSliderChanged()
 {
+    exitAgentMode();   // 手动干预即接管（智能体计划失效）
     // 哪个滑杆动了就同步到 cur_，并把预设下拉切回手动
     for (int i = 0; i < sliders_.size(); ++i) {
         const RtSlider* d = sliderDefs_[i];
@@ -490,6 +508,83 @@ void RetouchPage::onSliderChanged()
     if (presetCombo_->currentData().toString() != QStringLiteral("__manual__"))
         presetCombo_->setCurrentIndex(0);  // “— 手动 —”
     applyTimer_->start(40);
+}
+
+// ----------------------------------------------------------------- P9 AI 修图智能体
+void RetouchPage::exitAgentMode()
+{
+    agentMode_ = false;
+    agentPlan_.clear();
+    agentNote_.clear();
+}
+
+void RetouchPage::syncSlidersFromCur()
+{
+    for (int i = 0; i < sliders_.size(); ++i) {
+        const RtSlider* d = sliderDefs_[i];
+        const double v = cur_[QString::fromLatin1(d->key)];
+        sliders_[i]->blockSignals(true);
+        sliders_[i]->setValue(int(std::max(double(d->min),
+                                 std::min(double(d->max), v)) * 100));
+        sliders_[i]->blockSignals(false);
+        sliderVals_[i]->setText(QString::number(v, 'f', 2));
+    }
+}
+
+void RetouchPage::onAgentRun()
+{
+    if (geoImg_.isNull() || agentBtn_->isEnabled() == false) return;
+    agentBtn_->setEnabled(false);
+    prog_->setValue(15);
+    badge_->setText(QStringLiteral("AI 智能体决策中…（本地测量 → 本地 LLM）"));
+
+    const QImage img = geoImg_;
+    int iso = 0;
+    double shutter = 0;
+    const int combo = photoCombo_->currentIndex();
+    if (photos_ && combo >= 0 && combo < usableIdx_.size()) {
+        const Photo& ph = (*photos_)[usableIdx_[combo]];
+        iso = ph.iso;
+        shutter = LumenAgent::parseShutterSeconds(ph.sh);
+    }
+    const QString goal = goalEdit_ ? goalEdit_->text() : QString();
+
+    auto* watcher = new QFutureWatcher<AgentPlan>(this);
+    connect(watcher, &QFutureWatcher<AgentPlan>::finished, this,
+            [this, watcher]() {
+                watcher->deleteLater();
+                agentBtn_->setEnabled(true);
+                const AgentPlan plan = watcher->result();
+                if (!plan.ok || plan.params.isEmpty()) {
+                    badge_->setText(QStringLiteral("智能体决策失败：%1").arg(plan.reason));
+                    return;
+                }
+                agentPlan_ = plan.params;
+                agentMode_ = true;
+                // 计划中与滑杆同名的键回填显示（亮度/对比/高光/阴影/自然饱和/饱和/清晰/色调/色温/锐化）
+                cur_[QStringLiteral("brightness")] = agentPlan_.value(QStringLiteral("brightness"), 0.0);
+                cur_[QStringLiteral("contrast")]   = agentPlan_.value(QStringLiteral("contrast"), 0.0);
+                cur_[QStringLiteral("highlights")] = agentPlan_.value(QStringLiteral("highlights"), 0.0);
+                cur_[QStringLiteral("shadows")]    = agentPlan_.value(QStringLiteral("shadows"), 0.0);
+                cur_[QStringLiteral("vibrance")]   = agentPlan_.value(QStringLiteral("vibrance"), 0.0);
+                cur_[QStringLiteral("saturation")] = agentPlan_.value(QStringLiteral("saturation"), 0.0);
+                cur_[QStringLiteral("clarity")]    = agentPlan_.value(QStringLiteral("clarity"), 0.0);
+                cur_[QStringLiteral("tint")]       = agentPlan_.value(QStringLiteral("tint"), 0.0);
+                cur_[QStringLiteral("temp")]       = agentPlan_.value(QStringLiteral("warmth"), 0.0);
+                cur_[QStringLiteral("sharpen")]    = std::max(0.0, agentPlan_.value(QStringLiteral("sharpness"), 0.0));
+                syncSlidersFromCur();
+                if (presetCombo_->currentData().toString() != QStringLiteral("__manual__"))
+                    presetCombo_->setCurrentIndex(0);
+                agentNote_ = (plan.source == QStringLiteral("ollama"))
+                    ? QStringLiteral("AI 智能体 · %1 · %2 · 零云端").arg(plan.model, plan.intent)
+                    : QStringLiteral("AI 智能体 · 本地规则兜底 · %1 · 零云端").arg(plan.intent);
+                badge_->setText(QStringLiteral("%1\n依据：%2").arg(agentNote_, plan.reason));
+                prog_->setValue(100);
+                doApply();
+            });
+    watcher->setFuture(QtConcurrent::run([img, iso, shutter, goal]() {
+        return LumenAgent::decide(LumenAgent::contextFrom(img, iso, shutter, goal));
+    }));
 }
 
 // ----------------------------------------------------------------- P4-1 几何槽
@@ -665,12 +760,14 @@ void RetouchPage::onApplyPreset()   // rlRun
 {
     const QString key = presetCombo_->currentData().toString();
     if (key == QStringLiteral("__manual__")) return;
+    exitAgentMode();
     setParams(RetouchEngine::preset(key));
     doApply();
 }
 
 void RetouchPage::onAutoEnhance()   // rlAi
 {
+    exitAgentMode();
     refreshChips();
     setParams(RetouchEngine::recommend(geoImg_).params);
     doApply();
@@ -678,6 +775,7 @@ void RetouchPage::onAutoEnhance()   // rlAi
 
 void RetouchPage::onReset()
 {
+    exitAgentMode();
     setParams(RetouchParams{});
     presetCombo_->setCurrentIndex(0);
     doApply();
@@ -693,8 +791,11 @@ void RetouchPage::onExport()
     if (work.width() > kMaxExport || work.height() > kMaxExport)
         work = work.scaled(kMaxExport, kMaxExport, Qt::KeepAspectRatio, Qt::SmoothTransformation);
     work = applyGeometry(work, rot_, flipH_, flipV_, angle_, aspect_, cropNorm_);
-    QImage out = RetouchEngine::apply(work, buildFromMap(cur_));
-    if (canvas_->hasPaint())                     // P4-2：导出与预览同序合成蒙版
+    // P9：智能体模式导出走同一执行路径（retouchWithPlan），预览所见即导出所得
+    QImage out = agentMode_
+        ? LumenEngine::retouchWithPlan(work, agentPlan_)
+        : RetouchEngine::apply(work, buildFromMap(cur_));
+    if (!agentMode_ && canvas_->hasPaint())      // P4-2：导出与预览同序合成蒙版
         out = blendMask(work, out, canvas_->mask());
 
     const QString fname = QFileDialog::getSaveFileName(this, QStringLiteral("导出修后副本"),
@@ -749,7 +850,10 @@ void RetouchPage::loadPhoto(int idx)
 void RetouchPage::doApply()
 {
     if (geoImg_.isNull()) { afterLbl_->setText(QStringLiteral("无缩略图")); return; }
-    const QImage out = RetouchEngine::apply(geoImg_, buildFromMap(cur_));
+    // P9：智能体模式走 Lumen 13 项增量管线；手动/预设走 RetouchEngine
+    const QImage out = agentMode_
+        ? LumenEngine::retouchWithPlan(geoImg_, agentPlan_)
+        : RetouchEngine::apply(geoImg_, buildFromMap(cur_));
     afterImg_ = out;                                         // P4-3：供对比视图
     afterLbl_->setPixmap(QPixmap::fromImage(out).scaled(kPreviewW, kPreviewH,
         Qt::KeepAspectRatio, Qt::SmoothTransformation));
@@ -760,6 +864,7 @@ void RetouchPage::doApply()
 
 void RetouchPage::updateBadge()
 {
+    if (agentMode_ && !agentNote_.isEmpty()) { badge_->setText(agentNote_); return; }
     badge_->setText(QStringLiteral("%1 · 零云端").arg(RetouchEngine::describe(buildFromMap(cur_))));
 }
 

@@ -7,7 +7,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets Sql Concurrent)
+find_package(Qt6 REQUIRED COMPONENTS Widgets Sql Concurrent Network)
 
 set(LA_SOURCES
     src/main.cpp
@@ -19,6 +19,8 @@ set(LA_SOURCES
     src/core/ExifReader.cpp
     src/core/Scanner.h
     src/core/Scanner.cpp
+    src/core/LumenAgent.h
+    src/core/LumenAgent.cpp
     src/ui/DarkPalette.h
     src/ui/ThumbCache.h
     src/ui/ThumbCache.cpp
@@ -60,7 +62,8 @@ set(LA_RESOURCES
 )
 
 add_executable(LightAlbum WIN32 ${LA_SOURCES} ${LA_RESOURCES})
-target_link_libraries(LightAlbum PRIVATE Qt6::Widgets Qt6::Sql Qt6::Concurrent)
+# P9 起 LumenAgent 走本地 Ollama（仅回环）→ Qt6Network 回归（release.ps1 不再 -TrimNetwork）
+target_link_libraries(LightAlbum PRIVATE Qt6::Widgets Qt6::Sql Qt6::Concurrent Qt6::Network)
 # 注入版本号（来自 project(VERSION)），供 main.cpp 在标题/关于中展示
 target_compile_definitions(LightAlbum PRIVATE LA_VERSION="${PROJECT_VERSION}")
 

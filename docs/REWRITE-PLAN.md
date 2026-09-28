@@ -112,6 +112,16 @@ P8 原生导入器（补齐 P7 唯一硬缺口 → native 真正独立 GA）：�
     **12 张真实照片（iPhone 17/15/13 Pro、GPS、前置、竖拍、JPEG-in-PNG）逐字段（23 EXIF 字段 + rel +
     thumb 键）0 差异**；增量幂等（重跑 added=0/unchanged=N）；五路冒烟回归全绿；发行 zip 重出（15.5 MB）。
 
+P9 AI 修图智能体（Lumen × Ollama）：✅ 完成（见 docs/adr/ADR-0014-lumen-ollama-agent.md）
+  - `native/src/core/LumenAgent.{h,cpp}`：测量驱动决策（不传图）→ Ollama /api/chat
+    （`think:false` + `format:json`，qwen3.5:4b 热调用 ~2.5s）→ 13 参数白名单 + clamp →
+    `retouchWithPlan` 执行；Ollama 缺席/输出非法自动落本地规则兜底（LocalBrain 移植，诚实降级）。
+  - 零云端铁律不破：仅回环地址（isLocalUrl + 350ms 裸 socket 探端口秒退）。
+  - UI：RetouchPage「AI 智能体」按钮 + 可选目标输入；agentMode_ 独立执行路径（预览=导出），
+    手动/预设操作即退出；Qt6Network 回归（release 不再 -TrimNetwork，zip 16.6 MB）。
+  - 验证：`LA_AGENT_SMOKE` PASS（src=ollama 真实决策 + 强制兜底方向断言 + clamp 白名单）；
+    五路冒烟回归全绿；发行 exe 复验通过。
+
 ## index.html → C++ 模块映射（P1 起逐项迁移）
 
 | 现有（index.html 1.9.39） | 目标（native/） |

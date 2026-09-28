@@ -14,9 +14,74 @@
 #include <cmath>
 #include "core/Library.h"
 #include "core/LumenEngine.h"
+#include "core/LumenAgent.h"
 #include "core/Scanner.h"
 #include "ui/MainWindow.h"
 #include "ui/DarkPalette.h"
+
+namespace {
+// P9 AI 修图智能体冒烟：合成「偏暗偏暖发灰」样张 → 测量 → 决策 → 执行。
+// 真实路径（默认 Ollama 127.0.0.1:11434，机器没装则自动落兜底）+ 强制兜底路径（端口 9）。
+int runAgentSmoke()
+{
+    // 合成样张：暗 + 暖（R>B）+ 低对比
+    QImage img(256, 256, QImage::Format_RGB32);
+    for (int y = 0; y < 256; ++y) {
+        QRgb* ln = reinterpret_cast<QRgb*>(img.scanLine(y));
+        for (int x = 0; x < 256; ++x)
+            ln[x] = qRgb(52 + x / 16, 44 + y / 20, 30);   // 暗、轻微暖调、平缓（发灰）
+    }
+    int pass = 1;
+
+    // ① 真实决策（Ollama 在线 → ollama；未装 → 自动 local 兜底，两者都算结构合法）
+    const AgentContext ctx = LumenAgent::contextFrom(img, 3200, 0.0, QString());
+    const AgentPlan real = LumenAgent::decide(ctx);
+    bool realOk = real.ok && !real.params.isEmpty();
+    for (auto it = real.params.cbegin(); it != real.params.cend(); ++it)
+        if (it.value() < -1.0 || it.value() > 1.0) realOk = false;
+    const QImage outReal = LumenEngine::retouchWithPlan(img, real.params);
+    realOk = realOk && !outReal.isNull();
+    std::fprintf(stderr, "AGENT real src=%s model=%s intent=%s params=%d out=%d reason=%s\n",
+                 qPrintable(real.source), qPrintable(real.model),
+                 qPrintable(real.intent), real.params.size(), outReal.isNull() ? 0 : 1,
+                 qPrintable(real.reason));
+    if (!realOk) pass = 0;
+
+    // ② 强制兜底：LLM 指向关闭端口 → 秒退到本地规则（350ms 探测）
+    const QByteArray savedUrl = qgetenv("LA_LLM_URL");
+    qputenv("LA_LLM_URL", "http://127.0.0.1:9");
+    const AgentPlan fb = LumenAgent::decide(LumenAgent::contextFrom(img, 3200, 0.0, QStringLiteral("通透")));
+    qputenv("LA_LLM_URL", savedUrl);
+    const bool fbOk = fb.ok && fb.source == QStringLiteral("local")
+                   && !fb.params.isEmpty()
+                   && (fb.reason.contains(QStringLiteral("未连接"))
+                       || fb.reason.contains(QStringLiteral("兜底")));
+    std::fprintf(stderr, "AGENT fallback src=%s intent=%s brightness=%.2f warmth=%.2f denoise=%.2f\n",
+                 qPrintable(fb.source), qPrintable(fb.intent),
+                 fb.params.value(QStringLiteral("brightness"), 0),
+                 fb.params.value(QStringLiteral("warmth"), 0),
+                 fb.params.value(QStringLiteral("denoise"), 0));
+    if (!fbOk) pass = 0;
+
+    // ③ 兜底计划方向断言：暗样张应正提亮；ISO3200 应有降噪； goal 通透 → clarity ≥ 0
+    if (fb.params.value(QStringLiteral("brightness"), 0) <= 0) pass = 0;
+    if (fb.params.value(QStringLiteral("denoise"), 0) < 0.30) pass = 0;
+    if (fb.params.value(QStringLiteral("clarity"), 0) < 0.10) pass = 0;
+
+    // ④ clampPlan 白名单：未知键丢弃、越界截断
+    QMap<QString, double> dirty;
+    dirty.insert(QStringLiteral("brightness"), 5.0);
+    dirty.insert(QStringLiteral("evil"), 1.0);
+    const QMap<QString, double> cl = LumenAgent::clampPlan(dirty);
+    const bool clampOk = cl.size() == 1 && cl.value(QStringLiteral("brightness")) == 1.0;
+    if (!clampOk) pass = 0;
+
+    std::fprintf(stderr, "LA_AGENT_SMOKE %s real=%s fb=%s clamp=%d\n",
+                 pass ? "PASS" : "FAIL", realOk ? "1" : "0", fbOk ? "1" : "0", clampOk ? 1 : 0);
+    std::fflush(stderr);
+    return pass ? 0 : 1;
+}
+} // namespace（P9 agent 冒烟）
 
 namespace {
 // P5 金样对拍冒烟：读 _gold_lumen/{in,gold,steps}_*.png/json，跑 C++ auto 管线，
@@ -189,6 +254,10 @@ int main(int argc, char *argv[])
     // P5 金样对拍冒烟（无需库文件，最先跑）
     if (qEnvironmentVariableIsSet("LA_LUMEN_SMOKE"))
         return runLumenSmoke();
+
+    // P9 AI 修图智能体冒烟（测量 → 决策 → retouchWithPlan；不依赖库文件）
+    if (qEnvironmentVariableIsSet("LA_AGENT_SMOKE"))
+        return runAgentSmoke();
 
     // P8 原生导入器冒烟：扫描 LA_SCAN_ROOT 入库到 LA_SCAN_DB（独立于正式库），
     // 打印增量结果后退出；同一命令重跑应 added=0 / unchanged=N（增量幂等）。
