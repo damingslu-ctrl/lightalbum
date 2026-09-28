@@ -133,6 +133,33 @@ def op_gold(img):
     pb, pi = retouch._portrait_beautify(img, 1.0)
     out['portrait'] = pb
     out['_portrait_skin'] = float((pi or {}).get('skin') or 0.0)
+    # P5-4：镜头畸变校正（确定性网格 AFFINE，任意图皆可）
+    out['lens'] = retouch._lens_correct(img, 1.0)[0]
+    return out
+
+
+# P5-4 retouch_with_plan 固定参数字典（覆盖全部 13 项增量）
+PLAN_PARAMS = {
+    'warmth': 0.3, 'brightness': 0.2, 'contrast': 0.25,
+    'highlights': -0.3, 'shadows': 0.4, 'whites': 0.1, 'blacks': -0.2,
+    'saturation': 0.3, 'vibrance': 0.4, 'clarity': 0.3, 'tint': 0.2,
+    'denoise': 0.2, 'sharpness': 0.3,
+}
+
+
+def synth_level(n=4):
+    """合成倾斜地平线图（≤480，避免降采样差异）：上天空/下地面 + 整体旋转倾角。"""
+    angles = [3.0, 6.0, -4.0, 8.0]
+    out = []
+    for a in angles[:n]:
+        w, h = 360, 270
+        sky, ground = 205, 55
+        base = Image.new('RGB', (w, h), (sky, sky, sky))
+        px = base.load()
+        for y in range(h // 2, h):
+            for x in range(w):
+                px[x, y] = (ground, ground, ground)
+        out.append(base.rotate(a, expand=True, resample=Image.BICUBIC))
     return out
 
 
@@ -159,7 +186,29 @@ def main():
             if name.startswith('_'):
                 continue
             oimg.save(os.path.join(GOLD_DIR, 'op_%s_%d.png' % (name, i)))
-        print('  OPS film/bw/glow/redeye/vignette/hdr/structure/dodge ok')
+        print('  OPS film/bw/glow/redeye/vignette/hdr/structure/dodge/dehaze/chromatic/portrait/lens ok')
+        # P5-4 retouch_with_plan 金样（真实管线；复用已落盘的 in_path 避免 EXIF 方向差）
+        outp, _ = retouch.retouch_with_plan(in_path, PLAN_PARAMS)
+        Image.open(outp).convert('RGB').save(os.path.join(GOLD_DIR, 'op_plan_%d.png' % i))
+        try:
+            os.remove(outp)
+        except OSError:
+            pass
+        print('  PLAN ok params=%d' % len(PLAN_PARAMS))
+    # P5-4 合成倾斜地平线金样（Hough 检测 + 拉直）
+    for i, tim in enumerate(synth_level(4)):
+        in_lp = os.path.join(GOLD_DIR, 'in_level_%d.png' % i)
+        tim.save(in_lp)
+        det = retouch._detect_horizon(tim)
+        ang = float(det[0]) if det else 0.0
+        if det:
+            st_img, _ = retouch._straighten(tim, det[0])
+        else:
+            st_img = tim
+        st_img.save(os.path.join(GOLD_DIR, 'op_level_%d.png' % i))
+        with open(os.path.join(GOLD_DIR, 'level_meta_%d.json' % i), 'w', encoding='utf-8') as f:
+            json.dump({'angle': ang, 'votes': int(det[1]) if det else 0}, f)
+        print('LEVEL %d angle=%.2f votes=%d' % (i, ang, det[1] if det else 0))
     with open(os.path.join(GOLD_DIR, 'manifest.json'), 'w', encoding='utf-8') as f:
         json.dump(manifest, f)
     print('GOLD_GEN_OK n=%d' % len(inputs))

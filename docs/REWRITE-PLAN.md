@@ -66,7 +66,13 @@
   B 缩小镜像归位；portrait=YCbCr 肤色软掩膜(Chai&Ngan ramp)+Median5/Gauss 磨皮+美白门控
   (skin_lum<0.62)；基础设施 minFilter/medianFilter(尺寸可配)/YCbCr 整数定点/areaResample。
   金样：**11 算子 × 6 样本** madMax=1.107(vignette) PASS。
-  剩余：level(地平线 Hough) / lens(网格仿射畸变) 两个显式算子 + EditPlan 参数管线）
+- P5 引擎移植（第四批/收官：level / lens / EditPlan 参数管线）：✅ 完成
+  （level=Hough 地平线检测 θ∈[78°,102°] Sobel 阈值 55 + 票数门控 + QTransform 旋转裁 inscribed
+  矩形；lens=桶形畸变径向反畸变，N×N 网格局部仿射 + 镜像扩边；retouchWithPlan=13 项参数字典管线
+  warmth/brightness/contrast/tonal/saturation/vibrance/clarity/tint/denoise/sharpness）。
+  金样对拍全绿：`LA_LUMEN_SMOKE PASS` —— 12 显式算子（含 lens madMax=2.192）+
+  PLAN(13 参数 madMax=3.010 < 4.0) + LEVEL(角度自检 angErr=0.00, madMax=1.001) 全部通过；
+  P1/Cull/Retouch/Beauty 四路冒烟无回归。**P5 全部完成**，下一步进入 P6 打包对比。
 
 ## index.html → C++ 模块映射（P1 起逐项迁移）
 

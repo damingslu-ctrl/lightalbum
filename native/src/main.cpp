@@ -77,7 +77,22 @@ int runLumenSmoke()
 
     // ---- P5-2 显式算子逐算子对拍（隔离比对）----
     static const char* kOps[] = {"film", "bw", "glow", "redeye", "vignette", "hdr", "structure",
-                                "dodge", "dehaze", "chromatic", "portrait"};
+                                "dodge", "dehaze", "chromatic", "portrait", "lens"};
+    auto madOf = [&](const QImage& out, const QImage& gold) -> double {
+        if (out.size() != gold.size()) return 999.0;
+        QImage a = out.convertToFormat(QImage::Format_RGB32);
+        QImage b = gold.convertToFormat(QImage::Format_RGB32);
+        long long sum = 0;
+        for (int y = 0; y < a.height(); ++y) {
+            const QRgb* pa = reinterpret_cast<const QRgb*>(a.constScanLine(y));
+            const QRgb* pb = reinterpret_cast<const QRgb*>(b.constScanLine(y));
+            for (int x = 0; x < a.width(); ++x)
+                sum += std::abs(qRed(pa[x]) - qRed(pb[x]))
+                     + std::abs(qGreen(pa[x]) - qGreen(pb[x]))
+                     + std::abs(qBlue(pa[x]) - qBlue(pb[x]));
+        }
+        return double(sum) / (a.width() * a.height() * 3.0);
+    };
     for (int i = 0; i < n; ++i) {
         for (const char* op : kOps) {
             const QString inP = QDir(dir).filePath(QStringLiteral("in_%1.png").arg(i));
@@ -97,24 +112,63 @@ int runLumenSmoke()
             else if (opName == QStringLiteral("dodge"))     out = LumenEngine::dodge(in);
             else if (opName == QStringLiteral("dehaze"))    out = LumenEngine::dehaze(in);
             else if (opName == QStringLiteral("chromatic")) out = LumenEngine::chromaticCorrect(in);
-            else                                            out = LumenEngine::portraitBeautify(in);
-            double mad = 999;
-            if (out.size() == gold.size()) {
-                QImage a = out.convertToFormat(QImage::Format_RGB32);
-                QImage b = gold.convertToFormat(QImage::Format_RGB32);
-                long long sum = 0;
-                for (int y = 0; y < a.height(); ++y) {
-                    const QRgb* pa = reinterpret_cast<const QRgb*>(a.constScanLine(y));
-                    const QRgb* pb = reinterpret_cast<const QRgb*>(b.constScanLine(y));
-                    for (int x = 0; x < a.width(); ++x)
-                        sum += std::abs(qRed(pa[x]) - qRed(pb[x]))
-                             + std::abs(qGreen(pa[x]) - qGreen(pb[x]))
-                             + std::abs(qBlue(pa[x]) - qBlue(pb[x]));
-                }
-                mad = double(sum) / (a.width() * a.height() * 3.0);
-            }
+            else if (opName == QStringLiteral("portrait"))  out = LumenEngine::portraitBeautify(in);
+            else                                             out = LumenEngine::lensCorrect(in);
+            const double mad = madOf(out, gold);
             std::fprintf(stderr, "LUMEN_OP %d %s mad=%.3f\n", i, op, mad);
+            if (opName == QStringLiteral("lens") && qEnvironmentVariableIsSet("LA_LUMEN_DEBUG"))
+                out.save(QDir(dir).filePath(QStringLiteral("cpp_lens_%1.png").arg(i)));
             if (mad > kMadLimit) pass = false;
+        }
+    }
+
+    // ---- P5-4 retouch_with_plan 对拍（固定 13 项参数字典）----
+    {
+        QMap<QString,double> pp;
+        pp[QStringLiteral("warmth")] = 0.3;     pp[QStringLiteral("brightness")] = 0.2;
+        pp[QStringLiteral("contrast")] = 0.25;  pp[QStringLiteral("highlights")] = -0.3;
+        pp[QStringLiteral("shadows")] = 0.4;    pp[QStringLiteral("whites")] = 0.1;
+        pp[QStringLiteral("blacks")] = -0.2;    pp[QStringLiteral("saturation")] = 0.3;
+        pp[QStringLiteral("vibrance")] = 0.4;   pp[QStringLiteral("clarity")] = 0.3;
+        pp[QStringLiteral("tint")] = 0.2;       pp[QStringLiteral("denoise")] = 0.2;
+        pp[QStringLiteral("sharpness")] = 0.3;
+        static const double kPlanLimit = 4.0;
+        for (int i = 0; i < n; ++i) {
+            const QString inP = QDir(dir).filePath(QStringLiteral("in_%1.png").arg(i));
+            const QString gP = QDir(dir).filePath(QStringLiteral("op_plan_%1.png").arg(i));
+            const QImage in(inP), gold(gP);
+            if (in.isNull() || gold.isNull()) continue;
+            const QImage cpp = LumenEngine::retouchWithPlan(in, pp);
+            const double mad = madOf(cpp, gold);
+            if (qEnvironmentVariableIsSet("LA_LUMEN_DEBUG"))
+                cpp.save(QDir(dir).filePath(QStringLiteral("cpp_plan_%1.png").arg(i)));
+            std::fprintf(stderr, "LUMEN_PLAN %d mad=%.3f\n", i, mad);
+            if (mad > kPlanLimit) pass = false;
+        }
+    }
+
+    // ---- P5-4 水平校正对拍（含角度自检）----
+    {
+        static const double kLevelLimit = 6.0;
+        for (int i = 0; i < 4; ++i) {
+            const QString inP = QDir(dir).filePath(QStringLiteral("in_level_%1.png").arg(i));
+            const QString gP = QDir(dir).filePath(QStringLiteral("op_level_%1.png").arg(i));
+            const QString mP = QDir(dir).filePath(QStringLiteral("level_meta_%1.json").arg(i));
+            const QImage in(inP), gold(gP);
+            if (in.isNull() || gold.isNull()) continue;
+            QFile mf(mP);
+            double goldAngle = 0.0;
+            if (mf.open(QIODevice::ReadOnly)) {
+                goldAngle = QJsonDocument::fromJson(mf.readAll())
+                                .object().value(QStringLiteral("angle")).toDouble();
+                mf.close();
+            }
+            const double cppAngle = LumenEngine::levelDetectAngle(in);
+            const double angErr = std::fabs(cppAngle - goldAngle);
+            const double mad = madOf(LumenEngine::levelCorrect(in), gold);
+            std::fprintf(stderr, "LUMEN_LEVEL %d cppAngle=%.2f goldAngle=%.2f angErr=%.2f mad=%.3f\n",
+                         i, cppAngle, goldAngle, angErr, mad);
+            if (angErr > 1.0 || mad > kLevelLimit) pass = false;
         }
     }
     std::fprintf(stderr, "LA_LUMEN_SMOKE %s\n", pass ? "PASS" : "FAIL");

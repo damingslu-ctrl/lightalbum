@@ -13,6 +13,7 @@
 #include <QString>
 #include <QStringList>
 #include <QVector>
+#include <QMap>
 #include <QImage>
 #include <QRectF>
 
@@ -80,6 +81,13 @@ public:
     static QImage chromaticCorrect(const QImage& rgb, double amount = 1.0); // 横向色差 / 紫边
     static QImage portraitBeautify(const QImage& rgb, double strength = 1.0,
                                    double* skinFrac = nullptr);             // 肤色掩膜磨皮 + 美白
+
+    // ---- P5-4 显式算子（收官）+ 参数管线 ----
+    static QImage levelCorrect(const QImage& rgb);                        // Hough 地平线 + 拉直裁内切
+    static double levelDetectAngle(const QImage& rgb);                   // Hough 倾角(度)，无→0（自检用）
+    static int    levelDetectVotes(const QImage& rgb);                   // Hough 票数（自检用）
+    static QImage lensCorrect(const QImage& rgb, double amount = 1.0);    // 网格 AFFINE 桶形反畸变
+    static QImage retouchWithPlan(const QImage& rgb, const QMap<QString,double>& params); // 13 项增量
 
     // ---- PIL 合成基础设施（P5-2）----
     static QImage blend(const QImage& a, const QImage& b, double f);        // a*(1-f)+b*f
