@@ -23,6 +23,7 @@
 #include "ui/Theme.h"
 #include "ui/Splash.h"
 #include "core/MotionPref.h"
+#include "core/Vault.h"
 #include <QPropertyAnimation>
 
 namespace {
@@ -347,6 +348,37 @@ int main(int argc, char *argv[])
         std::fflush(stderr);
         if (qEnvironmentVariableIsSet("LA_SMOKE")) return 2;
         return 1;
+    }
+
+    // P16 写回链路自测：LA_RW_SMOKE=1（必须指向临时库副本，绝不碰真库）。
+    // 评分写→内存同步→SQL 读回；私密标记往返；meta KV 往返；vault 口令哈希/校验。
+    if (qEnvironmentVariableIsSet("LA_RW_SMOKE")) {
+        const auto& phs = lib.photos();
+        if (phs.isEmpty()) {
+            std::fprintf(stderr, "LA_RW_SMOKE_FAIL no photos\n");
+            return 3;
+        }
+        const QString p0 = phs.first().path;
+        bool r1 = lib.setRating(p0, 4);
+        bool r1m = phs.first().rating == 4;
+        bool r2 = lib.setPrivate(p0, true) && phs.first().priv;
+        bool r3 = lib.setPrivate(p0, false) && !phs.first().priv;
+        bool r4 = lib.setMetaValue(QStringLiteral("rw_smoke_key"),
+                                   QStringLiteral("v123"));
+        bool r5 = lib.metaValue(QStringLiteral("rw_smoke_key"))
+                    == QStringLiteral("v123");
+        const QByteArray salt = Vault::randomSalt();
+        const QString h = Vault::hashHex(QStringLiteral("口令abc123"), salt);
+        bool r6 = !h.isEmpty()
+            && Vault::verify(QStringLiteral("口令abc123"), salt, h)
+            && !Vault::verify(QStringLiteral("错密码"), salt, h);
+        lib.setRating(p0, 0);   // 还原
+        std::fprintf(stderr,
+            "LA_RW_SMOKE_%s rating=%d ratingMem=%d priv=%d unpriv=%d meta=%d metaGet=%d vault=%d\n",
+            (r1 && r1m && r2 && r3 && r4 && r5 && r6) ? "OK" : "FAIL",
+            int(r1), int(r1m), int(r2), int(r3), int(r4), int(r5), int(r6));
+        std::fflush(stderr);
+        return (r1 && r1m && r2 && r3 && r4 && r5 && r6) ? 0 : 4;
     }
 
     MainWindow win(&lib, thumbsDir, dbPath);

@@ -86,6 +86,15 @@ MapPage::MapPage(const QVector<Photo>* photos, QWidget* parent) : QWidget(parent
     connect(viewBtn_, &QPushButton::clicked, this, &MapPage::onViewInGallery);
 }
 
+void MapPage::setHidePrivate(bool hide)
+{
+    hidePrivate_ = hide;
+    // 已选区域时重算一次统计，保持口径一致
+    if (!lastRegion_.isEmpty() || !lastProv_.isEmpty())
+        onPicked(lastIsProv_ ? lastProv_ : lastRegion_,
+                 statsTitle_->text(), lastIsProv_);
+}
+
 void MapPage::onPicked(const QString& key, const QString& label, bool isProvince)
 {
     if (isProvince) { lastProv_ = key; lastRegion_ = QString(); }
@@ -97,6 +106,7 @@ void MapPage::onPicked(const QString& key, const QString& label, bool isProvince
     if (photos_) {
         const QString k = key.toLower();
         for (const Photo& p : *photos_) {
+            if (hidePrivate_ && p.priv) continue;   // P16 隐私门
             if (isProvince) { if (p.prov.toLower() == k) ++match; }
             else            { if (p.region.toLower() == k) ++match; }
         }

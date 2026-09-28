@@ -2,6 +2,8 @@
 #include "ThumbCache.h"
 #include <algorithm>
 
+const QString GalleryModel::kNoCategory = QStringLiteral("\u0001n categor");
+
 GalleryModel::GalleryModel(QObject* parent) : QAbstractListModel(parent) {}
 
 void GalleryModel::setSource(const QVector<Photo>* all)
@@ -18,7 +20,7 @@ void GalleryModel::setThumbCache(ThumbCache* c)
     }
 }
 
-// 文本 + 地理（大区/省）联合过滤：三条件 AND。
+// 文本 + 地理（大区/省）+ 分类/人物/隐私 联合过滤：全部 AND。
 void GalleryModel::rebuild()
 {
     beginResetModel();
@@ -28,12 +30,25 @@ void GalleryModel::rebuild()
         const QString needle = filter_.trimmed();
         const bool hasRegion = !regionFilter_.isEmpty();
         const bool hasProv   = !provFilter_.isEmpty();
+        const bool hasCat    = !categoryFilter_.isEmpty();
+        const bool hasPerson = !personFilter_.isEmpty();
         const QString region = regionFilter_.toLower();
         const QString prov   = provFilter_.toLower();
         for (int i = 0; i < all_->size(); ++i) {
             const Photo& p = (*all_)[i];
+            if (hidePrivate_ && p.priv) continue;               // P16 隐私门
             if (hasRegion && p.region.toLower() != region) continue;
             if (hasProv   && p.prov.toLower()   != prov)   continue;
+            if (hasCat) {                                       // P16 分类
+                if (categoryFilter_ == kNoCategory) {
+                    if (!p.category.isEmpty()) continue;
+                } else if (p.category != categoryFilter_) {
+                    continue;
+                }
+            }
+            if (hasPerson && !p.person.split(',', Qt::SkipEmptyParts)
+                                 .contains(personFilter_))      // P16 人物
+                continue;
             if (!needle.isEmpty()
                 && !p.title.contains(needle, Qt::CaseInsensitive)
                 && !p.rel.contains(needle, Qt::CaseInsensitive)
@@ -49,6 +64,9 @@ void GalleryModel::rebuild()
 void GalleryModel::setFilter(const QString& q)     { filter_ = q;        rebuild(); }
 void GalleryModel::setRegionFilter(const QString& r){ regionFilter_ = r; rebuild(); }
 void GalleryModel::setProvFilter(const QString& p) { provFilter_ = p;   rebuild(); }
+void GalleryModel::setCategoryFilter(const QString& c){ categoryFilter_ = c; rebuild(); }
+void GalleryModel::setPersonFilter(const QString& n){ personFilter_ = n; rebuild(); }
+void GalleryModel::setHidePrivate(bool hide)       { hidePrivate_ = hide; rebuild(); }
 
 const Photo* GalleryModel::photoAt(int row) const
 {
@@ -73,6 +91,8 @@ QVariant GalleryModel::data(const QModelIndex& index, int role) const
     case MissingRole: return p.missing;
     case RatingRole:  return p.rating;
     case DimRole:     return p.dim;
+    case PrivRole:    return p.priv;
+    case CategoryRole:return p.category;
     default:          return QVariant();
     }
 }

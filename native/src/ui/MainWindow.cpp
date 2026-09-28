@@ -8,8 +8,12 @@
 #include "BeautyPage.h"
 #include "../core/Scanner.h"
 #include "../core/MotionPref.h"
+#include "../core/Vault.h"
 #include <QDialog>
+#include <QInputDialog>
 #include <QKeyEvent>
+#include <QLineEdit>
+#include <QMessageBox>
 #include <QPair>
 #include <QStringList>
 #include <QToolButton>
@@ -318,11 +322,13 @@ private:
 // ============================================================================
 // P15 图片灯箱（沉浸式，无边框）：直接铺满显示大图，EXIF 等信息在图片正下方。
 // 作为 MainWindow 的子控件覆盖全窗口，不再弹带标题栏的对话框「框」。
+// P16：可点星级（写库）+ 私密切换（native vault 非破坏标记）。
 // ============================================================================
 class PhotoLightbox : public QWidget {
     Q_OBJECT
 public:
-    explicit PhotoLightbox(QWidget* parent = nullptr) : QWidget(parent)
+    explicit PhotoLightbox(Library* lib, QWidget* parent = nullptr)
+        : QWidget(parent), lib_(lib)
     {
         setObjectName(QStringLiteral("photoLightbox"));
         setAttribute(Qt::WA_StyledBackground, true);
@@ -377,6 +383,8 @@ public:
 
     void setPhoto(const Photo* ph, const QString& thumbsDir)
     {
+        path_ = ph->path;
+        changed_ = false;
         // ---- 大图（直接显示，按窗口尺寸自适应）----
         const QPixmap pm(QDir(thumbsDir).filePath(ph->thumbFile));
         if (!pm.isNull()) {
@@ -421,6 +429,58 @@ public:
         addRow(QStringLiteral("城市"), ph->city);
         addRow(QStringLiteral("评分"), ph->rating > 0 ? QString::number(ph->rating) : QStringLiteral("—"));
         addRow(QStringLiteral("尺寸"), ph->dim);
+        if (!ph->category.isEmpty())
+            addRow(QStringLiteral("分类"), ph->category);
+        iv->addStretch(1);
+
+        // ---- P16 可点星级：1-5 星写库；点当前最高星 = 清除评分 ----
+        auto* starRow = new QWidget(info_);
+        auto* sl = new QHBoxLayout(starRow);
+        sl->setContentsMargins(0, 4, 0, 0);
+        sl->setSpacing(4);
+        auto* starCap = new QLabel(QStringLiteral("评分"), starRow);
+        starCap->setStyleSheet(QStringLiteral("color:#8da396;font-size:12px;"));
+        sl->addWidget(starCap);
+        starBtns_.clear();
+        for (int i = 0; i < 5; ++i) {
+            auto* sb = new QToolButton(starRow);
+            sb->setText(QStringLiteral("★"));
+            sb->setFixedSize(28, 26);
+            sb->setCursor(Qt::PointingHandCursor);
+            connect(sb, &QToolButton::clicked, this, [this, i] {
+                if (!lib_) return;
+                const int nr = (curRating_ == i + 1) ? 0 : i + 1;
+                lib_->setRating(path_, nr);
+                curRating_ = nr;
+                changed_ = true;
+                setStars(nr);
+            });
+            sl->addWidget(sb);
+            starBtns_.append(sb);
+        }
+        sl->addStretch(1);
+        iv->addWidget(starRow);
+        setStars(ph->rating);
+        curRating_ = ph->rating;
+
+        // ---- P16 私密切换（native vault：非破坏标记 + 密码门）----
+        auto* privBtn = new QPushButton(
+            ph->priv ? QStringLiteral("🔓 已设为私密（点击取消）")
+                     : QStringLiteral("🔒 设为私密"), info_);
+        privBtn->setCursor(Qt::PointingHandCursor);
+        privBtn->setStyleSheet(Lumen::btnGhost());
+        connect(privBtn, &QPushButton::clicked, this, [this, privBtn] {
+            if (!lib_) return;
+            const bool on = !privBtn->property("privOn").toBool();
+            lib_->setPrivate(path_, on);
+            privBtn->setProperty("privOn", on);
+            privBtn->setText(on ? QStringLiteral("🔓 已设为私密（点击取消）")
+                                : QStringLiteral("🔒 设为私密"));
+            changed_ = true;
+        });
+        privBtn->setProperty("privOn", ph->priv);
+        iv->addWidget(privBtn);
+
         iv->addStretch(1);
 
         auto* btnRow = new QWidget(info_);
@@ -467,11 +527,34 @@ private:
         }
     }
 
+public:
+    // P16：灯箱内改动过评分/私密 → 关闭后由 MainWindow 刷新图库
+    bool hasChanges() const { return changed_; }
+    void clearChanges() { changed_ = false; }
+
+private:
+    // P16：星级按钮着色（r 颗金星，其余灰）
+    void setStars(int r)
+    {
+        for (int i = 0; i < starBtns_.size(); ++i) {
+            starBtns_.at(i)->setStyleSheet(i < r
+                ? QStringLiteral("QToolButton{background:transparent;border:none;"
+                                 "color:#d9a94e;font-size:17px;padding:0;}")
+                : QStringLiteral("QToolButton{background:transparent;border:none;"
+                                 "color:#3a4a40;font-size:17px;padding:0;}"));
+        }
+    }
+
+    Library* lib_ = nullptr;
     QLabel* img_  = nullptr;
     QWidget* info_ = nullptr;
+    QString  path_;
+    int      curRating_ = 0;
+    bool     changed_ = false;
+    QVector<QToolButton*> starBtns_;
 };
 
-MainWindow::MainWindow(const Library* lib, const QString& thumbsDir,
+MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
                        const QString& dbPath, QWidget* parent)
     : QMainWindow(parent), lib_(lib), dbPath_(dbPath)
 {
@@ -565,6 +648,12 @@ MainWindow::MainWindow(const Library* lib, const QString& thumbsDir,
     search_->setStyleSheet(Lumen::input());
     tl->addWidget(title_);
     tl->addStretch(1);
+    // P16 隐私库锁按钮：未初始化 → 设密码；锁定 → 输密码解锁；已解锁 → 重新上锁
+    vaultBtn_ = new QPushButton(QStringLiteral("🔒 隐私库"), topbar);
+    vaultBtn_->setCursor(Qt::PointingHandCursor);
+    vaultBtn_->setStyleSheet(Lumen::btnGhost());
+    connect(vaultBtn_, &QPushButton::clicked, this, &MainWindow::onVaultButton);
+    tl->addWidget(vaultBtn_);
     // P8：原生导入器入口（补齐 P7 审计的唯一硬缺口）
     auto* importBtn = new QPushButton(QString::fromUtf8("导入目录"), topbar);
     importBtn->setCursor(Qt::PointingHandCursor);
@@ -720,7 +809,66 @@ void MainWindow::resizeEvent(QResizeEvent* e)
         lightbox_->setGeometry(rect());
 }
 
-// P15：打开沉浸式灯箱（图库点击或探针复用）。
+// P16 隐私库：顶栏锁按钮分流 —— 未初始化 → 设密码；锁定 → 输密码解锁；已解锁 → 重新上锁。
+// 非破坏设计：原文件不动，仅 photos.private 标记 + PBKDF2 密码门（会话内解锁）。
+void MainWindow::onVaultButton()
+{
+    const QString saltHex = lib_->metaValue(QStringLiteral("vault_salt"));
+    const QString hashHex = lib_->metaValue(QStringLiteral("vault_hash"));
+
+    if (saltHex.isEmpty() || hashHex.isEmpty()) {
+        const QString p1 = QInputDialog::getText(
+            this, QStringLiteral("设置隐私库密码"),
+            QStringLiteral("为隐私库设置密码（标记为私密的照片需输入密码才可见）："),
+            QLineEdit::Password);
+        if (p1.isEmpty()) return;
+        const QString p2 = QInputDialog::getText(
+            this, QStringLiteral("确认密码"),
+            QStringLiteral("再输入一次相同密码："), QLineEdit::Password);
+        if (p2 != p1) {
+            QMessageBox::warning(this, QStringLiteral("隐私库"),
+                                 QStringLiteral("两次输入不一致，未设置。"));
+            return;
+        }
+        const QByteArray salt = Vault::randomSalt();
+        lib_->setMetaValue(QStringLiteral("vault_salt"),
+                           QString::fromLatin1(salt.toHex()));
+        lib_->setMetaValue(QStringLiteral("vault_hash"), Vault::hashHex(p1, salt));
+        vaultUnlocked_ = true;
+        vaultBtn_->setText(QStringLiteral("🔓 隐私库(已解锁)"));
+        refreshPrivateState();
+        return;
+    }
+
+    if (!vaultUnlocked_) {
+        const QString pwd = QInputDialog::getText(
+            this, QStringLiteral("解锁隐私库"),
+            QStringLiteral("输入隐私库密码："), QLineEdit::Password);
+        if (pwd.isEmpty()) return;
+        if (Vault::verify(pwd, QByteArray::fromHex(saltHex.toLatin1()), hashHex)) {
+            vaultUnlocked_ = true;
+            vaultBtn_->setText(QStringLiteral("🔓 隐私库(已解锁)"));
+            refreshPrivateState();
+        } else {
+            QMessageBox::warning(this, QStringLiteral("隐私库"),
+                                 QStringLiteral("密码不正确。"));
+        }
+    } else {
+        vaultUnlocked_ = false;
+        vaultBtn_->setText(QStringLiteral("🔒 隐私库"));
+        refreshPrivateState();
+    }
+}
+
+void MainWindow::refreshPrivateState()
+{
+    gallery_->setHidePrivate(!vaultUnlocked_);
+    map_->setHidePrivate(!vaultUnlocked_);
+    if (lightbox_ && lightbox_->isVisible())
+        lightbox_->hide();   // 重新上锁时顺手收起灯箱
+}
+
+// P15：打开沉浸式灯箱（图库点击或探针复用）。P16：灯箱内改评分/私密 → 关闭后刷新图库。
 void MainWindow::openLightbox(const QString& path)
 {
     const Photo* ph = nullptr;
@@ -728,14 +876,18 @@ void MainWindow::openLightbox(const QString& path)
         if (p.path == path) { ph = &p; break; }
     if (!ph) return;
     if (!lightbox_) {
-        lightbox_ = new PhotoLightbox(this);
+        lightbox_ = new PhotoLightbox(lib_, this);
         connect(lightbox_, &PhotoLightbox::openInRetouch, this, [this](const QString& p) {
-            if (lightbox_) lightbox_->hide();
+            const bool dirty = lightbox_ && lightbox_->hasChanges();
+            if (lightbox_) { lightbox_->hide(); lightbox_->clearChanges(); }
+            if (dirty) gallery_->refresh();
             retouch_->openPhoto(p);
             nav_->setCurrentRow(4);
         });
         connect(lightbox_, &PhotoLightbox::dismissed, this, [this] {
-            if (lightbox_) lightbox_->hide();
+            const bool dirty = lightbox_ && lightbox_->hasChanges();
+            if (lightbox_) { lightbox_->hide(); lightbox_->clearChanges(); }
+            if (dirty) gallery_->refresh();
         });
     }
     lightbox_->setPhoto(ph, thumbsDir_);
@@ -867,7 +1019,7 @@ QWidget* MainWindow::makeHome(const QString& thumbsDir) const
     const QVector<Photo>& all = lib_->photos();
     QVector<const Photo*> recent;
     for (const Photo& ph : all)
-        if (!ph.thumbFile.isEmpty()) recent.append(&ph);
+        if (!ph.thumbFile.isEmpty() && !ph.priv) recent.append(&ph);  // P16 锁定态不进首页
     std::stable_sort(recent.begin(), recent.end(),
                      [](const Photo* a, const Photo* b) { return a->date > b->date; });
     // P15.2：优先选横幅（宽>高，按 dim 字段解析，零图片解码）；横幅不足 8 再以竖图补位
@@ -993,7 +1145,7 @@ QWidget* MainWindow::makeHome(const QString& thumbsDir) const
 
     QVector<const Photo*> stripRecent;
     for (const Photo& ph : all)
-        if (!ph.thumbFile.isEmpty()) stripRecent.append(&ph);
+        if (!ph.thumbFile.isEmpty() && !ph.priv) stripRecent.append(&ph);  // P16
     std::stable_sort(stripRecent.begin(), stripRecent.end(),
                      [](const Photo* a, const Photo* b) { return a->date > b->date; });
     if (stripRecent.size() > 12) stripRecent.resize(12);

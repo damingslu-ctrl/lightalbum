@@ -20,11 +20,12 @@ class CullPage;
 class RetouchPage;
 class BeautyPage;
 class PhotoLightbox;   // P15 沉浸式灯箱（MainWindow.cpp 文件内定义）
+class QPushButton;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
-    MainWindow(const Library* lib, const QString& thumbsDir,
+    MainWindow(Library* lib, const QString& thumbsDir,
                const QString& dbPath = QString(), QWidget* parent = nullptr);
 
     // P11 UI 截图探针：逐导航页 setCurrentRow → grab() 存 PNG 到 dir；返回 0。
@@ -49,6 +50,11 @@ private:
 
     void startImport();          // P8：选目录 → 后台扫描入库 → 汇总/重启
 
+    // P16 隐私库：初始化密码 / 解锁 / 重新上锁（非破坏私密标记 + 密码门）
+    void setupVaultUi();         // 顶栏锁按钮
+    void onVaultButton();        // 点击行为随状态分流
+    void refreshPrivateState();  // 解锁/上锁 → 图库/地图同步可见性
+
     // P13：全客户端呼吸感 + 导航激活态管理
     bool  uiAnimEnabled() const;            // LA_* 冒烟/截图/系统减弱动效 → 关动画
     void  setupBreathing();                 // 呼吸定时器与受控元素
@@ -57,7 +63,7 @@ private:
     // P14：统一呼吸目标注册（功能卡片/画廊光晕等带相位偏移，错落呼吸）
     void  registerBreath(QGraphicsOpacityEffect* eff, double base, double amp, double phase = 0.0);
 
-    const Library* lib_;
+    Library*        lib_;
     QString         dbPath_;
     QString         thumbsDir_;     // P15：灯箱大图源（构造时保存，供 openLightbox 复用）
     QListWidget*    nav_ = nullptr;
@@ -89,4 +95,8 @@ private:
     BeautyPage*      beauty_ = nullptr;
 
     PhotoLightbox*  lightbox_ = nullptr;   // P15 沉浸式灯箱（无边框全窗口覆盖）
+
+    // P16 隐私库
+    QPushButton*    vaultBtn_ = nullptr;   // 顶栏锁按钮
+    bool            vaultUnlocked_ = false; // 会话内解锁状态（进程退出即回锁）
 };

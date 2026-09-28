@@ -17,7 +17,9 @@ public:
         OrientRole,   // landscape/portrait
         MissingRole,
         RatingRole,
-        DimRole
+        DimRole,
+        PrivRole,     // P16 隐私标记（卡片右上角锁徽章）
+        CategoryRole  // P16 分类标签
     };
     explicit GalleryModel(QObject* parent = nullptr);
 
@@ -26,12 +28,18 @@ public:
     void setFilter(const QString& q);            // 标题/文件名/器材 子串过滤
     void setRegionFilter(const QString& regionId); // 地理筛选（大区，空=清除）
     void setProvFilter(const QString& provEn);     // 地理筛选（省，空=清除）
+    void setCategoryFilter(const QString& cat);    // P16 分类（空=全部；kNoCategory=未分类）
+    void setPersonFilter(const QString& name);     // P16 人物（空=全部）
+    void setHidePrivate(bool hide);                // P16 隐私库锁定时隐藏私密照片
     const Photo* photoAt(int row) const;           // 行 → Photo*（供点击跳转修图）
+
+    // 「未分类」哨兵值（与真实分类名不可能撞车）
+    static const QString kNoCategory;
 
     int rowCount(const QModelIndex& parent = {}) const override;
     QVariant data(const QModelIndex& index, int role) const override;
 
-    void rebuild();   // 文本 + 地理（大区/省）联合过滤
+    void rebuild();   // 文本 + 地理 + 分类/人物/隐私 联合过滤
 
     QPixmap pixmapAt(int row) const;             // 委托绘制时调用（触发后台加载）
 
@@ -46,4 +54,7 @@ private:
     QString filter_;
     QString regionFilter_;   // 大区 id（Photo.region 命中）
     QString provFilter_;     // 省 en 名（Photo.prov 命中）
+    QString categoryFilter_; // P16 分类标签（空=全部）
+    QString personFilter_;   // P16 人物名（空=全部）
+    bool   hidePrivate_ = true;   // P16 锁定时隐藏私密照片（默认锁）
 };

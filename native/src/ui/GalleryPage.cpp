@@ -1,9 +1,20 @@
 #include "GalleryPage.h"
 #include "Theme.h"
 #include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QPushButton>
 #include <QScrollBar>
+#include <QSet>
 #include <QPainter>
 #include <QStyledItemDelegate>
+
+// P16 分类固定次序（与 classifier_server.py LABELS 单一事实源一致；空分类不展示）
+static QStringList catOrder()
+{
+    return {QStringLiteral("人像"), QStringLiteral("风光"), QStringLiteral("夜景·星空"),
+            QStringLiteral("城市·建筑"), QStringLiteral("微距·花卉"), QStringLiteral("动物"),
+            QStringLiteral("美食"), QStringLiteral("黑白")};
+}
 
 class GalleryCardDelegate : public QStyledItemDelegate {
 public:
@@ -115,6 +126,22 @@ GalleryPage::GalleryPage(const QVector<Photo>* photos, const QString& thumbsDir,
     lay->setContentsMargins(0, 0, 0, 0);
     lay->setSpacing(0);
 
+    // P16 分类 chips 条（buildChips 按数据填充；无分类数据时整条隐藏）
+    chipsBar_ = new QWidget(this);
+    chipsBar_->setStyleSheet(QStringLiteral("background:#060806;"));
+    auto* chipLay = new QHBoxLayout(chipsBar_);
+    chipLay->setContentsMargins(20, 10, 20, 0);
+    chipLay->setSpacing(8);
+    lay->addWidget(chipsBar_);
+
+    // P16 人物 chips 条（person 列有数据才显示）
+    personBar_ = new QWidget(this);
+    personBar_->setStyleSheet(QStringLiteral("background:#060806;"));
+    auto* personLay = new QHBoxLayout(personBar_);
+    personLay->setContentsMargins(20, 8, 20, 0);
+    personLay->setSpacing(8);
+    lay->addWidget(personBar_);
+
     count_ = new QLabel(this);
     count_->setStyleSheet(QString::fromUtf8("color:#8da396;padding:12px 20px 8px;"));
     lay->addWidget(count_);
@@ -157,16 +184,195 @@ GalleryPage::GalleryPage(const QVector<Photo>* photos, const QString& thumbsDir,
     });
 
     applyFilter(QString());
+    buildChips();
+}
+
+// ---- P16 chips：按数据 + 隐私门状态重建（空分类不展示，全空隐藏整条）----
+void GalleryPage::buildChips()
+{
+    // 清空旧 chips
+    for (QPushButton* b : catChips_) b->deleteLater();
+    catChips_.clear();
+    for (QPushButton* b : personChips_) b->deleteLater();
+    personChips_.clear();
+
+    const QString chipCss = QStringLiteral(
+        "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:999px;"
+        "padding:4px 12px;color:#8da996;font-size:12px;}"
+        "QPushButton:hover{border-color:#4fc08a;color:#f4f7f4;}"
+        "QPushButton:checked{background:#d9a94e;border-color:#d9a94e;"
+        "color:#0c100d;font-weight:bold;}");
+
+    // 计数（与列表同口径：锁定时跳过私密）
+    QHash<QString, int> catCnt;
+    QSet<QString> persons;
+    int nVisible = 0;
+    for (const Photo& p : *photos_) {
+        if (hidePrivate_ && p.priv) continue;
+        ++nVisible;
+        if (!p.category.isEmpty()) catCnt[p.category] += 1;
+        for (const QString& n : p.person.split(',', Qt::SkipEmptyParts))
+            persons.insert(n.trimmed());
+    }
+
+    auto* chipLay = static_cast<QHBoxLayout*>(chipsBar_->layout());
+    auto addChip = [this, chipLay, chipCss](QVector<QPushButton*>& dst,
+                                            const QString& tag, const QString& label) {
+        auto* b = new QPushButton(label, chipsBar_);
+        b->setCheckable(true);
+        b->setCursor(Qt::PointingHandCursor);
+        b->setStyleSheet(chipCss);
+        b->setProperty("catTag", tag);
+        connect(b, &QPushButton::clicked, this, [this, b] {
+            const QString tag = b->property("catTag").toString();
+            activeCat_ = (activeCat_ == tag) ? QString() : tag;
+            model_.setCategoryFilter(activeCat_);
+            restyleChips();
+            updateCount();
+        });
+        chipLay->addWidget(b);
+        dst.append(b);
+    };
+
+    // 全部
+    {
+        auto* b = new QPushButton(QStringLiteral("全部 %1").arg(nVisible), chipsBar_);
+        b->setCheckable(true);
+        b->setCursor(Qt::PointingHandCursor);
+        b->setStyleSheet(chipCss);
+        b->setProperty("catTag", QString());
+        connect(b, &QPushButton::clicked, this, [this] {
+            activeCat_.clear();
+            model_.setCategoryFilter(QString());
+            restyleChips();
+            updateCount();
+        });
+        chipLay->addWidget(b);
+        catChips_.append(b);
+    }
+    // 固定次序 8 类（空分类不展示）
+    for (const QString& cat : catOrder()) {
+        const int c = catCnt.value(cat, 0);
+        if (c > 0) addChip(catChips_, cat,
+                           QStringLiteral("%1 %2").arg(cat).arg(c));
+    }
+    // 其他（低置信度）与 未分类
+    {
+        const int c = catCnt.value(QStringLiteral("其他"), 0);
+        if (c > 0) addChip(catChips_, QStringLiteral("其他"),
+                           QStringLiteral("其他 %1").arg(c));
+    }
+    {
+        int unc = 0;
+        for (const Photo& p : *photos_)
+            if (!(hidePrivate_ && p.priv) && p.category.isEmpty()) ++unc;
+        if (unc > 0) addChip(catChips_, GalleryModel::kNoCategory,
+                             QStringLiteral("未分类 %1").arg(unc));
+    }
+    chipLay->addStretch(1);
+    chipsBar_->setVisible(catChips_.size() > 1);   // 只有「全部」= 无分类数据
+    restyleChips();
+
+    // 人物 chips（有数据才显示整条）
+    auto* personLay = static_cast<QHBoxLayout*>(personBar_->layout());
+    if (!persons.isEmpty()) {
+        auto* allBtn = new QPushButton(QStringLiteral("全部人物"), personBar_);
+        allBtn->setCheckable(true);
+        allBtn->setCursor(Qt::PointingHandCursor);
+        allBtn->setStyleSheet(chipCss);
+        allBtn->setProperty("personTag", QString());
+        connect(allBtn, &QPushButton::clicked, this, [this] {
+            activePerson_.clear();
+            model_.setPersonFilter(QString());
+            restyleChips();
+            updateCount();
+        });
+        personLay->addWidget(allBtn);
+        personChips_.append(allBtn);
+        QStringList sorted = QStringList(persons.cbegin(), persons.cend());
+        std::sort(sorted.begin(), sorted.end());
+        for (const QString& n : sorted) {
+            auto* b = new QPushButton(n, personBar_);
+            b->setCheckable(true);
+            b->setCursor(Qt::PointingHandCursor);
+            b->setStyleSheet(chipCss);
+            b->setProperty("personTag", n);
+            connect(b, &QPushButton::clicked, this, [this, b] {
+                const QString n = b->property("personTag").toString();
+                activePerson_ = (activePerson_ == n) ? QString() : n;
+                model_.setPersonFilter(activePerson_);
+                restyleChips();
+                updateCount();
+            });
+            personLay->addWidget(b);
+            personChips_.append(b);
+        }
+        personLay->addStretch(1);
+        personBar_->setVisible(true);
+    } else {
+        personBar_->setVisible(false);
+    }
+    restyleChips();
+}
+
+void GalleryPage::restyleChips()
+{
+    for (QPushButton* b : catChips_) {
+        const QString tag = b->property("catTag").toString();
+        b->setChecked(activeCat_ == tag);
+    }
+    for (QPushButton* b : personChips_) {
+        const QString tag = b->property("personTag").toString();
+        b->setChecked(activePerson_ == tag);
+    }
+}
+
+void GalleryPage::applyCategoryFilter(const QString& cat)
+{
+    activeCat_ = cat;
+    model_.setCategoryFilter(cat);
+    restyleChips();
+    updateCount();
+}
+
+void GalleryPage::setHidePrivate(bool hide)
+{
+    hidePrivate_ = hide;
+    model_.setHidePrivate(hide);
+    buildChips();      // 计数随隐私门变化
+    updateCount();
+}
+
+void GalleryPage::refresh()
+{
+    model_.rebuild();
+    buildChips();
+    updateCount();
+}
+
+void GalleryPage::updateCount()
+{
+    const int n = model_.rowCount();
+    const int total = photos_ ? photos_->size() : n;
+    QStringList notes;
+    if (!searchText_.trimmed().isEmpty()) notes << QStringLiteral("已筛");
+    if (!activeCat_.isEmpty())
+        notes << (activeCat_ == GalleryModel::kNoCategory
+                      ? QStringLiteral("未分类")
+                      : QStringLiteral("分类：%1").arg(activeCat_));
+    if (!activePerson_.isEmpty()) notes << QStringLiteral("人物：%1").arg(activePerson_);
+    const QString suffix = notes.isEmpty()
+        ? QString() : QStringLiteral("（%1）").arg(notes.join(QStringLiteral(" · ")));
+    count_->setText(n == total && notes.isEmpty()
+        ? QStringLiteral("显示 <b>%1</b> / %2 幅").arg(n).arg(total)
+        : QStringLiteral("显示 <b>%1</b> / %2 幅%3").arg(n).arg(total).arg(suffix));
 }
 
 void GalleryPage::applyFilter(const QString& q)
 {
+    searchText_ = q;
     model_.setFilter(q);
-    const int n = model_.rowCount();
-    const int total = photos_ ? photos_->size() : n;
-    count_->setText(n == total
-        ? QStringLiteral("显示 <b>%1</b> / %2 幅").arg(n).arg(total)
-        : QStringLiteral("显示 <b>%1</b> / %2 幅（已筛）").arg(n).arg(total));
+    updateCount();
 }
 
 // P15：地图区域/省点击 → 图库按大区/省筛选（pid 优先，否则大区）。
