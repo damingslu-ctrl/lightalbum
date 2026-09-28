@@ -82,6 +82,18 @@
   offscreen 冒烟（LA_SMOKE / LA_LUMEN_SMOKE），旧 Python 在无 GPU 下 Chromium 报 GPU Context lost
   无法等价无头自测。**P6 全部完成 → 路线 B 重写收官，native 为唯一正式分发形态。**
 
+- P7 发行打包 + 版本固化 + 全量终验 + 功能对等审计：✅ 完成（见 `docs/P7-PARITY.md`）。
+  - 版本固化：CMake `0.1.0 → 2.0.0`，`target_compile_definitions` 注入 `LA_VERSION`，标题改为
+    「光影集 LightAlbum 2.0.0」。
+  - 发行打包：`native/release.ps1`（delete-free，robocopy→windeployqt 干净部署 + 可选裁 Qt6Network），
+    产出 `LightAlbum-2.0.0-win64.zip`（16 MB，已裁 Qt6Network/tls/networkinformation/generic，无 CMake 残骸）。
+  - 全量终验：构建 exe 与**裁剪后** staging exe 各跑 P1/Cull/Retouch/Beauty/Lumen 五路冒烟，**全绿**
+    （注：`LA_RETOUCH_SMOKE cropNormOk` 对奇数宽源图为测试断言取整边角，非产品缺陷）。
+  - 功能对等审计：核心层（浏览/地图/修图/选片/美图/编辑/蒙版/对比）100% ✅；上层 AI/实验性
+    （人物/分类/本地大模型/HEIC/vault/光学天文/逆地理/MCP/外部编辑器桥）按零云端设计 **❌ 主动省略**；
+    **唯一硬缺口**：native `Library` 只读、无扫描/导入器，依赖 Python 端预建 `library.db`
+    → 建议列 P8 补原生导入器以达成真正独立 GA。
+
 ## index.html → C++ 模块映射（P1 起逐项迁移）
 
 | 现有（index.html 1.9.39） | 目标（native/） |

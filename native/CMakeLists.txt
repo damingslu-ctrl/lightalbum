@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(LightAlbumNative VERSION 0.1.0 LANGUAGES CXX)
+project(LightAlbumNative VERSION 2.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -55,6 +55,8 @@ set(LA_RESOURCES
 
 add_executable(LightAlbum WIN32 ${LA_SOURCES} ${LA_RESOURCES})
 target_link_libraries(LightAlbum PRIVATE Qt6::Widgets Qt6::Sql)
+# 注入版本号（来自 project(VERSION)），供 main.cpp 在标题/关于中展示
+target_compile_definitions(LightAlbum PRIVATE LA_VERSION="${PROJECT_VERSION}")
 
 # P3 起按模块加入（见 docs/REWRITE-PLAN.md 模块映射）
 # add_subdirectory(src/retouch)

@@ -3,6 +3,10 @@ client/venv/
 client/build/
 client/dist/
 native/build/
+# native 发行产物（脚本生成，不入库）
+native/LightAlbum-*.zip
+native/LightAlbum-*-win64/
+native/_trim_excluded/
 __pycache__/
 *.pyc
 venv*/

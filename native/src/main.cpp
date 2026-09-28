@@ -202,7 +202,7 @@ int main(int argc, char *argv[])
     }
 
     MainWindow win(&lib, thumbsDir);
-    win.setWindowTitle(QStringLiteral("光影集 LightAlbum (native)"));
+    win.setWindowTitle(QStringLiteral("光影集 LightAlbum " LA_VERSION));
     win.resize(1440, 940);
     win.show();
 
