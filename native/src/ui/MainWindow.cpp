@@ -11,6 +11,7 @@
 #include <QDialog>
 #include <QKeyEvent>
 #include <QPair>
+#include <QStringList>
 #include <QToolButton>
 #include <QHBoxLayout>
 #include <QVBoxLayout>
@@ -83,7 +84,7 @@ public:
         : QWidget(parent), items_(items)
     {
         setObjectName(QStringLiteral("rotGallery"));
-        setMinimumHeight(300);
+        setMinimumHeight(520);   // P15.2：画廊放大（原 300）
         auto* root = new QVBoxLayout(this);
         root->setContentsMargins(0, 0, 0, 0);
         root->setSpacing(10);
@@ -93,16 +94,16 @@ public:
         glow_->setObjectName(QStringLiteral("galleryGlow"));
         glow_->setAttribute(Qt::WA_TransparentForMouseEvents);
         {
-            QPixmap gp(560, 380); gp.fill(Qt::transparent);
+            QPixmap gp(760, 500); gp.fill(Qt::transparent);
             QPainter p(&gp); p.setRenderHint(QPainter::Antialiasing, true);
-            QRadialGradient rg(280, 190, 260);
+            QRadialGradient rg(380, 250, 340);
             rg.setColorAt(0.0, QColor(0x4f, 0xc0, 0x8a, 120));
             rg.setColorAt(0.55, QColor(0x4f, 0xc0, 0x8a, 34));
             rg.setColorAt(1.0, QColor(0x4f, 0xc0, 0x8a, 0));
-            p.setBrush(rg); p.setPen(Qt::NoPen); p.drawEllipse(0, 0, 560, 380);
+            p.setBrush(rg); p.setPen(Qt::NoPen); p.drawEllipse(0, 0, 760, 500);
             glow_->setPixmap(gp);
         }
-        glow_->setGeometry((width() - 560) / 2, -50, 560, 380);
+        glow_->setGeometry((width() - 760) / 2, -60, 760, 500);
         glowEff_ = new QGraphicsOpacityEffect(glow_);
         glowEff_->setOpacity(0.16);
         glow_->setGraphicsEffect(glowEff_);
@@ -110,7 +111,7 @@ public:
         // 画框
         frame_ = new QFrame(this);
         frame_->setObjectName(QStringLiteral("galleryFrame"));
-        frame_->setMinimumHeight(264);
+        frame_->setMinimumHeight(460);   // P15.2：画框放大（原 264）
         frame_->setStyleSheet(QStringLiteral(
             "QFrame{background:#0a0e0a;border:1px solid #26312a;border-radius:16px;}"));
         auto* fl = new QHBoxLayout(frame_);
@@ -173,7 +174,7 @@ public:
     void resizeEvent(QResizeEvent* e) override
     {
         QWidget::resizeEvent(e);
-        glow_->setGeometry((width() - 560) / 2, -50, 560, 380);
+        glow_->setGeometry((width() - 760) / 2, -60, 760, 500);
         layoutImages();
         rerenderCurrent();
     }
@@ -582,26 +583,22 @@ MainWindow::MainWindow(const Library* lib, const QString& thumbsDir,
     seam_->setGraphicsEffect(seamEff_);
     rl->addWidget(seam_);
 
-    // ---- KPI 指标条（P11：语义色竖条卡 —— 总数翡翠 / 年份金 / 足迹紫罗兰）----
+    // ---- 模块名称条（P15.2：替代固定 KPI 条，随导航切换显示对应模块名）----
     kpis_ = new QWidget(right);
     kpis_->setStyleSheet(QStringLiteral("background:#060806;"));
     auto* kl = new QHBoxLayout(kpis_);
-    kl->setContentsMargins(20, 12, 20, 12);
-    kl->setSpacing(14);
-    const Kpi k = lib_->kpi();
-    const QString yearTxt = k.yearCount > 0
-        ? QStringLiteral("%1 年 (%2\u2013%3)").arg(k.yearCount).arg(k.minYear).arg(k.maxYear)
-        : QStringLiteral("\u2014");
-    auto addKpi = [kl](const QString& v, const QString& label, const QColor& accent) {
-        auto* lb = new QLabel(QStringLiteral(
-            "<b style='font-size:20px;color:#f4f7f4;'>%1</b><br>"
-            "<span style='font-size:11px;color:#8da396;'>%2</span>").arg(v, label));
-        lb->setStyleSheet(Lumen::kpiCard(accent));
-        kl->addWidget(lb);
-    };
-    addKpi(QString::number(k.total), QStringLiteral("作品总数"), Lumen::EMERALD);
-    addKpi(yearTxt, QStringLiteral("拍摄年份"), Lumen::GOLD);
-    addKpi(QString::number(k.provCount), QStringLiteral("足迹省份"), Lumen::VIOLET);
+    kl->setContentsMargins(20, 8, 20, 8);
+    kl->setSpacing(10);
+    auto* modBar = new QFrame(kpis_);
+    modBar->setFixedSize(4, 18);
+    modBar->setStyleSheet(QStringLiteral("background:#d9a94e;border-radius:2px;"));
+    kl->addWidget(modBar);
+    moduleLbl_ = new QLabel(QStringLiteral("首页"), kpis_);
+    QFont mf = moduleLbl_->font(); mf.setPointSizeF(14); mf.setBold(true);
+    mf.setLetterSpacing(QFont::AbsoluteSpacing, 4.0);
+    moduleLbl_->setFont(mf);
+    moduleLbl_->setStyleSheet(QStringLiteral("color:#f4f7f4;"));
+    kl->addWidget(moduleLbl_);
     kl->addStretch(1);
     rl->addWidget(kpis_);
 
@@ -702,11 +699,14 @@ void MainWindow::tickBreath()
 }
 
 // P13：高亮当前导航项（显示对应金条），并更新呼吸目标行。
+// P15.2：顶栏模块名称随导航切换。
 void MainWindow::updateNavActive(int row)
 {
     activeNavRow_ = row;
     for (int i = 0; i < navBars_.size(); ++i)
         navBars_.at(i)->setVisible(i == row);
+    if (moduleLbl_ && row >= 0 && row < int(sizeof(kNav) / sizeof(kNav[0])))
+        moduleLbl_->setText(QString::fromUtf8(kNav[row].label));
 }
 
 // P13：导航切换联动动效（淡出 → 换页 → 淡入+轻微上滑）。
@@ -862,7 +862,7 @@ QWidget* MainWindow::makeHome(const QString& thumbsDir) const
     glow->setGraphicsEffect(ge);
     outer->addWidget(hero);
 
-    // ---- 旋转画廊（P15 中心装置）----
+    // ---- 旋转画廊（P15 中心装置；P15.2 优先横幅 + 放大）----
     QVector<RotatingGallery::Item> items;
     const QVector<Photo>& all = lib_->photos();
     QVector<const Photo*> recent;
@@ -870,8 +870,23 @@ QWidget* MainWindow::makeHome(const QString& thumbsDir) const
         if (!ph.thumbFile.isEmpty()) recent.append(&ph);
     std::stable_sort(recent.begin(), recent.end(),
                      [](const Photo* a, const Photo* b) { return a->date > b->date; });
-    if (recent.size() > 8) recent.resize(8);
+    // P15.2：优先选横幅（宽>高，按 dim 字段解析，零图片解码）；横幅不足 8 再以竖图补位
+    QVector<const Photo*> land, other;
     for (const Photo* ph : recent) {
+        const QStringList wh = ph->dim.split(QChar(0x00D7));   // "W×H"
+        bool isLand = false;
+        if (wh.size() == 2) {
+            bool okW = false, okH = false;
+            const int w = wh.at(0).toInt(&okW), h = wh.at(1).toInt(&okH);
+            isLand = okW && okH && w > h;
+        }
+        (isLand ? land : other).append(ph);
+    }
+    if (land.size() > 8) land.resize(8);
+    QVector<const Photo*> picked = land;
+    for (int i = 0; picked.size() < 8 && i < other.size(); ++i)
+        picked.append(other.at(i));
+    for (const Photo* ph : picked) {
         const QPixmap pm = QPixmap(QDir(thumbsDir).filePath(ph->thumbFile));
         if (pm.isNull()) continue;
         const QString cap = ph->title.isEmpty()
@@ -918,6 +933,30 @@ QWidget* MainWindow::makeHome(const QString& thumbsDir) const
         feat->addCard(col);
     }
     outer->addWidget(feat);
+
+    // ---- 库存概览（P15.2：原顶栏固定 KPI 条移入首页，随首页滚动）----
+    {
+        const Kpi k = lib_->kpi();
+        const QString yearTxt = k.yearCount > 0
+            ? QStringLiteral("%1 年 (%2\u2013%3)").arg(k.yearCount).arg(k.minYear).arg(k.maxYear)
+            : QStringLiteral("\u2014");
+        auto* kpiRow = new QWidget(w);
+        auto* khl = new QHBoxLayout(kpiRow);
+        khl->setContentsMargins(0, 0, 0, 0);
+        khl->setSpacing(14);
+        auto addKpi = [khl](const QString& v, const QString& label, const QColor& accent) {
+            auto* lb = new QLabel(QStringLiteral(
+                "<b style='font-size:20px;color:#f4f7f4;'>%1</b><br>"
+                "<span style='font-size:11px;color:#8da396;'>%2</span>").arg(v, label));
+            lb->setStyleSheet(Lumen::kpiCard(accent));
+            khl->addWidget(lb);
+        };
+        addKpi(QString::number(k.total), QStringLiteral("作品总数"), Lumen::EMERALD);
+        addKpi(yearTxt, QStringLiteral("拍摄年份"), Lumen::GOLD);
+        addKpi(QString::number(k.provCount), QStringLiteral("足迹省份"), Lumen::VIOLET);
+        khl->addStretch(1);
+        outer->addWidget(kpiRow);
+    }
 
     // ---- 最近作品胶片带：真实缩略图（按日期倒序取 12 张），金描边 hover ----
     auto* head = new QWidget(w);

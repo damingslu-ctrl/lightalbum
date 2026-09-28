@@ -65,6 +65,7 @@ private:
     QLabel*         title_ = nullptr;
     QStackedWidget* stack_ = nullptr;
     QWidget*        kpis_ = nullptr;
+    QLabel*         moduleLbl_ = nullptr;   // P15.2：顶栏模块名称（随导航切换）
 
     // P13 呼吸感受控元素
     QFrame*                  seam_ = nullptr;       // 顶栏发丝线
