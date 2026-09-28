@@ -135,6 +135,16 @@ P10 足迹点亮（离线逆地理编码）：✅ 完成
   - 验证：`LA_GEO_SMOKE` PASS（雷克雅未克/北京/广州/大连/南海五点断言 + 真库 ≥40% 闸）；
     七路回归全绿（P1 provs=12 / Cull / Retouch / Beauty / Lumen / Agent / P8 金样对拍）。
 
+2.0.0 正式发布（2026-09-28）：✅ 完成
+  - 定位：native 2.0.0 = 唯一正式分发形态（零云端核心客户端）；旧 1.x Python 打包
+    （client/dist 1.5.5→1.9.39 共 44 项）全部移出工作区（主机 safe-delete 策略禁止批量删除，
+    改移至 D:\lightalbum-old-versions-trash，确认后手动清空）；native 时间戳 staging/.bak/
+    _trim_excluded 已真删。
+  - 使用说明书：docs/LightAlbum-2.0.0-使用说明书.md（安装/数据路径/导入/八区功能/AI 智能体
+    接入/隐私/已知边界/环境变量/故障排查）；release.ps1 自动把说明书以 USER-MANUAL.md
+    打进发行包（ASCII 通配符匹配，规避 ps1 中文编码坑）。
+  - 发行物：native/LightAlbum-2.0.0-win64.zip（16.6 MB，含说明书；staging exe 冒烟终验通过）。
+
 ## index.html → C++ 模块映射（P1 起逐项迁移）
 
 | 现有（index.html 1.9.39） | 目标（native/） |

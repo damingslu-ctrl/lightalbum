@@ -35,6 +35,11 @@ windeployqt.exe --release --no-translations --no-qml --no-opengl-sw (Join-Path $
 # 3) offscreen platform plugin for CI/smoke
 Copy-Item "D:/qt/6.8.3/mingw_64/plugins/platforms/qoffscreen.dll" (Join-Path $staging "platforms/qoffscreen.dll") -Force
 
+# 3.5) user manual (matched via ASCII wildcard; copied as USER-MANUAL.md)
+$docsDir = Join-Path $root "..\docs"
+$manual = Get-ChildItem $docsDir -Filter "LightAlbum-2.0.0-*.md" -File | Select-Object -First 1
+if ($manual) { Copy-Item $manual.FullName (Join-Path $staging "USER-MANUAL.md") -Force }
+
 # 4) optional trim (native has no QNetwork usage)
 if ($TrimNetwork) {
   $excl = Join-Path $root "_trim_excluded"
