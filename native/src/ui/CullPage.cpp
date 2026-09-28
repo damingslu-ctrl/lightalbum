@@ -4,6 +4,7 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QListView>
+#include <QStackedWidget>
 #include <QPainter>
 #include <QPixmap>
 #include <QFileInfo>
@@ -59,9 +60,9 @@ void CullCardDelegate::paint(QPainter* p, const QStyleOptionViewItem& o,
     p->save();
     const QRect r = o.rect.adjusted(6, 6, -6, -6);
     const bool sel = (o.state & QStyle::State_Selected);
-    // 卡片底
-    p->setPen(QPen(sel ? QColor(0xc9, 0xa2, 0x4b) : QColor(0x2a, 0x2f, 0x2c), sel ? 2 : 1));
-    p->setBrush(QColor(0x12, 0x16, 0x14));
+    // 卡片底（P12：对齐 Lumen token——旧值 0xc9a24b/0x121614 为 P10 色板残留）
+    p->setPen(QPen(sel ? QColor(0xd9, 0xa9, 0x4e) : QColor(0x26, 0x31, 0x2a), sel ? 2 : 1));
+    p->setBrush(QColor(0x13, 0x1a, 0x15));
     p->drawRoundedRect(r, 10, 10);
 
     const QPixmap pm = idx.data(Qt::DecorationRole).value<QPixmap>();
@@ -71,7 +72,7 @@ void CullCardDelegate::paint(QPainter* p, const QStyleOptionViewItem& o,
         p->drawPixmap(imgR.x() + (imgR.width() - scaled.width()) / 2,
                       imgR.y() + (imgR.height() - scaled.height()) / 2, scaled);
     } else {
-        p->setPen(QColor(0x3a, 0x40, 0x3c));
+        p->setPen(QColor(0x5a, 0x6b, 0x60));
         p->drawText(imgR, Qt::AlignCenter, QStringLiteral("无缩略图"));
     }
 
@@ -81,12 +82,12 @@ void CullCardDelegate::paint(QPainter* p, const QStyleOptionViewItem& o,
     const QString reason = idx.data(CullModel::ReasonRole).toString();
 
     QRect txtR(r.x() + 10, imgR.bottom() + 6, r.width() - 20, r.height() - imgR.height() - 12);
-    p->setPen(QColor(0xf2, 0xf5, 0xf3));
+    p->setPen(QColor(0xf4, 0xf7, 0xf4));
     QFont f = p->font(); f.setBold(true); f.setPointSizeF(13);
     p->setFont(f);
     p->drawText(txtR, Qt::AlignLeft, QStringLiteral("%1  %2").arg(grade).arg(score, 0, 'f', 1));
 
-    p->setPen(QColor(0x9f, 0xa8, 0xa3));
+    p->setPen(QColor(0x8d, 0xa3, 0x96));
     f.setBold(false); f.setPointSizeF(10); p->setFont(f);
     const QString sub = (status == QStringLiteral("rejected")) ? reason
         : QStringLiteral("本地精选");
@@ -132,6 +133,9 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     for (const QString& l : labels) {
         auto* lb = new QLabel(QStringLiteral("<b style='font-size:15px;color:#f4f7f4;'>—</b><br>"
             "<span style='font-size:11px;color:#8da396;'>%1</span>").arg(l), kp);
+        // P12：居中 + 最小宽度，防止「解码失败」等 4 字标签被压成两行
+        lb->setAlignment(Qt::AlignCenter);
+        lb->setMinimumWidth(80);
         lb->setStyleSheet(QStringLiteral("QLabel{background:#131a15;border:1px solid #26312a;"
             "border-radius:10px;padding:8px 14px;}"));
         kpis_.append(lb);
@@ -168,7 +172,17 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     model_ = new CullModel(this);
     view->setModel(model_);
     view->setItemDelegate(new CullCardDelegate(view));
-    lay->addWidget(view, 1);
+
+    // P12：分析前大面板不再是一片黑洞——第 0 页放空态引导，出结果切到第 1 页网格
+    gridStack_ = new QStackedWidget(this);
+    auto* emptyHint = new QLabel(QStringLiteral(
+        "尚无分析结果\n\n导入照片后点击「开始分析」\n基于本地缩略图打分 · 零云端 · 失败即放行"), this);
+    emptyHint->setAlignment(Qt::AlignCenter);
+    emptyHint->setStyleSheet(QStringLiteral("QLabel{color:#8da396;font-size:13px;background:transparent;}"));
+    gridStack_->addWidget(emptyHint);   // index 0
+    gridStack_->addWidget(view);        // index 1
+    gridStack_->setCurrentIndex(0);
+    lay->addWidget(gridStack_, 1);
 
     connect(runBtn_, &QPushButton::clicked, this, &CullPage::onAnalyze);
 
@@ -232,6 +246,7 @@ void CullPage::onFinished(const CullReport& rep)
     setKpi(6, QString::number(rep.unknownCount), QStringLiteral("解码失败"));
 
     model_->setItems(rep.topItems, thumbsDir_);
+    if (gridStack_) gridStack_->setCurrentIndex(model_->rowCount() > 0 ? 1 : 0);
 
     if (!qEnvironmentVariableIsEmpty("LA_CULL_SMOKE")) {
         std::fprintf(stderr,

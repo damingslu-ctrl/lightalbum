@@ -12,7 +12,6 @@ class QComboBox;
 class QLabel;
 class QPushButton;
 class QToolButton;
-class QProgressBar;
 class QTimer;
 
 class BeautyPage : public QWidget {
@@ -44,7 +43,6 @@ private:
     QLabel*      afterLbl_   = nullptr;
     QLabel*      selName_    = nullptr;   // 当前风格名
     QLabel*      badge_      = nullptr;
-    QProgressBar* prog_      = nullptr;
     QPushButton* autoBtn_    = nullptr;
     QPushButton* exportBtn_  = nullptr;
 

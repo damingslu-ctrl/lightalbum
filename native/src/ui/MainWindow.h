@@ -26,7 +26,12 @@ public:
     int shootPages(const QString& dir);
 
 private:
-    QWidget* makePlaceholder(const QString& secName, const QString& phase) const;
+    // P12「美术馆策展」：首页为艺术 hero 仪表盘（hero 渐变 + 功能入口 + 最近作品胶片带）
+    QWidget* makeHome(const QString& thumbsDir) const;
+    // 占位页带图标与用户向说明（不再引用内部 docs）；关于页显示真实版本信息
+    QWidget* makePlaceholder(const QString& secName, const QString& iconKind,
+                             const QString& desc) const;
+    QWidget* makeAbout() const;
 
     void startImport();          // P8：选目录 → 后台扫描入库 → 汇总/重启
 

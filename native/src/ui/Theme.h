@@ -107,11 +107,52 @@ inline QString kpiCard(const QColor& accent)
 {
     return QString::fromUtf8(
         "QLabel{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
-        "stop:0 rgba(%1,26), stop:1 rgba(0,0,0,0)) #131a15;"
+        "stop:0 rgba(%1,46), stop:1 rgba(0,0,0,0)) #131a15;"
         "border:1px solid #26312a;border-left:3px solid #%2;"
-        "border-radius:10px;padding:8px 16px;}")
+        "border-radius:12px;padding:10px 18px;}")
         .arg(QString::number(accent.red()) + "," + QString::number(accent.green())
              + "," + QString::number(accent.blue()), hex(accent));
+}
+
+// ---- P12「美术馆策展」组件 --------------------------------------------------
+
+// Hero 横幅：对角翡翠→金低语渐变（大面积但克制，文字仍是主角）
+inline QString heroBand()
+{
+    return QString::fromUtf8(
+        "#hero{background:qlineargradient(x1:0,y1:0,x2:1,y2:1,"
+        "stop:0 #14281d, stop:0.45 #0d130f, stop:1 #1c1508);"
+        "border:1px solid #26312a;border-radius:16px;}");
+}
+
+// 胶囊 chip：描边 + 语义色文字
+inline QString pill(const QColor& accent)
+{
+    return QString::fromUtf8(
+        "QLabel{background:#0e1410;border:1px solid rgba(%1,120);"
+        "border-radius:999px;padding:3px 12px;color:#%2;font-size:11px;}")
+        .arg(QString::number(accent.red()) + "," + QString::number(accent.green())
+             + "," + QString::number(accent.blue()), hex(accent));
+}
+
+// 功能入口卡：图标 + 名称，hover 时语义色描边点亮
+inline QString featureCard(const QColor& accent)
+{
+    return QString::fromUtf8(
+        "QToolButton{background:#131a15;border:1px solid #26312a;border-radius:14px;"
+        "padding:12px 8px;color:#f4f7f4;font-weight:bold;font-size:13px;}"
+        "QToolButton:hover{background:#1a231d;border:1px solid #%1;}"
+        "QToolButton:pressed{background:#0e1410;}")
+        .arg(hex(accent));
+}
+
+// 最近作品胶片卡：圆角图 + 底部日期
+inline QString filmCard()
+{
+    return QString::fromUtf8(
+        "QToolButton{background:#131a15;border:1px solid #26312a;border-radius:12px;"
+        "padding:5px;color:#8da396;font-size:10.5px;}"
+        "QToolButton:hover{border:1px solid #d9a94e;background:#1a231d;}");
 }
 
 // 输入框 / 下拉：胶囊内嵌

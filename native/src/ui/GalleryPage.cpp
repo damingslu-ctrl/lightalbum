@@ -28,21 +28,26 @@ public:
         p->save();
         p->setRenderHint(QPainter::Antialiasing, true);
 
-        // 卡片底（与 web 版 .g-item：圆角 10、line 描边、选中金边）
+        // 卡片底（P12：圆角加大 + hover 翡翠描边 + 选中金边）
         QRectF card(opt.rect.adjusted(8, 8, -8, -8));
+        const bool hov  = (opt.state & QStyle::State_MouseOver) != 0;
+        const bool sel  = (opt.state & QStyle::State_Selected) != 0;
         p->setPen(Qt::NoPen);
         p->setBrush(QColor(0x13, 0x1a, 0x15));
-        p->drawRoundedRect(card, 10, 10);
-        if (opt.state & QStyle::State_Selected) {
-            QPen pen(QColor(0xd9, 0xa9, 0x4e), 2.0);
+        p->drawRoundedRect(card, 12, 12);
+        p->setBrush(Qt::NoBrush);
+        if (sel) {
+            QPen pen(QColor(0xd9, 0xa9, 0x4e), 2.2);
             p->setPen(pen);
-            p->setBrush(Qt::NoBrush);
-            p->drawRoundedRect(card.adjusted(1, 1, -1, -1), 10, 10);
+            p->drawRoundedRect(card.adjusted(1, 1, -1, -1), 12, 12);
+        } else if (hov) {
+            QPen pen(QColor(0x4f, 0xc0, 0x8a, 170), 1.4);
+            p->setPen(pen);
+            p->drawRoundedRect(card.adjusted(0.5, 0.5, -0.5, -0.5), 12, 12);
         } else {
             QPen pen(QColor(0x26, 0x31, 0x2a), 1);
             p->setPen(pen);
-            p->setBrush(Qt::NoBrush);
-            p->drawRoundedRect(card.adjusted(0.5, 0.5, -0.5, -0.5), 10, 10);
+            p->drawRoundedRect(card.adjusted(0.5, 0.5, -0.5, -0.5), 12, 12);
         }
 
         // 图区：等比居中；缺失/未加载显示占位
@@ -125,6 +130,7 @@ GalleryPage::GalleryPage(const QVector<Photo>* photos, const QString& thumbsDir,
     view_->setSpacing(0);
     view_->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
     view_->setSelectionMode(QAbstractItemView::SingleSelection);
+    view_->setMouseTracking(true);   // P12：委托 hover 翡翠描边需要鼠标追踪
     view_->setFrameShape(QFrame::NoFrame);
     view_->setStyleSheet(Lumen::scrollbar() +
         QStringLiteral("QListView{background:transparent;}"

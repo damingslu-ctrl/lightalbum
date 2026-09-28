@@ -584,7 +584,7 @@ void RetouchPage::onAgentRun()
                     ? QStringLiteral("AI 智能体 · %1 · %2 · 零云端").arg(plan.model, plan.intent)
                     : QStringLiteral("AI 智能体 · 本地规则兜底 · %1 · 零云端").arg(plan.intent);
                 badge_->setText(QStringLiteral("%1\n依据：%2").arg(agentNote_, plan.reason));
-                prog_->setValue(100);
+                prog_->setValue(0);  // P12: 完成即回零，进度条只在 AI 决策期间可见
                 doApply();
             });
     watcher->setFuture(QtConcurrent::run([img, iso, shutter, goal]() {
@@ -690,7 +690,7 @@ void RetouchPage::onMaskApply()
     afterImg_ = localOut_;                                   // P4-3：供对比视图
     if (compareMode_) compareW_->setImages(geoImg_, afterImg_);
     badge_->setText(QStringLiteral("局部调整已应用 · 零云端"));
-    prog_->setValue(100);
+    prog_->setValue(0);  // P12: 完成即回零，进度条只在 AI 决策期间可见
 }
 
 // ----------------------------------------------------------------- P4-3 裁剪 / 对比槽
@@ -744,7 +744,7 @@ void RetouchPage::onEraseTaskUpdated(int id)
             Qt::KeepAspectRatio, Qt::SmoothTransformation));
         if (maskMode_) maskBtn_->setChecked(false);
         badge_->setText(QStringLiteral("AI消除结果已回填 · 零云端"));
-        prog_->setValue(100);
+        prog_->setValue(0);  // P12: 完成即回零，进度条只在 AI 决策期间可见
     }
 }
 
@@ -809,7 +809,7 @@ void RetouchPage::onExport()
     if (fname.isEmpty()) return;
     if (out.save(fname)) {
         badge_->setText(QStringLiteral("已导出 · %1 · 零云端").arg(QFileInfo(fname).fileName()));
-        prog_->setValue(100);
+        prog_->setValue(0);  // P12: 完成即回零，进度条只在 AI 决策期间可见
     } else {
         badge_->setText(QStringLiteral("导出失败"));
     }
@@ -864,7 +864,7 @@ void RetouchPage::doApply()
         Qt::KeepAspectRatio, Qt::SmoothTransformation));
     if (compareMode_) compareW_->setImages(geoImg_, afterImg_);
     updateBadge();
-    prog_->setValue(100);
+    prog_->setValue(0);  // P12: 完成即回零，进度条只在 AI 决策期间可见
 }
 
 void RetouchPage::updateBadge()

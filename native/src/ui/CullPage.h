@@ -9,6 +9,8 @@
 #include "../core/Library.h"
 #include "../core/CullEngine.h"
 
+class QStackedWidget;
+
 // 选片结果网格模型
 class CullModel : public QAbstractListModel {
     Q_OBJECT
@@ -76,5 +78,6 @@ private:
     QPushButton*  runBtn_ = nullptr;
     QLabel*       progress_ = nullptr;
     QVector<QLabel*> kpis_;
+    QStackedWidget* gridStack_ = nullptr;   // 0=空态引导 / 1=结果网格
     void setKpi(int idx, const QString& v, const QString& label);
 };

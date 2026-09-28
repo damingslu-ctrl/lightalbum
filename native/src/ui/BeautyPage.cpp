@@ -6,7 +6,6 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QToolButton>
-#include <QProgressBar>
 #include <QScrollArea>
 #include <QFileDialog>
 #include <QDir>
@@ -114,20 +113,14 @@ BeautyPage::BeautyPage(const QVector<Photo>* photos, const QString& thumbsDir, Q
     sa->setWidget(gallery_);
     root->addWidget(sa, 1);
 
-    // ---- 徽章 + 进度 ----
+    // ---- 状态徽章（P12：移除常满进度条——同步操作无进度语义，状态文字足够）----
     auto* foot = new QWidget(this);
     auto* fl = new QHBoxLayout(foot);
     fl->setContentsMargins(0, 0, 0, 0);
-    prog_ = new QProgressBar(foot);
-    prog_->setRange(0, 100); prog_->setValue(0);
-    prog_->setTextVisible(false);
-    prog_->setStyleSheet("QProgressBar{background:#0e1410;border:1px solid #26312a;"
-        "border-radius:6px;height:8px;} QProgressBar::chunk{border-radius:6px;"
-        "background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #4fc08a, stop:1 #6adba6);}");
     badge_ = new QLabel(QStringLiteral("选择下方风格卡 · 零云端"), foot);
     badge_->setStyleSheet("color:#8da396;");
-    fl->addWidget(prog_, 1);
     fl->addWidget(badge_);
+    fl->addStretch(1);
     root->addWidget(foot);
 
     connect(photoCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &BeautyPage::onPhotoChanged);
@@ -227,8 +220,7 @@ void BeautyPage::onExport()
     if (fname.isEmpty()) return;
     if (out.save(fname)) {
         badge_->setText(QStringLiteral("已导出 · %1 · 零云端").arg(QFileInfo(fname).fileName()));
-        prog_->setValue(100);
-    } else {
+        } else {
         badge_->setText(QStringLiteral("导出失败"));
     }
 }
@@ -240,7 +232,6 @@ void BeautyPage::updatePreview()
     afterLbl_->setPixmap(QPixmap::fromImage(out).scaled(kPreviewW, kPreviewH,
         Qt::KeepAspectRatio, Qt::SmoothTransformation));
     badge_->setText(QStringLiteral("%1 · 零云端").arg(selName_->text()));
-    prog_->setValue(100);
 }
 
 void BeautyPage::onPhotoChanged(int)   // 忽略 idx，用 combo 当前值
