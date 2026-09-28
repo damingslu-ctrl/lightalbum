@@ -94,6 +94,24 @@
     **唯一硬缺口**：native `Library` 只读、无扫描/导入器，依赖 Python 端预建 `library.db`
     → 建议列 P8 补原生导入器以达成真正独立 GA。
 
+P8 原生导入器（补齐 P7 唯一硬缺口 → native 真正独立 GA）：✅ 完成
+  - `native/src/core/ExifReader.{h,cpp}`：纯手写 TIFF/EXIF 解析（零第三方依赖），JPEG APP1 / PNG eXIf /
+    TIFF 容器按**文件签名**识别（piexif 同款语义，实测抓到 .png 扩展名的 JPEG）；语义逐条对齐
+    `core/exif.py`（有理数零值保护 / f·快门格式化 / DMS→十进制度 round6 / mtime 日期兜底）。
+  - `native/src/core/PathGuess.{h,cpp}`：`scanner.py` 路径推导忠实移植（REGION/SERIES/PROV 全部别名表、
+    省份精确→最长子串、城市下一层跳工作目录、标题/日期正则）；中文字面量必须 `QString::fromUtf8`
+    （QLatin1String 会按 Latin-1 解出乱码——对拍抓到）。
+  - `native/src/core/Scanner.{h,cpp}`：增量同步（size+mtime 未变完全跳过）、云端占位识别、
+    `*_retouched`/SKIP_DIRS/点目录排除、200 张攒批 UPSERT（评分不覆盖语义）、消失标 missing=1；
+    **缩略图缓存键 sha1(反斜杠绝对路径|mtime整数|size) 与 Python `thumbs._key` 逐字节兼容**
+    → 双端共享同一 thumbs 目录互相命中（注意盘符大小写：DB 主键与键字节敏感，Qt 给大写 `D:`）。
+  - UI：顶栏「导入目录」→ QFileDialog → QtConcurrent 后台扫描（QProgressDialog 进度/取消）→
+    汇总 + 可选重启载入。Qt6 的 `QtConcurrent::run` 头文件内联实现，exe 不导入 Qt6Concurrent.dll
+    （staging 无此 DLL 是正确形态）。
+  - 验证：`LA_SCAN_SMOKE` 冒烟 + 金样对拍 `_gold_scan.py`/`_compare_scan.py` —— 4 张合成样张 +
+    **12 张真实照片（iPhone 17/15/13 Pro、GPS、前置、竖拍、JPEG-in-PNG）逐字段（23 EXIF 字段 + rel +
+    thumb 键）0 差异**；增量幂等（重跑 added=0/unchanged=N）；五路冒烟回归全绿；发行 zip 重出（15.5 MB）。
+
 ## index.html → C++ 模块映射（P1 起逐项迁移）
 
 | 现有（index.html 1.9.39） | 目标（native/） |

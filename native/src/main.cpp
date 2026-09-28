@@ -14,6 +14,7 @@
 #include <cmath>
 #include "core/Library.h"
 #include "core/LumenEngine.h"
+#include "core/Scanner.h"
 #include "ui/MainWindow.h"
 #include "ui/DarkPalette.h"
 
@@ -189,6 +190,23 @@ int main(int argc, char *argv[])
     if (qEnvironmentVariableIsSet("LA_LUMEN_SMOKE"))
         return runLumenSmoke();
 
+    // P8 原生导入器冒烟：扫描 LA_SCAN_ROOT 入库到 LA_SCAN_DB（独立于正式库），
+    // 打印增量结果后退出；同一命令重跑应 added=0 / unchanged=N（增量幂等）。
+    if (qEnvironmentVariableIsSet("LA_SCAN_SMOKE")) {
+        const ScanResult r = Scanner::syncRoot(
+            qEnvironmentVariable("LA_SCAN_ROOT"),
+            qEnvironmentVariable("LA_SCAN_DB"),
+            qEnvironmentVariable("LA_SCAN_THUMBS"));
+        std::fprintf(stderr,
+                     "LA_SCAN_SMOKE added=%d updated=%d unchanged=%d missing=%d "
+                     "placeholders=%d total=%d errors=%d secs=%.2f %s\n",
+                     r.added, r.updated, r.unchanged, r.missing, r.placeholders,
+                     r.total, r.errorCount, r.seconds,
+                     r.errorCount == 0 ? "PASS" : "FAIL");
+        std::fflush(stderr);
+        return r.errorCount == 0 ? 0 : 1;
+    }
+
     Library lib;
     const QString dbPath  = qEnvironmentVariable("LA_DB", QStringLiteral("D:/lightalbum/library.db"));
     const QString thumbsDir = qEnvironmentVariable("LA_THUMBS", QStringLiteral("D:/lightalbum/thumbs"));
@@ -201,7 +219,7 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    MainWindow win(&lib, thumbsDir);
+    MainWindow win(&lib, thumbsDir, dbPath);
     win.setWindowTitle(QStringLiteral("光影集 LightAlbum " LA_VERSION));
     win.resize(1440, 940);
     win.show();

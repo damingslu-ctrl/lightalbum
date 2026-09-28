@@ -19,12 +19,15 @@ class BeautyPage;
 class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
-    MainWindow(const Library* lib, const QString& thumbsDir, QWidget* parent = nullptr);
+    MainWindow(const Library* lib, const QString& thumbsDir,
+               const QString& dbPath = QString(), QWidget* parent = nullptr);
 
 private:
     QWidget* makePlaceholder(const QString& secName, const QString& phase) const;
+    void startImport();          // P8：选目录 → 后台扫描入库 → 汇总/重启
 
     const Library* lib_;
+    QString         dbPath_;
     QListWidget*    nav_ = nullptr;
     QLineEdit*      search_ = nullptr;
     QLabel*         title_ = nullptr;

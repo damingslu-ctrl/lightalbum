@@ -7,12 +7,18 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets Sql)
+find_package(Qt6 REQUIRED COMPONENTS Widgets Sql Concurrent)
 
 set(LA_SOURCES
     src/main.cpp
     src/core/Library.h
     src/core/Library.cpp
+    src/core/PathGuess.h
+    src/core/PathGuess.cpp
+    src/core/ExifReader.h
+    src/core/ExifReader.cpp
+    src/core/Scanner.h
+    src/core/Scanner.cpp
     src/ui/DarkPalette.h
     src/ui/ThumbCache.h
     src/ui/ThumbCache.cpp
@@ -54,7 +60,7 @@ set(LA_RESOURCES
 )
 
 add_executable(LightAlbum WIN32 ${LA_SOURCES} ${LA_RESOURCES})
-target_link_libraries(LightAlbum PRIVATE Qt6::Widgets Qt6::Sql)
+target_link_libraries(LightAlbum PRIVATE Qt6::Widgets Qt6::Sql Qt6::Concurrent)
 # 注入版本号（来自 project(VERSION)），供 main.cpp 在标题/关于中展示
 target_compile_definitions(LightAlbum PRIVATE LA_VERSION="${PROJECT_VERSION}")
 
