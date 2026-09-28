@@ -21,6 +21,8 @@ set(LA_SOURCES
     src/core/Scanner.cpp
     src/core/LumenAgent.h
     src/core/LumenAgent.cpp
+    src/core/GeoIndex.h
+    src/core/GeoIndex.cpp
     src/ui/DarkPalette.h
     src/ui/ThumbCache.h
     src/ui/ThumbCache.cpp

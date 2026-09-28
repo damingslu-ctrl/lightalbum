@@ -15,6 +15,7 @@
 #include "core/Library.h"
 #include "core/LumenEngine.h"
 #include "core/LumenAgent.h"
+#include "core/GeoIndex.h"
 #include "core/Scanner.h"
 #include "ui/MainWindow.h"
 #include "ui/DarkPalette.h"
@@ -82,6 +83,56 @@ int runAgentSmoke()
     return pass ? 0 : 1;
 }
 } // namespace（P9 agent 冒烟）
+
+namespace {
+// P10 离线逆地理编码冒烟：已知点断言（pip / 城市兜底 / 海上诚实空）+ 真库回填统计。
+int runGeoSmoke()
+{
+    GeoIndex& gi = GeoIndex::instance();
+    const bool loaded = gi.ensureLoaded();
+    int pass = loaded ? 1 : 0;
+    struct P { double lat, lon; const char* r; const char* pv; const char* ct; };
+    static const P pts[] = {
+        {64.15, -21.94,  "iceland", "Capital Region",   "雷克雅未克"},
+        {39.90, 116.41,  "china",   "Beijing Municipality", "北京"},
+        {23.13, 113.26,  "china",   "Guangzhou Province", "广州"},
+        {38.91, 121.61,  "china",   "Liaoning Province", "大连"},   // 沿海缝隙 → 城市兜底
+        {15.46, 111.13,  "",        "",                 ""},       // 南海海域 → 诚实空
+    };
+    for (const P& p : pts) {
+        const GeoResult g = gi.resolve(p.lat, p.lon);
+        // 中文字面量必须 fromUtf8（QLatin1String 按 Latin-1 解，中文必错——PathGuess 同款教训）
+        const bool ok = g.region == QString::fromUtf8(p.r)
+                     && g.prov == QString::fromUtf8(p.pv)
+                     && g.city == QString::fromUtf8(p.ct);
+        std::fprintf(stderr, "GEO %s lat=%.2f lon=%.2f -> r=%s pv=%s ct=%s\n",
+                     ok ? "ok" : "FAIL", p.lat, p.lon,
+                     qPrintable(g.region), qPrintable(g.prov), qPrintable(g.city));
+        if (!ok) pass = 0;
+    }
+    // 真库回填统计（读时回填，KPI 省份数应显著 > 0）
+    int enriched = 0, total = 0, provCount = 0;
+    if (qEnvironmentVariableIsSet("LA_DB")) {
+        Library lib;
+        QString err;
+        if (lib.open(qEnvironmentVariable("LA_DB"), &err)) {
+            for (const Photo& p : lib.photos()) {
+                ++total;
+                if (!p.region.isEmpty()) ++enriched;
+            }
+            provCount = lib.kpi().provCount;
+        } else {
+            std::fprintf(stderr, "GEO db open fail: %s\n", qPrintable(err));
+        }
+    }
+    std::fprintf(stderr, "GEO realdb total=%d enriched=%d provCount=%d\n",
+                 total, enriched, provCount);
+    if (total > 0 && (enriched * 100 / total) < 40) pass = 0;   // 真库点亮 ≥40%
+    std::fprintf(stderr, "LA_GEO_SMOKE %s loaded=%d\n", pass ? "PASS" : "FAIL", loaded ? 1 : 0);
+    std::fflush(stderr);
+    return pass ? 0 : 1;
+}
+} // namespace（P10 geo 冒烟）
 
 namespace {
 // P5 金样对拍冒烟：读 _gold_lumen/{in,gold,steps}_*.png/json，跑 C++ auto 管线，
@@ -258,6 +309,10 @@ int main(int argc, char *argv[])
     // P9 AI 修图智能体冒烟（测量 → 决策 → retouchWithPlan；不依赖库文件）
     if (qEnvironmentVariableIsSet("LA_AGENT_SMOKE"))
         return runAgentSmoke();
+
+    // P10 离线逆地理冒烟（已知点 + 真库回填统计）
+    if (qEnvironmentVariableIsSet("LA_GEO_SMOKE"))
+        return runGeoSmoke();
 
     // P8 原生导入器冒烟：扫描 LA_SCAN_ROOT 入库到 LA_SCAN_DB（独立于正式库），
     // 打印增量结果后退出；同一命令重跑应 added=0 / unchanged=N（增量幂等）。

@@ -122,6 +122,19 @@ P9 AI 修图智能体（Lumen × Ollama）：✅ 完成（见 docs/adr/ADR-0014-
   - 验证：`LA_AGENT_SMOKE` PASS（src=ollama 真实决策 + 强制兜底方向断言 + clamp 白名单）；
     五路冒烟回归全绿；发行 exe 复验通过。
 
+P10 足迹点亮（离线逆地理编码）：✅ 完成
+  - `native/src/core/GeoIndex.{h,cpp}`：复用 exe 内嵌地图数据 `:/data/mapdata.json`（P2 同源，
+    零新增数据集/零云端）——GPS → 地图像素投影（x=(lon+180)/360*1000, y=(90-lat)/180*500）→
+    233 省 331 环 bbox 预筛 + 射线法点内测试 → (region, 省键)；
+    未命中用内嵌 89 城最近邻表兜底（≤1.6° 救沿海简化缝隙的 region/prov，≤1.0° 才给 ct 城市点；
+    城市表由 `_gen_geo_cities.py` 对齐数据集省键生成，沿海城市手工覆盖）。
+  - 接线：`Library::open` 读时回填（库保持只读，provs KPI 0→12）；`Scanner` 导入时写库
+    （`LA_GEO_OFF` 供对拍 harness 关闭）。
+  - 实测（真库 6425 张，62% 有 GPS）：回填 3224（全库 50%，GPS 的 81%）；pip 2927 + 城市兜底 295
+    （典型 = 大连半岛尖端被简化省界裁掉）；海上/十国之外 766 张诚实留空。
+  - 验证：`LA_GEO_SMOKE` PASS（雷克雅未克/北京/广州/大连/南海五点断言 + 真库 ≥40% 闸）；
+    七路回归全绿（P1 provs=12 / Cull / Retouch / Beauty / Lumen / Agent / P8 金样对拍）。
+
 ## index.html → C++ 模块映射（P1 起逐项迁移）
 
 | 现有（index.html 1.9.39） | 目标（native/） |

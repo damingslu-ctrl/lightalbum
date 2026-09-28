@@ -12,6 +12,7 @@ struct Photo {
     int    year = 0, iso = 0, rating = 0;
     double focal = 0;
     bool   hasGps = false;
+    double la = 0, lo = 0;    // GPS 十进制度（仅 hasGps 时有效；P10 逆地理用）
     bool   missing = false;
 };
 

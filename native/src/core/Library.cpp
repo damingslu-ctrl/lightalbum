@@ -1,4 +1,5 @@
 #include "Library.h"
+#include "GeoIndex.h"
 #include <QSqlDatabase>
 #include <QSqlQuery>
 #include <QSqlError>
@@ -62,8 +63,17 @@ bool Library::open(const QString& dbPath, QString* err)
             const QJsonValue lo = o.value(QLatin1String("lo"));
             const QJsonValue la = o.value(QLatin1String("la"));
             p.hasGps = lo.isDouble() && la.isDouble();
+            if (p.hasGps) { p.lo = lo.toDouble(); p.la = la.toDouble(); }
         }
         if (p.title.isEmpty()) p.title = p.rel;   // 兜底展示名（非编造 EXIF）
+        // P10 离线逆地理回填（读时计算，库保持只读）：仅路径推导缺失且真有 GPS 时
+        if (p.region.isEmpty() && p.hasGps) {
+            GeoIndex::instance().ensureLoaded();
+            const GeoResult g = GeoIndex::instance().resolve(p.la, p.lo);
+            if (!g.region.isEmpty()) p.region = g.region;
+            if (!g.prov.isEmpty())   p.prov = g.prov;
+            if (p.city.isEmpty() && !g.city.isEmpty()) p.city = g.city;
+        }
         if (p.year > 0) years.insert(p.year);
         if (!p.prov.isEmpty()) provs.insert(p.prov);
         photos_.push_back(std::move(p));

@@ -2,6 +2,7 @@
 #include "Scanner.h"
 #include "PathGuess.h"
 #include "ExifReader.h"
+#include "GeoIndex.h"
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDir>
@@ -358,6 +359,15 @@ ScanResult Scanner::syncRoot(const QString& rootIn, const QString& dbPathIn,
         o.insert(QStringLiteral("wb"), ex.wb);
         o.insert(QStringLiteral("meter"), ex.meter);
         o.insert(QStringLiteral("dim"), ex.dim);
+        // P10 离线逆地理：路径推导无地区但有真 GPS → 内嵌数据回填 r/pv/ct（写入库）。
+        // LA_GEO_OFF 供 P8 金样对拍 harness 关闭（对齐 Python 无逆地理的行为）。
+        if (g.r.isEmpty() && ex.hasGps && qEnvironmentVariableIsEmpty("LA_GEO_OFF")) {
+            GeoIndex::instance().ensureLoaded();
+            const GeoResult gres = GeoIndex::instance().resolve(ex.la, ex.lo);
+            if (!gres.region.isEmpty()) o.insert(QStringLiteral("r"), gres.region);
+            if (!gres.prov.isEmpty())   o.insert(QStringLiteral("pv"), gres.prov);
+            if (!gres.city.isEmpty())   o.insert(QStringLiteral("ct"), gres.city);
+        }
         r.exif = o;
         r.thumb = thumbName;
         pending.append(r);
