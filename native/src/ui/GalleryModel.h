@@ -24,9 +24,14 @@ public:
     void setSource(const QVector<Photo>* all);   // 借用，不持有
     void setThumbCache(ThumbCache* c);
     void setFilter(const QString& q);            // 标题/文件名/器材 子串过滤
+    void setRegionFilter(const QString& regionId); // 地理筛选（大区，空=清除）
+    void setProvFilter(const QString& provEn);     // 地理筛选（省，空=清除）
+    const Photo* photoAt(int row) const;           // 行 → Photo*（供点击跳转修图）
 
     int rowCount(const QModelIndex& parent = {}) const override;
     QVariant data(const QModelIndex& index, int role) const override;
+
+    void rebuild();   // 文本 + 地理（大区/省）联合过滤
 
     QPixmap pixmapAt(int row) const;             // 委托绘制时调用（触发后台加载）
 
@@ -39,4 +44,6 @@ private:
     ThumbCache* cache_ = nullptr;
     QHash<QString, int> rowByThumb_;
     QString filter_;
+    QString regionFilter_;   // 大区 id（Photo.region 命中）
+    QString provFilter_;     // 省 en 名（Photo.prov 命中）
 };

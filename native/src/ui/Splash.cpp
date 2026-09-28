@@ -1,5 +1,6 @@
 #include "Splash.h"
 #include "Theme.h"
+#include "../core/MotionPref.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -128,19 +129,19 @@ void SplashWindow::play()
     // 整体淡入
     setWindowOpacity(0.0);
     intro_ = new QPropertyAnimation(this, "windowOpacity");
-    intro_->setDuration(360);
+    intro_->setDuration(Lumen::Motion::kSplashIntroMs);
     intro_->setStartValue(0.0);
     intro_->setEndValue(1.0);
     intro_->setEasingCurve(QEasingCurve::OutCubic);
     intro_->start(QAbstractAnimation::DeleteWhenStopped);
 
     // 定时后收缩成缝
-    QTimer::singleShot(1500, this, [this] {
+    QTimer::singleShot(Lumen::Motion::kSplashHoldMs, this, [this] {
         if (breath_) { breath_->stop(); }
         const QRect slit(target_.x(), target_.center().y() - 1,
                          target_.width(), 2);
         contract_ = new QPropertyAnimation(this, "geometry");
-        contract_->setDuration(680);
+        contract_->setDuration(Lumen::Motion::kSplashContractMs);
         contract_->setStartValue(geometry());
         contract_->setEndValue(slit);
         contract_->setEasingCurve(QEasingCurve::InOutCubic);
@@ -148,5 +149,18 @@ void SplashWindow::play()
             emit finished();
         });
         contract_->start(QAbstractAnimation::DeleteWhenStopped);
+    });
+}
+
+// 无障碍：静态品牌画面（无呼吸/收缩），短暂停留后直接发 finished()，
+// 由 main.cpp 以「无展开动效」方式切入客户端。
+void SplashWindow::playStatic()
+{
+    show();
+    raise();
+    glow_->setGeometry((width() - 520) / 2, (height() - 520) / 2, 520, 520);
+    setWindowOpacity(1.0);
+    QTimer::singleShot(600, this, [this] {
+        emit finished();
     });
 }

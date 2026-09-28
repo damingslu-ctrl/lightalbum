@@ -149,6 +149,13 @@ GalleryPage::GalleryPage(const QVector<Photo>* photos, const QString& thumbsDir,
             prefetchTimer_, qOverload<>(&QTimer::start));
     connect(prefetchTimer_, &QTimer::timeout, this, &GalleryPage::prefetch);
 
+    // P15：点击卡片 → 弹出灯箱并跳转修图（零云端；path 由 MainWindow 定位 Photo）。
+    connect(view_, &QListView::clicked, this, [this](const QModelIndex& ix) {
+        if (!ix.isValid()) return;
+        const Photo* p = model_.photoAt(ix.row());
+        if (p) emit photoActivated(p->path);
+    });
+
     applyFilter(QString());
 }
 
@@ -160,6 +167,18 @@ void GalleryPage::applyFilter(const QString& q)
     count_->setText(n == total
         ? QStringLiteral("显示 <b>%1</b> / %2 幅").arg(n).arg(total)
         : QStringLiteral("显示 <b>%1</b> / %2 幅（已筛）").arg(n).arg(total));
+}
+
+// P15：地图区域/省点击 → 图库按大区/省筛选（pid 优先，否则大区）。
+void GalleryPage::applyGeoFilter(const QString& regionId, const QString& provEn)
+{
+    model_.setRegionFilter(regionId);
+    model_.setProvFilter(provEn);
+    const int n = model_.rowCount();
+    const int total = photos_ ? photos_->size() : n;
+    count_->setText((regionId.isEmpty() && provEn.isEmpty())
+        ? QStringLiteral("显示 <b>%1</b> / %2 幅").arg(n).arg(total)
+        : QStringLiteral("显示 <b>%1</b> / %2 幅（区域筛选）").arg(n).arg(total));
 }
 
 void GalleryPage::prefetch()

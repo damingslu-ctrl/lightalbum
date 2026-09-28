@@ -7,6 +7,10 @@
 #include "RetouchPage.h"
 #include "BeautyPage.h"
 #include "../core/Scanner.h"
+#include "../core/MotionPref.h"
+#include <QDialog>
+#include <QPair>
+#include <QToolButton>
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QLabel>
@@ -65,6 +69,335 @@ QPixmap roundedThumb(const QString& path, int size, int radius)
     return out;
 }
 } // namespace
+
+// ============================================================================
+// P15 首页中心装置：旋转画廊（自绘轮播）
+// 自动前进 + 手动前后 + 圆点指示 + 交叉淡入 + 翡翠辉光；尊重系统「减弱动效」。
+// ============================================================================
+class RotatingGallery : public QWidget {
+    Q_OBJECT
+public:
+    using Item = QPair<QPixmap, QString>;
+    explicit RotatingGallery(const QVector<Item>& items, QWidget* parent = nullptr)
+        : QWidget(parent), items_(items)
+    {
+        setObjectName(QStringLiteral("rotGallery"));
+        setMinimumHeight(300);
+        auto* root = new QVBoxLayout(this);
+        root->setContentsMargins(0, 0, 0, 0);
+        root->setSpacing(10);
+
+        // 翡翠辉光（呼吸由 MainWindow 注册驱动）
+        glow_ = new QLabel(this);
+        glow_->setObjectName(QStringLiteral("galleryGlow"));
+        glow_->setAttribute(Qt::WA_TransparentForMouseEvents);
+        {
+            QPixmap gp(560, 380); gp.fill(Qt::transparent);
+            QPainter p(&gp); p.setRenderHint(QPainter::Antialiasing, true);
+            QRadialGradient rg(280, 190, 260);
+            rg.setColorAt(0.0, QColor(0x4f, 0xc0, 0x8a, 120));
+            rg.setColorAt(0.55, QColor(0x4f, 0xc0, 0x8a, 34));
+            rg.setColorAt(1.0, QColor(0x4f, 0xc0, 0x8a, 0));
+            p.setBrush(rg); p.setPen(Qt::NoPen); p.drawEllipse(0, 0, 560, 380);
+            glow_->setPixmap(gp);
+        }
+        glow_->setGeometry((width() - 560) / 2, -50, 560, 380);
+        glowEff_ = new QGraphicsOpacityEffect(glow_);
+        glowEff_->setOpacity(0.16);
+        glow_->setGraphicsEffect(glowEff_);
+
+        // 画框
+        frame_ = new QFrame(this);
+        frame_->setObjectName(QStringLiteral("galleryFrame"));
+        frame_->setMinimumHeight(264);
+        frame_->setStyleSheet(QStringLiteral(
+            "QFrame{background:#0a0e0a;border:1px solid #26312a;border-radius:16px;}"));
+        auto* fl = new QHBoxLayout(frame_);
+        fl->setContentsMargins(0, 0, 0, 0);
+
+        prevBtn_ = makeArrow(QStringLiteral("\u2039"));
+        nextBtn_ = makeArrow(QStringLiteral("\u203A"));
+        fl->addWidget(prevBtn_, 0, Qt::AlignVCenter);
+        fl->addStretch(1);
+        fl->addWidget(nextBtn_, 0, Qt::AlignVCenter);
+
+        imgA_ = new QLabel(frame_); imgB_ = new QLabel(frame_);
+        imgA_->setAlignment(Qt::AlignCenter); imgB_->setAlignment(Qt::AlignCenter);
+        imgA_->setGraphicsEffect(new QGraphicsOpacityEffect(imgA_));
+        imgB_->setGraphicsEffect(new QGraphicsOpacityEffect(imgB_));
+        effA_ = qobject_cast<QGraphicsOpacityEffect*>(imgA_->graphicsEffect());
+        effB_ = qobject_cast<QGraphicsOpacityEffect*>(imgB_->graphicsEffect());
+        imgB_->hide();
+        root->addWidget(frame_);
+
+        // 圆点 + 标题
+        auto* dotRow = new QWidget(this);
+        auto* dl = new QHBoxLayout(dotRow);
+        dl->setContentsMargins(0, 0, 0, 0); dl->setSpacing(8); dl->setAlignment(Qt::AlignCenter);
+        for (int i = 0; i < items_.size(); ++i) {
+            auto* d = new QLabel(dotRow);
+            d->setFixedSize(8, 8);
+            d->setStyleSheet(QStringLiteral("QLabel{background:#3a4a40;border-radius:4px;}"));
+            dots_.append(d); dl->addWidget(d);
+        }
+        root->addWidget(dotRow);
+
+        titleLbl_ = new QLabel(this);
+        titleLbl_->setAlignment(Qt::AlignCenter);
+        titleLbl_->setStyleSheet(QStringLiteral("color:#f4f7f4;font-size:13px;font-weight:bold;"));
+        root->addWidget(titleLbl_);
+
+        connect(prevBtn_, &QToolButton::clicked, this, [this] { advance(-1); });
+        connect(nextBtn_, &QToolButton::clicked, this, [this] { advance(1); });
+
+        const bool reduced = Lumen::systemReducedMotion();
+        if (items_.isEmpty()) {
+            auto* ph = new QLabel(frame_);
+            ph->setText(QStringLiteral("导入目录后，这里会轮播你的最新作品。"));
+            ph->setAlignment(Qt::AlignCenter);
+            ph->setStyleSheet(QStringLiteral("color:#8da396;"));
+        } else {
+            showIndex(0, false);
+            if (!reduced && items_.size() > 1) {
+                autoTimer_ = new QTimer(this);
+                autoTimer_->setInterval(4500);
+                connect(autoTimer_, &QTimer::timeout, this, [this] { advance(1); });
+                autoTimer_->start();
+            }
+        }
+    }
+
+    QGraphicsOpacityEffect* glowEffect() const { return glowEff_; }
+
+    void resizeEvent(QResizeEvent* e) override
+    {
+        QWidget::resizeEvent(e);
+        glow_->setGeometry((width() - 560) / 2, -50, 560, 380);
+        layoutImages();
+        rerenderCurrent();
+    }
+
+private:
+    QToolButton* makeArrow(const QString& ch)
+    {
+        auto* b = new QToolButton(this);
+        b->setText(ch);
+        b->setCursor(Qt::PointingHandCursor);
+        b->setFixedSize(34, 34);
+        b->setStyleSheet(QStringLiteral(
+            "QToolButton{background:rgba(19,26,21,180);border:1px solid #26312a;"
+            "border-radius:17px;color:#f4f7f4;font-size:22px;font-weight:bold;}"
+            "QToolButton:hover{border:1px solid #4fc08a;background:#1a231d;}"));
+        return b;
+    }
+    void layoutImages()
+    {
+        const QRect r = frame_->contentsRect().adjusted(46, 14, -46, -14);
+        imgA_->setGeometry(r); imgB_->setGeometry(r);
+    }
+    QPixmap scaledCover(const QPixmap& src, const QSize& size)
+    {
+        if (src.isNull() || size.isEmpty()) return QPixmap();
+        QPixmap out(size);
+        out.fill(QColor(0x0a, 0x0e, 0x0a));
+        QPixmap scaled = src.scaled(size, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+        QPainter p(&out);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        const QRect r((out.width() - scaled.width()) / 2,
+                      (out.height() - scaled.height()) / 2,
+                      scaled.width(), scaled.height());
+        QPainterPath path; path.addRoundedRect(r, 12, 12);
+        p.setClipPath(path);
+        p.drawPixmap(r.topLeft(), scaled);
+        return out;
+    }
+    void rerenderCurrent()
+    {
+        if (items_.isEmpty()) return;
+        QLabel* cur = (curShown_ == 0) ? imgA_ : imgB_;
+        cur->setPixmap(scaledCover(items_.at(curIdx_).first,
+                                   frame_->contentsRect().adjusted(46, 14, -46, -14).size()));
+    }
+    void showIndex(int idx, bool animate)
+    {
+        if (idx < 0 || idx >= items_.size()) return;
+        QLabel* incoming = (curShown_ == 0) ? imgB_ : imgA_;
+        QLabel* outgoing = (curShown_ == 0) ? imgA_ : imgB_;
+        QGraphicsOpacityEffect* ie = (curShown_ == 0) ? effB_ : effA_;
+        QGraphicsOpacityEffect* oe = (curShown_ == 0) ? effA_ : effB_;
+        incoming->setPixmap(scaledCover(items_.at(idx).first,
+                                       frame_->contentsRect().adjusted(46, 14, -46, -14).size()));
+        incoming->show(); incoming->raise();
+        titleLbl_->setText(items_.at(idx).second);
+        for (int i = 0; i < dots_.size(); ++i)
+            dots_[i]->setStyleSheet(i == idx
+                ? QStringLiteral("QLabel{background:#d9a94e;border-radius:4px;}")
+                : QStringLiteral("QLabel{background:#3a4a40;border-radius:4px;}"));
+        if (!animate) {
+            ie->setOpacity(1.0);
+            outgoing->hide();
+            curShown_ = (curShown_ == 0) ? 1 : 0;
+            return;
+        }
+        ie->setOpacity(0.0);
+        auto* fin = new QPropertyAnimation(ie, "opacity");
+        fin->setDuration(600); fin->setStartValue(0.0); fin->setEndValue(1.0);
+        fin->setEasingCurve(QEasingCurve::InOutCubic);
+        auto* fout = new QPropertyAnimation(oe, "opacity");
+        fout->setDuration(600); fout->setStartValue(1.0); fout->setEndValue(0.0);
+        fout->setEasingCurve(QEasingCurve::InOutCubic);
+        connect(fout, &QPropertyAnimation::finished, this, [outgoing] { outgoing->hide(); });
+        fin->start(QAbstractAnimation::DeleteWhenStopped);
+        fout->start(QAbstractAnimation::DeleteWhenStopped);
+        curShown_ = (curShown_ == 0) ? 1 : 0;
+    }
+    void advance(int dir)
+    {
+        if (items_.isEmpty()) return;
+        const int n = items_.size();
+        curIdx_ = (curIdx_ + dir + n) % n;
+        showIndex(curIdx_, true);
+    }
+
+    QVector<Item> items_;
+    QLabel* glow_ = nullptr;
+    QGraphicsOpacityEffect* glowEff_ = nullptr;
+    QFrame* frame_ = nullptr;
+    QLabel *imgA_ = nullptr, *imgB_ = nullptr;
+    QGraphicsOpacityEffect *effA_ = nullptr, *effB_ = nullptr;
+    QToolButton *prevBtn_ = nullptr, *nextBtn_ = nullptr;
+    QVector<QLabel*> dots_;
+    QLabel* titleLbl_ = nullptr;
+    QTimer* autoTimer_ = nullptr;
+    int curIdx_ = 0;
+    int curShown_ = 0;
+};
+
+// ============================================================================
+// P15 功能入口行：承载一张错落呼吸的翡翠辉光（注册到 MainWindow 呼吸节拍）。
+// ============================================================================
+class FeatRow : public QWidget {
+    Q_OBJECT
+public:
+    explicit FeatRow(QWidget* parent = nullptr) : QWidget(parent)
+    {
+        glow_ = new QLabel(this);
+        glow_->setObjectName(QStringLiteral("featGlow"));
+        glow_->setAttribute(Qt::WA_TransparentForMouseEvents);
+        {
+            QPixmap gp(440, 200); gp.fill(Qt::transparent);
+            QPainter p(&gp); p.setRenderHint(QPainter::Antialiasing, true);
+            QRadialGradient rg(220, 100, 190);
+            rg.setColorAt(0.0, QColor(0x4f, 0xc0, 0x8a, 70));
+            rg.setColorAt(1.0, QColor(0x4f, 0xc0, 0x8a, 0));
+            p.setBrush(rg); p.setPen(Qt::NoPen); p.drawEllipse(0, 0, 440, 200);
+            glow_->setPixmap(gp);
+        }
+        glowEff_ = new QGraphicsOpacityEffect(glow_);
+        glowEff_->setOpacity(0.06);
+        glow_->setGraphicsEffect(glowEff_);
+        auto* l = new QHBoxLayout(this);
+        l->setContentsMargins(0, 0, 0, 0);
+        l->setSpacing(14);
+    }
+    QGraphicsOpacityEffect* glowEffect() const { return glowEff_; }
+    void addCard(QWidget* w) { static_cast<QHBoxLayout*>(layout())->addWidget(w, 1); }
+    void resizeEvent(QResizeEvent* e) override
+    {
+        QWidget::resizeEvent(e);
+        glow_->setGeometry(0, 0, width(), height());
+    }
+
+private:
+    QLabel* glow_ = nullptr;
+    QGraphicsOpacityEffect* glowEff_ = nullptr;
+};
+
+// ============================================================================
+// P15 图片灯箱：大图预览 + EXIF 元信息 + 「在修图台打开」。
+// ============================================================================
+class PhotoLightbox : public QDialog {
+    Q_OBJECT
+public:
+    explicit PhotoLightbox(const Photo* ph, const QString& thumbsDir, QWidget* parent = nullptr)
+        : QDialog(parent)
+    {
+        setWindowTitle(QStringLiteral("作品 · 灯箱"));
+        setMinimumSize(720, 560);
+        setStyleSheet(QStringLiteral("QDialog{background:#060806;}"));
+        auto* root = new QHBoxLayout(this);
+        root->setContentsMargins(18, 18, 18, 18);
+        root->setSpacing(18);
+
+        auto* imgBox = new QFrame(this);
+        imgBox->setStyleSheet(QStringLiteral(
+            "QFrame{background:#0a0e0a;border:1px solid #26312a;border-radius:14px;}"));
+        auto* il = new QVBoxLayout(imgBox);
+        il->setContentsMargins(12, 12, 12, 12);
+        auto* img = new QLabel(imgBox);
+        img->setAlignment(Qt::AlignCenter);
+        const QPixmap pm(QDir(thumbsDir).filePath(ph->thumbFile));
+        if (!pm.isNull()) {
+            const int W = 460, H = 500;
+            const QPixmap sc = pm.scaled(W, H, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+            QPixmap out(W, H); out.fill(QColor(0x0a, 0x0e, 0x0a));
+            QPainter p(&out); p.setRenderHint(QPainter::Antialiasing, true);
+            const QRect r((W - sc.width()) / 2, (H - sc.height()) / 2, sc.width(), sc.height());
+            QPainterPath path; path.addRoundedRect(r, 12, 12);
+            p.setClipPath(path); p.drawPixmap(r.topLeft(), sc);
+            img->setPixmap(out);
+        } else {
+            img->setText(QStringLiteral("无缩略图"));
+            img->setStyleSheet(QStringLiteral("color:#8da396;"));
+        }
+        il->addWidget(img);
+        root->addWidget(imgBox, 1);
+
+        auto* info = new QWidget(this);
+        auto* vl = new QVBoxLayout(info);
+        vl->setContentsMargins(0, 0, 0, 0);
+        vl->setSpacing(12);
+        vl->setAlignment(Qt::AlignTop);
+        auto* t = new QLabel(ph->title.isEmpty()
+                                 ? QFileInfo(ph->path).fileName() : ph->title, info);
+        QFont tf = t->font(); tf.setPointSizeF(16); tf.setBold(true); t->setFont(tf);
+        t->setStyleSheet(QStringLiteral("color:#f4f7f4;"));
+        t->setWordWrap(true);
+        vl->addWidget(t);
+
+        auto addRow = [&](const QString& k, const QString& v) {
+            auto* lb = new QLabel(
+                QStringLiteral("<b style='color:#8da396;'>%1</b> %2")
+                    .arg(k, v.isEmpty() ? QStringLiteral("—") : v), info);
+            lb->setStyleSheet(QStringLiteral("color:#f4f7f4;font-size:12px;"));
+            lb->setWordWrap(true);
+            vl->addWidget(lb);
+        };
+        addRow(QStringLiteral("日期"), ph->date);
+        addRow(QStringLiteral("器材"), ph->cam);
+        addRow(QStringLiteral("镜头"), ph->lens);
+        addRow(QStringLiteral("大区 / 省"), ph->region + (ph->prov.isEmpty()
+                    ? QString() : QStringLiteral(" / ") + ph->prov));
+        addRow(QStringLiteral("城市"), ph->city);
+        addRow(QStringLiteral("评分"), ph->rating > 0 ? QString::number(ph->rating) : QStringLiteral("—"));
+        addRow(QStringLiteral("尺寸"), ph->dim);
+        vl->addStretch(1);
+
+        auto* open = new QPushButton(QStringLiteral("在修图台打开 →"), info);
+        open->setCursor(Qt::PointingHandCursor);
+        open->setStyleSheet(Lumen::btnPrimary());
+        connect(open, &QPushButton::clicked, this, [this] { done(1); });
+        vl->addWidget(open);
+        auto* close = new QPushButton(QStringLiteral("关闭"), info);
+        close->setCursor(Qt::PointingHandCursor);
+        close->setStyleSheet(Lumen::btnGhost());
+        connect(close, &QPushButton::clicked, this, &QDialog::reject);
+        vl->addWidget(close);
+        root->addWidget(info, 0);
+
+        setProperty("photoPath", ph->path);
+    }
+};
 
 MainWindow::MainWindow(const Library* lib, const QString& thumbsDir,
                        const QString& dbPath, QWidget* parent)
@@ -204,7 +537,7 @@ MainWindow::MainWindow(const Library* lib, const QString& thumbsDir,
     stack_ = new QStackedWidget(right);
     // 页序与 kNav 一致；首页 = P12「美术馆策展」艺术仪表盘，日志为设计态占位，关于页实装
     stack_->addWidget(makeHome(thumbsDir));
-    map_ = new MapPage(stack_);
+    map_ = new MapPage(&lib_->photos(), stack_);
     stack_->addWidget(map_);
     gallery_ = new GalleryPage(&lib_->photos(), thumbsDir, stack_);
     stack_->addWidget(gallery_);
@@ -223,10 +556,39 @@ MainWindow::MainWindow(const Library* lib, const QString& thumbsDir,
     setCentralWidget(central);
     connect(nav_, &QListWidget::currentRowChanged, this, &MainWindow::onNav);
     connect(search_, &QLineEdit::textChanged, gallery_, &GalleryPage::applyFilter);
+    // P15：图库卡片点击 → 灯箱 → （可选）跳转修图台
+    connect(gallery_, &GalleryPage::photoActivated, this, [this, thumbsDir](const QString& path) {
+        const Photo* ph = nullptr;
+        for (const Photo& p : lib_->photos())
+            if (p.path == path) { ph = &p; break; }
+        if (!ph) return;
+        PhotoLightbox box(ph, thumbsDir, this);
+        if (box.exec() == 1) {
+            retouch_->openPhoto(path);
+            nav_->setCurrentRow(4);
+        }
+    });
+    // P15：地图「在图库查看」→ 按区域筛选并切到图库
+    connect(map_, &MapPage::requestGallery, this,
+            [this](const QString& regionId, const QString& provEn) {
+                gallery_->applyGeoFilter(regionId, provEn);
+                nav_->setCurrentRow(2);
+            });
     animEnabled_ = uiAnimEnabled();
     // 拿到首页 hero 光晕指针（makeHome 内以 objectName 标注）
     heroGlow_ = stack_->widget(0)->findChild<QLabel*>(QStringLiteral("heroGlow"));
     setupBreathing();
+    // P15：扩展呼吸到画廊辉光 / 功能卡辉光（错落相位，统一节拍）
+    if (heroGlow_ && heroGlow_->graphicsEffect())
+        registerBreath(qobject_cast<QGraphicsOpacityEffect*>(heroGlow_->graphicsEffect()),
+                       0.34, 0.26, 0.0);
+    registerBreath(seamEff_, 0.72, 0.28, 1.0);
+    if (QLabel* gg = stack_->widget(0)->findChild<QLabel*>("galleryGlow"))
+        if (auto* e = qobject_cast<QGraphicsOpacityEffect*>(gg->graphicsEffect()))
+            registerBreath(e, 0.16, 0.12, 2.0);
+    if (QLabel* fg = stack_->widget(0)->findChild<QLabel*>("featGlow"))
+        if (auto* e = qobject_cast<QGraphicsOpacityEffect*>(fg->graphicsEffect()))
+            registerBreath(e, 0.06, 0.05, 3.0);
     nav_->setCurrentRow(2);   // 默认落在图库（P1 唯一实装页）
 }
 
@@ -237,7 +599,8 @@ bool MainWindow::uiAnimEnabled() const
         && !qEnvironmentVariableIsSet("LA_UI_SHOT")
         && !qEnvironmentVariableIsSet("LA_CULL_SMOKE")
         && !qEnvironmentVariableIsSet("LA_RETOUCH_SMOKE")
-        && !qEnvironmentVariableIsSet("LA_BEAUTY_SMOKE");
+        && !qEnvironmentVariableIsSet("LA_BEAUTY_SMOKE")
+        && !Lumen::systemReducedMotion();   // P15：系统「减弱动效」→ 关动效
 }
 
 // P13：全客户端呼吸感 —— 单一 30fps 定时器正弦驱动若干受控元素。
@@ -250,21 +613,28 @@ void MainWindow::setupBreathing()
     breathTimer_->start();
 }
 
+// P15：统一注册呼吸目标（辉光/激活条共享同一 30fps 节拍，相位错落）。
+void MainWindow::registerBreath(QGraphicsOpacityEffect* eff, double base,
+                                 double amp, double phase)
+{
+    if (eff) breathTargets_.append({eff, base, amp, phase});
+}
+
 void MainWindow::tickBreath()
 {
     breathPhase_ += 0.045;
-    const double s = std::sin(breathPhase_);          // -1..1
-    const double k = 0.5 + 0.5 * s;                    // 0..1
-    if (heroGlow_ && heroGlow_->graphicsEffect())
-        static_cast<QGraphicsOpacityEffect*>(heroGlow_->graphicsEffect())
-            ->setOpacity(0.34 + 0.26 * k);
-    if (seamEff_)
-        seamEff_->setOpacity(0.72 + 0.28 * k);
+    // 扩展呼吸：hero 光晕 / seam / 画廊辉光 / 功能卡辉光 统一正弦驱动
+    for (auto& t : breathTargets_) {
+        if (!t.eff) continue;
+        const double k = 0.5 + 0.5 * std::sin(breathPhase_ + t.phase);
+        t.eff->setOpacity(t.base + t.amp * k);
+    }
+    // 导航激活金条（仅当前项呼吸）
     if (activeNavRow_ >= 0 && activeNavRow_ < navBars_.size()) {
         QFrame* bar = navBars_.at(activeNavRow_);
         if (bar->isVisible() && bar->graphicsEffect())
             static_cast<QGraphicsOpacityEffect*>(bar->graphicsEffect())
-                ->setOpacity(0.55 + 0.45 * k);
+                ->setOpacity(0.55 + 0.45 * (0.5 + 0.5 * std::sin(breathPhase_)));
     }
 }
 
@@ -329,52 +699,52 @@ void MainWindow::onNav(int row)
 // 大胆但有秩序：渐变只出现在 hero 与 hover 强语义处，照片仍是唯一主角。
 QWidget* MainWindow::makeHome(const QString& thumbsDir) const
 {
-    auto* w = new QWidget;
-    auto* outer = new QVBoxLayout(w);
-    outer->setContentsMargins(20, 16, 20, 16);
-    outer->setSpacing(16);
+    auto* scroll = new QScrollArea;
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setStyleSheet(QStringLiteral(
+        "QScrollArea{background:#060806;}"
+        "QScrollBar:vertical{background:transparent;width:10px;margin:2px;}"
+        "QScrollBar::handle:vertical{background:#24312a;border-radius:4px;min-height:30px;}"
+        "QScrollBar::handle:vertical:hover{background:#2f7d57;}"
+        "QScrollBar:add-line:vertical,QScrollBar::sub-line:vertical{height:0;}"));
 
-    // ---- Hero：对角翡翠→金低语渐变 + 大字标题 + 水印图标 ----
+    auto* w = new QWidget(scroll);
+    auto* outer = new QVBoxLayout(w);
+    outer->setContentsMargins(28, 22, 28, 22);
+    outer->setSpacing(18);
+
+    // ---- Hero（居中 · 大字 · 翡翠→金低语渐变 · 呼吸光晕）----
     auto* hero = new QWidget(w);
     hero->setObjectName("hero");
     hero->setStyleSheet(Lumen::heroBand());
-    hero->setMinimumHeight(172);
+    hero->setMinimumHeight(178);
     auto* hl = new QHBoxLayout(hero);
-    hl->setContentsMargins(30, 22, 26, 22);
+    hl->setContentsMargins(34, 24, 34, 24);
     hl->setSpacing(18);
-    auto* hv = new QVBoxLayout;
-    hv->setSpacing(7);
-    auto* chipRow = new QHBoxLayout; chipRow->setSpacing(8);
+    auto* hv = new QVBoxLayout; hv->setSpacing(8); hv->setAlignment(Qt::AlignVCenter);
+    auto* chipRow = new QHBoxLayout; chipRow->setSpacing(8); chipRow->setAlignment(Qt::AlignCenter);
     auto* chip1 = new QLabel(QStringLiteral("核心客户端 v%1").arg(LA_VERSION), hero);
     chip1->setStyleSheet(Lumen::pill(Lumen::EMERALD));
     auto* chip2 = new QLabel(QStringLiteral("零云端 · 本地优先"), hero);
     chip2->setStyleSheet(Lumen::pill(Lumen::GOLD));
-    chipRow->addWidget(chip1); chipRow->addWidget(chip2); chipRow->addStretch(1);
+    chipRow->addWidget(chip1); chipRow->addWidget(chip2);
     hv->addLayout(chipRow);
     auto* title = new QLabel(QStringLiteral("光影集"), hero);
-    QFont tf = title->font(); tf.setPointSizeF(30); tf.setBold(true);
-    tf.setLetterSpacing(QFont::AbsoluteSpacing, 9.0);
-    title->setFont(tf);
-    title->setStyleSheet("color:#f4f7f4;");
+    QFont tf = title->font(); tf.setPointSizeF(32); tf.setBold(true);
+    tf.setLetterSpacing(QFont::AbsoluteSpacing, 10.0); title->setFont(tf);
+    title->setStyleSheet("color:#f4f7f4;"); title->setAlignment(Qt::AlignCenter);
     hv->addWidget(title);
     auto* en = new QLabel(QStringLiteral("L I G H T A L B U M"), hero);
-    QFont ef = en->font(); ef.setPointSizeF(8.5);
-    ef.setLetterSpacing(QFont::AbsoluteSpacing, 3.0);
-    en->setFont(ef);
-    en->setStyleSheet("color:#d9a94e;");
+    QFont ef = en->font(); ef.setPointSizeF(9); ef.setLetterSpacing(QFont::AbsoluteSpacing, 4.0);
+    en->setFont(ef); en->setStyleSheet("color:#d9a94e;"); en->setAlignment(Qt::AlignCenter);
     hv->addWidget(en);
     auto* tag = new QLabel(
         QStringLiteral("每一次快门，都是一次驻足 —— 私人影像馆，全部在本机完成"), hero);
-    tag->setStyleSheet("color:#8da396;font-size:12px;");
+    tag->setStyleSheet("color:#8da996;font-size:12px;"); tag->setAlignment(Qt::AlignCenter);
     hv->addWidget(tag);
     hl->addLayout(hv);
-    hl->addStretch(1);
-    auto* wm = new QLabel(hero);
-    wm->setPixmap(Icons::make(QStringLiteral("gallery"),
-                              QColor(0x4f, 0xc0, 0x8a, 36), 116).pixmap(116, 116));
-    wm->setAlignment(Qt::AlignVCenter);
-    hl->addWidget(wm);
-    // P13 呼吸光晕：柔翡翠径向光，置于 hero 左后方，由 tickBreath 正弦驱动透明度
+    // 呼吸光晕：柔翡翠径向光，置于 hero 中央后方，由 tickBreath 正弦驱动透明度
     auto* glow = new QLabel(hero);
     glow->setObjectName(QStringLiteral("heroGlow"));
     glow->setAttribute(Qt::WA_TransparentForMouseEvents);
@@ -392,13 +762,34 @@ QWidget* MainWindow::makeHome(const QString& thumbsDir) const
         p.drawEllipse(0, 0, 460, 460);
         glow->setPixmap(gp);
     }
-    glow->setGeometry(20, -70, 460, 460);
+    glow->setGeometry((hero->width() - 460) / 2, -70, 460, 460);
     auto* ge = new QGraphicsOpacityEffect(glow);
     ge->setOpacity(0.4);
     glow->setGraphicsEffect(ge);
     outer->addWidget(hero);
 
-    // ---- 功能入口：四张语义色卡，hover 点亮，点击直达 ----
+    // ---- 旋转画廊（P15 中心装置）----
+    QVector<RotatingGallery::Item> items;
+    const QVector<Photo>& all = lib_->photos();
+    QVector<const Photo*> recent;
+    for (const Photo& ph : all)
+        if (!ph.thumbFile.isEmpty()) recent.append(&ph);
+    std::stable_sort(recent.begin(), recent.end(),
+                     [](const Photo* a, const Photo* b) { return a->date > b->date; });
+    if (recent.size() > 8) recent.resize(8);
+    for (const Photo* ph : recent) {
+        const QPixmap pm = QPixmap(QDir(thumbsDir).filePath(ph->thumbFile));
+        if (pm.isNull()) continue;
+        const QString cap = ph->title.isEmpty()
+            ? (ph->date.isEmpty() ? QStringLiteral("未命名") : ph->date)
+            : ph->title;
+        items.append({pm, cap});
+    }
+    auto* rg = new RotatingGallery(items, w);
+    rg->setObjectName(QStringLiteral("rotGallery"));
+    outer->addWidget(rg);
+
+    // ---- 功能入口：四张语义色卡，hover 点亮，点击直达（错落呼吸辉光）----
     struct Feat { const char* name; const char* desc; const char* icon;
                   int navRow; QColor accent; };
     const Feat feats[] = {
@@ -407,15 +798,13 @@ QWidget* MainWindow::makeHome(const QString& thumbsDir) const
         {"修图", "流明引擎手动调", "retouch", 4, Lumen::EMERALD},
         {"美图", "一键风格化",   "enhance", 5, Lumen::VIOLET},
     };
-    auto* featRow = new QWidget(w);
-    auto* fl = new QHBoxLayout(featRow);
-    fl->setContentsMargins(0, 0, 0, 0);
-    fl->setSpacing(14);
+    auto* feat = new FeatRow(w);
     for (const Feat& ft : feats) {
-        auto* col = new QWidget(featRow);
+        auto* col = new QWidget(feat);
         auto* cv = new QVBoxLayout(col);
         cv->setContentsMargins(0, 0, 0, 0);
-        cv->setSpacing(5);
+        cv->setSpacing(6);
+        cv->setAlignment(Qt::AlignTop);
         auto* btn = new QToolButton(col);
         btn->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
         btn->setIcon(Icons::make(QString::fromLatin1(ft.icon), ft.accent, 40));
@@ -429,12 +818,12 @@ QWidget* MainWindow::makeHome(const QString& thumbsDir) const
                 [this, row = ft.navRow] { nav_->setCurrentRow(row); });
         auto* desc = new QLabel(QString::fromUtf8(ft.desc), col);
         desc->setAlignment(Qt::AlignCenter);
-        desc->setStyleSheet("color:#8da396;font-size:10.5px;");
+        desc->setStyleSheet("color:#8da996;font-size:10.5px;");
         cv->addWidget(btn, 1);
         cv->addWidget(desc);
-        fl->addWidget(col, 1);
+        feat->addCard(col);
     }
-    outer->addWidget(featRow);
+    outer->addWidget(feat);
 
     // ---- 最近作品胶片带：真实缩略图（按日期倒序取 12 张），金描边 hover ----
     auto* head = new QWidget(w);
@@ -469,14 +858,13 @@ QWidget* MainWindow::makeHome(const QString& thumbsDir) const
     sl->setContentsMargins(0, 2, 0, 2);
     sl->setSpacing(12);
 
-    QVector<const Photo*> recent;
-    const QVector<Photo>& all = lib_->photos();
+    QVector<const Photo*> stripRecent;
     for (const Photo& ph : all)
-        if (!ph.thumbFile.isEmpty()) recent.append(&ph);
-    std::stable_sort(recent.begin(), recent.end(),
+        if (!ph.thumbFile.isEmpty()) stripRecent.append(&ph);
+    std::stable_sort(stripRecent.begin(), stripRecent.end(),
                      [](const Photo* a, const Photo* b) { return a->date > b->date; });
-    if (recent.size() > 12) recent.resize(12);
-    for (const Photo* ph : recent) {
+    if (stripRecent.size() > 12) stripRecent.resize(12);
+    for (const Photo* ph : stripRecent) {
         const QPixmap pm = roundedThumb(
             QDir(thumbsDir).filePath(ph->thumbFile), 150, 10);
         if (pm.isNull()) continue;
@@ -496,15 +884,16 @@ QWidget* MainWindow::makeHome(const QString& thumbsDir) const
     stripArea->setWidget(strip);
     outer->addWidget(stripArea);
 
-    if (recent.isEmpty()) {
+    if (stripRecent.isEmpty()) {
         auto* hint = new QLabel(
             QStringLiteral("导入目录后，这里会展示你的最新作品。"), w);
         hint->setAlignment(Qt::AlignCenter);
-        hint->setStyleSheet("color:#8da396;");
+        hint->setStyleSheet("color:#8da996;");
         outer->addWidget(hint);
     }
     outer->addStretch(1);
-    return w;
+    scroll->setWidget(w);
+    return scroll;
 }
 
 // P12 占位页重设计：线性图标 + 标题 + 「即将推出」胶囊 + 一句用户向说明。
@@ -673,3 +1062,6 @@ void MainWindow::startImport()
             [cancelled]() { return cancelled->load(); });
     }));
 }
+
+// AUTOMOC：本文件含 Q_OBJECT 类，必须包含生成的 moc（P15 新增 RotatingGallery/FeatRow/PhotoLightbox）。
+#include "MainWindow.moc"

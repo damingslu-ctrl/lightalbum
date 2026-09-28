@@ -14,6 +14,10 @@ class GalleryPage : public QWidget {
 public:
     GalleryPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidget* parent = nullptr);
     void applyFilter(const QString& q);
+    void applyGeoFilter(const QString& regionId, const QString& provEn); // 地图跳转：大区/省筛选
+
+signals:
+    void photoActivated(const QString& path);   // 双击卡片 → 打开灯箱并跳转修图
 
 private:
     const QVector<Photo>* photos_ = nullptr;

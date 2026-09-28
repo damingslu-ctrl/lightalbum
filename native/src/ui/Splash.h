@@ -13,6 +13,8 @@ public:
     explicit SplashWindow(const QRect& target, QWidget* parent = nullptr);
     // 播放开场：整体淡入 → 光晕呼吸 → 定时后收缩成缝 → 发 finished()
     void play();
+    // 无障碍（reduced-motion）：静态品牌画面，无呼吸/收缩动效，短暂停留后发 finished()
+    void playStatic();
 
 signals:
     void finished();

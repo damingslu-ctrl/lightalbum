@@ -752,7 +752,7 @@ void RetouchPage::onEraseTaskUpdated(int id)
 void RetouchPage::onPhotoChanged(int)
 {
     if (photoCombo_->currentIndex() < 0) return;
-    loadPhoto(photoCombo_->currentIndex());
+    loadPhoto(usableIdx_[photoCombo_->currentIndex()]);
     refreshChips();
 }
 
@@ -837,8 +837,8 @@ void RetouchPage::setParams(const RetouchParams& p)
 
 void RetouchPage::loadPhoto(int idx)
 {
-    if (idx < 0 || idx >= usableIdx_.size()) return;
-    const Photo& ph = (*photos_)[usableIdx_[idx]];
+    if (idx < 0 || idx >= photos_->size()) return;
+    const Photo& ph = (*photos_)[idx];
     const QString path = QDir(thumbsDir_).filePath(ph.thumbFile);
     QImage img(path);
     if (img.isNull()) {
@@ -850,6 +850,20 @@ void RetouchPage::loadPhoto(int idx)
         img = img.scaled(kMaxSrc, kMaxSrc, Qt::KeepAspectRatio, Qt::SmoothTransformation);
     geoSrc_ = img;
     rebuildGeo();
+}
+
+void RetouchPage::openPhoto(const QString& path)
+{
+    if (!photos_ || path.isEmpty()) return;
+    int g = -1;
+    for (int i = 0; i < photos_->size(); ++i) {
+        if ((*photos_)[i].path == path) { g = i; break; }
+    }
+    if (g < 0) return;
+    const int u = usableIdx_.indexOf(g);
+    if (u >= 0) photoCombo_->setCurrentIndex(u);   // 在 300 限额内 → 同步下拉
+    loadPhoto(g);
+    refreshChips();
 }
 
 void RetouchPage::doApply()

@@ -43,10 +43,12 @@ private:
     void startImport();          // P8：选目录 → 后台扫描入库 → 汇总/重启
 
     // P13：全客户端呼吸感 + 导航激活态管理
-    bool  uiAnimEnabled() const;            // LA_* 冒烟/截图场景关闭动画
+    bool  uiAnimEnabled() const;            // LA_* 冒烟/截图/系统减弱动效 → 关动画
     void  setupBreathing();                 // 呼吸定时器与受控元素
-    void  tickBreath();                     // 正弦驱动 hero 光晕/seam/激活条
+    void  tickBreath();                     // 正弦驱动 hero 光晕/seam/激活条/扩展目标
     void  updateNavActive(int row);         // 高亮当前导航项 + 激活呼吸条
+    // P14：统一呼吸目标注册（功能卡片/画廊光晕等带相位偏移，错落呼吸）
+    void  registerBreath(QGraphicsOpacityEffect* eff, double base, double amp, double phase = 0.0);
 
     const Library* lib_;
     QString         dbPath_;
@@ -66,6 +68,10 @@ private:
     QVector<QWidget*>        navCells_;             // 各导航自绘单元格
     QVector<QFrame*>         navBars_;              // 各导航激活金条
     bool                     animEnabled_ = true;
+
+    // P14：扩展呼吸目标（功能卡片光晕/画廊光晕），与 heroGlow/seam/激活条共享同一节拍
+    struct BreathTarget { QGraphicsOpacityEffect* eff = nullptr; double base = 0.5; double amp = 0.2; double phase = 0.0; };
+    QVector<BreathTarget>    breathTargets_;
 
     GalleryPage*    gallery_ = nullptr;
     MapPage*        map_ = nullptr;

@@ -1,4 +1,5 @@
 #include "MapView.h"
+#include "../core/MotionPref.h"
 #include <QPainter>
 #include <QFile>
 #include <QJsonDocument>
@@ -17,7 +18,7 @@ MapView::MapView(QWidget* parent) : QWidget(parent)
 {
     setMinimumSize(320, 200);
     setMouseTracking(true);
-    reduceMotion_ = !qEnvironmentVariableIsEmpty("LA_REDUCE_MOTION");
+    reduceMotion_ = Lumen::systemReducedMotion();   // P15：尊重系统「减弱动效」
 
     loadData();
     computeRegionBBox();
@@ -328,6 +329,7 @@ void MapView::mousePressEvent(QMouseEvent* e)
             double wx = dst.x() + fmod(w.x() - dst.x(), span);
             if (wx < dst.x()) wx += span;
             if (std::hypot(wx - e->pos().x(), w.y() - e->pos().y()) < 10) {
+                emit picked(ri.id, ri.name, false);
                 enterRegion(ri.id);
                 return;
             }
@@ -344,6 +346,8 @@ void MapView::mousePressEvent(QMouseEvent* e)
             for (int i=1;i<pv.ring.pts.size();++i) path.lineTo(o + pv.ring.pts[i]*scale);
             path.closeSubpath();
             if (path.contains(e->pos())) {
+                const QString label = pv.zh.isEmpty() ? pv.name : pv.zh;
+                emit picked(pv.name, label, true);
                 enterProvince(pv.name);
                 return;
             }

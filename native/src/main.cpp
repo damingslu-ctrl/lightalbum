@@ -22,6 +22,7 @@
 #include "ui/DarkPalette.h"
 #include "ui/Theme.h"
 #include "ui/Splash.h"
+#include "core/MotionPref.h"
 #include <QPropertyAnimation>
 
 namespace {
@@ -385,6 +386,17 @@ int main(int argc, char *argv[])
     }
 
     if (animOk) {
+        // 系统「减弱动效」：静态收尾 splash，客户端立即全尺寸显示（无展开动画）。
+        if (Lumen::systemReducedMotion()) {
+            SplashWindow splash(fullRect);
+            QObject::connect(&splash, &SplashWindow::finished, [&]() {
+                splash.close();
+                win.setGeometry(fullRect);
+                win.show();
+            });
+            splash.playStatic();
+            return app.exec();
+        }
         // 开场：splash 播放 → 收缩成缝 → 客户端从缝中向上下展开
         SplashWindow splash(fullRect);
         QObject::connect(&splash, &SplashWindow::finished, [&]() {
@@ -395,7 +407,7 @@ int main(int argc, char *argv[])
             win.setGeometry(slit);
             win.show();
             auto* a = new QPropertyAnimation(&win, "geometry");
-            a->setDuration(620);
+            a->setDuration(Lumen::Motion::kExpandMs);
             a->setStartValue(slit);
             a->setEndValue(fullRect);
             a->setEasingCurve(QEasingCurve::OutCubic);

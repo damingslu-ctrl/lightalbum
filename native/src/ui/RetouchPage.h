@@ -39,6 +39,9 @@ public:
     explicit RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
                         QWidget* parent = nullptr);
 
+    // P15：由首页/图库灯箱跳转而来——按 path 定位并载入照片（零云端）。
+    void openPhoto(const QString& path);
+
     // 几何变换纯函数（P4-1；供 UI 与冒烟直测）：
     // rot ∈ 0..3（顺时针 90° 步进）→ 拉直 angleDeg（-10..10，先于旋转）→ 翻转 → 居中裁剪 aspect(w/h，0=不裁)。
     // 顺序固定：拉直 → 翻转 → 90°旋转 → 裁剪（确定性流水线）。

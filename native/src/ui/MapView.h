@@ -44,6 +44,7 @@ public:
 
 signals:
     void breadcrumbChanged(const QString& text);
+    void picked(const QString& key, const QString& label, bool isProvince); // 区域/省点击
 
 protected:
     void paintEvent(QPaintEvent*) override;

@@ -18,27 +18,42 @@ void GalleryModel::setThumbCache(ThumbCache* c)
     }
 }
 
-void GalleryModel::setFilter(const QString& q)
+// 文本 + 地理（大区/省）联合过滤：三条件 AND。
+void GalleryModel::rebuild()
 {
-    filter_ = q;
     beginResetModel();
     idx_.clear();
     rowByThumb_.clear();
     if (all_) {
         const QString needle = filter_.trimmed();
+        const bool hasRegion = !regionFilter_.isEmpty();
+        const bool hasProv   = !provFilter_.isEmpty();
+        const QString region = regionFilter_.toLower();
+        const QString prov   = provFilter_.toLower();
         for (int i = 0; i < all_->size(); ++i) {
             const Photo& p = (*all_)[i];
-            if (needle.isEmpty()
-                || p.title.contains(needle, Qt::CaseInsensitive)
-                || p.rel.contains(needle, Qt::CaseInsensitive)
-                || p.cam.contains(needle, Qt::CaseInsensitive)) {
-                idx_.push_back(i);
-                if (!rowByThumb_.contains(p.thumbFile))
-                    rowByThumb_.insert(p.thumbFile, int(idx_.size()) - 1);
-            }
+            if (hasRegion && p.region.toLower() != region) continue;
+            if (hasProv   && p.prov.toLower()   != prov)   continue;
+            if (!needle.isEmpty()
+                && !p.title.contains(needle, Qt::CaseInsensitive)
+                && !p.rel.contains(needle, Qt::CaseInsensitive)
+                && !p.cam.contains(needle, Qt::CaseInsensitive)) continue;
+            idx_.push_back(i);
+            if (!rowByThumb_.contains(p.thumbFile))
+                rowByThumb_.insert(p.thumbFile, int(idx_.size()) - 1);
         }
     }
     endResetModel();
+}
+
+void GalleryModel::setFilter(const QString& q)     { filter_ = q;        rebuild(); }
+void GalleryModel::setRegionFilter(const QString& r){ regionFilter_ = r; rebuild(); }
+void GalleryModel::setProvFilter(const QString& p) { provFilter_ = p;   rebuild(); }
+
+const Photo* GalleryModel::photoAt(int row) const
+{
+    if (!all_ || row < 0 || row >= idx_.size()) return nullptr;
+    return &(*all_)[idx_[row]];
 }
 
 int GalleryModel::rowCount(const QModelIndex& parent) const
