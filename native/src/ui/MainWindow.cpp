@@ -9,6 +9,7 @@
 #include "../core/Scanner.h"
 #include "../core/MotionPref.h"
 #include <QDialog>
+#include <QKeyEvent>
 #include <QPair>
 #include <QToolButton>
 #include <QHBoxLayout>
@@ -314,64 +315,102 @@ private:
 };
 
 // ============================================================================
-// P15 图片灯箱：大图预览 + EXIF 元信息 + 「在修图台打开」。
+// P15 图片灯箱（沉浸式，无边框）：直接铺满显示大图，EXIF 等信息在图片正下方。
+// 作为 MainWindow 的子控件覆盖全窗口，不再弹带标题栏的对话框「框」。
 // ============================================================================
-class PhotoLightbox : public QDialog {
+class PhotoLightbox : public QWidget {
     Q_OBJECT
 public:
-    explicit PhotoLightbox(const Photo* ph, const QString& thumbsDir, QWidget* parent = nullptr)
-        : QDialog(parent)
+    explicit PhotoLightbox(QWidget* parent = nullptr) : QWidget(parent)
     {
-        setWindowTitle(QStringLiteral("作品 · 灯箱"));
-        setMinimumSize(720, 560);
-        setStyleSheet(QStringLiteral("QDialog{background:#060806;}"));
-        auto* root = new QHBoxLayout(this);
-        root->setContentsMargins(18, 18, 18, 18);
-        root->setSpacing(18);
+        setObjectName(QStringLiteral("photoLightbox"));
+        setAttribute(Qt::WA_StyledBackground, true);
+        setStyleSheet(QStringLiteral("QWidget#photoLightbox{background:rgba(6,8,6,0.97);}"));
 
-        auto* imgBox = new QFrame(this);
-        imgBox->setStyleSheet(QStringLiteral(
-            "QFrame{background:#0a0e0a;border:1px solid #26312a;border-radius:14px;}"));
-        auto* il = new QVBoxLayout(imgBox);
-        il->setContentsMargins(12, 12, 12, 12);
-        auto* img = new QLabel(imgBox);
-        img->setAlignment(Qt::AlignCenter);
+        auto* root = new QVBoxLayout(this);
+        root->setContentsMargins(0, 0, 0, 0);
+        root->setSpacing(0);
+
+        // 顶栏：标题 + 关闭
+        auto* top = new QWidget(this);
+        top->setStyleSheet(QStringLiteral(
+            "QWidget{background:rgba(10,14,10,0.55);border-bottom:1px solid #1c261f;}"));
+        auto* tl = new QHBoxLayout(top);
+        tl->setContentsMargins(18, 10, 18, 10);
+        auto* cap = new QLabel(QStringLiteral("作品预览"), top);
+        cap->setStyleSheet(QStringLiteral("color:#8da396;font-size:13px;letter-spacing:2px;"));
+        tl->addWidget(cap); tl->addStretch(1);
+        auto* x = new QPushButton(QStringLiteral("✕ 关闭"), top);
+        x->setCursor(Qt::PointingHandCursor);
+        x->setStyleSheet(Lumen::btnGhost());
+        tl->addWidget(x);
+        root->addWidget(top);
+
+        // 滚动内容：大图在上，信息在下
+        auto* scroll = new QScrollArea(this);
+        scroll->setWidgetResizable(true);
+        scroll->setFrameShape(QFrame::NoFrame);
+        scroll->setStyleSheet(QStringLiteral("QScrollArea{background:transparent;border:none;}"));
+        auto* content = new QWidget(scroll);
+        auto* cv = new QVBoxLayout(content);
+        cv->setContentsMargins(28, 26, 28, 30);
+        cv->setSpacing(18);
+        cv->setAlignment(Qt::AlignHCenter);
+
+        img_ = new QLabel(content);
+        img_->setAlignment(Qt::AlignCenter);
+        cv->addWidget(img_);
+
+        info_ = new QWidget(content);
+        info_->setMaximumWidth(780);
+        auto* iv = new QVBoxLayout(info_);
+        iv->setContentsMargins(0, 0, 0, 0);
+        iv->setSpacing(12);
+        cv->addWidget(info_, 0, Qt::AlignHCenter);
+        cv->addStretch(1);
+        scroll->setWidget(content);
+        root->addWidget(scroll, 1);
+
+        connect(x, &QPushButton::clicked, this, &PhotoLightbox::close);
+    }
+
+    void setPhoto(const Photo* ph, const QString& thumbsDir)
+    {
+        // ---- 大图（直接显示，按窗口尺寸自适应）----
         const QPixmap pm(QDir(thumbsDir).filePath(ph->thumbFile));
         if (!pm.isNull()) {
-            const int W = 460, H = 500;
-            const QPixmap sc = pm.scaled(W, H, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-            QPixmap out(W, H); out.fill(QColor(0x0a, 0x0e, 0x0a));
-            QPainter p(&out); p.setRenderHint(QPainter::Antialiasing, true);
-            const QRect r((W - sc.width()) / 2, (H - sc.height()) / 2, sc.width(), sc.height());
-            QPainterPath path; path.addRoundedRect(r, 12, 12);
-            p.setClipPath(path); p.drawPixmap(r.topLeft(), sc);
-            img->setPixmap(out);
+            const int pw  = parentWidget() ? parentWidget()->width()  : 1000;
+            const int pht = parentWidget() ? parentWidget()->height() : 800;
+            const int maxW = qMax(360, pw - 56);
+            const int maxH = qMax(260, pht - 360);
+            const QPixmap sc = pm.scaled(maxW, maxH, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+            img_->setPixmap(sc);
+            img_->setFixedSize(sc.size());
         } else {
-            img->setText(QStringLiteral("无缩略图"));
-            img->setStyleSheet(QStringLiteral("color:#8da396;"));
+            img_->setText(QStringLiteral("无缩略图"));
+            img_->setStyleSheet(QStringLiteral("color:#8da396;font-size:14px;"));
+            img_->setFixedSize(360, 200);
         }
-        il->addWidget(img);
-        root->addWidget(imgBox, 1);
 
-        auto* info = new QWidget(this);
-        auto* vl = new QVBoxLayout(info);
-        vl->setContentsMargins(0, 0, 0, 0);
-        vl->setSpacing(12);
-        vl->setAlignment(Qt::AlignTop);
+        // ---- 信息（图片正下方）----
+        clearLayout(info_->layout());
+        auto* iv = qobject_cast<QVBoxLayout*>(info_->layout());
+        if (!iv) { iv = new QVBoxLayout(info_); iv->setContentsMargins(0,0,0,0); iv->setSpacing(12); }
+
         auto* t = new QLabel(ph->title.isEmpty()
-                                 ? QFileInfo(ph->path).fileName() : ph->title, info);
-        QFont tf = t->font(); tf.setPointSizeF(16); tf.setBold(true); t->setFont(tf);
+                                 ? QFileInfo(ph->path).fileName() : ph->title, info_);
+        QFont tf = t->font(); tf.setPointSizeF(17); tf.setBold(true); t->setFont(tf);
         t->setStyleSheet(QStringLiteral("color:#f4f7f4;"));
         t->setWordWrap(true);
-        vl->addWidget(t);
+        iv->addWidget(t);
 
         auto addRow = [&](const QString& k, const QString& v) {
             auto* lb = new QLabel(
-                QStringLiteral("<b style='color:#8da396;'>%1</b> %2")
-                    .arg(k, v.isEmpty() ? QStringLiteral("—") : v), info);
+                QStringLiteral("<b style='color:#8da396;'>%1</b> &nbsp; %2")
+                    .arg(k, v.isEmpty() ? QStringLiteral("—") : v), info_);
             lb->setStyleSheet(QStringLiteral("color:#f4f7f4;font-size:12px;"));
             lb->setWordWrap(true);
-            vl->addWidget(lb);
+            iv->addWidget(lb);
         };
         addRow(QStringLiteral("日期"), ph->date);
         addRow(QStringLiteral("器材"), ph->cam);
@@ -381,22 +420,54 @@ public:
         addRow(QStringLiteral("城市"), ph->city);
         addRow(QStringLiteral("评分"), ph->rating > 0 ? QString::number(ph->rating) : QStringLiteral("—"));
         addRow(QStringLiteral("尺寸"), ph->dim);
-        vl->addStretch(1);
+        iv->addStretch(1);
 
-        auto* open = new QPushButton(QStringLiteral("在修图台打开 →"), info);
+        auto* btnRow = new QWidget(info_);
+        auto* bl = new QHBoxLayout(btnRow);
+        bl->setContentsMargins(0, 8, 0, 0);
+        bl->setSpacing(12);
+        auto* open = new QPushButton(QStringLiteral("在修图台打开 →"), btnRow);
         open->setCursor(Qt::PointingHandCursor);
         open->setStyleSheet(Lumen::btnPrimary());
-        connect(open, &QPushButton::clicked, this, [this] { done(1); });
-        vl->addWidget(open);
-        auto* close = new QPushButton(QStringLiteral("关闭"), info);
+        connect(open, &QPushButton::clicked, this,
+                [this, path = ph->path] { emit openInRetouch(path); });
+        auto* close = new QPushButton(QStringLiteral("关闭"), btnRow);
         close->setCursor(Qt::PointingHandCursor);
         close->setStyleSheet(Lumen::btnGhost());
-        connect(close, &QPushButton::clicked, this, &QDialog::reject);
-        vl->addWidget(close);
-        root->addWidget(info, 0);
-
-        setProperty("photoPath", ph->path);
+        connect(close, &QPushButton::clicked, this, &PhotoLightbox::close);
+        bl->addWidget(open); bl->addWidget(close); bl->addStretch(1);
+        iv->addWidget(btnRow);
     }
+
+signals:
+    void openInRetouch(const QString& path);
+    void dismissed();
+
+protected:
+    void showEvent(QShowEvent* e) override {
+        if (parentWidget()) setGeometry(parentWidget()->rect());
+        QWidget::showEvent(e);
+    }
+    void keyPressEvent(QKeyEvent* e) override {
+        if (e->key() == Qt::Key_Escape) { e->accept(); close(); }
+        else QWidget::keyPressEvent(e);
+    }
+    void closeEvent(QCloseEvent* e) override {
+        QWidget::closeEvent(e);
+        emit dismissed();
+    }
+
+private:
+    static void clearLayout(QLayout* lay) {
+        if (!lay) return;
+        while (QLayoutItem* it = lay->takeAt(0)) {
+            if (QWidget* w = it->widget()) w->deleteLater();
+            delete it;
+        }
+    }
+
+    QLabel* img_  = nullptr;
+    QWidget* info_ = nullptr;
 };
 
 MainWindow::MainWindow(const Library* lib, const QString& thumbsDir,
@@ -556,18 +627,10 @@ MainWindow::MainWindow(const Library* lib, const QString& thumbsDir,
     setCentralWidget(central);
     connect(nav_, &QListWidget::currentRowChanged, this, &MainWindow::onNav);
     connect(search_, &QLineEdit::textChanged, gallery_, &GalleryPage::applyFilter);
-    // P15：图库卡片点击 → 灯箱 → （可选）跳转修图台
-    connect(gallery_, &GalleryPage::photoActivated, this, [this, thumbsDir](const QString& path) {
-        const Photo* ph = nullptr;
-        for (const Photo& p : lib_->photos())
-            if (p.path == path) { ph = &p; break; }
-        if (!ph) return;
-        PhotoLightbox box(ph, thumbsDir, this);
-        if (box.exec() == 1) {
-            retouch_->openPhoto(path);
-            nav_->setCurrentRow(4);
-        }
-    });
+    // P15：图库卡片点击 → 沉浸式灯箱（无边框）→（可选）跳转修图台
+    thumbsDir_ = thumbsDir;
+    connect(gallery_, &GalleryPage::photoActivated, this,
+            [this](const QString& path) { openLightbox(path); });
     // P15：地图「在图库查看」→ 按区域筛选并切到图库
     connect(map_, &MapPage::requestGallery, this,
             [this](const QString& regionId, const QString& provEn) {
@@ -649,6 +712,37 @@ void MainWindow::updateNavActive(int row)
 // P13：导航切换联动动效（淡出 → 换页 → 淡入+轻微上滑）。
 // 冒烟/截图或窗口尚未可见（开场动画期间）时直接换页，避免不确定性。
 // 效果只在过渡期间 enabled；静置时 disabled 走原生渲染（避免中间 pixmap 发虚）。
+// P15：沉浸式灯箱铺满窗口，随主窗口尺寸变化同步。
+void MainWindow::resizeEvent(QResizeEvent* e)
+{
+    QMainWindow::resizeEvent(e);
+    if (lightbox_ && lightbox_->isVisible())
+        lightbox_->setGeometry(rect());
+}
+
+// P15：打开沉浸式灯箱（图库点击或探针复用）。
+void MainWindow::openLightbox(const QString& path)
+{
+    const Photo* ph = nullptr;
+    for (const Photo& p : lib_->photos())
+        if (p.path == path) { ph = &p; break; }
+    if (!ph) return;
+    if (!lightbox_) {
+        lightbox_ = new PhotoLightbox(this);
+        connect(lightbox_, &PhotoLightbox::openInRetouch, this, [this](const QString& p) {
+            if (lightbox_) lightbox_->hide();
+            retouch_->openPhoto(p);
+            nav_->setCurrentRow(4);
+        });
+        connect(lightbox_, &PhotoLightbox::dismissed, this, [this] {
+            if (lightbox_) lightbox_->hide();
+        });
+    }
+    lightbox_->setPhoto(ph, thumbsDir_);
+    lightbox_->show();
+    lightbox_->raise();
+}
+
 void MainWindow::onNav(int row)
 {
     if (row < 0 || row >= stack_->count()) return;

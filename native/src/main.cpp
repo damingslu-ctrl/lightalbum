@@ -356,6 +356,7 @@ int main(int argc, char *argv[])
     // P13 开场动画：仅在真实启动（非冒烟/截图）时播放，保证 CI 确定性。
     const bool animOk = !qEnvironmentVariableIsSet("LA_SMOKE")
         && !qEnvironmentVariableIsSet("LA_UI_SHOT")
+        && !qEnvironmentVariableIsSet("LA_LIGHTBOX_SHOT")
         && !qEnvironmentVariableIsSet("LA_CULL_SMOKE")
         && !qEnvironmentVariableIsSet("LA_RETOUCH_SMOKE")
         && !qEnvironmentVariableIsSet("LA_BEAUTY_SMOKE");
@@ -420,6 +421,22 @@ int main(int argc, char *argv[])
     // 非动画（冒烟/截图）：直接显示并保留原有门控
     win.setGeometry(fullRect);
     win.show();
+
+    // P15 沉浸式灯箱探针：LA_LIGHTBOX_SHOT=<dir> 时打开首张照片的灯箱 → grab 存 PNG 后退出。
+    if (qEnvironmentVariableIsSet("LA_LIGHTBOX_SHOT")) {
+        const QString dir = qEnvironmentVariable("LA_LIGHTBOX_SHOT");
+        QDir().mkpath(dir);
+        const auto& phs = lib.photos();
+        if (!phs.isEmpty()) {
+            win.openLightbox(phs.first().path);
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 250);
+            const QString path = QDir(dir).filePath(QStringLiteral("lightbox.png"));
+            win.grab().save(path);
+            std::fprintf(stderr, "LA_LIGHTBOX_SHOT %s\n", qPrintable(path));
+            std::fflush(stderr);
+        }
+        return 0;
+    }
 
     // P11 UI 截图探针：LA_UI_SHOT=<dir> 时逐页 widget.grab() 存 PNG（offscreen 可用，
     // 用于颜色/乱码真实验证——颜色校验铁律：必须实测不许猜）。

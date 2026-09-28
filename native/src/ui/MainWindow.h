@@ -19,6 +19,7 @@ class MapPage;
 class CullPage;
 class RetouchPage;
 class BeautyPage;
+class PhotoLightbox;   // P15 沉浸式灯箱（MainWindow.cpp 文件内定义）
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -29,8 +30,14 @@ public:
     // P11 UI 截图探针：逐导航页 setCurrentRow → grab() 存 PNG 到 dir；返回 0。
     int shootPages(const QString& dir);
 
+    // P15：打开沉浸式灯箱（图库点击 / 探针复用）
+    void openLightbox(const QString& path);
+
     // P13：导航切换联动动效（淡出→换页→淡入+轻微上滑）
     void onNav(int row);
+
+    // P15：沉浸式灯箱随窗口尺寸铺满
+    void resizeEvent(QResizeEvent* e) override;
 
 private:
     // P12「美术馆策展」：首页为艺术 hero 仪表盘（hero 渐变 + 功能入口 + 最近作品胶片带）
@@ -52,6 +59,7 @@ private:
 
     const Library* lib_;
     QString         dbPath_;
+    QString         thumbsDir_;     // P15：灯箱大图源（构造时保存，供 openLightbox 复用）
     QListWidget*    nav_ = nullptr;
     QLineEdit*      search_ = nullptr;
     QLabel*         title_ = nullptr;
@@ -78,4 +86,6 @@ private:
     CullPage*       cull_ = nullptr;
     RetouchPage*     retouch_ = nullptr;
     BeautyPage*      beauty_ = nullptr;
+
+    PhotoLightbox*  lightbox_ = nullptr;   // P15 沉浸式灯箱（无边框全窗口覆盖）
 };
