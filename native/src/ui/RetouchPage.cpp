@@ -259,6 +259,16 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
     geoRotRBtn_ = gbtn(QStringLiteral("旋转⟳"));
     geoFlipHBtn_ = gbtn(QStringLiteral("⇋ 水平"));
     geoFlipVBtn_ = gbtn(QStringLiteral("⇅ 垂直"));
+    // P16.1：旋转/翻转按钮加 tooltip（键盘可达性 + 操作明确）
+    geoRotLBtn_->setToolTip(QStringLiteral("向左旋转 90°"));
+    geoRotRBtn_->setToolTip(QStringLiteral("向右旋转 90°"));
+    geoFlipHBtn_->setToolTip(QStringLiteral("水平翻转（镜像）"));
+    geoFlipVBtn_->setToolTip(QStringLiteral("垂直翻转（镜像）"));
+    // 视觉分隔：旋转/翻转组 ↔ 拉直/裁剪组
+    auto* geoSep = new QFrame(geo);
+    geoSep->setFrameShape(QFrame::VLine);
+    geoSep->setFixedHeight(20);
+    geoSep->setStyleSheet(QStringLiteral("color:#26312a;"));
     straighten_ = new QSlider(Qt::Horizontal, geo);
     straighten_->setRange(-100, 100); straighten_->setValue(0);
     straighten_->setFixedWidth(160);
@@ -275,6 +285,7 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
     geoResetBtn_ = gbtn(QStringLiteral("重置几何"));
     gl2->addWidget(geoRotLBtn_); gl2->addWidget(geoRotRBtn_);
     gl2->addWidget(geoFlipHBtn_); gl2->addWidget(geoFlipVBtn_);
+    gl2->addWidget(geoSep);
     gl2->addWidget(new QLabel(QStringLiteral("拉直"), geo));
     gl2->addWidget(straighten_);
     gl2->addWidget(new QLabel(QStringLiteral("裁剪"), geo));

@@ -308,6 +308,7 @@ int main(int argc, char *argv[])
     app.setOrganizationName(QStringLiteral("lightalbum"));
     Dark::apply(app);
     Lumen::applyAppFont(app);   // P11：中文优先雅黑（发虚/缺字防线）
+    app.setStyleSheet(Lumen::focusRing());   // P16.1：全局键盘焦点环（WCAG 可达性）
 
     // P5 金样对拍冒烟（无需库文件，最先跑）
     if (qEnvironmentVariableIsSet("LA_LUMEN_SMOKE"))

@@ -165,6 +165,19 @@ inline QString input()
         "QLineEdit:focus,QComboBox:focus{border-color:#4fc08a;}");
 }
 
+// 键盘焦点环（WCAG 2.1：所有可交互控件须有可见焦点指示）。
+// 描边画在控件外侧、不挤占布局；统一翡翠色作为全局 focus 语义色。
+// 注：Qt 样式表支持 outline / outline-offset（自 Qt 4.4 起），offscreen 截图不显，
+//     真实桌面键盘 Tab 聚焦即见。
+inline QString focusRing(const QColor& c = EMERALD_HI)
+{
+    return QString::fromUtf8(
+        "QPushButton:focus,QToolButton:focus,QAbstractSpinBox:focus,"
+        "QComboBox:focus,QSlider:focus{"
+        "outline:2px solid #%1;outline-offset:2px;}")
+        .arg(hex(c));
+}
+
 // 滑杆：翡翠轨道 + 发光手柄
 inline QString slider(const QColor& handle = EMERALD)
 {

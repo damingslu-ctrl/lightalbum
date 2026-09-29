@@ -23,6 +23,8 @@ set(LA_SOURCES
     src/core/LumenAgent.cpp
     src/core/GeoIndex.h
     src/core/GeoIndex.cpp
+    src/core/Vault.h
+    src/core/Vault.cpp
     src/ui/DarkPalette.h
     src/ui/ThumbCache.h
     src/ui/ThumbCache.cpp
@@ -67,7 +69,8 @@ set(LA_RESOURCES
 
 add_executable(LightAlbum WIN32 ${LA_SOURCES} ${LA_RESOURCES})
 # P9 起 LumenAgent 走本地 Ollama（仅回环）→ Qt6Network 回归（release.ps1 不再 -TrimNetwork）
-target_link_libraries(LightAlbum PRIVATE Qt6::Widgets Qt6::Sql Qt6::Concurrent Qt6::Network)
+# P16 vault 口令学走 Windows BCrypt（PBKDF2-SHA256 + GenRandom）
+target_link_libraries(LightAlbum PRIVATE Qt6::Widgets Qt6::Sql Qt6::Concurrent Qt6::Network bcrypt)
 # 注入版本号（来自 project(VERSION)），供 main.cpp 在标题/关于中展示
 target_compile_definitions(LightAlbum PRIVATE LA_VERSION="${PROJECT_VERSION}")
 

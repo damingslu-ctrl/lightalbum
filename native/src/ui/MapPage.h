@@ -19,6 +19,9 @@ private slots:
     void onViewInGallery();
 
 private:
+    int computeGpsCount() const;   // P16.1 真实 GPS 足迹计数（尊重隐私门）
+
+private:
     MapView* view_ = nullptr;
     QLabel*  crumb_ = nullptr;
     QPushButton* back_ = nullptr;

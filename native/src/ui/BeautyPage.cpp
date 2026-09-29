@@ -82,7 +82,7 @@ BeautyPage::BeautyPage(const QVector<Photo>* photos, const QString& thumbsDir, Q
         l->setAlignment(Qt::AlignCenter);
         l->setStyleSheet("QLabel{background:#000;border:1px solid #26312a;border-radius:12px;}");
     }
-    selName_ = new QLabel(QStringLiteral("原图"), this);
+    selName_ = new QLabel(QStringLiteral("风格化"), this);   // P16.1：修后图标题，避免与左图「原图」重复
     selName_->setStyleSheet("color:#f4f7f4;font-weight:bold;");
     auto* bl1 = new QVBoxLayout; bl1->setContentsMargins(0,0,0,0);
     bl1->addWidget(beforeLbl_); bl1->addWidget(new QLabel(QStringLiteral("原图"), this), 0, Qt::AlignHCenter);

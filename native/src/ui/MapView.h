@@ -42,6 +42,10 @@ public:
     Level level() const { return level_; }
     QString breadcrumb() const;
 
+    // P16.1 数据诚实：注入真实 GPS 照片数（尊重隐私门由调用方计算），
+    // 取代 paintEvent 中原硬编码的「足迹 0」。
+    void setGpsCount(int n) { gpsCount_ = n < 0 ? 0 : n; update(); }
+
 signals:
     void breadcrumbChanged(const QString& text);
     void picked(const QString& key, const QString& label, bool isProvince); // 区域/省点击
@@ -86,4 +90,5 @@ private:
     QTimer              driftTimer_;
     bool                reduceMotion_ = false;
     QString             hoverHint_;            // 鼠标悬停提示（省名）
+    int                 gpsCount_ = 0;         // P16.1 真实 GPS 足迹数（含隐私门下计数）
 };

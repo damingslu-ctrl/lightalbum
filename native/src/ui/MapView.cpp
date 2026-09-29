@@ -260,10 +260,11 @@ void MapView::paintEvent(QPaintEvent*)
     else
         renderProvince(p, dst);
 
-    // 诚实足迹提示
+    // 诚实足迹提示（GPS 数由 MapPage 经 setGpsCount 注入，绝不硬编码）
     p.setPen(QColor(0x8d, 0xa3, 0x96));
     const QString foot = (level_ == World)
-        ? QString("足迹地图 · 10 大区 / 233 省 · 本库 GPS 足迹 0")
+        ? QString("足迹地图 · 10 大区 / 233 省 · 本库 GPS 足迹 %1")
+            .arg(gpsCount_)
         : QString();
     if (!foot.isEmpty())
         p.drawText(rect().adjusted(12, 0, 0, -10), Qt::AlignLeft | Qt::AlignBottom, foot);

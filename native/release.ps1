@@ -31,9 +31,11 @@ Copy-Item $exeSrc (Join-Path $staging "LightAlbum.exe") -Force
 # 2) deploy Qt via windeployqt (clean: only required DLLs + plugins)
 #    --force: 必须加 —— 中断过的 windeployqt 会留下「同尺寸但损坏」的 DLL，
 #    重跑默认按时间戳/尺寸跳过，导致 0xC000012F 启动失败（P13 实证）。
-$env:PATH = "D:/qt/6.8.3/mingw_64/bin;" + $env:PATH
+#    用全路径调用（字面值，规避 & $var 在本环境偶发 BadExpression）。
+#    输出重定向到日志（*> 而非 2>&1 | Out-Null）：dxcompiler 警告写 stderr 时，
+#    PowerShell 管道会把原生命令中断当成 NativeCommandError，导致部署半成品。
 $ErrorActionPreference = "Continue"
-windeployqt.exe --release --force --no-translations --no-qml --no-opengl-sw (Join-Path $staging "LightAlbum.exe") 2>&1 | Out-Null
+& "D:/qt/6.8.3/mingw_64/bin/windeployqt.exe" --release --force --no-translations --no-qml --no-opengl-sw (Join-Path $staging "LightAlbum.exe") *> (Join-Path $root "windeployqt.log")
 $ErrorActionPreference = "Stop"
 
 # 3) offscreen platform plugin for CI/smoke

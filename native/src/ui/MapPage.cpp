@@ -36,6 +36,7 @@ MapPage::MapPage(const QVector<Photo>* photos, QWidget* parent) : QWidget(parent
     ll->addWidget(bar);
 
     view_ = new MapView(left);
+    view_->setGpsCount(computeGpsCount());   // P16.1：注入真实 GPS 足迹数
     ll->addWidget(view_, 1);
     lay->addWidget(left, 1);
 
@@ -89,10 +90,21 @@ MapPage::MapPage(const QVector<Photo>* photos, QWidget* parent) : QWidget(parent
 void MapPage::setHidePrivate(bool hide)
 {
     hidePrivate_ = hide;
+    view_->setGpsCount(computeGpsCount());   // P16.1：隐私门切换 → 足迹数同步
     // 已选区域时重算一次统计，保持口径一致
     if (!lastRegion_.isEmpty() || !lastProv_.isEmpty())
         onPicked(lastIsProv_ ? lastProv_ : lastRegion_,
                  statsTitle_->text(), lastIsProv_);
+}
+
+// P16.1 真实 GPS 足迹数：hasGps 为真且未被隐私门屏蔽的照片计数（诚实，不编造）。
+int MapPage::computeGpsCount() const
+{
+    if (!photos_) return 0;
+    int n = 0;
+    for (const Photo& p : *photos_)
+        if (p.hasGps && !(hidePrivate_ && p.priv)) ++n;
+    return n;
 }
 
 void MapPage::onPicked(const QString& key, const QString& label, bool isProvince)
