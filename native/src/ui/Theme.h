@@ -42,9 +42,12 @@ inline constexpr QColor DISABLED   = QColor(0x50, 0x58, 0x52);
 inline QString hex(const QColor& c) { return c.name(); }
 
 // ---- 字体：中文优先雅黑（不写死则 offscreen/默认字体中文发虚） ---------------
-inline void applyAppFont(QApplication& app)
+// P16.6 视觉QA：prefer 为显式从文件加载的 CJK 家族名（offscreen 字体库缺枚举时用），
+// 为空则回退系统「Microsoft YaHei UI」。两者都走雅黑家族，真实窗口外观不变。
+inline void applyAppFont(QApplication& app, const QString& prefer = QString())
 {
-    QFont f(QString::fromUtf8("Microsoft YaHei UI"));
+    const QString fam = prefer.isEmpty() ? QString::fromUtf8("Microsoft YaHei UI") : prefer;
+    QFont f(fam);
     f.setStyleStrategy(QFont::PreferAntialias);
     f.setPointSizeF(9.5);
     app.setFont(f);

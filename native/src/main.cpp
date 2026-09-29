@@ -7,6 +7,7 @@
 #include <QTimer>
 #include <QDir>
 #include <QFileInfo>
+#include <QFontDatabase>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -307,7 +308,31 @@ int main(int argc, char *argv[])
     app.setApplicationName(QStringLiteral("LightAlbum"));
     app.setOrganizationName(QStringLiteral("lightalbum"));
     Dark::apply(app);
-    Lumen::applyAppFont(app);   // P11：中文优先雅黑（发虚/缺字防线）
+
+    // P16.6 视觉QA：offscreen 字体库不枚举 CJK → 中文豆腐块。显式从文件加载中文字体，
+    // 字体引擎直接持有字形（不依赖系统字体枚举），offscreen 截图即等于真实窗口效果。
+    QString cjkFamily;
+    {
+        static const QStringList cands = {
+            QStringLiteral("C:/Windows/Fonts/msyh.ttc"),
+            QStringLiteral("C:/Windows/Fonts/NotoSansSC-VF.ttf"),
+            QStringLiteral("C:/Windows/Fonts/simhei.ttf"),
+            QStringLiteral("C:/Windows/Fonts/simsun.ttc"),
+        };
+        for (const QString& p : cands) {
+            if (!QFileInfo::exists(p)) continue;
+            const int id = QFontDatabase::addApplicationFont(p);
+            if (id < 0) continue;
+            const QStringList fams = QFontDatabase::applicationFontFamilies(id);
+            if (!fams.isEmpty()) { cjkFamily = fams.first(); break; }
+        }
+        if (cjkFamily.isEmpty())
+            std::fprintf(stderr, "LA_FONT no CJK font loaded (fallback to system)\n");
+        else
+            std::fprintf(stderr, "LA_FONT loaded CJK family=%s\n", qPrintable(cjkFamily));
+        std::fflush(stderr);
+    }
+    Lumen::applyAppFont(app, cjkFamily);   // P11：中文优先（显式 CJK 家族或系统雅黑）
     app.setStyleSheet(Lumen::focusRing());   // P16.1：全局键盘焦点环（WCAG 可达性）
 
     // P5 金样对拍冒烟（无需库文件，最先跑）
