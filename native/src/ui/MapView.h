@@ -7,6 +7,7 @@
 #include <QTimer>
 #include <QVector>
 #include <QString>
+#include <QStringList>
 #include <QPointF>
 
 // 预投影坐标系：所有环/省/经纬都落在 [0,MAP_W]x[0,MAP_H] 的等距圆柱平面
@@ -50,6 +51,13 @@ public:
     // 在世界/大区/省三级以翡翠光点呈现你的实际拍摄足迹。
     void setGpsPoints(const QVector<QPointF>& pts);
 
+    // P16.4.2 金色航线基点（「我的位置」，经纬度，默认上海）。设置后重新烘焙世界层。
+    void setHomePoint(double lon, double lat);
+    double homeLon() const { return homeLon_; }
+    double homeLat() const { return homeLat_; }
+    // P16.4.2 有作品的大区 id 列表：其中心点也作为航线目标（与 web 版「连向每一处拍摄地」一致）
+    void setArcRegionIds(const QStringList& ids);
+
 signals:
     void breadcrumbChanged(const QString& text);
     void picked(const QString& key, const QString& label, bool isProvince); // 区域/省点击
@@ -68,6 +76,10 @@ private:
     void renderProvince(QPainter& p, const QRectF& dst) const;
     // P16.4 在大区/省视图按拟合变换投影真实 GPS 足迹点（裁剪到 dst）
     void drawGpsDots(QPainter& p, const QRectF& bbox, const QRectF& dst) const;
+    // P16.4.2 金色航线：以基点连向每处 GPS 足迹（二次贝塞尔向上拱起，短路径过接缝）
+    void drawArcs(QPainter& p, const QRectF& bbox, const QRectF& dst) const;
+    // P16.4.2 航线目标集 = GPS 足迹点 ∪ 有作品大区的中心点（预投影空间）
+    QVector<QPointF> arcTargets() const;
 
     QPointF preToWidget(const QPointF& pre, const QRectF& dst, double scale,
                          double offX = 0) const;
@@ -98,4 +110,7 @@ private:
     QString             hoverHint_;            // 鼠标悬停提示（省名）
     int                 gpsCount_ = 0;         // P16.1 真实 GPS 足迹数（含隐私门下计数）
     QVector<QPointF>    gpsPts_;               // P16.4 真实照片 GPS 足迹点（预投影空间）
+    double              homeLon_ = 121.47;     // P16.4.2 航线基点（默认上海，经纬度）
+    double              homeLat_ = 31.23;
+    QStringList         arcRegionIds_;         // P16.4.2 有作品的大区（中心点为航线目标）
 };

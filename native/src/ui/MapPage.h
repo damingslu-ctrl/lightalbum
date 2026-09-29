@@ -17,15 +17,20 @@ signals:
 private slots:
     void onPicked(const QString& key, const QString& label, bool isProvince);
     void onViewInGallery();
+    void onRelocate();   // P16.4.2 重新定位航线基点（「我的位置」）
 
 private:
     int computeGpsCount() const;   // P16.1 真实 GPS 足迹计数（尊重隐私门）
     QVector<QPointF> computeGpsPoints() const;   // P16.4 真实 GPS 足迹点（预投影空间）
+    QStringList computeArcRegionIds() const;     // P16.4.2 有作品的大区 id（航线目标）
 
 private:
     MapView* view_ = nullptr;
     QLabel*  crumb_ = nullptr;
     QPushButton* back_ = nullptr;
+    QPushButton* relocBtn_ = nullptr;   // P16.4.2 重新定位
+    QLabel*      homeHint_ = nullptr;   // P16.4.2 基点提示
+    QString      homeName_ = QString::fromUtf8("上海");
     // 统计侧栏
     QWidget*     stats_ = nullptr;
     QLabel*      statsTitle_ = nullptr;

@@ -133,6 +133,33 @@ void MapView::buildWorldPixmap()
         p.setPen(QPen(border, 0.6));
         p.drawPath(path);
     }
+    // P16.4.2 金色航线：以「我的位置」为基点，向每一处拍摄地延伸（画在足迹点下层）。
+    // 与 web 版 arcsA/arcsB 同思路：经度是循环的，整条弧在 ±MAP_W 各复制一份，接缝处自然衔接。
+    if (!gpsPts_.isEmpty() || !arcRegionIds_.isEmpty()) {
+        const QPointF h(eqX(homeLon_), eqY(homeLat_));
+        const QVector<QPointF> targets = arcTargets();
+        p.setBrush(Qt::NoBrush);
+        p.setPen(QPen(QColor(0xd9, 0xa9, 0x4e, 110), 1.0));
+        for (const QPointF& pt : targets) {
+            QPointF t = pt;
+            if (t.x() - h.x() > MAP_W / 2) t.rx() -= MAP_W;   // 短路径方向
+            if (h.x() - t.x() > MAP_W / 2) t.rx() += MAP_W;
+            const double dx = t.x() - h.x(), dy = t.y() - h.y();
+            const double len = std::sqrt(dx * dx + dy * dy);
+            const double lift = std::min(90.0, len * 0.22);   // 控制点向上（极向）拱起
+            const QPointF mid((h.x() + t.x()) / 2.0, (h.y() + t.y()) / 2.0 - lift);
+            for (double off : { -MAP_W, 0.0, MAP_W }) {
+                QPainterPath arc;
+                arc.moveTo(h.x() + off, h.y());
+                arc.quadTo(mid.x() + off, mid.y(), t.x() + off, t.y());
+                p.drawPath(arc);
+            }
+        }
+        // 基点标记：金色圆环 + 实心芯
+        p.setPen(QPen(QColor(0xd9, 0xa9, 0x4e), 1.4));
+        p.setBrush(QColor(0xf0, 0xd0, 0x8a));
+        p.drawEllipse(h, 3.2, 3.2);
+    }
     // P16.4 真实 GPS 足迹点：翡翠小光点（已按隐私门过滤）
     if (!gpsPts_.isEmpty()) {
         p.setPen(Qt::NoPen);
@@ -150,6 +177,39 @@ void MapView::setGpsPoints(const QVector<QPointF>& pts)
     gpsPts_ = pts;
     buildWorldPixmap();          // 重新烘焙世界静态层（含足迹点，随漂移一起移动）
     update();
+}
+
+// P16.4.2 金色航线基点（经纬度）。重烘焙世界层并刷新下钻视图。
+void MapView::setHomePoint(double lon, double lat)
+{
+    if (lon == homeLon_ && lat == homeLat_) return;
+    homeLon_ = lon;
+    homeLat_ = lat;
+    buildWorldPixmap();
+    update();
+}
+
+void MapView::setArcRegionIds(const QStringList& ids)
+{
+    if (ids == arcRegionIds_) return;
+    arcRegionIds_ = ids;
+    buildWorldPixmap();
+    update();
+}
+
+// 航线目标集 = GPS 足迹点 ∪ 有作品大区的中心点（预投影空间，去重）
+QVector<QPointF> MapView::arcTargets() const
+{
+    QVector<QPointF> ts = gpsPts_;
+    for (const QString& id : arcRegionIds_) {
+        for (const RegionInfo& ri : regions_) {
+            if (ri.id == id) {
+                if (!ts.contains(ri.proj)) ts.append(ri.proj);
+                break;
+            }
+        }
+    }
+    return ts;
 }
 
 // —— 坐标变换：预投影 → 目标矩形（含偏移与缩放）——
@@ -239,6 +299,7 @@ void MapView::renderRegion(QPainter& p, const QRectF& dst) const
         p.setPen(QColor(0xe8, 0xe2, 0xd4));
         p.drawText(c + QPointF(4, 4), pv.zh.isEmpty() ? pv.name : pv.zh);
     }
+    drawArcs(p, bbox, dst);      // P16.4.2 金色航线
     drawGpsDots(p, bbox, dst);   // P16.4
 }
 
@@ -260,6 +321,7 @@ void MapView::renderProvince(QPainter& p, const QRectF& dst) const
     p.setPen(QColor(0xe8, 0xe2, 0xd4));
     const QString label = (curProvince_.zh.isEmpty() ? curProvince_.name : curProvince_.zh);
     p.drawText(c + QPointF(6, 5), label);
+    drawArcs(p, curProvince_.bbox, dst);      // P16.4.2 金色航线
     drawGpsDots(p, curProvince_.bbox, dst);   // P16.4
 }
 
@@ -277,6 +339,42 @@ void MapView::drawGpsDots(QPainter& p, const QRectF& bbox, const QRectF& dst) co
         if (pt.x() < bbox.left() - 2 || pt.x() > bbox.right() + 2 ||
             pt.y() < bbox.top() - 2 || pt.y() > bbox.bottom() + 2) continue;
         p.drawEllipse(o + pt * scale, 2.4, 2.4);
+    }
+    p.restore();
+}
+
+// P16.4.2 金色航线下钻视图：与 drawGpsDots 同一拟合变换；基点在 bbox 外也照画
+// （弧从画面边缘切入，clipRect 兜底），保持「基点 → 每处足迹」的叙事一致。
+void MapView::drawArcs(QPainter& p, const QRectF& bbox, const QRectF& dst) const
+{
+    if (gpsPts_.isEmpty() && arcRegionIds_.isEmpty()) return;
+    const QVector<QPointF> targets = arcTargets();
+    double scale = 1;
+    const QRectF fr = fitRect(bbox, dst, scale);
+    const QPointF o = fr.topLeft();
+    const QPointF h(o.x() + eqX(homeLon_) * scale, o.y() + eqY(homeLat_) * scale);
+    p.save();
+    p.setClipRect(dst);
+    p.setBrush(Qt::NoBrush);
+    p.setPen(QPen(QColor(0xd9, 0xa9, 0x4e, 120), 1.1));
+    for (const QPointF& pt : targets) {
+        if (pt.x() < bbox.left() - 2 || pt.x() > bbox.right() + 2 ||
+            pt.y() < bbox.top() - 2 || pt.y() > bbox.bottom() + 2) continue;
+        const QPointF t(o.x() + pt.x() * scale, o.y() + pt.y() * scale);
+        const double dx = t.x() - h.x(), dy = t.y() - h.y();
+        const double len = std::sqrt(dx * dx + dy * dy);
+        const double lift = std::min(120.0, len * 0.25);
+        QPainterPath arc;
+        arc.moveTo(h);
+        arc.quadTo(QPointF((h.x() + t.x()) / 2.0, (h.y() + t.y()) / 2.0 - lift), t);
+        p.drawPath(arc);
+    }
+    // 基点标记（在 bbox 内才画；世界层已画过一次）
+    if (eqX(homeLon_) >= bbox.left() && eqX(homeLon_) <= bbox.right() &&
+        eqY(homeLat_) >= bbox.top() && eqY(homeLat_) <= bbox.bottom()) {
+        p.setPen(QPen(QColor(0xd9, 0xa9, 0x4e), 1.5));
+        p.setBrush(QColor(0xf0, 0xd0, 0x8a));
+        p.drawEllipse(h, 3.6, 3.6);
     }
     p.restore();
 }

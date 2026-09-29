@@ -5,6 +5,11 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
+#include <QDialog>
+#include <QComboBox>
+#include <QLineEdit>
+#include <QDoubleValidator>
+#include <QDialogButtonBox>
 
 MapPage::MapPage(const QVector<Photo>* photos, QWidget* parent) : QWidget(parent), photos_(photos)
 {
@@ -34,11 +39,21 @@ MapPage::MapPage(const QVector<Photo>* photos, QWidget* parent) : QWidget(parent
     bl->addWidget(back_);
     bl->addWidget(crumb_);
     bl->addStretch(1);
+    // P16.4.2 重新定位（web 版 relocateBtn 对应物：基点=「我的位置」，金色航线起点）
+    relocBtn_ = new QPushButton(QString::fromUtf8("◎ 重新定位"), bar);
+    relocBtn_->setCursor(Qt::PointingHandCursor);
+    relocBtn_->setToolTip(QString::fromUtf8("设置金色航线的起点（我的位置）"));
+    relocBtn_->setStyleSheet(QStringLiteral(
+        "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:9px;"
+        "padding:5px 12px;color:#4fc08a;}"
+        "QPushButton:hover{border-color:#4fc08a;}"));
+    bl->addWidget(relocBtn_);
     ll->addWidget(bar);
 
     view_ = new MapView(left);
-    view_->setGpsCount(computeGpsCount());   // P16.1：注入真实 GPS 足迹数
-    view_->setGpsPoints(computeGpsPoints()); // P16.4：注入真实 GPS 足迹点
+    view_->setGpsCount(computeGpsCount());     // P16.1：注入真实 GPS 足迹数
+    view_->setGpsPoints(computeGpsPoints());   // P16.4：注入真实 GPS 足迹点
+    view_->setArcRegionIds(computeArcRegionIds()); // P16.4.2：有作品大区 → 航线目标
     ll->addWidget(view_, 1);
     lay->addWidget(left, 1);
 
@@ -76,6 +91,16 @@ MapPage::MapPage(const QVector<Photo>* photos, QWidget* parent) : QWidget(parent
     viewBtn_->setEnabled(false);
     viewBtn_->setStyleSheet(Lumen::btnGold());
     sl->addWidget(viewBtn_);
+
+    // P16.4.2 航线基点提示（数据事实：默认上海，可经「重新定位」修改）
+    homeHint_ = new QLabel(stats_);
+    homeHint_->setStyleSheet("color:#8da396;font-size:11px;");
+    homeHint_->setWordWrap(true);
+    homeHint_->setText(QString::fromUtf8(
+        "<span style='color:#d9a94e;'>✈ 航线基点：%1</span><br>"
+        "金色航线从这里出发，连向每一处拍摄地；点上方「◎ 重新定位」可更改。")
+        .arg(homeName_));
+    sl->addWidget(homeHint_);
     sl->addStretch(1);
     lay->addWidget(stats_);
 
@@ -87,13 +112,15 @@ MapPage::MapPage(const QVector<Photo>* photos, QWidget* parent) : QWidget(parent
     });
     connect(view_, &MapView::picked, this, &MapPage::onPicked);
     connect(viewBtn_, &QPushButton::clicked, this, &MapPage::onViewInGallery);
+    connect(relocBtn_, &QPushButton::clicked, this, &MapPage::onRelocate);
 }
 
 void MapPage::setHidePrivate(bool hide)
 {
     hidePrivate_ = hide;
-    view_->setGpsCount(computeGpsCount());   // P16.1：隐私门切换 → 足迹数同步
-    view_->setGpsPoints(computeGpsPoints()); // P16.4：隐私门切换 → 足迹点同步
+    view_->setGpsCount(computeGpsCount());         // P16.1：隐私门切换 → 足迹数同步
+    view_->setGpsPoints(computeGpsPoints());       // P16.4：隐私门切换 → 足迹点同步
+    view_->setArcRegionIds(computeArcRegionIds()); // P16.4.2：航线目标同步
     // 已选区域时重算一次统计，保持口径一致
     if (!lastRegion_.isEmpty() || !lastProv_.isEmpty())
         onPicked(lastIsProv_ ? lastProv_ : lastRegion_,
@@ -126,6 +153,23 @@ QVector<QPointF> MapPage::computeGpsPoints() const
     return pts;
 }
 
+// P16.4.2 有作品的大区 id：至少 1 幅（未被隐私门屏蔽）照片的大区，作为航线目标。
+// 与 web 版「连向每一处拍摄地」一致；海外大区无 GPS 原图也照连（大区中心是真实经纬度）。
+QStringList MapPage::computeArcRegionIds() const
+{
+    QStringList ids;
+    if (!photos_) return ids;
+    QSet<QString> seen;
+    for (const Photo& p : *photos_) {
+        if (hidePrivate_ && p.priv) continue;
+        if (!p.region.isEmpty() && !seen.contains(p.region)) {
+            seen.insert(p.region);
+            ids.append(p.region);
+        }
+    }
+    return ids;
+}
+
 void MapPage::onPicked(const QString& key, const QString& label, bool isProvince)
 {
     if (isProvince) { lastProv_ = key; lastRegion_ = QString(); }
@@ -156,4 +200,95 @@ void MapPage::onPicked(const QString& key, const QString& label, bool isProvince
 void MapPage::onViewInGallery()
 {
     emit requestGallery(lastRegion_, lastProv_);
+}
+
+// P16.4.2 重新定位：城市预设 / 自定义经纬度 → setHomePoint。
+// 本机桌面无浏览器定位 API，采用显式选择（诚实：不假装自动定位）。
+void MapPage::onRelocate()
+{
+    QDialog dlg(this);
+    dlg.setWindowTitle(QString::fromUtf8("重新定位 · 航线基点"));
+    dlg.setStyleSheet(QStringLiteral(
+        "QDialog{background:#0e130f;}"
+        "QLabel{color:#d9e4dc;font-size:12px;}"
+        "QComboBox,QLineEdit{background:#131a15;border:1px solid #26312a;border-radius:8px;"
+        "padding:6px 8px;color:#f4f7f4;}"
+        "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:8px;"
+        "padding:6px 14px;color:#d9e4dc;}"
+        "QPushButton QPushButton{color:#d9e4dc;}"));
+    auto* vl = new QVBoxLayout(&dlg);
+    vl->setContentsMargins(18, 16, 18, 14);
+    vl->setSpacing(10);
+
+    vl->addWidget(new QLabel(QString::fromUtf8(
+        "金色航线以「我的位置」为基点，连向每一处拍摄地。选择常驻城市，或直接输入经纬度："), &dlg));
+    auto* combo = new QComboBox(&dlg);
+    struct City { const char* zh; double lon, lat; };
+    const City cities[] = {
+        {"上海", 121.47, 31.23}, {"北京", 116.40, 39.90}, {"广州", 113.26, 23.13},
+        {"深圳", 114.06, 22.55}, {"成都", 104.07, 30.57}, {"杭州", 120.15, 30.27},
+        {"西安", 108.94, 34.34}, {"武汉", 114.31, 30.59}, {"乌鲁木齐", 87.62, 43.82},
+        {"拉萨", 91.11, 29.66}, {"中国香港", 114.17, 22.32}, {"中国台北", 121.56, 25.03},
+    };
+    int curIdx = 0;
+    for (int i = 0; i < int(sizeof(cities) / sizeof(City)); ++i) {
+        combo->addItem(QString::fromUtf8(cities[i].zh));
+        if (QString::fromUtf8(cities[i].zh) == homeName_) curIdx = i;
+    }
+    combo->addItem(QString::fromUtf8("自定义经纬度…"));
+    combo->setCurrentIndex(curIdx);
+    vl->addWidget(combo);
+
+    auto* row = new QHBoxLayout();
+    auto* lonEd = new QLineEdit(&dlg);
+    auto* latEd = new QLineEdit(&dlg);
+    auto* dv = new QDoubleValidator(-180.0, 180.0, 4, &dlg);
+    lonEd->setValidator(dv);
+    latEd->setValidator(new QDoubleValidator(-90.0, 90.0, 4, &dlg));
+    lonEd->setPlaceholderText(QString::fromUtf8("经度 (东经为正)"));
+    latEd->setPlaceholderText(QString::fromUtf8("纬度 (北纬为正)"));
+    row->addWidget(lonEd);
+    row->addWidget(latEd);
+    vl->addLayout(row);
+
+    auto* bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    bb->button(QDialogButtonBox::Ok)->setText(QString::fromUtf8("确定"));
+    bb->button(QDialogButtonBox::Cancel)->setText(QString::fromUtf8("取消"));
+    connect(bb, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    vl->addWidget(bb);
+
+    auto apply = [&](double lon, double lat, const QString& name) {
+        view_->setHomePoint(lon, lat);
+        homeName_ = name;
+        homeHint_->setText(QString::fromUtf8(
+            "<span style='color:#d9a94e;'>✈ 航线基点：%1</span><br>"
+            "金色航线从这里出发，连向每一处拍摄地；点上方「◎ 重新定位」可更改。")
+            .arg(name));
+    };
+    connect(combo, &QComboBox::currentIndexChanged, &dlg, [=, &dlg](int idx) {
+        const bool custom = (idx == combo->count() - 1);
+        lonEd->setEnabled(custom);
+        latEd->setEnabled(custom);
+        Q_UNUSED(dlg);
+    });
+    // 默认填充当前基点
+    lonEd->setText(QString::number(view_->homeLon(), 'f', 2));
+    latEd->setText(QString::number(view_->homeLat(), 'f', 2));
+    const bool isPreset = (combo->currentIndex() != combo->count() - 1);
+    lonEd->setEnabled(!isPreset);
+    latEd->setEnabled(!isPreset);
+
+    if (dlg.exec() != QDialog::Accepted) return;
+    const int idx = combo->currentIndex();
+    if (idx < int(sizeof(cities) / sizeof(City))) {
+        apply(cities[idx].lon, cities[idx].lat, QString::fromUtf8(cities[idx].zh));
+    } else {
+        bool ok1 = false, ok2 = false;
+        const double lon = lonEd->text().toDouble(&ok1);
+        const double lat = latEd->text().toDouble(&ok2);
+        if (!ok1 || !ok2) return;   // 输入无效则不动基点
+        apply(lon, lat, QString::fromUtf8("%1, %2")
+              .arg(latEd->text(), lonEd->text()));
+    }
 }
