@@ -321,66 +321,73 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
     root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(0);
 
-    // ---- 左侧图标栏（P12 修复：ListMode 下 68px 宽度挤不下「图标+文字」，
-    //      全部标签被省略成 "…"。改 IconMode：图标在上 / 中文标签在下）----
+    // ---- P18 侧边栏 E「折叠双态轨」：常态 68px 纯图标，hover 展开到 208px，
+    //      图标左/文字右横排，文字随宽度淡入。单元格仍走 setItemWidget 真
+    //      QLabel（P12 教训：QSS 委托文本会省略成 …）；gridSize 锚定展开宽
+    //      208 → 收起时视口裁切 + 透明度 0 双保险，杜绝文字残影。----
     nav_ = new QListWidget(central);
-    nav_->setFixedWidth(68);
+    nav_->setMinimumWidth(68);
+    nav_->setMaximumWidth(68);
     nav_->setViewMode(QListView::IconMode);
     nav_->setFlow(QListView::TopToBottom);
     nav_->setWrapping(false);
     nav_->setMovement(QListView::Static);          // IconMode 默认可拖拽，锁死
-    nav_->setGridSize(QSize(68, 58));
+    nav_->setGridSize(QSize(208, 46));             // P18：锚定展开态几何
     nav_->setUniformItemSizes(true);
     nav_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     nav_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     nav_->setFrameShape(QFrame::NoFrame);
     nav_->setStyleSheet(QStringLiteral(
         "QListWidget{background:#0c100d;border-right:1px solid #26312a;outline:0;padding-top:8px;}"
-        "QListWidget::item{color:#8da396;font-size:11px;"
-        "  margin:3px 6px;border-radius:10px;}"
-        "QListWidget::item:hover{background:#1a231d;color:#f4f7f4;}"
-        // 注意：选中态不能加全边框——QSS border 会让 IconMode 文本被省略成 "…"（实测）
-        "QListWidget::item:selected{color:#f4f7f4;"
-        "  background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-        "  stop:0 rgba(79,192,138,88), stop:1 rgba(79,192,138,18));"
-        "  border-left:2px solid #d9a94e;}"));
+        "QListWidget::item{margin:3px 0;border-radius:10px;}"
+        "QListWidget::item:hover{background:#1a231d;}"
+        "QListWidget::item:selected{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
+        "  stop:0 rgba(79,192,138,88), stop:1 rgba(79,192,138,18));}"));
     nav_->setIconSize(QSize(22, 22));
+    nav_->installEventFilter(this);                  // P18：hover 展开/收回
     const char* kIcons[] = {"home", "map", "gallery", "cull", "retouch", "enhance", "log", "about"};
     for (int i = 0; i < int(sizeof(kNav) / sizeof(kNav[0])); ++i) {
-        // P12：IconMode 委托文本在选中态被 QSS 省略成 "…"（实测），
-        // 改用 setItemWidget 自绘单元格——图标 + 中文标签都是真 QLabel，永不省略。
         auto* it = new QListWidgetItem;
-        it->setSizeHint(QSize(56, 52));
+        it->setSizeHint(QSize(208, 44));
         nav_->addItem(it);
         auto* cell = new QWidget;
-        auto* cv = new QVBoxLayout(cell);
-        cv->setContentsMargins(0, 0, 0, 0);
-        cv->setSpacing(4);
-        cv->setAlignment(Qt::AlignCenter);
+        auto* ch = new QHBoxLayout(cell);
+        ch->setContentsMargins(23, 0, 0, 0);   // 收起 68px 时图标居中：(68-22)/2=23
+        ch->setSpacing(12);
         auto* ic = new QLabel(cell);
         ic->setPixmap(Icons::make(QString::fromLatin1(kIcons[i]),
                                   QColor(0x9f, 0xa8, 0xa3), 22).pixmap(22, 22));
-        ic->setAlignment(Qt::AlignCenter);
         ic->setStyleSheet("background:transparent;");
         auto* tx = new QLabel(QString::fromUtf8(kNav[i].label), cell);
-        tx->setAlignment(Qt::AlignCenter);
-        tx->setStyleSheet("color:#9db2a5;font-size:11px;background:transparent;");
-        cv->addWidget(ic);
-        cv->addWidget(tx);
+        tx->setStyleSheet("color:#9db2a5;font-size:12.5px;background:transparent;");
+        auto* te = new QGraphicsOpacityEffect(tx);
+        te->setOpacity(0.0);                   // 收起态文字全隐（防裁切残影）
+        tx->setGraphicsEffect(te);
+        ch->addWidget(ic);
+        ch->addWidget(tx);
+        ch->addStretch();
         nav_->setItemWidget(it, cell);
         navCells_.append(cell);
+        navTexts_.append(tx);
         // 激活金条（呼吸由 tickBreath 驱动），默认隐藏
         auto* bar = new QFrame(cell);
         bar->setObjectName(QStringLiteral("navBar"));
-        bar->setFixedSize(2, 26);
+        bar->setFixedSize(2, 24);
         bar->setStyleSheet(QStringLiteral("background:#d9a94e;border-radius:1px;"));
-        bar->move(3, (52 - 26) / 2);
+        bar->move(3, (44 - 24) / 2);
         bar->hide();
         auto* be = new QGraphicsOpacityEffect(bar);
         be->setOpacity(0.9);
         bar->setGraphicsEffect(be);
         navBars_.append(bar);
     }
+    // P18：折叠双态动画（宽度 + 文字透明度同源驱动，避免双动画失步）
+    navAnim_ = new QVariantAnimation(this);
+    navAnim_->setDuration(240);
+    navAnim_->setEasingCurve(QEasingCurve::OutCubic);
+    connect(navAnim_, &QVariantAnimation::valueChanged, this, [this](const QVariant& v) {
+        applyNavProgress(v.toDouble());
+    });
     root->addWidget(nav_);
 
     // ---- 右侧：顶栏 + 页面栈 ----
@@ -547,6 +554,41 @@ void MainWindow::updateNavActive(int row)
         moduleLbl_->setText(QString::fromUtf8(kNav[row].label));
 }
 
+// P18 侧边栏 E：折叠双态轨 —— hover 展开 208px / 离开收回 68px。
+// 单一 QVariantAnimation 同源驱动宽度与文字透明度；进度存 navProgress_，
+// 中途反向也能从当前进度平滑折返。
+void MainWindow::expandNav(bool on)
+{
+    if (navExpanded_ == on) return;
+    navExpanded_ = on;
+    navAnim_->stop();
+    navAnim_->setStartValue(navProgress_);
+    navAnim_->setEndValue(on ? 1.0 : 0.0);
+    navAnim_->start();
+}
+
+void MainWindow::applyNavProgress(double t)
+{
+    navProgress_ = t;
+    const int w = 68 + int(140.0 * t + 0.5);
+    nav_->setMinimumWidth(w);
+    nav_->setMaximumWidth(w);
+    for (QLabel* tx : navTexts_) {
+        if (auto* e = qobject_cast<QGraphicsOpacityEffect*>(tx->graphicsEffect()))
+            e->setOpacity(t);
+    }
+}
+
+// P18：hover 进出侧栏 → 展开/收回（进入子项不会误触发父级 Leave）
+bool MainWindow::eventFilter(QObject* obj, QEvent* ev)
+{
+    if (obj == nav_) {
+        if (ev->type() == QEvent::Enter) expandNav(true);
+        else if (ev->type() == QEvent::Leave) expandNav(false);
+    }
+    return QMainWindow::eventFilter(obj, ev);
+}
+
 // P13：导航切换联动动效（淡出 → 换页 → 淡入+轻微上滑）。
 // 冒烟/截图或窗口尚未可见（开场动画期间）时直接换页，避免不确定性。
 // 效果只在过渡期间 enabled；静置时 disabled 走原生渲染（避免中间 pixmap 发虚）。
@@ -653,6 +695,11 @@ void MainWindow::onNav(int row)
     // 其他页恢复全局 chrome（经左栏「首页」项或各页返回路径均可回到首页）。
     const bool home = (row == 0);
     nav_->setVisible(!home);
+    if (home && navExpanded_) {              // P18：回首页隐藏侧栏时一并收回展开态
+        navAnim_->stop();
+        navExpanded_ = false;
+        applyNavProgress(0.0);
+    }
     topbar_->setVisible(!home);
     seam_->setVisible(!home);
     kpis_->setVisible(!home);

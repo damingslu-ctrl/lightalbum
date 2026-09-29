@@ -22,12 +22,16 @@ class LogPage;
 class HomePage;        // P17 沉浸式首页（Quiet Frame）
 class PhotoLightbox;   // P15 沉浸式灯箱（MainWindow.cpp 文件内定义）
 class QPushButton;
+class QVariantAnimation;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
     MainWindow(Library* lib, const QString& thumbsDir,
                const QString& dbPath = QString(), QWidget* parent = nullptr);
+
+    // P18：侧栏展开态入口（offscreen 截图/QA 无鼠标事件，直接驱动动画）
+    void expandNav(bool on);
 
     // P11 UI 截图探针：逐导航页 setCurrentRow → grab() 存 PNG 到 dir；返回 0。
     int shootPages(const QString& dir);
@@ -60,6 +64,9 @@ private:
     void  setupBreathing();                 // 呼吸定时器与受控元素
     void  tickBreath();                     // 正弦驱动 hero 光晕/seam/激活条/扩展目标
     void  updateNavActive(int row);         // 高亮当前导航项 + 激活呼吸条
+    // P18 侧边栏 E「折叠双态轨」：hover 展开 208px / 离开收回 68px，文字随宽淡入
+    void  applyNavProgress(double t);
+    bool  eventFilter(QObject* obj, QEvent* ev) override;
     // P14：统一呼吸目标注册（功能卡片/画廊光晕等带相位偏移，错落呼吸）
     void  registerBreath(QGraphicsOpacityEffect* eff, double base, double amp, double phase = 0.0);
 
@@ -83,6 +90,10 @@ private:
     int                      activeNavRow_ = 0;
     QVector<QWidget*>        navCells_;             // 各导航自绘单元格
     QVector<QFrame*>         navBars_;              // 各导航激活金条
+    QVector<QLabel*>         navTexts_;             // P18：导航文字标签（展开淡入）
+    QVariantAnimation*       navAnim_ = nullptr;    // P18：折叠双态动画（宽度+透明度同源）
+    double                   navProgress_ = 0.0;    // P18：0=68px 收起，1=208px 展开
+    bool                     navExpanded_ = false;
     bool                     animEnabled_ = true;
 
     // P14：扩展呼吸目标（seam 发丝线等），与激活条共享同一节拍

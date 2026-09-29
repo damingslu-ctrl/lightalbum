@@ -554,8 +554,11 @@ int main(int argc, char *argv[])
 
     // P11 UI 截图探针：LA_UI_SHOT=<dir> 时逐页 widget.grab() 存 PNG（offscreen 可用，
     // 用于颜色/乱码真实验证——颜色校验铁律：必须实测不许猜）。
-    if (qEnvironmentVariableIsSet("LA_UI_SHOT"))
+    if (qEnvironmentVariableIsSet("LA_UI_SHOT")) {
+        if (qEnvironmentVariableIsSet("LA_UI_SHOT_EXPAND"))
+            win.expandNav(true);   // P18：侧栏展开态截图（折叠态走默认）
         return win.shootPages(qEnvironmentVariable("LA_UI_SHOT"));
+    }
 
     // 冒烟探针门控：载入真库 + 页面栈就位后自动退出（offscreen/CI 可用）。
     // 选片自测（LA_CULL_SMOKE）/ 修图自测（LA_RETOUCH_SMOKE）
