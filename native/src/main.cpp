@@ -557,6 +557,8 @@ int main(int argc, char *argv[])
     if (qEnvironmentVariableIsSet("LA_UI_SHOT")) {
         if (qEnvironmentVariableIsSet("LA_UI_SHOT_EXPAND"))
             win.expandNav(true);   // P18：侧栏展开态截图（折叠态走默认）
+        if (qEnvironmentVariableIsSet("LA_UI_SHOT_SOLID"))
+            win.forceTopSolid(true); // P19：顶栏实底态截图（强制态，抗 onNav 重算）
         return win.shootPages(qEnvironmentVariable("LA_UI_SHOT"));
     }
 

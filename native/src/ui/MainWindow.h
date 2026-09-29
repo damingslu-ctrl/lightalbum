@@ -67,6 +67,17 @@ private:
     // P18 侧边栏 E「折叠双态轨」：hover 展开 208px / 离开收回 68px，文字随宽淡入
     void  applyNavProgress(double t);
     bool  eventFilter(QObject* obj, QEvent* ev) override;
+
+    // P19 标题栏 E「沉浸渐隐栏」：顶栏悬浮透明，滚动/入栏时底色渐显
+    void  syncTopbarFloat();                // 顶栏/seam 几何 = 侧栏右缘 → 内容区右缘
+    void  updateTopSolid();                 // 依当前页滚动偏移 + hover 计算目标态
+    void  applyTopSolid(double t);          // 进度 → 底色层透明度 + seam 显隐
+public:
+    void  setTopSolid(bool on);             // QA 门控 LA_UI_SHOT_SOLID 直驱
+    void  forceTopSolid(bool on);           // QA 强制态（跳过动画与滚动状态机）
+private:
+    bool                     topForced_ = false;    // P19：QA 强制实底标志
+    void  showEvent(QShowEvent* ev) override;
     // P14：统一呼吸目标注册（功能卡片/画廊光晕等带相位偏移，错落呼吸）
     void  registerBreath(QGraphicsOpacityEffect* eff, double base, double amp, double phase = 0.0);
 
@@ -92,6 +103,14 @@ private:
     QVector<QFrame*>         navBars_;              // 各导航激活金条
     QVector<QLabel*>         navTexts_;             // P18：导航文字标签（展开淡入）
     QVariantAnimation*       navAnim_ = nullptr;    // P18：折叠双态动画（宽度+透明度同源）
+    // P19 沉浸渐隐栏
+    QFrame*                  topShade_ = nullptr;   // 顶栏渐显底色层（QWidget 不画 QSS 背景，必须 QFrame）
+    QPushButton*             searchToggle_ = nullptr; // 搜索展开/收起图标钮
+    QVariantAnimation*       topSolidAnim_ = nullptr;
+    double                   topSolidT_ = 0.0;      // 0 透明 / 1 实底
+    bool                     topHover_ = false;
+    bool                     topSolidOn_ = false;
+    QWidget*                 aboutPg_ = nullptr;    // P19：关于页句柄（顶部让位用）
     double                   navProgress_ = 0.0;    // P18：0=68px 收起，1=208px 展开
     bool                     navExpanded_ = false;
     bool                     animEnabled_ = true;

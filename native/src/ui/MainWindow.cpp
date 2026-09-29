@@ -35,6 +35,7 @@
 #include <QDir>
 #include <QPixmap>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QToolButton>
 #include <QPainter>
 #include <QPainterPath>
@@ -390,72 +391,100 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
     });
     root->addWidget(nav_);
 
+    // P19：顶栏渐显动画（底色层透明度同源驱动）
+    topSolidAnim_ = new QVariantAnimation(this);
+    topSolidAnim_->setDuration(240);
+    topSolidAnim_->setEasingCurve(QEasingCurve::OutCubic);
+    connect(topSolidAnim_, &QVariantAnimation::valueChanged, this, [this](const QVariant& v) {
+        applyTopSolid(v.toDouble());
+    });
+
     // ---- 右侧：顶栏 + 页面栈 ----
     auto* right = new QWidget(central);
     auto* rl = new QVBoxLayout(right);
     rl->setContentsMargins(0, 0, 0, 0);
     rl->setSpacing(0);
 
+    // ---- P19 E「沉浸渐隐栏」：topbar 脱离布局、悬浮于页面栈之上（透明常驻）。
+    //      页面滚动>12px 或鼠标入栏 → 毛玻璃底色渐显（seam 发丝线随动）。
+    //      模块名自 kpis_ 迁入（模块条退役），按钮全图标化，搜索点击展开。----
     topbar_ = new QWidget(right);
     QWidget* topbar = topbar_;
-    topbar->setObjectName("topbar");
-    topbar->setStyleSheet(QStringLiteral(
-        "#topbar{background:#0c100d;}"));
+    topbar->setFixedHeight(54);
     auto* tl = new QHBoxLayout(topbar);
-    tl->setContentsMargins(20, 12, 20, 12);
+    tl->setContentsMargins(20, 0, 16, 0);
+    tl->setSpacing(10);
+    // 渐显底色层（0 号子控件、置底；文字/按钮不受透明度影响）
+    topShade_ = new QFrame(topbar);     // QFrame：QWidget 默认不绘制 QSS 背景（实测坑）
+    topShade_->setStyleSheet(QStringLiteral("background:rgba(12,16,13,0.90);"));
+    auto* shadeEff = new QGraphicsOpacityEffect(topShade_);
+    shadeEff->setOpacity(0.0);
+    topShade_->setGraphicsEffect(shadeEff);
     title_ = new QLabel(QString::fromUtf8("光影集"), topbar);
     QFont tf = title_->font(); tf.setPointSizeF(15); tf.setBold(true);
     tf.setLetterSpacing(QFont::AbsoluteSpacing, 2.0);
     title_->setFont(tf);
-    title_->setStyleSheet("color:#f4f7f4;");
+    title_->setStyleSheet("color:#f4f7f4;background:transparent;");
+    tl->addWidget(title_);
+    auto* dotSep = new QFrame(topbar);           // 金点分隔：光影集 · 模块名
+    dotSep->setFixedSize(4, 4);
+    dotSep->setStyleSheet(QStringLiteral("background:#d9a94e;border-radius:2px;"));
+    tl->addWidget(dotSep);
+    moduleLbl_ = new QLabel(QStringLiteral("首页"), topbar);   // P19：自 kpis_ 迁入
+    QFont mf2 = moduleLbl_->font(); mf2.setPointSizeF(11); mf2.setBold(true);
+    mf2.setLetterSpacing(QFont::AbsoluteSpacing, 4.0);
+    moduleLbl_->setFont(mf2);
+    moduleLbl_->setStyleSheet(QStringLiteral("color:#8da396;background:transparent;"));
+    tl->addWidget(moduleLbl_);
+    tl->addStretch(1);
     search_ = new QLineEdit(topbar);
     search_->setPlaceholderText(QString::fromUtf8("搜索标题 / 文件名 / 器材…"));
-    search_->setFixedWidth(300);
+    search_->setFixedWidth(220);
     search_->setStyleSheet(Lumen::input());
-    tl->addWidget(title_);
-    tl->addStretch(1);
+    search_->hide();                             // P19：点击 🔍 展开
     // P16 隐私库锁按钮：未初始化 → 设密码；锁定 → 输密码解锁；已解锁 → 重新上锁
-    vaultBtn_ = new QPushButton(QStringLiteral("🔒 隐私库"), topbar);
+    vaultBtn_ = new QPushButton(QStringLiteral("🔒"), topbar);
+    vaultBtn_->setToolTip(QString::fromUtf8("隐私库"));
     vaultBtn_->setCursor(Qt::PointingHandCursor);
+    vaultBtn_->setFixedSize(32, 32);
     vaultBtn_->setStyleSheet(Lumen::btnGhost());
     connect(vaultBtn_, &QPushButton::clicked, this, &MainWindow::onVaultButton);
     tl->addWidget(vaultBtn_);
+    searchToggle_ = new QPushButton(QStringLiteral("🔍"), topbar);
+    searchToggle_->setToolTip(QString::fromUtf8("搜索（图库筛选）"));
+    searchToggle_->setCursor(Qt::PointingHandCursor);
+    searchToggle_->setFixedSize(32, 32);
+    searchToggle_->setStyleSheet(Lumen::btnGhost());
+    connect(searchToggle_, &QPushButton::clicked, this, [this] {
+        if (search_->isVisible()) { search_->hide(); }
+        else { search_->show(); search_->raise(); search_->setFocus(); }
+    });
+    tl->addWidget(searchToggle_);
     // P8：原生导入器入口（补齐 P7 审计的唯一硬缺口）
-    auto* importBtn = new QPushButton(QString::fromUtf8("导入目录"), topbar);
+    auto* importBtn = new QPushButton(QStringLiteral("＋"), topbar);
+    importBtn->setToolTip(QString::fromUtf8("导入目录"));
     importBtn->setCursor(Qt::PointingHandCursor);
+    importBtn->setFixedSize(32, 32);
     importBtn->setStyleSheet(Lumen::btnGold());
     connect(importBtn, &QPushButton::clicked, this, &MainWindow::startImport);
     tl->addWidget(importBtn);
-    tl->addWidget(search_);
-    rl->addWidget(topbar);
-    // 顶栏底部翡翠→金渐变发丝线（大胆点：品牌双色的呼吸缝）
-    seam_ = new QFrame(right);
+    topbar->installEventFilter(this);            // P19：入栏渐显
+    // 顶栏底部翡翠→金渐变发丝线（品牌双色的呼吸缝；P19 起随底色渐显，seam
+    // 成为 topbar 子控件，几何由 syncTopbarFloat 同步，不进布局）
+    seam_ = new QFrame(topbar_);
     seam_->setFixedHeight(2);
     seam_->setStyleSheet(QStringLiteral(
         "background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
         "stop:0 #4fc08a, stop:0.55 #d9a94e, stop:1 rgba(217,169,78,0));"));
     seamEff_ = new QGraphicsOpacityEffect(seam_);
     seam_->setGraphicsEffect(seamEff_);
-    rl->addWidget(seam_);
+    seam_->lower();                              // 底色层之下（topShade_ 是 0 号）
+    seam_->hide();                               // P19：初始透明态（visible 由 applyTopSolid 接管）
 
-    // ---- 模块名称条（P15.2：替代固定 KPI 条，随导航切换显示对应模块名）----
+    // ---- P19：模块名称条退役——moduleLbl_ 已迁入悬浮顶栏；kpis_ 保留对象
+    //      （onNav 等处有引用）但常隐，不再占布局。----
     kpis_ = new QWidget(right);
-    kpis_->setStyleSheet(QStringLiteral("background:#060806;"));
-    auto* kl = new QHBoxLayout(kpis_);
-    kl->setContentsMargins(20, 8, 20, 8);
-    kl->setSpacing(10);
-    auto* modBar = new QFrame(kpis_);
-    modBar->setFixedSize(4, 18);
-    modBar->setStyleSheet(QStringLiteral("background:#d9a94e;border-radius:2px;"));
-    kl->addWidget(modBar);
-    moduleLbl_ = new QLabel(QStringLiteral("首页"), kpis_);
-    QFont mf = moduleLbl_->font(); mf.setPointSizeF(14); mf.setBold(true);
-    mf.setLetterSpacing(QFont::AbsoluteSpacing, 4.0);
-    moduleLbl_->setFont(mf);
-    moduleLbl_->setStyleSheet(QStringLiteral("color:#f4f7f4;"));
-    kl->addWidget(moduleLbl_);
-    kl->addStretch(1);
-    rl->addWidget(kpis_);
+    kpis_->hide();
 
     stack_ = new QStackedWidget(right);
     // 页序与 kNav 一致；P17 起首页 = 「Quiet Frame」沉浸式影集（内容绑定真实库），日志为 EXIF 分析页，关于页实装
@@ -475,7 +504,24 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
     stack_->addWidget(retouch_);
     log_ = new LogPage(&lib_->photos(), stack_);
     stack_->addWidget(log_);
-    stack_->addWidget(makeAbout());
+    aboutPg_ = makeAbout();
+    stack_->addWidget(aboutPg_);
+
+    // P19：非首页给悬浮顶栏让出 54px 顶部空间（首页自带顶栏不参与）；
+    // 内容满铺到 right 顶部，顶栏透明悬浮其上，滚动后底色渐显。
+    for (QWidget* pg : QList<QWidget*>{ map_, gallery_, cull_, retouch_, log_, aboutPg_ }) {
+        QMargins m = pg->contentsMargins();
+        m.setTop(qMax(m.top(), 54));
+        pg->setContentsMargins(m);
+    }
+    // P19：滚动渐显 hook——各页所有 QScrollArea 的垂直偏移>12 → 顶栏实底。
+    // 无 QScrollArea 的页（地图/首页）只由 hover 触发。
+    for (QWidget* pg : QList<QWidget*>{ map_, gallery_, cull_, retouch_, log_, aboutPg_ }) {
+        const auto sas = pg->findChildren<QScrollArea*>();
+        for (QScrollArea* sa : sas)
+            connect(sa->verticalScrollBar(), &QScrollBar::valueChanged, this,
+                    [this](int) { updateTopSolid(); });
+    }
     rl->addWidget(stack_, 1);
     root->addWidget(right, 1);
 
@@ -577,16 +623,83 @@ void MainWindow::applyNavProgress(double t)
         if (auto* e = qobject_cast<QGraphicsOpacityEffect*>(tx->graphicsEffect()))
             e->setOpacity(t);
     }
+    syncTopbarFloat();                   // P19：侧栏展开动画带动顶栏右移
 }
 
 // P18：hover 进出侧栏 → 展开/收回（进入子项不会误触发父级 Leave）
+// P19：hover 进出顶栏 → 底色渐显/按滚动状态收回
 bool MainWindow::eventFilter(QObject* obj, QEvent* ev)
 {
     if (obj == nav_) {
         if (ev->type() == QEvent::Enter) expandNav(true);
         else if (ev->type() == QEvent::Leave) expandNav(false);
+    } else if (obj == topbar_) {
+        if (ev->type() == QEvent::Enter) { topHover_ = true;  updateTopSolid(); }
+        else if (ev->type() == QEvent::Leave) { topHover_ = false; updateTopSolid(); }
     }
     return QMainWindow::eventFilter(obj, ev);
+}
+
+// ---- P19 沉浸渐隐栏 ----
+// 顶栏几何 = 侧栏右缘 → 内容区右缘；seam 置于栏底同步宽度。悬浮件不进布局，
+// 需在 resize / nav 宽度动画 / show 后调用。
+void MainWindow::syncTopbarFloat()
+{
+    QWidget* host = topbar_->parentWidget();
+    if (!host) return;
+    const int navW = nav_->isVisible() ? nav_->width() : 0;
+    const int w = qMax(0, host->width() - navW);
+    topbar_->setGeometry(navW, 0, w, 54);
+    topbar_->raise();                    // 悬浮于 stack_ 之上
+    topShade_->setGeometry(0, 0, w, 54); // 底色层不进布局，必须手动铺满
+    seam_->setGeometry(0, 52, w, 2);
+}
+
+void MainWindow::applyTopSolid(double t)
+{
+    topSolidT_ = t;
+    if (auto* e = qobject_cast<QGraphicsOpacityEffect*>(topShade_->graphicsEffect()))
+        e->setOpacity(t);
+    seam_->setVisible(t > 0.05);         // 呼吸仍由 tickBreath 驱动透明度
+}
+
+void MainWindow::forceTopSolid(bool on)
+{
+    topForced_ = on;                     // QA：越过滚动/hover 状态机，直接落终值
+    topSolidAnim_->stop();
+    topSolidOn_ = on;
+    applyTopSolid(on ? 1.0 : 0.0);
+}
+
+void MainWindow::setTopSolid(bool on)
+{
+    if (topSolidOn_ == on) return;
+    topSolidOn_ = on;
+    topSolidAnim_->stop();
+    topSolidAnim_->setStartValue(topSolidT_);
+    topSolidAnim_->setEndValue(on ? 1.0 : 0.0);
+    topSolidAnim_->start();
+}
+
+// 目标态 = 鼠标在顶栏 || 当前页（非首页）首个 QScrollArea 垂直偏移>12
+void MainWindow::updateTopSolid()
+{
+    if (topForced_) { setTopSolid(true); return; }   // P19：QA 强制态优先
+    bool on = topHover_;
+    if (!on && stack_ && stack_->currentWidget() != home_) {
+        const auto sas = stack_->currentWidget()->findChildren<QScrollArea*>();
+        if (!sas.isEmpty()) {
+            QScrollBar* sb = sas.first()->verticalScrollBar();
+            on = sb && sb->value() > 12;
+        }
+    }
+    setTopSolid(on);
+}
+
+void MainWindow::showEvent(QShowEvent* ev)
+{
+    QMainWindow::showEvent(ev);
+    syncTopbarFloat();
 }
 
 // P13：导航切换联动动效（淡出 → 换页 → 淡入+轻微上滑）。
@@ -598,6 +711,7 @@ void MainWindow::resizeEvent(QResizeEvent* e)
     QMainWindow::resizeEvent(e);
     if (lightbox_ && lightbox_->isVisible())
         lightbox_->setGeometry(rect());
+    syncTopbarFloat();                   // P19：悬浮顶栏跟随窗口
 }
 
 // P16 隐私库：顶栏锁按钮分流 —— 未初始化 → 设密码；锁定 → 输密码解锁；已解锁 → 重新上锁。
@@ -701,8 +815,9 @@ void MainWindow::onNav(int row)
         applyNavProgress(0.0);
     }
     topbar_->setVisible(!home);
-    seam_->setVisible(!home);
-    kpis_->setVisible(!home);
+    kpis_->hide();                       // P19：模块条退役，永远不显示
+    updateTopSolid();                    // P19：切页后按滚动偏移重算底色
+    syncTopbarFloat();
     if (!animEnabled_ || !isVisible() || row == stack_->currentIndex()) {
         stack_->setCurrentIndex(row);
         return;
