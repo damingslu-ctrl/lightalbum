@@ -19,6 +19,7 @@ class MapPage;
 class CullPage;
 class RetouchPage;
 class LogPage;
+class HomePage;        // P17 沉浸式首页（Quiet Frame）
 class PhotoLightbox;   // P15 沉浸式灯箱（MainWindow.cpp 文件内定义）
 class QPushButton;
 
@@ -41,8 +42,7 @@ public:
     void resizeEvent(QResizeEvent* e) override;
 
 private:
-    // P12「美术馆策展」：首页为艺术 hero 仪表盘（hero 渐变 + 功能入口 + 最近作品胶片带）
-    QWidget* makeHome(const QString& thumbsDir) const;
+    // P12「美术馆策展」已由 P17「Quiet Frame」沉浸式首页取代（HomePage）
     // 占位页带图标与用户向说明（不再引用内部 docs）；关于页显示真实版本信息
     QWidget* makePlaceholder(const QString& secName, const QString& iconKind,
                              const QString& desc) const;
@@ -69,14 +69,15 @@ private:
     QListWidget*    nav_ = nullptr;
     QLineEdit*      search_ = nullptr;
     QLabel*         title_ = nullptr;
+    QWidget*        topbar_ = nullptr;      // P17：顶栏句柄（首页隐藏全局 chrome）
     QStackedWidget* stack_ = nullptr;
     QWidget*        kpis_ = nullptr;
     QLabel*         moduleLbl_ = nullptr;   // P15.2：顶栏模块名称（随导航切换）
+    HomePage*       home_ = nullptr;        // P17：沉浸式首页
 
     // P13 呼吸感受控元素
     QFrame*                  seam_ = nullptr;       // 顶栏发丝线
     QGraphicsOpacityEffect*  seamEff_ = nullptr;
-    QLabel*                  heroGlow_ = nullptr;   // 首页 hero 径向光晕
     QTimer*                  breathTimer_ = nullptr;
     double                   breathPhase_ = 0;
     int                      activeNavRow_ = 0;
@@ -84,7 +85,7 @@ private:
     QVector<QFrame*>         navBars_;              // 各导航激活金条
     bool                     animEnabled_ = true;
 
-    // P14：扩展呼吸目标（功能卡片光晕/画廊光晕），与 heroGlow/seam/激活条共享同一节拍
+    // P14：扩展呼吸目标（seam 发丝线等），与激活条共享同一节拍
     struct BreathTarget { QGraphicsOpacityEffect* eff = nullptr; double base = 0.5; double amp = 0.2; double phase = 0.0; };
     QVector<BreathTarget>    breathTargets_;
 

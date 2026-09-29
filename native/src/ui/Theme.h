@@ -53,6 +53,35 @@ inline void applyAppFont(QApplication& app, const QString& prefer = QString())
     app.setFont(f);
 }
 
+// ---- P17「Quiet Frame」衬线字族：拉丁走 Georgia，中文走显式加载的衬线 CJK ----
+// （NotoSerifSC / 华文宋体 / 宋体，由 main.cpp 从字体文件加载后 setSerifFamily 注入；
+//   未注入则中文兜底雅黑——真实窗口仍可读，仅失去衬线气质。）
+inline QStringList& serifFamilies()
+{
+    static QStringList s = {QStringLiteral("Georgia"),
+                            QStringLiteral("Microsoft YaHei UI")};
+    return s;
+}
+inline void setSerifFamily(const QString& cjkSerif)
+{
+    if (cjkSerif.isEmpty()) return;
+    QStringList& s = serifFamilies();
+    s.removeOne(cjkSerif);
+    s.insert(1, cjkSerif);   // Georgia 之后（拉丁衬线优先），雅黑之前（兜底）
+}
+inline QFont serifFont(qreal pointSize, QFont::Weight weight = QFont::Normal,
+                       qreal letterSpacing = 0.0)
+{
+    QFont f;
+    f.setFamilies(serifFamilies());
+    f.setPointSizeF(pointSize);
+    f.setWeight(weight);
+    if (letterSpacing != 0.0)
+        f.setLetterSpacing(QFont::AbsoluteSpacing, letterSpacing);
+    f.setStyleStrategy(QFont::PreferAntialias);
+    return f;
+}
+
 // ---- 组件样式工厂（QSS 片段；只覆盖强语义组件，表面色走 QPalette） -----------
 
 // 主按钮：翡翠渐变（大胆点一：唯一的「执行」色）

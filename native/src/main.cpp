@@ -20,6 +20,7 @@
 #include "core/GeoIndex.h"
 #include "core/Scanner.h"
 #include "ui/MainWindow.h"
+#include "ui/HomePage.h"
 #include "ui/DarkPalette.h"
 #include "ui/Theme.h"
 #include "ui/Splash.h"
@@ -333,6 +334,30 @@ int main(int argc, char *argv[])
         std::fflush(stderr);
     }
     Lumen::applyAppFont(app, cjkFamily);   // P11：中文优先（显式 CJK 家族或系统雅黑）
+
+    // P17「Quiet Frame」衬线中文：大标题/章节名的书卷气来自显式加载的衬线 CJK 字体，
+    // 拉丁字形仍由 Georgia 优先（families 兜底链在 Lumen::serifFamilies）。
+    {
+        static const QStringList serifCands = {
+            QStringLiteral("C:/Windows/Fonts/NotoSerifSC-VF.ttf"),
+            QStringLiteral("C:/Windows/Fonts/STSONG.TTF"),
+            QStringLiteral("C:/Windows/Fonts/simsun.ttc"),
+        };
+        QString serifFamily;
+        for (const QString& p : serifCands) {
+            if (!QFileInfo::exists(p)) continue;
+            const int id = QFontDatabase::addApplicationFont(p);
+            if (id < 0) continue;
+            const QStringList fams = QFontDatabase::applicationFontFamilies(id);
+            if (!fams.isEmpty()) { serifFamily = fams.first(); break; }
+        }
+        Lumen::setSerifFamily(serifFamily);
+        if (serifFamily.isEmpty())
+            std::fprintf(stderr, "LA_FONT no serif CJK loaded (titles fall back to sans)\n");
+        else
+            std::fprintf(stderr, "LA_FONT loaded serif CJK family=%s\n", qPrintable(serifFamily));
+        std::fflush(stderr);
+    }
     app.setStyleSheet(Lumen::focusRing());   // P16.1：全局键盘焦点环（WCAG 可达性）
 
     // P5 金样对拍冒烟（无需库文件，最先跑）
@@ -374,6 +399,37 @@ int main(int argc, char *argv[])
         std::fflush(stderr);
         if (qEnvironmentVariableIsSet("LA_SMOKE")) return 2;
         return 1;
+    }
+
+    // P17 首页章节分组冒烟（纯逻辑，无 GUI）：章节数>0、章内非空、按数量降序、
+    // 展示字段非空、关键词 ⊆ 真实分类；打印定位覆盖率后按结果退出。
+    if (qEnvironmentVariableIsSet("LA_HOME_SMOKE")) {
+        const auto& phs = lib.photos();
+        const auto chs = HomePage::buildChapters(phs, 12);
+        int located = 0, usable = 0;
+        for (const Photo& p : phs) {
+            if (p.priv || p.missing || p.thumbFile.isEmpty()) continue;
+            ++usable;
+            if (!p.city.isEmpty() || !p.prov.isEmpty() || !p.region.isEmpty()) ++located;
+        }
+        bool ok = !chs.isEmpty() && located > 0;
+        int prevCount = 1 << 30;
+        for (const auto& c : chs) {
+            if (c.photos.isEmpty() || c.title.isEmpty()
+                || c.capsLine.isEmpty() || c.subtitle.isEmpty()
+                || (int)c.photos.size() > prevCount)
+                ok = false;
+            prevCount = int(c.photos.size());
+        }
+        std::fprintf(stderr, "LA_HOME_SMOKE_%s chapters=%d located=%d usable=%d "
+                             "first=\"%s\"(%d 幅) kw=%d\n",
+                     ok ? "OK" : "FAIL", chs.size(), located, usable,
+                     chs.isEmpty() ? qPrintable(QString())
+                                   : qPrintable(chs.first().title),
+                     chs.isEmpty() ? 0 : chs.first().photos.size(),
+                     chs.isEmpty() ? 0 : chs.first().keywords.size());
+        std::fflush(stderr);
+        return ok ? 0 : 1;
     }
 
     // P16 写回链路自测：LA_RW_SMOKE=1（必须指向临时库副本，绝不碰真库）。

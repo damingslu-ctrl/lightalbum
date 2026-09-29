@@ -50,6 +50,8 @@ set(LA_SOURCES
     src/ui/CompareWidget.cpp
     src/ui/MainWindow.h
     src/ui/MainWindow.cpp
+    src/ui/HomePage.h
+    src/ui/HomePage.cpp
     src/ui/Splash.h
     src/ui/Splash.cpp
     src/core/CullEngine.h

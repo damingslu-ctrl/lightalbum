@@ -5,8 +5,16 @@ client/dist/
 native/build/
 # native 发行产物（脚本生成，不入库）
 native/LightAlbum-*.zip
+native/LightAlbum-*.zip.bak
 native/LightAlbum-*-win64/
+native/LightAlbum-*-win64-*/
 native/_trim_excluded/
+native/.qt/
+native/LightAlbum_autogen/
+native/_ui_shot_*/
+native/_probe_*
+native/build/_thumb_probe.py
+native/data/_geo_cities.inc
 __pycache__/
 *.pyc
 venv*/
