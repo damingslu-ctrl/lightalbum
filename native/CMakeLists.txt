@@ -32,6 +32,10 @@ set(LA_SOURCES
     src/ui/GalleryModel.cpp
     src/ui/GalleryPage.h
     src/ui/GalleryPage.cpp
+    src/ui/GalleryCardPainter.h
+    src/ui/GalleryCardPainter.cpp
+    src/ui/EditorialView.h
+    src/ui/EditorialView.cpp
     src/ui/MapView.h
     src/ui/MapView.cpp
     src/ui/MapPage.h

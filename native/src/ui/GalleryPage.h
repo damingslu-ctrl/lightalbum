@@ -2,7 +2,7 @@
 // 图库页：QListView(IconMode) 窗口化网格 + 自绘委托（卡片/横竖徽章/标题/缺失标记）
 // P16：分类 chips 条（CLIP 本地批量分类写库后读库筛选）+ 人物筛选条 + 隐私门同步
 #include <QWidget>
-#include <QListView>
+#include "EditorialView.h"  // P23 E 杂志拼贴视图
 #include <QLabel>
 #include <QTimer>
 #include "GalleryModel.h"
@@ -20,6 +20,7 @@ public:
     void applyCategoryFilter(const QString& cat);                        // P16 分类 chips
     void setHidePrivate(bool hide);                                      // P16 隐私门（重建 chips 计数）
     void refresh();                                                      // 灯箱改评分/私密后刷新
+    void qaShootE(const QString& png);                                   // P23 E 像素/几何自测（offscreen）
 
 signals:
     void photoActivated(const QString& path);   // 点击卡片 → 沉浸式灯箱
@@ -32,7 +33,7 @@ private:
     const QVector<Photo>* photos_ = nullptr;
     GalleryModel model_;
     ThumbCache   cache_;
-    QListView*   view_ = nullptr;
+    EditorialView* view_ = nullptr;  // P23：原 QListView(IconMode) 均匀网格 -> 杂志拼贴
     QLabel*      count_ = nullptr;
     QTimer*      prefetchTimer_ = nullptr;
     QWidget*     chipsBar_ = nullptr;         // P16 分类 chips（无分类数据时整条隐藏）

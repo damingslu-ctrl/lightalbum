@@ -21,6 +21,7 @@
 #include "core/Scanner.h"
 #include "ui/MainWindow.h"
 #include "ui/MapView.h"
+#include "ui/GalleryPage.h"
 #include "ui/HomePage.h"
 #include "ui/DarkPalette.h"
 #include "ui/Theme.h"
@@ -475,6 +476,7 @@ int main(int argc, char *argv[])
         && !qEnvironmentVariableIsSet("LA_CULL_SMOKE")
         && !qEnvironmentVariableIsSet("LA_RETOUCH_SMOKE")
         && !qEnvironmentVariableIsSet("LA_MAP_A_QA")
+        && !qEnvironmentVariableIsSet("LA_GALLERY_E_QA")
         ;
 
     QRect avail = QApplication::primaryScreen()->availableGeometry();
@@ -560,6 +562,32 @@ int main(int argc, char *argv[])
         QDir().mkpath(QFileInfo(p).absolutePath());
         if (MapView* mv = win.mapView()) mv->qaShootA(p);
         std::fprintf(stderr, "LA_MAP_A_QA_DONE\n");
+        std::fflush(stderr);
+        return 0;
+    }
+
+    // P23 E 杂志拼贴 像素/几何自测：LA_GALLERY_E_QA=<png> 时合成 12 张照片驱动 EditorialView，
+    // 验证 feature 首图占 2×2 + 卡片真实绘制，并抓整页 PNG（颜色校验铁律：必须实测不许猜）。
+    if (!qEnvironmentVariableIsEmpty("LA_GALLERY_E_QA")) {
+        const QString p = qEnvironmentVariable("LA_GALLERY_E_QA");
+        QDir().mkpath(QFileInfo(p).absolutePath());
+        QVector<Photo> synth;
+        for (int i = 0; i < 12; ++i) {
+            Photo ph;
+            ph.path  = QStringLiteral("synthetic/%1.jpg").arg(i);
+            ph.title = QStringLiteral("作品 %1").arg(i + 1);
+            ph.date  = QStringLiteral("2024-05-%1").arg((i % 9) + 1, 2, 10, QChar('0'));
+            ph.orient = (i % 2) ? QStringLiteral("portrait") : QStringLiteral("landscape");
+            ph.rating = (i % 4 == 0) ? 4 : (i % 3 == 0 ? 3 : 0);
+            ph.year  = 2024;
+            synth.append(ph);
+        }
+        GalleryPage page(&synth, QDir::temp().filePath(QStringLiteral("la_e_qa_thumbs")), nullptr);
+        page.resize(1200, 820);
+        page.show();
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 400);
+        page.qaShootE(p);
+        std::fprintf(stderr, "LA_GALLERY_E_QA_DONE\n");
         std::fflush(stderr);
         return 0;
     }
