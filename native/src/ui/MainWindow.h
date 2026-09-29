@@ -13,6 +13,7 @@ class QStackedWidget;
 class QLineEdit;
 class QLabel;
 class QListWidget;
+class QListWidgetItem;
 class QWidget;
 class GalleryPage;
 class MapPage;
@@ -30,9 +31,6 @@ class MainWindow : public QMainWindow {
 public:
     MainWindow(Library* lib, const QString& thumbsDir,
                const QString& dbPath = QString(), QWidget* parent = nullptr);
-
-    // P18：侧栏展开态入口（offscreen 截图/QA 无鼠标事件，直接驱动动画）
-    void expandNav(bool on);
 
     // P11 UI 截图探针：逐导航页 setCurrentRow → grab() 存 PNG 到 dir；返回 0。
     int shootPages(const QString& dir);
@@ -65,8 +63,6 @@ private:
     void  setupBreathing();                 // 呼吸定时器与受控元素
     void  tickBreath();                     // 正弦驱动 hero 光晕/seam/激活条/扩展目标
     void  updateNavActive(int row);         // 高亮当前导航项 + 激活呼吸条
-    // P18 侧边栏 E「折叠双态轨」：hover 展开 208px / 离开收回 68px，文字随宽淡入
-    void  applyNavProgress(double t);
     bool  eventFilter(QObject* obj, QEvent* ev) override;
 
     // P19 标题栏 E「沉浸渐隐栏」：顶栏悬浮透明，滚动/入栏时底色渐显
@@ -101,10 +97,9 @@ private:
     QTimer*                  breathTimer_ = nullptr;
     double                   breathPhase_ = 0;
     int                      activeNavRow_ = 0;
-    QVector<QWidget*>        navCells_;             // 各导航自绘单元格
-    QVector<QFrame*>         navBars_;              // 各导航激活金条
-    QVector<QLabel*>         navTexts_;             // P18：导航文字标签（展开淡入）
-    QVariantAnimation*       navAnim_ = nullptr;    // P18：折叠双态动画（宽度+透明度同源）
+    QWidget*                 navBox_ = nullptr;     // P24 A 抛光图标轨：字标+列表容器
+    QFrame*                  navBar_ = nullptr;     // 激活金条（贴栏缘，呼吸驱动）
+    QVector<QListWidgetItem*> navItems_;            // 各导航项（激活态图标重着色）
     // P19 沉浸渐隐栏
     QFrame*                  topShade_ = nullptr;   // 顶栏渐显底色层（QWidget 不画 QSS 背景，必须 QFrame）
     QPushButton*             searchToggle_ = nullptr; // 搜索展开/收起图标钮
@@ -113,8 +108,6 @@ private:
     bool                     topHover_ = false;
     bool                     topSolidOn_ = false;
     QWidget*                 aboutPg_ = nullptr;    // P19：关于页句柄（顶部让位用）
-    double                   navProgress_ = 0.0;    // P18：0=68px 收起，1=208px 展开
-    bool                     navExpanded_ = false;
     bool                     animEnabled_ = true;
 
     // P14：扩展呼吸目标（seam 发丝线等），与激活条共享同一节拍

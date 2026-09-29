@@ -59,6 +59,10 @@ const NavItem kNav[] = {
     {"日志", "P2"}, {"关于", "P3"},
 };
 
+// 导航图标名（与 kNav 一一对应；历史映射：日志→enhance、关于→log，勿重排）
+// P24 A 抛光图标轨：激活态在 updateNavActive 用金色重绘同一图标。
+const char* kNavIcons[] = { "home", "map", "gallery", "cull", "retouch", "enhance", "log" };
+
 // P12「美术馆策展」：方形圆角缩略图（KeepAspectRatioByExpanding + 路径裁剪）
 QPixmap roundedThumb(const QString& path, int size, int radius)
 {
@@ -324,74 +328,63 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
     root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(0);
 
-    // ---- P18 侧边栏 E「折叠双态轨」：常态 68px 纯图标，hover 展开到 208px，
-    //      图标左/文字右横排，文字随宽度淡入。单元格仍走 setItemWidget 真
-    //      QLabel（P12 教训：QSS 委托文本会省略成 …）；gridSize 锚定展开宽
-    //      208 → 收起时视口裁切 + 透明度 0 双保险，杜绝文字残影。----
-    nav_ = new QListWidget(central);
+    // ---- P24 侧边栏 A「抛光图标轨」：固定 68px 纯图标轨（取消 P18 折叠双态）。
+    //      顶部衬线「光」字标；激活项金底胶囊（QSS 横向 margin 内缩 68-26=42px）
+    //      + 左缘金条 + 图标转金；hover 泛光。图标走 QListWidgetItem::setIcon
+    //      （激活态在 updateNavActive 重着色）；纯图标轨无文字 → tooltip 补位。----
+    navBox_ = new QWidget(central);
+    navBox_->setFixedWidth(68);
+    navBox_->setStyleSheet(QStringLiteral(
+        "background:#0c100d;border-right:1px solid #26312a;"));
+    auto* nvLay = new QVBoxLayout(navBox_);
+    nvLay->setContentsMargins(0, 14, 0, 12);
+    nvLay->setSpacing(4);
+    auto* navLogo = new QLabel(QStringLiteral("光"), navBox_);
+    navLogo->setAlignment(Qt::AlignCenter);
+    navLogo->setFixedHeight(30);
+    navLogo->setStyleSheet(QStringLiteral(
+        "color:#d9a94e;font-family:Georgia,'Noto Serif SC','STSong',serif;"
+        "font-size:17px;background:transparent;"));
+    nvLay->addWidget(navLogo);
+
+    nav_ = new QListWidget(navBox_);
     nav_->setMinimumWidth(68);
     nav_->setMaximumWidth(68);
     nav_->setViewMode(QListView::IconMode);
     nav_->setFlow(QListView::TopToBottom);
     nav_->setWrapping(false);
     nav_->setMovement(QListView::Static);          // IconMode 默认可拖拽，锁死
-    nav_->setGridSize(QSize(208, 46));             // P18：锚定展开态几何
+    nav_->setGridSize(QSize(68, 48));
     nav_->setUniformItemSizes(true);
     nav_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     nav_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     nav_->setFrameShape(QFrame::NoFrame);
     nav_->setStyleSheet(QStringLiteral(
-        "QListWidget{background:#0c100d;border-right:1px solid #26312a;outline:0;padding-top:8px;}"
-        "QListWidget::item{margin:3px 0;border-radius:10px;}"
-        "QListWidget::item:hover{background:#1a231d;}"
-        "QListWidget::item:selected{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-        "  stop:0 rgba(79,192,138,88), stop:1 rgba(79,192,138,18));}"));
+        "QListWidget{background:transparent;outline:0;}"
+        "QListWidget::item{margin:2px 13px;border-radius:10px;}"          // 42px 胶囊
+        "QListWidget::item:hover{background:rgba(232,228,218,15);}"       // 泛光 .06
+        "QListWidget::item:selected{background:rgba(217,169,78,40);}"));  // 金底 .16
     nav_->setIconSize(QSize(22, 22));
-    nav_->installEventFilter(this);                  // P18：hover 展开/收回
-    const char* kIcons[] = {"home", "map", "gallery", "cull", "retouch", "enhance", "log", "about"};
-    for (int i = 0; i < int(sizeof(kNav) / sizeof(kNav[0])); ++i) {
+    for (int i = 0; i < int(sizeof(kNavIcons) / sizeof(kNavIcons[0])); ++i) {
         auto* it = new QListWidgetItem;
-        it->setSizeHint(QSize(208, 44));
+        it->setSizeHint(QSize(68, 44));
+        it->setIcon(Icons::make(QString::fromLatin1(kNavIcons[i]),
+                                QColor(0x9f, 0xa8, 0xa3), 22));
+        it->setToolTip(QString::fromUtf8(kNav[i].label));
         nav_->addItem(it);
-        auto* cell = new QWidget;
-        auto* ch = new QHBoxLayout(cell);
-        ch->setContentsMargins(23, 0, 0, 0);   // 收起 68px 时图标居中：(68-22)/2=23
-        ch->setSpacing(12);
-        auto* ic = new QLabel(cell);
-        ic->setPixmap(Icons::make(QString::fromLatin1(kIcons[i]),
-                                  QColor(0x9f, 0xa8, 0xa3), 22).pixmap(22, 22));
-        ic->setStyleSheet("background:transparent;");
-        auto* tx = new QLabel(QString::fromUtf8(kNav[i].label), cell);
-        tx->setStyleSheet("color:#9db2a5;font-size:12.5px;background:transparent;");
-        auto* te = new QGraphicsOpacityEffect(tx);
-        te->setOpacity(0.0);                   // 收起态文字全隐（防裁切残影）
-        tx->setGraphicsEffect(te);
-        ch->addWidget(ic);
-        ch->addWidget(tx);
-        ch->addStretch();
-        nav_->setItemWidget(it, cell);
-        navCells_.append(cell);
-        navTexts_.append(tx);
-        // 激活金条（呼吸由 tickBreath 驱动），默认隐藏
-        auto* bar = new QFrame(cell);
-        bar->setObjectName(QStringLiteral("navBar"));
-        bar->setFixedSize(2, 24);
-        bar->setStyleSheet(QStringLiteral("background:#d9a94e;border-radius:1px;"));
-        bar->move(3, (44 - 24) / 2);
-        bar->hide();
-        auto* be = new QGraphicsOpacityEffect(bar);
-        be->setOpacity(0.9);
-        bar->setGraphicsEffect(be);
-        navBars_.append(bar);
+        navItems_.append(it);
     }
-    // P18：折叠双态动画（宽度 + 文字透明度同源驱动，避免双动画失步）
-    navAnim_ = new QVariantAnimation(this);
-    navAnim_->setDuration(240);
-    navAnim_->setEasingCurve(QEasingCurve::OutCubic);
-    connect(navAnim_, &QVariantAnimation::valueChanged, this, [this](const QVariant& v) {
-        applyNavProgress(v.toDouble());
-    });
-    root->addWidget(nav_);
+    // 激活金条：贴视口左缘（A 方案胶囊 left:-13px → 栏缘 x=0），呼吸由 tickBreath 驱动
+    navBar_ = new QFrame(nav_->viewport());
+    navBar_->setObjectName(QStringLiteral("navBar"));
+    navBar_->setFixedSize(3, 20);
+    navBar_->setStyleSheet(QStringLiteral("background:#d9a94e;border-radius:1px;"));
+    navBar_->hide();
+    auto* navBarEff = new QGraphicsOpacityEffect(navBar_);
+    navBarEff->setOpacity(0.9);
+    navBar_->setGraphicsEffect(navBarEff);
+    nvLay->addWidget(nav_, 1);
+    root->addWidget(navBox_);
 
     // P19：顶栏渐显动画（底色层透明度同源驱动）
     topSolidAnim_ = new QVariantAnimation(this);
@@ -583,59 +576,39 @@ void MainWindow::tickBreath()
         t.eff->setOpacity(t.base + t.amp * k);
     }
     // 导航激活金条（仅当前项呼吸）
-    if (activeNavRow_ >= 0 && activeNavRow_ < navBars_.size()) {
-        QFrame* bar = navBars_.at(activeNavRow_);
-        if (bar->isVisible() && bar->graphicsEffect())
-            static_cast<QGraphicsOpacityEffect*>(bar->graphicsEffect())
-                ->setOpacity(0.55 + 0.45 * (0.5 + 0.5 * std::sin(breathPhase_)));
-    }
+    if (navBar_ && navBar_->isVisible() && navBar_->graphicsEffect())
+        static_cast<QGraphicsOpacityEffect*>(navBar_->graphicsEffect())
+            ->setOpacity(0.55 + 0.45 * (0.5 + 0.5 * std::sin(breathPhase_)));
 }
 
-// P13：高亮当前导航项（显示对应金条），并更新呼吸目标行。
+// P13：高亮当前导航项（P24：金条移至对应行 + 图标转金，其余回灰）。
 // P15.2：顶栏模块名称随导航切换。
 void MainWindow::updateNavActive(int row)
 {
     activeNavRow_ = row;
-    for (int i = 0; i < navBars_.size(); ++i)
-        navBars_.at(i)->setVisible(i == row);
+    for (int i = 0; i < navItems_.size()
+                    && i < int(sizeof(kNavIcons) / sizeof(kNavIcons[0])); ++i) {
+        navItems_.at(i)->setIcon(Icons::make(QString::fromLatin1(kNavIcons[i]),
+            i == row ? QColor(0xd9, 0xa9, 0x4e) : QColor(0x9f, 0xa8, 0xa3), 22));
+    }
+    if (navBar_) {
+        if (row >= 0 && row < nav_->count()) {
+            const QRect vr = nav_->visualItemRect(nav_->item(row));
+            navBar_->setGeometry(0, vr.y() + (vr.height() - navBar_->height()) / 2,
+                                 navBar_->width(), navBar_->height());
+            navBar_->show();
+        } else {
+            navBar_->hide();
+        }
+    }
     if (moduleLbl_ && row >= 0 && row < int(sizeof(kNav) / sizeof(kNav[0])))
         moduleLbl_->setText(QString::fromUtf8(kNav[row].label));
 }
 
-// P18 侧边栏 E：折叠双态轨 —— hover 展开 208px / 离开收回 68px。
-// 单一 QVariantAnimation 同源驱动宽度与文字透明度；进度存 navProgress_，
-// 中途反向也能从当前进度平滑折返。
-void MainWindow::expandNav(bool on)
-{
-    if (navExpanded_ == on) return;
-    navExpanded_ = on;
-    navAnim_->stop();
-    navAnim_->setStartValue(navProgress_);
-    navAnim_->setEndValue(on ? 1.0 : 0.0);
-    navAnim_->start();
-}
-
-void MainWindow::applyNavProgress(double t)
-{
-    navProgress_ = t;
-    const int w = 68 + int(140.0 * t + 0.5);
-    nav_->setMinimumWidth(w);
-    nav_->setMaximumWidth(w);
-    for (QLabel* tx : navTexts_) {
-        if (auto* e = qobject_cast<QGraphicsOpacityEffect*>(tx->graphicsEffect()))
-            e->setOpacity(t);
-    }
-    syncTopbarFloat();                   // P19：侧栏展开动画带动顶栏右移
-}
-
-// P18：hover 进出侧栏 → 展开/收回（进入子项不会误触发父级 Leave）
 // P19：hover 进出顶栏 → 底色渐显/按滚动状态收回
 bool MainWindow::eventFilter(QObject* obj, QEvent* ev)
 {
-    if (obj == nav_) {
-        if (ev->type() == QEvent::Enter) expandNav(true);
-        else if (ev->type() == QEvent::Leave) expandNav(false);
-    } else if (obj == topbar_) {
+    if (obj == topbar_) {
         if (ev->type() == QEvent::Enter) { topHover_ = true;  updateTopSolid(); }
         else if (ev->type() == QEvent::Leave) { topHover_ = false; updateTopSolid(); }
     }
@@ -810,11 +783,6 @@ void MainWindow::onNav(int row)
     // P21：首页保留左侧全局导航（用户要求首页也显示左栏，不再为沉浸隐藏它）。
     // 顶栏/发丝线仍按 P19 沉浸逻辑在首页隐藏；HomePage 自身左章节面板在右侧并排。
     const bool home = (row == 0);
-    if (home && navExpanded_) {              // P18：回首页时收回展开态（左栏仍常显）
-        navAnim_->stop();
-        navExpanded_ = false;
-        applyNavProgress(0.0);
-    }
     topbar_->setVisible(!home);
     kpis_->hide();                       // P19：模块条退役，永远不显示
     updateTopSolid();                    // P19：切页后按滚动偏移重算底色
