@@ -964,6 +964,11 @@ int MainWindow::shootPages(const QString& dir)
 
 // P8 原生导入器：选目录 → QtConcurrent 后台 Scanner::syncRoot → 进度/取消 → 汇总。
 // 完成后提供「重启载入」（页面持有的是打开时快照，避免半刷新状态）。
+MapView* MainWindow::mapView() const
+{
+    return map_ ? map_->view() : nullptr;
+}
+
 void MainWindow::startImport()
 {
     const QString dir = QFileDialog::getExistingDirectory(

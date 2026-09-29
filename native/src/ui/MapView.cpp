@@ -2,6 +2,9 @@
 #include "../core/MotionPref.h"
 #include <QPainter>
 #include <QFile>
+#include <QImage>
+#include <QDir>
+#include <QFileInfo>
 #include <QJsonDocument>
 #include <QMouseEvent>
 #include <QPainterPath>
@@ -130,7 +133,7 @@ void MapView::buildWorldPixmap()
         for (int i = 1; i < r.pts.size(); ++i) path.lineTo(r.pts[i]);
         path.closeSubpath();
         p.fillPath(path, land);
-        p.setPen(QPen(border, 0.6));
+        p.setPen(QPen(border, 0.9));
         p.drawPath(path);
     }
     // P16.4.2 金色航线：以「我的位置」为基点，向每一处拍摄地延伸（画在足迹点下层）。
@@ -160,10 +163,18 @@ void MapView::buildWorldPixmap()
         p.setBrush(QColor(0xf0, 0xd0, 0x8a));
         p.drawEllipse(h, 3.2, 3.2);
     }
-    // P16.4 真实 GPS 足迹点：翡翠小光点（已按隐私门过滤）
+    // P16.4 真实 GPS 足迹点：翡翠柔光晕 + 实心芯（A 现状墨韵·抛光：加光晕、对齐翡翠 #5fdca6）
     if (!gpsPts_.isEmpty()) {
+        const QColor jade(0x5f, 0xdc, 0xa6);
         p.setPen(Qt::NoPen);
-        p.setBrush(QColor(0x4f, 0xc0, 0x8a));
+        // 柔光晕（半透明，落点更易被看见）
+        p.setBrush(QColor(0x5f, 0xdc, 0xa6, 82));
+        for (const QPointF& pt : gpsPts_) {
+            if (pt.x() < 0 || pt.x() > MAP_W || pt.y() < 0 || pt.y() > MAP_H) continue;
+            p.drawEllipse(pt, 5.0, 5.0);
+        }
+        // 实心芯
+        p.setBrush(jade);
         for (const QPointF& pt : gpsPts_) {
             if (pt.x() < 0 || pt.x() > MAP_W || pt.y() < 0 || pt.y() > MAP_H) continue;
             p.drawEllipse(pt, 2.0, 2.0);
@@ -292,7 +303,7 @@ void MapView::renderRegion(QPainter& p, const QRectF& dst) const
         path.closeSubpath();
         const bool isCur = hasCurProvince_ && pv.name == curProvince_.name;
         p.fillPath(path, isCur ? hl : land);
-        p.setPen(QPen(isCur ? QColor(0xe8, 0xc8, 0x7a) : border, isCur ? 1.6 : 0.7));
+        p.setPen(QPen(isCur ? QColor(0xe8, 0xc8, 0x7a) : border, isCur ? 1.6 : 0.9));
         p.drawPath(path);
         // 省名标签
         const QPointF c = o + pv.ctr * scale;
@@ -334,11 +345,18 @@ void MapView::drawGpsDots(QPainter& p, const QRectF& bbox, const QRectF& dst) co
     p.save();
     p.setClipRect(dst);
     p.setPen(Qt::NoPen);
-    p.setBrush(QColor(0x6a, 0xdb, 0xa6));
+    // A 现状墨韵·抛光：柔光晕 + 翡翠实心芯（与世界层一致，半径随缩放保持光晕比）
+    p.setBrush(QColor(0x5f, 0xdc, 0xa6, 82));
     for (const QPointF& pt : gpsPts_) {
         if (pt.x() < bbox.left() - 2 || pt.x() > bbox.right() + 2 ||
             pt.y() < bbox.top() - 2 || pt.y() > bbox.bottom() + 2) continue;
-        p.drawEllipse(o + pt * scale, 2.4, 2.4);
+        p.drawEllipse(o + pt * scale, 5.5 * scale, 5.5 * scale);
+    }
+    p.setBrush(QColor(0x5f, 0xdc, 0xa6));
+    for (const QPointF& pt : gpsPts_) {
+        if (pt.x() < bbox.left() - 2 || pt.x() > bbox.right() + 2 ||
+            pt.y() < bbox.top() - 2 || pt.y() > bbox.bottom() + 2) continue;
+        p.drawEllipse(o + pt * scale, 2.4 * scale, 2.4 * scale);
     }
     p.restore();
 }
@@ -377,6 +395,46 @@ void MapView::drawArcs(QPainter& p, const QRectF& bbox, const QRectF& dst) const
         p.drawEllipse(h, 3.6, 3.6);
     }
     p.restore();
+}
+
+// A 现状墨韵·抛光 —— 像素自测：注入确定性合成足迹点，离屏渲染世界层并统计翡翠像素
+// （核心+光晕）。用于 CI/offscreen 验证「光晕已落地」，颜色校验铁律：实测不许猜。
+void MapView::qaShootA(const QString& path)
+{
+    // 确定性合成足迹点（北京/上海/广州/成都/乌鲁木齐），与真实库无关，保证可复现
+    gpsPts_ = {
+        QPointF(eqX(116.40), eqY(39.90)),
+        QPointF(eqX(121.47), eqY(31.23)),
+        QPointF(eqX(113.26), eqY(23.13)),
+        QPointF(eqX(104.07), eqY(30.57)),
+        QPointF(eqX(87.62),  eqY(43.82)),
+    };
+    arcRegionIds_.clear();
+    buildWorldPixmap();
+
+    const int W = int(MAP_W), H = int(MAP_H);
+    QImage img(W, H, QImage::Format_ARGB32);
+    img.fill(Qt::transparent);
+    {
+        QPainter p(&img);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        p.drawPixmap(0, 0, worldPix_);
+    }
+    int jade = 0;
+    const uchar* bits = img.constBits();
+    const int bpl = img.bytesPerLine();
+    for (int y = 0; y < H; ++y) {
+        const uchar* row = bits + y * bpl;
+        for (int x = 0; x < W; ++x) {
+            const uchar* px = row + x * 4;
+            const int b = px[0], g = px[1], r = px[2];
+            if (g > 70 && g > r + 15 && g > b) ++jade;
+        }
+    }
+    if (!path.isEmpty()) img.save(path);
+    std::fprintf(stderr, "LA_MAP_A_QA jade=%d points=%d png=%s\n",
+                 jade, gpsPts_.size(), qPrintable(path));
+    std::fflush(stderr);
 }
 
 void MapView::paintEvent(QPaintEvent*)

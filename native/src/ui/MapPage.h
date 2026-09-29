@@ -10,6 +10,7 @@ class MapPage : public QWidget {
 public:
     explicit MapPage(const QVector<Photo>* photos, QWidget* parent = nullptr);
     void setHidePrivate(bool hide);   // P16 隐私门：锁定时统计跳过私密照片
+    MapView* view() const { return view_; }   // A 现状墨韵·抛光 QA 探针访问
 
 signals:
     void requestGallery(const QString& regionId, const QString& provEn); // 在图库查看

@@ -20,6 +20,7 @@
 #include "core/GeoIndex.h"
 #include "core/Scanner.h"
 #include "ui/MainWindow.h"
+#include "ui/MapView.h"
 #include "ui/HomePage.h"
 #include "ui/DarkPalette.h"
 #include "ui/Theme.h"
@@ -473,6 +474,7 @@ int main(int argc, char *argv[])
         && !qEnvironmentVariableIsSet("LA_LIGHTBOX_SHOT")
         && !qEnvironmentVariableIsSet("LA_CULL_SMOKE")
         && !qEnvironmentVariableIsSet("LA_RETOUCH_SMOKE")
+        && !qEnvironmentVariableIsSet("LA_MAP_A_QA")
         ;
 
     QRect avail = QApplication::primaryScreen()->availableGeometry();
@@ -549,6 +551,16 @@ int main(int argc, char *argv[])
             std::fprintf(stderr, "LA_LIGHTBOX_SHOT %s\n", qPrintable(path));
             std::fflush(stderr);
         }
+        return 0;
+    }
+
+    // A 现状墨韵·抛光 像素自测：LA_MAP_A_QA=<png> 时离屏渲染地图世界层并统计翡翠像素。
+    if (!qEnvironmentVariableIsEmpty("LA_MAP_A_QA")) {
+        const QString p = qEnvironmentVariable("LA_MAP_A_QA");
+        QDir().mkpath(QFileInfo(p).absolutePath());
+        if (MapView* mv = win.mapView()) mv->qaShootA(p);
+        std::fprintf(stderr, "LA_MAP_A_QA_DONE\n");
+        std::fflush(stderr);
         return 0;
     }
 

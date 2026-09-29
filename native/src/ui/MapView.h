@@ -58,6 +58,9 @@ public:
     // P16.4.2 有作品的大区 id 列表：其中心点也作为航线目标（与 web 版「连向每一处拍摄地」一致）
     void setArcRegionIds(const QStringList& ids);
 
+    // A 现状墨韵·抛光：像素自测探针（offscreen 渲染世界层 + 翡翠像素统计）
+    void qaShootA(const QString& path);
+
 signals:
     void breadcrumbChanged(const QString& text);
     void picked(const QString& key, const QString& label, bool isProvince); // 区域/省点击

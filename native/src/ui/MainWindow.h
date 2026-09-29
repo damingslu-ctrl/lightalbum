@@ -19,6 +19,7 @@ class MapPage;
 class CullPage;
 class RetouchPage;
 class LogPage;
+class MapView;         // A 现状墨韵·抛光 QA 探针
 class HomePage;        // P17 沉浸式首页（Quiet Frame）
 class PhotoLightbox;   // P15 沉浸式灯箱（MainWindow.cpp 文件内定义）
 class QPushButton;
@@ -75,6 +76,7 @@ private:
 public:
     void  setTopSolid(bool on);             // QA 门控 LA_UI_SHOT_SOLID 直驱
     void  forceTopSolid(bool on);           // QA 强制态（跳过动画与滚动状态机）
+    MapView* mapView() const;              // A 现状墨韵·抛光 QA 探针
 private:
     bool                     topForced_ = false;    // P19：QA 强制实底标志
     void  showEvent(QShowEvent* ev) override;
