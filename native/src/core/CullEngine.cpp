@@ -187,6 +187,7 @@ CullReport CullEngine::analyze(const QVector<CullInput>& inputs,
         const CullInput& in = inputs[idx];
         CullItem it;
         it.thumbPath = in.thumbPath;
+        it.category = in.category;   // 透传场景分类，供选片页 chips 筛选
 
         // MD5（文件字节；解码失败时仍能算）
         {

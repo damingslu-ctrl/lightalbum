@@ -14,6 +14,7 @@ struct CullInput {
     QString thumbPath;          // 本地缩略图绝对路径
     int     origW = 0, origH = 0;
     bool    isRaw = false;       // 原图扩展名是否 RAW（仅影响淘汰策略）
+    QString category;           // CLIP 场景分类标签（空 = 未分类），供选片页筛选
 };
 
 struct CullItem {
@@ -31,6 +32,7 @@ struct CullItem {
     QString grade;
     double  coverage = 0;        // 参与计分的权重占比
     QString status;              // candidate / rejected
+    QString category;            // CLIP 场景分类标签（透传自 CullInput）
     QString rejectReason;
     QString dupOf;               // 去重时被指向的保留者缩略图
     int     dupGroup = 0;
