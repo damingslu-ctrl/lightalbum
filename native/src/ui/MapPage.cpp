@@ -1,5 +1,6 @@
 #include "MapPage.h"
 #include "Theme.h"
+#include <QPointF>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -37,6 +38,7 @@ MapPage::MapPage(const QVector<Photo>* photos, QWidget* parent) : QWidget(parent
 
     view_ = new MapView(left);
     view_->setGpsCount(computeGpsCount());   // P16.1：注入真实 GPS 足迹数
+    view_->setGpsPoints(computeGpsPoints()); // P16.4：注入真实 GPS 足迹点
     ll->addWidget(view_, 1);
     lay->addWidget(left, 1);
 
@@ -91,6 +93,7 @@ void MapPage::setHidePrivate(bool hide)
 {
     hidePrivate_ = hide;
     view_->setGpsCount(computeGpsCount());   // P16.1：隐私门切换 → 足迹数同步
+    view_->setGpsPoints(computeGpsPoints()); // P16.4：隐私门切换 → 足迹点同步
     // 已选区域时重算一次统计，保持口径一致
     if (!lastRegion_.isEmpty() || !lastProv_.isEmpty())
         onPicked(lastIsProv_ ? lastProv_ : lastRegion_,
@@ -105,6 +108,22 @@ int MapPage::computeGpsCount() const
     for (const Photo& p : *photos_)
         if (p.hasGps && !(hidePrivate_ && p.priv)) ++n;
     return n;
+}
+
+// P16.4 真实 GPS 足迹点：仅 hasGps 且未被隐私门屏蔽的照片；经纬度 → 预投影空间（与 MapView 一致）
+QVector<QPointF> MapPage::computeGpsPoints() const
+{
+    QVector<QPointF> pts;
+    if (!photos_) return pts;
+    pts.reserve(photos_->size());
+    for (const Photo& p : *photos_) {
+        if (!p.hasGps || (hidePrivate_ && p.priv)) continue;
+        if (p.la == 0.0 && p.lo == 0.0) continue;   // 数据诚实：零坐标视为无效
+        const double x = (p.lo + 180.0) / 360.0 * MapView::MAP_W;
+        const double y = (90.0 - p.la) / 180.0 * MapView::MAP_H;
+        pts.append(QPointF(x, y));
+    }
+    return pts;
 }
 
 void MapPage::onPicked(const QString& key, const QString& label, bool isProvince)

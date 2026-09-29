@@ -20,6 +20,7 @@ private slots:
 
 private:
     int computeGpsCount() const;   // P16.1 真实 GPS 足迹计数（尊重隐私门）
+    QVector<QPointF> computeGpsPoints() const;   // P16.4 真实 GPS 足迹点（预投影空间）
 
 private:
     MapView* view_ = nullptr;

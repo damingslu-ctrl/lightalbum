@@ -46,6 +46,10 @@ public:
     // 取代 paintEvent 中原硬编码的「足迹 0」。
     void setGpsCount(int n) { gpsCount_ = n < 0 ? 0 : n; update(); }
 
+    // P16.4 足迹点：注入真实照片 GPS 坐标（预投影空间，已在调用方按隐私门过滤），
+    // 在世界/大区/省三级以翡翠光点呈现你的实际拍摄足迹。
+    void setGpsPoints(const QVector<QPointF>& pts);
+
 signals:
     void breadcrumbChanged(const QString& text);
     void picked(const QString& key, const QString& label, bool isProvince); // 区域/省点击
@@ -62,6 +66,8 @@ private:
     void renderWorldInto(QPainter& p, const QRectF& dst) const;
     void renderRegion(QPainter& p, const QRectF& dst) const;
     void renderProvince(QPainter& p, const QRectF& dst) const;
+    // P16.4 在大区/省视图按拟合变换投影真实 GPS 足迹点（裁剪到 dst）
+    void drawGpsDots(QPainter& p, const QRectF& bbox, const QRectF& dst) const;
 
     QPointF preToWidget(const QPointF& pre, const QRectF& dst, double scale,
                          double offX = 0) const;
@@ -91,4 +97,5 @@ private:
     bool                reduceMotion_ = false;
     QString             hoverHint_;            // 鼠标悬停提示（省名）
     int                 gpsCount_ = 0;         // P16.1 真实 GPS 足迹数（含隐私门下计数）
+    QVector<QPointF>    gpsPts_;               // P16.4 真实照片 GPS 足迹点（预投影空间）
 };

@@ -1,0 +1,419 @@
+#include "LogPage.h"
+#include "Theme.h"
+#include <QScrollArea>
+#include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QGridLayout>
+#include <QLabel>
+#include <QPainter>
+#include <QPainterPath>
+#include <QRegularExpression>
+#include <QVector>
+#include <algorithm>
+#include <cmath>
+
+// ———————————————————————————————————————————————————————————————————————
+// 解析助手（与 web renderStats 口径一致；缺失 EXIF 一律跳过，不硬塞末档）
+// ———————————————————————————————————————————————————————————————————————
+static double parseApertureNum(const QString& s)
+{
+    static const QRegularExpression re("(\\d+(?:\\.\\d+)?)");
+    const QRegularExpressionMatch m = re.match(s);
+    return m.hasMatch() ? m.captured(1).toDouble() : NAN;
+}
+
+static double parseShutterSec(const QString& s)
+{
+    QString t = s.trimmed();
+    if (t.isEmpty()) return NAN;
+    if (t.contains('/')) {
+        QString den = t.section('/', 1);
+        den.remove(QRegularExpression("[^0-9.]"));
+        const double d = den.toDouble();
+        return d > 0 ? 1.0 / d : NAN;
+    }
+    if (t.contains('s', Qt::CaseInsensitive)) {
+        const QString num = t.left(t.indexOf('s', Qt::CaseInsensitive)).trimmed();
+        return num.toDouble();   // 秒（1s / 20s / 0.5s）
+    }
+    return t.toDouble();          // 纯数字 → 秒
+}
+
+// ———————————————————————————————————————————————————————————————————————
+// BarChart
+// ———————————————————————————————————————————————————————————————————————
+BarChart::BarChart(QWidget* parent) : QWidget(parent)
+{
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    setMinimumHeight(168);
+}
+
+void BarChart::setData(const QStringList& labels, const QVector<int>& values, const QColor& color)
+{
+    labels_ = labels; values_ = values; color_ = color;
+    update();
+}
+
+void BarChart::paintEvent(QPaintEvent*)
+{
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.fillRect(rect(), Qt::transparent);
+    const int n = values_.size();
+    if (n == 0) return;
+    const int pad = 30, baseY = height() - 16, plotH = baseY - 12;
+    const int maxV = *std::max_element(values_.begin(), values_.end());
+    const int max = maxV < 1 ? 1 : maxV;
+    const int gap = 8;
+    const int bw = (width() - pad * 2 - gap * (n - 1)) / n;
+    if (bw <= 0) return;
+
+    p.setPen(QPen(Lumen::LINE, 1));
+    p.drawLine(pad, baseY, width() - pad, baseY);
+
+    QFont vf = p.font(); vf.setPointSizeF(10); vf.setBold(true);
+    QFont lf = p.font(); lf.setPointSizeF(9.5);
+    for (int i = 0; i < n; ++i) {
+        const int v = values_[i];
+        const int h = int(double(v) / double(max) * double(plotH));
+        const int x = pad + i * (bw + gap);
+        const int y = baseY - h;
+        p.setPen(Qt::NoPen);
+        p.setBrush(color_);
+        if (h > 1) p.drawRoundedRect(QRect(x, y, bw, h), 4, 4);
+        else p.drawRect(QRect(x, baseY - 1, bw, 1));   // 0 值细线占位
+        // 数值
+        p.setFont(vf); p.setPen(Lumen::INK);
+        p.drawText(QRect(x, y - 16, bw, 14), Qt::AlignCenter | Qt::AlignBottom, QString::number(v));
+        // 横轴标签
+        p.setFont(lf); p.setPen(Lumen::MUTED);
+        p.drawText(QRect(x, baseY + 2, bw, 12), Qt::AlignCenter | Qt::AlignTop, labels_[i]);
+    }
+}
+
+// ———————————————————————————————————————————————————————————————————————
+// PieChart
+// ———————————————————————————————————————————————————————————————————————
+PieChart::PieChart(QWidget* parent) : QWidget(parent)
+{
+    setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    setMinimumSize(180, 180);
+}
+
+void PieChart::setData(const QStringList& keys, const QVector<int>& values, const QStringList& colors)
+{
+    keys_ = keys; values_ = values; colors_ = colors;
+    update();
+}
+
+void PieChart::paintEvent(QPaintEvent*)
+{
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.fillRect(rect(), Qt::transparent);
+    const int total = std::accumulate(values_.begin(), values_.end(), 0);
+    if (total <= 0) return;
+    const int S = qMin(width(), height());
+    const int R = S / 2 - 4;
+    const QPointF c(width() / 2.0, height() / 2.0);
+    double ang = -M_PI / 2.0;
+    for (int i = 0; i < values_.size(); ++i) {
+        if (values_[i] <= 0) continue;
+        const double a2 = ang + double(values_[i]) / double(total) * 2.0 * M_PI;
+        const double large = (double(values_[i]) / double(total)) > 0.5 ? 1.0 : 0.0;
+        QPainterPath path;
+        path.moveTo(c);
+        path.arcTo(QRectF(c.x() - R, c.y() - R, 2 * R, 2 * R), -90.0 + ang * 180.0 / M_PI,
+                   (a2 - ang) * 180.0 / M_PI);
+        path.closeSubpath();
+        QColor col = (i < colors_.size()) ? QColor(colors_[i]) : Lumen::EMERALD;
+        p.setBrush(col); p.setPen(QPen(Lumen::BG, 1.5));
+        p.drawPath(path);
+        ang = a2;
+    }
+}
+
+// ———————————————————————————————————————————————————————————————————————
+// LogPage
+// ———————————————————————————————————————————————————————————————————————
+LogPage::LogPage(const QVector<Photo>* photos, QWidget* parent)
+    : QWidget(parent), photos_(photos)
+{
+    auto* outer = new QVBoxLayout(this);
+    outer->setContentsMargins(0, 0, 0, 0);
+    outer->setSpacing(0);
+    auto* scroll = new QScrollArea(this);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setStyleSheet(QStringLiteral("QScrollArea{background:#060806;border:none;}"));
+    outer->addWidget(scroll);
+
+    auto* root = new QWidget(scroll);
+    auto* lay = new QVBoxLayout(root);
+    lay->setContentsMargins(22, 20, 22, 24);
+    lay->setSpacing(16);
+
+    // —— 区块标题 ——
+    auto* head = new QWidget(root);
+    auto* hl = new QVBoxLayout(head);
+    hl->setContentsMargins(0, 0, 0, 0);
+    hl->setSpacing(6);
+    auto* title = new QLabel(QString::fromUtf8("摄影日志"), head);
+    QFont tf = title->font(); tf.setPointSizeF(20); tf.setBold(true);
+    tf.setLetterSpacing(QFont::AbsoluteSpacing, 4.0);
+    title->setFont(tf);
+    title->setStyleSheet("color:#f4f7f4;");
+    auto* sub = new QLabel(QString::fromUtf8(
+        "基于全部作品的 EXIF 信息，统计你的拍摄参数偏好与创作节律。数据会替你说话。"), head);
+    sub->setStyleSheet("color:#8da396;font-size:12px;");
+    sub->setWordWrap(true);
+    hl->addWidget(title);
+    hl->addWidget(sub);
+    lay->addWidget(head);
+
+    // —— KPI 条 ——
+    kpiRow_ = new QWidget(root);
+    auto* khl = new QHBoxLayout(kpiRow_);
+    khl->setContentsMargins(0, 0, 0, 0);
+    khl->setSpacing(12);
+    for (int i = 0; i < 6; ++i) {
+        auto* lb = new QLabel(kpiRow_);
+        lb->setStyleSheet(Lumen::kpiCard(Lumen::EMERALD));
+        khl->addWidget(lb);
+    }
+    khl->addStretch(1);
+    lay->addWidget(kpiRow_);
+
+    // —— 洞察卡 ——
+    insight_ = new QLabel(root);
+    insight_->setWordWrap(true);
+    insight_->setStyleSheet(QStringLiteral(
+        "QLabel{background:#131a15;border:1px solid #26312a;border-radius:12px;"
+        "padding:14px 18px;color:#d9e4dc;font-size:13px;line-height:1.6;}"));
+    lay->addWidget(insight_);
+
+    // —— 图表网格（2 列 × 3 行）——
+    auto* grid = new QGridLayout();
+    grid->setContentsMargins(0, 0, 0, 0);
+    grid->setSpacing(14);
+
+    auto makeCard = [&](const QString& t, const QString& hint, QWidget* chart, QWidget* legend = nullptr) {
+        auto* card = new QWidget(root);
+        card->setStyleSheet(QStringLiteral(
+            "QWidget{background:#131a15;border:1px solid #26312a;border-radius:14px;}"));
+        auto* cl = new QVBoxLayout(card);
+        cl->setContentsMargins(16, 14, 16, 14);
+        cl->setSpacing(8);
+        auto* h = new QLabel(t, card);
+        QFont hf = h->font(); hf.setPointSizeF(13.5); hf.setBold(true);
+        hf.setLetterSpacing(QFont::AbsoluteSpacing, 2.0);
+        h->setFont(hf); h->setStyleSheet("color:#f4f7f4;");
+        auto* hi = new QLabel(hint, card);
+        hi->setStyleSheet("color:#8da396;font-size:11px;");
+        cl->addWidget(h);
+        cl->addWidget(hi);
+        cl->addWidget(chart);
+        if (legend) cl->addWidget(legend);
+        return card;
+    };
+
+    apChart_   = new BarChart(root);
+    shChart_   = new BarChart(root);
+    isoChart_  = new BarChart(root);
+    focChart_  = new BarChart(root);
+    gearChart_ = new PieChart(root);
+    gearLegend_= new QLabel(root);
+    gearLegend_->setWordWrap(true);
+    gearLegend_->setStyleSheet("color:#8da396;font-size:11px;");
+    gearLegend_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
+    monthChart_= new BarChart(root);
+
+    const QColor gold(0xc1, 0x9a, 0x4b), blue(0x3f, 0x60, 0x98),
+                 purple(0x4b, 0x3f, 0x7a), orange(0xc7, 0x6b, 0x3a), green(0x5a, 0x8f, 0x6b);
+
+    grid->addWidget(makeCard(QString::fromUtf8("光圈分布"),   QString::fromUtf8("常用景深与通光量"),    apChart_), 0, 0);
+    grid->addWidget(makeCard(QString::fromUtf8("快门速度"),   QString::fromUtf8("从高速定格到长曝"),    shChart_), 0, 1);
+    grid->addWidget(makeCard(QString::fromUtf8("感光度 ISO"), QString::fromUtf8("画质与噪点的权衡"),    isoChart_), 1, 0);
+    grid->addWidget(makeCard(QString::fromUtf8("镜头焦距"),   QString::fromUtf8("广角到长焦的取舍"),    focChart_), 1, 1);
+    grid->addWidget(makeCard(QString::fromUtf8("器材使用"),   QString::fromUtf8("机身 / 镜头出勤率"),   gearChart_, gearLegend_), 2, 0);
+    grid->addWidget(makeCard(QString::fromUtf8("按月的拍摄活跃度"), QString::fromUtf8("一年里的创作节律"), monthChart_), 2, 1);
+
+    lay->addLayout(grid);
+    lay->addStretch(1);
+
+    scroll->setWidget(root);
+
+    recompute();
+}
+
+void LogPage::setHidePrivate(bool hide)
+{
+    if (hidePrivate_ == hide) return;
+    hidePrivate_ = hide;
+    recompute();
+}
+
+void LogPage::recompute()
+{
+    // 仅纳入「未锁定隐私」的照片
+    const QVector<Photo>& ps = photos_ ? *photos_ : QVector<Photo>();
+    QVector<const Photo*> inc;
+    inc.reserve(ps.size());
+    for (const Photo& p : ps)
+        if (!(hidePrivate_ && p.priv)) inc.append(&p);
+
+    // —— 桶 ——
+    QMap<QString, int> apB, shB, isoB, focB;
+    apB[QString::fromUtf8("f/1.4-2")] = 0; apB[QString::fromUtf8("f/2.8-4")] = 0;
+    apB[QString::fromUtf8("f/5.6-8")] = 0; apB[QString::fromUtf8("f/9-11")] = 0;
+    apB[QString::fromUtf8("f/13-16")] = 0;
+    shB[QString::fromUtf8("≥1/500")] = 0; shB[QString::fromUtf8("1/125-1/250")] = 0;
+    shB[QString::fromUtf8("1/30-1/60")] = 0; shB[QString::fromUtf8("1/4-1s")] = 0;
+    shB[QString::fromUtf8(">10s")] = 0;
+    isoB[QString::fromUtf8("≤200")] = 0; isoB[QString::fromUtf8("400-800")] = 0;
+    isoB[QString::fromUtf8("1600-3200")] = 0; isoB[QString::fromUtf8("≥4000")] = 0;
+    focB[QString::fromUtf8("≤24")] = 0; focB[QString::fromUtf8("35-50")] = 0;
+    focB[QString::fromUtf8("70-135")] = 0; focB[QString::fromUtf8("≥200")] = 0;
+
+    QMap<QString, int> gear;
+    int months[12] = {0};
+    QSet<QString> regions;
+    QSet<QString> cams;
+    QMap<QString, int> camCount;
+    int total = 0, favN = 0;
+    QSet<int> years;
+
+    for (const Photo* p : inc) {
+        ++total;
+        if (p->rating >= 4) ++favN;          // 收藏代理：4~5 星视为收藏
+        if (!p->region.isEmpty()) regions.insert(p->region);
+        if (!p->cam.isEmpty()) { cams.insert(p->cam); camCount[p->cam]++; }
+        if (p->year > 0) years.insert(p->year);
+
+        const double a = parseApertureNum(p->ap);
+        if (std::isfinite(a)) {
+            if (a < 2.1) apB[QString::fromUtf8("f/1.4-2")]++;
+            else if (a < 4.1) apB[QString::fromUtf8("f/2.8-4")]++;
+            else if (a < 8.1) apB[QString::fromUtf8("f/5.6-8")]++;
+            else if (a < 11.1) apB[QString::fromUtf8("f/9-11")]++;
+            else apB[QString::fromUtf8("f/13-16")]++;
+        }
+        // 快门
+        const QString st = p->sh.trimmed();
+        const bool isFrac = st.contains('/');
+        const bool hasS = st.contains('s', Qt::CaseInsensitive);
+        const double sec = parseShutterSec(st);
+        if (std::isfinite(sec) && sec > 0) {
+            if (!isFrac && hasS) {
+                if (sec > 10) shB[QString::fromUtf8(">10s")]++;
+                else if (sec >= 1) shB[QString::fromUtf8("1/4-1s")]++;
+                else shB[QString::fromUtf8("1/30-1/60")]++;
+            } else {
+                const double den = isFrac ? (1.0 / sec) : sec;
+                if (den >= 500) shB[QString::fromUtf8("≥1/500")]++;
+                else if (den >= 125) shB[QString::fromUtf8("1/125-1/250")]++;
+                else shB[QString::fromUtf8("1/30-1/60")]++;
+            }
+        }
+        // ISO
+        if (p->iso > 0) {
+            if (p->iso <= 200) isoB[QString::fromUtf8("≤200")]++;
+            else if (p->iso <= 800) isoB[QString::fromUtf8("400-800")]++;
+            else if (p->iso <= 3200) isoB[QString::fromUtf8("1600-3200")]++;
+            else isoB[QString::fromUtf8("≥4000")]++;
+        }
+        // 焦距
+        if (p->focal > 0) {
+            if (p->focal <= 24) focB[QString::fromUtf8("≤24")]++;
+            else if (p->focal <= 50) focB[QString::fromUtf8("35-50")]++;
+            else if (p->focal <= 135) focB[QString::fromUtf8("70-135")]++;
+            else focB[QString::fromUtf8("≥200")]++;
+        }
+        // 器材
+        const QString key = p->cam + QString::fromUtf8(" · ") + p->lens;
+        gear[key]++;
+        // 月度
+        if (p->date.length() >= 7) {
+            const int m = p->date.mid(5, 2).toInt();
+            if (m >= 1 && m <= 12) months[m - 1]++;
+        }
+    }
+
+    const QColor gold(0xc1, 0x9a, 0x4b), blue(0x3f, 0x60, 0x98),
+                 purple(0x4b, 0x3f, 0x7a), orange(0xc7, 0x6b, 0x3a), green(0x5a, 0x8f, 0x6b);
+
+    apChart_->setData(apB.keys(), QVector<int>::fromList(apB.values()), gold);
+    shChart_->setData(shB.keys(), QVector<int>::fromList(shB.values()), blue);
+    isoChart_->setData(isoB.keys(), QVector<int>::fromList(isoB.values()), purple);
+    focChart_->setData(focB.keys(), QVector<int>::fromList(focB.values()), orange);
+    monthChart_->setData({QString::fromUtf8("1"),QString::fromUtf8("2"),QString::fromUtf8("3"),
+                           QString::fromUtf8("4"),QString::fromUtf8("5"),QString::fromUtf8("6"),
+                           QString::fromUtf8("7"),QString::fromUtf8("8"),QString::fromUtf8("9"),
+                           QString::fromUtf8("10"),QString::fromUtf8("11"),QString::fromUtf8("12")},
+                         QVector<int>(std::begin(months), std::end(months)), green);
+
+    // 器材：取前 6 + 其他
+    QVector<QPair<QString, int>> gv;
+    for (auto it = gear.begin(); it != gear.end(); ++it)
+        gv.append({it.key(), it.value()});
+    std::sort(gv.begin(), gv.end(),
+              [](const QPair<QString, int>& a, const QPair<QString, int>& b) { return a.second > b.second; });
+    const QStringList palette = {QStringLiteral("#c19a4b"), QStringLiteral("#3f6098"),
+                                 QStringLiteral("#4b3f7a"), QStringLiteral("#c76b3a"),
+                                 QStringLiteral("#5a8f6b"), QStringLiteral("#b06a8a")};
+    QStringList gk, gc; QVector<int> gv_;
+    int other = 0;
+    for (int i = 0; i < gv.size(); ++i) {
+        if (i < 6) { gk.append(gv[i].first); gc.append(palette[i % palette.size()]); gv_.append(gv[i].second); }
+        else other += gv[i].second;
+    }
+    if (other > 0) { gk.append(QString::fromUtf8("其他")); gc.append(QStringLiteral("#5a6b60")); gv_.append(other); }
+    gearChart_->setData(gk, gv_, gc);
+    QString legendHtml;
+    for (int i = 0; i < gk.size(); ++i)
+        legendHtml += QStringLiteral("<span style='margin-right:12px;'><i style='display:inline-block;"
+                                     "width:9px;height:9px;border-radius:2px;background:%1;margin-right:5px;'></i>"
+                                     "%2 (%3)</span>").arg(gc[i], gk[i], QString::number(gv_[i]));
+    gearLegend_->setText(legendHtml);
+
+    // —— KPI ——
+    const QString topCam = camCount.isEmpty() ? QStringLiteral("—") : camCount.begin().key();
+    const int topCamN = camCount.isEmpty() ? 0 : camCount.begin().value();
+    const auto topFocIt = std::max_element(focB.begin(), focB.end(),
+        [](const int& a, const int& b) { return a < b; });
+    const QString topFoc = (topFocIt != focB.end() && *topFocIt > 0)
+        ? focB.key(*topFocIt) : QStringLiteral("—");
+    const int topFocN = (topFocIt != focB.end()) ? *topFocIt : 0;
+    const int yrCount = years.size();
+    const int perYr = yrCount ? int(double(total) / double(yrCount)) : 0;
+    const int widePct = total ? int(std::round(double(focB[QString::fromUtf8("≤24")]) / double(total) * 100.0)) : 0;
+
+    const QStringList kpiV = {
+        QString::number(total),
+        QString::number(regions.size()),
+        QString::number(cams.size()),
+        QString::number(favN),
+        topCam + QStringLiteral(" · ") + QString::number(topCamN) + QString::fromUtf8("幅"),
+        topFoc + QStringLiteral(" · ") + QString::number(topFocN) + QString::fromUtf8("幅")
+    };
+    const QStringList kpiL = {
+        QString::fromUtf8("作品总数"), QString::fromUtf8("足迹地区"),
+        QString::fromUtf8("使用机身"), QString::fromUtf8("已收藏"),
+        QString::fromUtf8("最常机身"), QString::fromUtf8("最常焦段")
+    };
+    const QColor kpiC[] = {Lumen::EMERALD, Lumen::VIOLET, Lumen::GOLD, Lumen::CORAL, Lumen::EMERALD, Lumen::GOLD};
+    QList<QLabel*> kpiLbls = kpiRow_->findChildren<QLabel*>();
+    for (int i = 0; i < 6 && i < kpiLbls.size(); ++i) {
+        kpiLbls[i]->setText(QStringLiteral(
+            "<b style='font-size:20px;color:#f4f7f4;'>%1</b><br>"
+            "<span style='font-size:11px;color:#8da996;'>%2</span>").arg(kpiV[i], kpiL[i]));
+        kpiLbls[i]->setStyleSheet(Lumen::kpiCard(kpiC[i]));
+    }
+
+    // —— 洞察 ——
+    insight_->setText(QString::fromUtf8(
+        "数据会说话：你最偏爱 <b>%1</b>（%2 幅），广角（≤24mm）占全部作品的 <b>%3%</b>；"
+        "足迹横跨 <b>%4</b> 个地区，平均每年约 <b>%5</b> 幅。风光与夜色，是你反复回到的母题。")
+        .arg(topCam, QString::number(topCamN), QString::number(widePct),
+             QString::number(regions.size()), QString::number(perYr)));
+}

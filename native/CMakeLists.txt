@@ -36,6 +36,8 @@ set(LA_SOURCES
     src/ui/MapView.cpp
     src/ui/MapPage.h
     src/ui/MapPage.cpp
+    src/ui/LogPage.h
+    src/ui/LogPage.cpp
     src/ui/CullPage.h
     src/ui/CullPage.cpp
     src/ui/RetouchPage.h

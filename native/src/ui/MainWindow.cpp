@@ -3,6 +3,7 @@
 #include "Theme.h"
 #include "GalleryPage.h"
 #include "MapPage.h"
+#include "LogPage.h"
 #include "CullPage.h"
 #include "RetouchPage.h"
 #include "../core/Scanner.h"
@@ -691,7 +692,7 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
     rl->addWidget(kpis_);
 
     stack_ = new QStackedWidget(right);
-    // 页序与 kNav 一致；首页 = P12「美术馆策展」艺术仪表盘，日志为设计态占位，关于页实装
+    // 页序与 kNav 一致；首页 = P12「美术馆策展」艺术仪表盘，日志为 P16.4 EXIF 分析页，关于页实装
     stack_->addWidget(makeHome(thumbsDir));
     map_ = new MapPage(&lib_->photos(), stack_);
     stack_->addWidget(map_);
@@ -701,8 +702,8 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
     stack_->addWidget(cull_);
     retouch_ = new RetouchPage(&lib_->photos(), thumbsDir, stack_);
     stack_->addWidget(retouch_);
-    stack_->addWidget(makePlaceholder(QStringLiteral("摄影日志"), QStringLiteral("log"),
-        QStringLiteral("拍摄时间线与器材使用统计")));
+    log_ = new LogPage(&lib_->photos(), stack_);
+    stack_->addWidget(log_);
     stack_->addWidget(makeAbout());
     rl->addWidget(stack_, 1);
     root->addWidget(right, 1);
@@ -860,6 +861,7 @@ void MainWindow::refreshPrivateState()
 {
     gallery_->setHidePrivate(!vaultUnlocked_);
     map_->setHidePrivate(!vaultUnlocked_);
+    log_->setHidePrivate(!vaultUnlocked_);
     if (lightbox_ && lightbox_->isVisible())
         lightbox_->hide();   // 重新上锁时顺手收起灯箱
 }

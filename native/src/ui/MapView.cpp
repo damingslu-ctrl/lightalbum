@@ -133,7 +133,23 @@ void MapView::buildWorldPixmap()
         p.setPen(QPen(border, 0.6));
         p.drawPath(path);
     }
+    // P16.4 真实 GPS 足迹点：翡翠小光点（已按隐私门过滤）
+    if (!gpsPts_.isEmpty()) {
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(0x4f, 0xc0, 0x8a));
+        for (const QPointF& pt : gpsPts_) {
+            if (pt.x() < 0 || pt.x() > MAP_W || pt.y() < 0 || pt.y() > MAP_H) continue;
+            p.drawEllipse(pt, 2.0, 2.0);
+        }
+    }
     p.end();
+}
+
+void MapView::setGpsPoints(const QVector<QPointF>& pts)
+{
+    gpsPts_ = pts;
+    buildWorldPixmap();          // 重新烘焙世界静态层（含足迹点，随漂移一起移动）
+    update();
 }
 
 // —— 坐标变换：预投影 → 目标矩形（含偏移与缩放）——
@@ -223,6 +239,7 @@ void MapView::renderRegion(QPainter& p, const QRectF& dst) const
         p.setPen(QColor(0xe8, 0xe2, 0xd4));
         p.drawText(c + QPointF(4, 4), pv.zh.isEmpty() ? pv.name : pv.zh);
     }
+    drawGpsDots(p, bbox, dst);   // P16.4
 }
 
 void MapView::renderProvince(QPainter& p, const QRectF& dst) const
@@ -243,6 +260,25 @@ void MapView::renderProvince(QPainter& p, const QRectF& dst) const
     p.setPen(QColor(0xe8, 0xe2, 0xd4));
     const QString label = (curProvince_.zh.isEmpty() ? curProvince_.name : curProvince_.zh);
     p.drawText(c + QPointF(6, 5), label);
+    drawGpsDots(p, curProvince_.bbox, dst);   // P16.4
+}
+
+void MapView::drawGpsDots(QPainter& p, const QRectF& bbox, const QRectF& dst) const
+{
+    if (gpsPts_.isEmpty()) return;
+    double scale = 1;
+    const QRectF fr = fitRect(bbox, dst, scale);
+    const QPointF o = fr.topLeft();
+    p.save();
+    p.setClipRect(dst);
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(0x6a, 0xdb, 0xa6));
+    for (const QPointF& pt : gpsPts_) {
+        if (pt.x() < bbox.left() - 2 || pt.x() > bbox.right() + 2 ||
+            pt.y() < bbox.top() - 2 || pt.y() > bbox.bottom() + 2) continue;
+        p.drawEllipse(o + pt * scale, 2.4, 2.4);
+    }
+    p.restore();
 }
 
 void MapView::paintEvent(QPaintEvent*)
