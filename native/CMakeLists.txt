@@ -46,8 +46,6 @@ set(LA_SOURCES
     src/ui/CropCanvas.cpp
     src/ui/CompareWidget.h
     src/ui/CompareWidget.cpp
-    src/ui/BeautyPage.h
-    src/ui/BeautyPage.cpp
     src/ui/MainWindow.h
     src/ui/MainWindow.cpp
     src/ui/Splash.h

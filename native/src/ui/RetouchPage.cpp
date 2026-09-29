@@ -14,6 +14,8 @@
 #include <QPushButton>
 #include <QSlider>
 #include <QProgressBar>
+#include <QToolButton>
+#include <QIcon>
 #include <QScrollArea>
 #include <QGroupBox>
 #include <QFrame>
@@ -56,6 +58,13 @@ QString photoLabel(const Photo& ph)
     if (!ph.title.isEmpty()) return ph.title;
     if (!ph.rel.isEmpty())   return QFileInfo(ph.rel).fileName();
     return QFileInfo(ph.path).fileName();
+}
+
+QString rtCardStyle(bool sel)
+{
+    return sel
+      ? QStringLiteral("QToolButton{background:#1a231d;border:2px solid #4fc08a;border-radius:12px;color:#f4f7f4;padding:4px;}")
+      : QStringLiteral("QToolButton{background:#131a15;border:2px solid #26312a;border-radius:12px;color:#f4f7f4;padding:4px;}");
 }
 } // namespace
 
@@ -145,9 +154,14 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
     : QWidget(parent), photos_(photos), thumbsDir_(thumbsDir)
 {
     for (const RtSlider& s : kSliders) cur_[QString::fromLatin1(s.key)] = 0.0;
+    presets_ = RetouchEngine::presets();
 
-    auto* root = new QVBoxLayout(this);
-    root->setContentsMargins(16, 16, 16, 16);
+    auto* outH = new QHBoxLayout(this);
+    outH->setContentsMargins(16, 16, 16, 16);
+    outH->setSpacing(12);
+    auto* leftCol = new QWidget(this);
+    auto* root = new QVBoxLayout(leftCol);
+    root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(12);
 
     // ---- 操作条：照片选择 + 预设 + 按钮 ----
@@ -425,6 +439,40 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
     applyTimer_->setSingleShot(true);
     connect(applyTimer_, &QTimer::timeout, this, &RetouchPage::doApply);
 
+    // ---- P16.3 右侧预设画廊（自美图 BeautyPage 迁移：滤镜卡片，点选即套用）----
+    {
+        constexpr int kCardCols = 2, kCardIcon = 118;
+        galleryPanel_ = new QWidget(this);
+        auto* gv = new QVBoxLayout(galleryPanel_);
+        gv->setContentsMargins(0, 0, 0, 0);
+        gv->setSpacing(8);
+        auto* gt = new QLabel(QStringLiteral("滤镜预设"), galleryPanel_);
+        gt->setStyleSheet(QStringLiteral("color:#f4f7f4;font-weight:bold;font-size:13px;"));
+        gv->addWidget(gt);
+        auto* gsa = new QScrollArea(galleryPanel_);
+        gsa->setWidgetResizable(true);
+        gsa->setStyleSheet(QStringLiteral("QScrollArea{background:#0e1410;border:1px solid #26312a;border-radius:12px;}"));
+        auto* gw = new QWidget(gsa);
+        auto* gl = new QGridLayout(gw);
+        gl->setSpacing(10);
+        for (int i = 0; i < presets_.size(); ++i) {
+            auto* card = new QToolButton(gw);
+            card->setFixedSize(kCardIcon + 16, kCardIcon + 34);
+            card->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
+            card->setIconSize(QSize(kCardIcon, kCardIcon));
+            card->setText(presets_[i].name);
+            card->setStyleSheet(rtCardStyle(false));
+            connect(card, &QToolButton::clicked, this, [this, i]{ onCardClicked(i); });
+            gl->addWidget(card, i / kCardCols, i % kCardCols);
+            cards_.append(card);
+        }
+        gsa->setWidget(gw);
+        gv->addWidget(gsa, 1);
+        galleryPanel_->setFixedWidth(300);
+    }
+    outH->addWidget(leftCol, 1);
+    outH->addWidget(galleryPanel_, 0);
+
     // 载入首张（rebuildGeo 内已做首次 doApply）
     if (!usableIdx_.isEmpty()) {
         loadPhoto(0);
@@ -490,6 +538,38 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
     }
 }
 
+void RetouchPage::clearCardSel()
+{
+    selCard_ = -1;
+    for (auto* c : cards_) c->setStyleSheet(rtCardStyle(false));
+}
+
+void RetouchPage::onCardClicked(int i)
+{
+    if (i < 0 || i >= presets_.size() || i >= cards_.size()) return;
+    selCard_ = i;
+    // 同步预设下拉（触发 onPresetChanged → onApplyPreset → setParams + doApply）
+    for (int k = 0; k < presetCombo_->count(); ++k) {
+        if (presetCombo_->itemData(k).toString() == presets_[i].key) {
+            presetCombo_->setCurrentIndex(k);
+            break;
+        }
+    }
+    for (int k = 0; k < cards_.size(); ++k)
+        cards_[k]->setStyleSheet(rtCardStyle(k == selCard_));
+    badge_->setText(QStringLiteral("%1 · 零云端").arg(presets_[i].name));
+}
+
+void RetouchPage::refreshGallery()
+{
+    if (geoImg_.isNull()) { for (auto* c : cards_) c->setIcon(QIcon()); return; }
+    const QImage gsrc = geoImg_.scaled(220, 220, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    for (int i = 0; i < presets_.size() && i < cards_.size(); ++i) {
+        const QImage thumb = RetouchEngine::apply(gsrc, presets_[i].p);
+        cards_[i]->setIcon(QIcon(QPixmap::fromImage(thumb)));
+    }
+}
+
 void RetouchPage::buildSlider(const RtSlider& def, QGridLayout* gl)
 {
     const int row = gl->rowCount();
@@ -515,6 +595,7 @@ void RetouchPage::buildSlider(const RtSlider& def, QGridLayout* gl)
 void RetouchPage::onSliderChanged()
 {
     exitAgentMode();   // 手动干预即接管（智能体计划失效）
+    clearCardSel();    // 手动滑杆 ≠ 预设卡片
     // 哪个滑杆动了就同步到 cur_，并把预设下拉切回手动
     for (int i = 0; i < sliders_.size(); ++i) {
         const RtSlider* d = sliderDefs_[i];
@@ -550,6 +631,7 @@ void RetouchPage::syncSlidersFromCur()
 void RetouchPage::onAgentRun()
 {
     if (geoImg_.isNull() || agentBtn_->isEnabled() == false) return;
+    clearCardSel();    // 进入智能体模式 ≠ 预设卡片
     agentBtn_->setEnabled(false);
     prog_->setValue(15);
     badge_->setText(QStringLiteral("AI 智能体决策中…（本地测量 → 本地 LLM）"));
@@ -769,6 +851,7 @@ void RetouchPage::onPhotoChanged(int)
 
 void RetouchPage::onPresetChanged(int)
 {
+    clearCardSel();    // 下拉切预设 ≠ 右侧卡片高亮（卡片点击会再次高亮）
     onApplyPreset();
 }
 
@@ -784,6 +867,7 @@ void RetouchPage::onApplyPreset()   // rlRun
 void RetouchPage::onAutoEnhance()   // rlAi
 {
     exitAgentMode();
+    clearCardSel();    // AI 增强 ≠ 预设卡片
     refreshChips();
     setParams(RetouchEngine::recommend(geoImg_).params);
     doApply();
@@ -792,6 +876,7 @@ void RetouchPage::onAutoEnhance()   // rlAi
 void RetouchPage::onReset()
 {
     exitAgentMode();
+    clearCardSel();    // 重置后无激活预设卡片
     setParams(RetouchParams{});
     presetCombo_->setCurrentIndex(0);
     doApply();
@@ -861,6 +946,7 @@ void RetouchPage::loadPhoto(int idx)
         img = img.scaled(kMaxSrc, kMaxSrc, Qt::KeepAspectRatio, Qt::SmoothTransformation);
     geoSrc_ = img;
     rebuildGeo();
+    refreshGallery();
 }
 
 void RetouchPage::openPhoto(const QString& path)

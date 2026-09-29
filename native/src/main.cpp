@@ -392,7 +392,7 @@ int main(int argc, char *argv[])
         && !qEnvironmentVariableIsSet("LA_LIGHTBOX_SHOT")
         && !qEnvironmentVariableIsSet("LA_CULL_SMOKE")
         && !qEnvironmentVariableIsSet("LA_RETOUCH_SMOKE")
-        && !qEnvironmentVariableIsSet("LA_BEAUTY_SMOKE");
+        ;
 
     QRect avail = QApplication::primaryScreen()->availableGeometry();
     QRect fullRect((avail.width() - 1440) / 2, (avail.height() - 940) / 2, 1440, 940);
@@ -477,11 +477,10 @@ int main(int argc, char *argv[])
         return win.shootPages(qEnvironmentVariable("LA_UI_SHOT"));
 
     // 冒烟探针门控：载入真库 + 页面栈就位后自动退出（offscreen/CI 可用）。
-    // 选片自测（LA_CULL_SMOKE）/ 修图自测（LA_RETOUCH_SMOKE）/ 美图自测（LA_BEAUTY_SMOKE）
+    // 选片自测（LA_CULL_SMOKE）/ 修图自测（LA_RETOUCH_SMOKE）
     // 由各自页面自行驱动退出，这里不抢跑。
     if (qEnvironmentVariableIsSet("LA_SMOKE") && qEnvironmentVariableIsEmpty("LA_CULL_SMOKE")
-        && qEnvironmentVariableIsEmpty("LA_RETOUCH_SMOKE")
-        && qEnvironmentVariableIsEmpty("LA_BEAUTY_SMOKE")) {
+        && qEnvironmentVariableIsEmpty("LA_RETOUCH_SMOKE")) {
         QTimer::singleShot(600, &app, [&lib]{
             const Kpi& k = lib.kpi();
             std::fprintf(stderr, "LA_P1_SMOKE_OK photos=%d years=%d provs=%d span=%d-%d\n",

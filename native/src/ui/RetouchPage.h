@@ -20,6 +20,7 @@ class QSlider;
 class QProgressBar;
 class QTimer;
 class QScrollArea;
+class QToolButton;
 class QGridLayout;
 class QStackedLayout;
 class MaskCanvas;
@@ -63,6 +64,10 @@ private slots:
     void doApply();        // 防抖执行修调（几何后图像）
     void refreshChips();
 
+    // P16.3 右侧预设画廊（自美图迁移）
+    void onCardClicked(int i);
+    void refreshGallery();
+
     // P4-1 几何
     void onGeoRotate(bool left);
     void onGeoFlip(bool horizontal);
@@ -91,6 +96,7 @@ private:
     void loadPhoto(int idx);
     void updateBadge();
     void rebuildGeo();                        // geoSrc_ → geoImg_（几何重算）+ before 刷新
+    void clearCardSel();                      // 清除右侧预设卡片高亮
 
     const QVector<Photo>* photos_ = nullptr;
     QString thumbsDir_;
@@ -161,4 +167,10 @@ private:
     EraseBridge*   eraseBridge_ = nullptr;
     QPushButton*   eraseBtn_ = nullptr;
     QLabel*        eraseSlotLbl_ = nullptr;
+
+    // P16.3 右侧预设画廊（自美图 BeautyPage 迁移）
+    QVector<RetouchPreset> presets_;
+    QVector<QToolButton*> cards_;
+    int           selCard_ = -1;
+    QWidget*      galleryPanel_ = nullptr;
 };

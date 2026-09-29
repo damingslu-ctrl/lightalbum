@@ -18,7 +18,6 @@ class GalleryPage;
 class MapPage;
 class CullPage;
 class RetouchPage;
-class BeautyPage;
 class PhotoLightbox;   // P15 沉浸式灯箱（MainWindow.cpp 文件内定义）
 class QPushButton;
 
@@ -92,7 +91,6 @@ private:
     MapPage*        map_ = nullptr;
     CullPage*       cull_ = nullptr;
     RetouchPage*     retouch_ = nullptr;
-    BeautyPage*      beauty_ = nullptr;
 
     PhotoLightbox*  lightbox_ = nullptr;   // P15 沉浸式灯箱（无边框全窗口覆盖）
 

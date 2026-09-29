@@ -5,7 +5,6 @@
 #include "MapPage.h"
 #include "CullPage.h"
 #include "RetouchPage.h"
-#include "BeautyPage.h"
 #include "../core/Scanner.h"
 #include "../core/MotionPref.h"
 #include "../core/Vault.h"
@@ -50,10 +49,10 @@
 
 namespace {
 struct NavItem { const char* label; const char* phase; };
-// 与 web 版导航一致：首页/足迹/图库 · 智能选片/修图/AI美图 · 日志/关于（三组分隔在 P1 用间隔项体现）
+// 与 web 版导航一致：首页/足迹/图库 · 智能选片/修图 · 日志/关于（三组分隔在 P1 用间隔项体现）
 const NavItem kNav[] = {
     {"首页", "P1"}, {"足迹", "P2"}, {"图库", "P1"},
-    {"选片", "P3"}, {"修图", "P3"}, {"美图", "P3"},
+    {"选片", "P3"}, {"修图", "P3"},
     {"日志", "P2"}, {"关于", "P3"},
 };
 
@@ -702,8 +701,6 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
     stack_->addWidget(cull_);
     retouch_ = new RetouchPage(&lib_->photos(), thumbsDir, stack_);
     stack_->addWidget(retouch_);
-    beauty_ = new BeautyPage(&lib_->photos(), thumbsDir, stack_);
-    stack_->addWidget(beauty_);
     stack_->addWidget(makePlaceholder(QStringLiteral("摄影日志"), QStringLiteral("log"),
         QStringLiteral("拍摄时间线与器材使用统计")));
     stack_->addWidget(makeAbout());
@@ -748,7 +745,6 @@ bool MainWindow::uiAnimEnabled() const
         && !qEnvironmentVariableIsSet("LA_UI_SHOT")
         && !qEnvironmentVariableIsSet("LA_CULL_SMOKE")
         && !qEnvironmentVariableIsSet("LA_RETOUCH_SMOKE")
-        && !qEnvironmentVariableIsSet("LA_BEAUTY_SMOKE")
         && !Lumen::systemReducedMotion();   // P15：系统「减弱动效」→ 关动效
 }
 
@@ -1057,7 +1053,6 @@ QWidget* MainWindow::makeHome(const QString& thumbsDir) const
         {"图库", "浏览全部作品", "gallery", 2, Lumen::EMERALD},
         {"选片", "本地打分筛选", "cull",   3, Lumen::GOLD},
         {"修图", "流明引擎手动调", "retouch", 4, Lumen::EMERALD},
-        {"美图", "一键风格化",   "enhance", 5, Lumen::VIOLET},
     };
     auto* feat = new FeatRow(w);
     for (const Feat& ft : feats) {
@@ -1251,7 +1246,7 @@ QWidget* MainWindow::makeAbout() const
     cl->addWidget(title);
     cl->addWidget(pos);
     cl->addWidget(makeLine(QStringLiteral(
-        "零云端承诺：导入、足迹、图库、选片、修图、美图全部在本机完成，"
+        "零云端承诺：导入、足迹、图库、选片、修图全部在本机完成，"
         "照片不上传任何服务器。")));
     cl->addWidget(makeLine(QStringLiteral(
         "资料库：D:\\lightalbum\\library.db（可用环境变量 LA_DB / LA_THUMBS 重定向）。")));
