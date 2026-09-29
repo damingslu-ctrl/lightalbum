@@ -807,11 +807,10 @@ void MainWindow::onNav(int row)
 {
     if (row < 0 || row >= stack_->count()) return;
     updateNavActive(row);
-    // P17：首页隐藏全局 chrome（左栏/顶栏/发丝线/模块条），交给沉浸式首页自身的顶栏导航；
-    // 其他页恢复全局 chrome（经左栏「首页」项或各页返回路径均可回到首页）。
+    // P21：首页保留左侧全局导航（用户要求首页也显示左栏，不再为沉浸隐藏它）。
+    // 顶栏/发丝线仍按 P19 沉浸逻辑在首页隐藏；HomePage 自身左章节面板在右侧并排。
     const bool home = (row == 0);
-    nav_->setVisible(!home);
-    if (home && navExpanded_) {              // P18：回首页隐藏侧栏时一并收回展开态
+    if (home && navExpanded_) {              // P18：回首页时收回展开态（左栏仍常显）
         navAnim_->stop();
         navExpanded_ = false;
         applyNavProgress(0.0);
