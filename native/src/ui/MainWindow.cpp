@@ -93,119 +93,90 @@ public:
         setAttribute(Qt::WA_StyledBackground, true);
         setStyleSheet(QStringLiteral("QWidget#photoLightbox{background:rgba(6,8,6,0.97);}"));
 
-        auto* root = new QVBoxLayout(this);
-        root->setContentsMargins(0, 0, 0, 0);
-        root->setSpacing(0);
+        // P20：无布局——img_/bottom_ 全走手动 geometry（见 resizeEvent）
 
-        // 顶栏：标题 + 关闭
-        auto* top = new QWidget(this);
-        top->setStyleSheet(QStringLiteral(
-            "QWidget{background:rgba(10,14,10,0.55);border-bottom:1px solid #1c261f;}"));
-        auto* tl = new QHBoxLayout(top);
-        tl->setContentsMargins(18, 10, 18, 10);
-        auto* cap = new QLabel(QStringLiteral("作品预览"), top);
-        cap->setStyleSheet(QStringLiteral("color:#8da396;font-size:13px;letter-spacing:2px;"));
-        tl->addWidget(cap); tl->addStretch(1);
-        auto* x = new QPushButton(QStringLiteral("✕ 关闭"), top);
-        x->setCursor(Qt::PointingHandCursor);
-        x->setStyleSheet(Lumen::btnGhost());
-        tl->addWidget(x);
-        root->addWidget(top);
-
-        // 滚动内容：大图在上，信息在下
-        auto* scroll = new QScrollArea(this);
-        scroll->setWidgetResizable(true);
-        scroll->setFrameShape(QFrame::NoFrame);
-        scroll->setStyleSheet(QStringLiteral("QScrollArea{background:transparent;border:none;}"));
-        auto* content = new QWidget(scroll);
-        auto* cv = new QVBoxLayout(content);
-        cv->setContentsMargins(28, 26, 28, 30);
-        cv->setSpacing(18);
-        cv->setAlignment(Qt::AlignHCenter);
-
-        img_ = new QLabel(content);
+        // P20 B「影院黑幕」：去顶栏与滚动布局——img_ 满幅居中，信息收进
+        // 底部渐变黑幕（QFrame：普通 QWidget 默认不画 QSS 背景，P19 实测坑）。
+        // 常态黑幕半透明（opacity .38）让画面不被信息压住，鼠标入幕 200ms
+        // 渐显至 1.0（QVariantAnimation，中途进出平滑折返）。
+        img_ = new QLabel(this);
         img_->setAlignment(Qt::AlignCenter);
-        cv->addWidget(img_);
+        img_->setStyleSheet(QStringLiteral("background:transparent;"));
 
-        info_ = new QWidget(content);
-        info_->setMaximumWidth(780);
-        auto* iv = new QVBoxLayout(info_);
-        iv->setContentsMargins(0, 0, 0, 0);
-        iv->setSpacing(12);
-        cv->addWidget(info_, 0, Qt::AlignHCenter);
-        cv->addStretch(1);
-        scroll->setWidget(content);
-        root->addWidget(scroll, 1);
+        bottom_ = new QFrame(this);
+        bottom_->setObjectName(QStringLiteral("lbBottom"));
+        bottom_->setStyleSheet(QStringLiteral(
+            "QFrame#lbBottom{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
+            "stop:0 rgba(4,6,4,0), stop:0.45 rgba(4,6,4,0.55), stop:1 rgba(4,6,4,0.94));}"));
+        auto* bl = new QHBoxLayout(bottom_);
+        bl->setContentsMargins(34, 6, 28, 16);
+        bl->setSpacing(16);
+        auto* textCol = new QVBoxLayout;
+        textCol->setSpacing(3);
+        title_ = new QLabel(bottom_);
+        title_->setStyleSheet(QStringLiteral(
+            "font-family:'Noto Serif SC','STSong','SimSun',serif;"
+            "font-size:18px;font-weight:600;color:#f4f7f4;"));
+        meta_ = new QLabel(bottom_);
+        meta_->setStyleSheet(QStringLiteral("color:#9db2a5;font-size:11.5px;letter-spacing:1px;"));
+        textCol->addWidget(title_);
+        textCol->addWidget(meta_);
+        bl->addLayout(textCol);
+        bl->addStretch(1);
+        starRow_ = new QWidget(bottom_);          // 星级行：setPhoto 时填充
+        auto* sl = new QHBoxLayout(starRow_);
+        sl->setContentsMargins(0, 0, 0, 0); sl->setSpacing(4);
+        bl->addWidget(starRow_);
+        ctl_ = new QWidget(bottom_);              // 操作按钮区：setPhoto 时填充
+        auto* cl = new QHBoxLayout(ctl_);
+        cl->setContentsMargins(0, 0, 0, 0); cl->setSpacing(10);
+        bl->addWidget(ctl_);
 
-        connect(x, &QPushButton::clicked, this, &PhotoLightbox::close);
+        bottom_->installEventFilter(this);
+        bottom_->raise();                          // 黑幕浮于 img_ 之上
+        bottomEff_ = new QGraphicsOpacityEffect(bottom_);
+        bottomEff_->setOpacity(0.38);
+        bottom_->setGraphicsEffect(bottomEff_);
+        if (qEnvironmentVariableIsSet("LA_LIGHTBOX_HOVER"))
+            bottomEff_->setOpacity(1.0);    // QA：黑幕显形态截图（offscreen 无鼠标）
+        fade_ = new QVariantAnimation(this);
+        fade_->setDuration(200);
+        fade_->setEasingCurve(QEasingCurve::OutCubic);
+        connect(fade_, &QVariantAnimation::valueChanged, this, [this](const QVariant& v) {
+            bottomEff_->setOpacity(v.toDouble());
+        });
     }
 
     void setPhoto(const Photo* ph, const QString& thumbsDir)
     {
         path_ = ph->path;
         changed_ = false;
-        // ---- 大图（直接显示，按窗口尺寸自适应）----
-        const QPixmap pm(QDir(thumbsDir).filePath(ph->thumbFile));
-        if (!pm.isNull()) {
-            const int pw  = parentWidget() ? parentWidget()->width()  : 1000;
-            const int pht = parentWidget() ? parentWidget()->height() : 800;
-            const int maxW = qMax(360, pw - 56);
-            const int maxH = qMax(260, pht - 360);
-            const QPixmap sc = pm.scaled(maxW, maxH, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-            img_->setPixmap(sc);
-            img_->setFixedSize(sc.size());
-        } else {
-            img_->setText(QStringLiteral("无缩略图"));
-            img_->setStyleSheet(QStringLiteral("color:#8da396;font-size:14px;"));
-            img_->setFixedSize(360, 200);
-        }
+        // ---- 大图：存原图，layoutImage() 按窗口自适应（resize 也走这里）----
+        orig_ = QPixmap(QDir(thumbsDir).filePath(ph->thumbFile));
+        layoutImage();
 
-        // ---- 信息（图片正下方）----
-        clearLayout(info_->layout());
-        auto* iv = qobject_cast<QVBoxLayout*>(info_->layout());
-        if (!iv) { iv = new QVBoxLayout(info_); iv->setContentsMargins(0,0,0,0); iv->setSpacing(12); }
-
-        auto* t = new QLabel(ph->title.isEmpty()
-                                 ? QFileInfo(ph->path).fileName() : ph->title, info_);
-        QFont tf = t->font(); tf.setPointSizeF(17); tf.setBold(true); t->setFont(tf);
-        t->setStyleSheet(QStringLiteral("color:#f4f7f4;"));
-        t->setWordWrap(true);
-        iv->addWidget(t);
-
-        auto addRow = [&](const QString& k, const QString& v) {
-            auto* lb = new QLabel(
-                QStringLiteral("<b style='color:#8da396;'>%1</b> &nbsp; %2")
-                    .arg(k, v.isEmpty() ? QStringLiteral("—") : v), info_);
-            lb->setStyleSheet(QStringLiteral("color:#f4f7f4;font-size:12px;"));
-            lb->setWordWrap(true);
-            iv->addWidget(lb);
-        };
-        addRow(QStringLiteral("日期"), ph->date);
-        addRow(QStringLiteral("器材"), ph->cam);
-        addRow(QStringLiteral("镜头"), ph->lens);
-        addRow(QStringLiteral("大区 / 省"), ph->region + (ph->prov.isEmpty()
-                    ? QString() : QStringLiteral(" / ") + ph->prov));
-        addRow(QStringLiteral("城市"), ph->city);
-        addRow(QStringLiteral("评分"), ph->rating > 0 ? QString::number(ph->rating) : QStringLiteral("—"));
-        addRow(QStringLiteral("尺寸"), ph->dim);
-        if (!ph->category.isEmpty())
-            addRow(QStringLiteral("分类"), ph->category);
-        iv->addStretch(1);
+        // ---- 影院黑幕信息层：衬线标题 + 一行式元信息（地点·日期·器材）----
+        title_->setText(ph->title.isEmpty()
+                        ? QFileInfo(ph->path).fileName() : ph->title);
+        QStringList metaBits;
+        const QString place = ph->city.isEmpty() ? ph->prov : ph->city;
+        if (!place.isEmpty())    metaBits << place;
+        if (!ph->date.isEmpty()) metaBits << ph->date;
+        if (!ph->cam.isEmpty())  metaBits << ph->cam;
+        if (!ph->lens.isEmpty()) metaBits << ph->lens;
+        if (!ph->dim.isEmpty())  metaBits << ph->dim;
+        meta_->setText(metaBits.join(QStringLiteral("　·　")));
 
         // ---- P16 可点星级：1-5 星写库；点当前最高星 = 清除评分 ----
-        auto* starRow = new QWidget(info_);
-        auto* sl = new QHBoxLayout(starRow);
-        sl->setContentsMargins(0, 4, 0, 0);
-        sl->setSpacing(4);
-        auto* starCap = new QLabel(QStringLiteral("评分"), starRow);
-        starCap->setStyleSheet(QStringLiteral("color:#8da396;font-size:12px;"));
-        sl->addWidget(starCap);
+        clearLayout(starRow_->layout());
+        auto* sl = qobject_cast<QHBoxLayout*>(starRow_->layout());
         starBtns_.clear();
         for (int i = 0; i < 5; ++i) {
-            auto* sb = new QToolButton(starRow);
+            auto* sb = new QToolButton(starRow_);
             sb->setText(QStringLiteral("★"));
             sb->setFixedSize(28, 26);
             sb->setCursor(Qt::PointingHandCursor);
+            sb->setToolTip(QStringLiteral("评分 %1").arg(i + 1));
             connect(sb, &QToolButton::clicked, this, [this, i] {
                 if (!lib_) return;
                 const int nr = (curRating_ == i + 1) ? 0 : i + 1;
@@ -218,14 +189,14 @@ public:
             starBtns_.append(sb);
         }
         sl->addStretch(1);
-        iv->addWidget(starRow);
         setStars(ph->rating);
         curRating_ = ph->rating;
 
-        // ---- P16 私密切换（native vault：非破坏标记 + 密码门）----
+        // ---- 操作区：私密切换（native vault）+ 修图台 + 关闭 ----
+        clearLayout(ctl_->layout());
+        auto* cl = qobject_cast<QHBoxLayout*>(ctl_->layout());
         auto* privBtn = new QPushButton(
-            ph->priv ? QStringLiteral("🔓 已设为私密（点击取消）")
-                     : QStringLiteral("🔒 设为私密"), info_);
+            ph->priv ? QStringLiteral("🔓 已私密") : QStringLiteral("🔒 私密"), ctl_);
         privBtn->setCursor(Qt::PointingHandCursor);
         privBtn->setStyleSheet(Lumen::btnGhost());
         connect(privBtn, &QPushButton::clicked, this, [this, privBtn] {
@@ -233,30 +204,20 @@ public:
             const bool on = !privBtn->property("privOn").toBool();
             lib_->setPrivate(path_, on);
             privBtn->setProperty("privOn", on);
-            privBtn->setText(on ? QStringLiteral("🔓 已设为私密（点击取消）")
-                                : QStringLiteral("🔒 设为私密"));
+            privBtn->setText(on ? QStringLiteral("🔓 已私密") : QStringLiteral("🔒 私密"));
             changed_ = true;
         });
         privBtn->setProperty("privOn", ph->priv);
-        iv->addWidget(privBtn);
-
-        iv->addStretch(1);
-
-        auto* btnRow = new QWidget(info_);
-        auto* bl = new QHBoxLayout(btnRow);
-        bl->setContentsMargins(0, 8, 0, 0);
-        bl->setSpacing(12);
-        auto* open = new QPushButton(QStringLiteral("在修图台打开 →"), btnRow);
+        auto* open = new QPushButton(QStringLiteral("修图台 →"), ctl_);
         open->setCursor(Qt::PointingHandCursor);
         open->setStyleSheet(Lumen::btnPrimary());
         connect(open, &QPushButton::clicked, this,
                 [this, path = ph->path] { emit openInRetouch(path); });
-        auto* close = new QPushButton(QStringLiteral("关闭"), btnRow);
+        auto* close = new QPushButton(QStringLiteral("关闭"), ctl_);
         close->setCursor(Qt::PointingHandCursor);
         close->setStyleSheet(Lumen::btnGhost());
         connect(close, &QPushButton::clicked, this, &PhotoLightbox::close);
-        bl->addWidget(open); bl->addWidget(close); bl->addStretch(1);
-        iv->addWidget(btnRow);
+        cl->addWidget(privBtn); cl->addWidget(open); cl->addWidget(close);
     }
 
 signals:
@@ -271,6 +232,26 @@ protected:
     void keyPressEvent(QKeyEvent* e) override {
         if (e->key() == Qt::Key_Escape) { e->accept(); close(); }
         else QWidget::keyPressEvent(e);
+    }
+    // P20：满幅 img_ + 底部黑幕跟随窗口尺寸（黑幕常驻最上层）
+    void resizeEvent(QResizeEvent* e) override {
+        QWidget::resizeEvent(e);
+        img_->setGeometry(rect());
+        bottom_->setGeometry(0, height() - 120, width(), 120);
+        bottom_->raise();
+        layoutImage();
+    }
+    // P20：鼠标入幕显形 / 离幕收暗（从当前透明度出发，中途反向平滑折返）
+    bool eventFilter(QObject* obj, QEvent* ev) override {
+        if (obj == bottom_) {
+            if (ev->type() == QEvent::Enter || ev->type() == QEvent::Leave) {
+                fade_->stop();
+                fade_->setStartValue(bottomEff_->opacity());
+                fade_->setEndValue(ev->type() == QEvent::Enter ? 1.0 : 0.38);
+                fade_->start();
+            }
+        }
+        return QWidget::eventFilter(obj, ev);
     }
     void closeEvent(QCloseEvent* e) override {
         QWidget::closeEvent(e);
@@ -304,9 +285,30 @@ private:
         }
     }
 
+    // P20：按当前窗口尺寸缩放原图（留 44px 呼吸边）；无图时占位文案
+    void layoutImage()
+    {
+        if (orig_.isNull()) {
+            img_->setText(QStringLiteral("无缩略图"));
+            img_->setStyleSheet(QStringLiteral("color:#8da396;font-size:14px;"));
+            return;
+        }
+        const int m = 44;
+        const QPixmap sc = orig_.scaled(qMax(360, width() - m), qMax(260, height() - m),
+                                        Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        img_->setPixmap(sc);
+    }
+
     Library* lib_ = nullptr;
     QLabel* img_  = nullptr;
-    QWidget* info_ = nullptr;
+    QPixmap orig_;
+    QFrame* bottom_ = nullptr;                      // P20：影院黑幕信息层
+    QGraphicsOpacityEffect* bottomEff_ = nullptr;
+    QVariantAnimation* fade_ = nullptr;
+    QLabel* title_ = nullptr;
+    QLabel* meta_ = nullptr;
+    QWidget* starRow_ = nullptr;
+    QWidget* ctl_ = nullptr;
     QString  path_;
     int      curRating_ = 0;
     bool     changed_ = false;
