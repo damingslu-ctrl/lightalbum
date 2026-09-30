@@ -285,7 +285,7 @@ LogPage::LogPage(const QVector<Photo>* photos, QWidget* parent)
     insight_ = new QLabel(root);
     insight_->setWordWrap(true);
     insight_->setStyleSheet(QStringLiteral(
-        "QLabel{background:#0f1512;border:1px solid #26312a;border-radius:8px;"
+        "QLabel{background:#0f1512;border:none;border-radius:8px;"
         "padding:12px 16px;color:#cfe6d8;font-family:Consolas,'SFMono-Regular',monospace;"
         "font-size:12px;line-height:1.6;}"));
     lay->addWidget(insight_);
@@ -301,7 +301,7 @@ LogPage::LogPage(const QVector<Photo>* photos, QWidget* parent)
     auto makeCard = [&](const QString& t, const QString& hint, QWidget* chart, QWidget* legend = nullptr) {
         auto* card = new QWidget(root);
         card->setStyleSheet(QStringLiteral(
-            "QWidget{background:#0f1512;border:1px solid #26312a;border-radius:8px;}"));
+            "QWidget{background:#0f1512;border:none;border-radius:8px;}"));
         auto* cl = new QVBoxLayout(card);
         cl->setContentsMargins(12, 10, 12, 10);
         cl->setSpacing(6);
@@ -523,7 +523,7 @@ void LogPage::recompute()
             "<b style='font-family:Consolas,monospace;font-size:16px;color:#7fe6ac;'>%1</b><br>"
             "<span style='font-size:11px;color:#8da996;'>%2</span>").arg(kpiV[i], kpiL[i]));
         kpiLbls[i]->setStyleSheet(QStringLiteral(
-            "QLabel{background:#0f1512;border:1px solid #26312a;border-radius:8px;"
+            "QLabel{background:#0f1512;border:none;border-radius:8px;"
             "padding:9px 10px;}"));
     }
 

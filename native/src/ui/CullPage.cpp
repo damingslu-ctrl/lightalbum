@@ -397,7 +397,7 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
             "<span style='font-size:11px;color:#8da396;'>%1</span>").arg(l), kp);
         lb->setAlignment(Qt::AlignCenter);
         lb->setMinimumWidth(80);
-        lb->setStyleSheet(QString::fromUtf8("QLabel{background:#131a15;border:1px solid #26312a;"
+        lb->setStyleSheet(QString::fromUtf8("QLabel{background:#131a15;border:none;"
             "border-radius:10px;padding:8px 14px;}"));
         kpis_.append(lb);
         kl->addWidget(lb);
@@ -481,7 +481,7 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     auto* sbl = new QHBoxLayout(selBar_);
     sbl->setContentsMargins(12, 8, 12, 8);
     sbl->setSpacing(10);
-    selBar_->setStyleSheet(QStringLiteral("QWidget{background:#0e1410;border:1px solid #26312a;"
+    selBar_->setStyleSheet(QStringLiteral("QWidget{background:#0e1410;border:none;"
         "border-radius:10px;}"));
     selBar_->setVisible(false);
     selThumb_ = new QLabel(selBar_);
@@ -512,7 +512,7 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     // 锁定区（顶部）
     lockFrame_ = new QFrame(this);
     lockFrame_->setFrameShape(QFrame::StyledPanel);
-    lockFrame_->setStyleSheet(QStringLiteral("QFrame{background:#0e1410;border:1px solid #26312a;border-radius:12px;}"));
+    lockFrame_->setStyleSheet(QStringLiteral("QFrame{background:#0e1410;border:none;border-radius:12px;}"));
     auto* ll = new QVBoxLayout(lockFrame_);
     ll->setContentsMargins(12, 10, 12, 10); ll->setSpacing(8);
     lockTitle_ = new QLabel(QString::fromUtf8("锁定区"), lockFrame_);
@@ -540,7 +540,7 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     view_->setGridSize(QSize(232, 268));
     view_->setWordWrap(false);
     view_->setSelectionMode(QAbstractItemView::SingleSelection);
-    view_->setStyleSheet(QStringLiteral("QListView{background:#0c100d;border:1px solid #26312a;"
+    view_->setStyleSheet(QStringLiteral("QListView{background:#0c100d;border:none;"
         "border-radius:12px;} QListView::item:selected{background:transparent;}"));
     model_ = new CullModel(this);
     proxy_ = new CullProxy(this);
@@ -564,7 +564,7 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     auto* duelFrame = new QFrame(this);        // QWidget 不画 QSS 底，必须 QFrame
     duelFrame->setFrameShape(QFrame::StyledPanel);
     duelFrame->setStyleSheet(QStringLiteral(
-        "QFrame{background:#0c100d;border:1px solid #26312a;border-radius:12px;}"));
+        "QFrame{background:#0c100d;border:none;border-radius:12px;}"));
     duel_ = duelFrame;
     duel_->setFocusPolicy(Qt::StrongFocus);
     auto* dv = new QVBoxLayout(duel_);
@@ -630,7 +630,7 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     filmScroll_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     filmScroll_->setWidgetResizable(true);
     filmScroll_->setFixedHeight(104);
-    filmScroll_->setStyleSheet(QStringLiteral("QScrollArea{background:#0c100d;border:1px solid #26312a;"
+    filmScroll_->setStyleSheet(QStringLiteral("QScrollArea{background:#0c100d;border:none;"
         "border-radius:12px;}"));
     filmRow_ = new QWidget(filmScroll_);
     filmRow_->setLayout(new QHBoxLayout);
