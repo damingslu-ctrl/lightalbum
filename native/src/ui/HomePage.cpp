@@ -791,6 +791,13 @@ void HomePage::refreshPanel()
 void HomePage::stageChanged(int idx, int total)
 {
     static_cast<SegBar*>(segBar_)->set(total, idx);
+    // 左侧面板模糊打底跟随当前展示图（此前固定在章节开场照）；
+    // signal 发出时 Stage::current() 已指向新图，直接取即可。
+    if (stage_) {
+        if (const Photo* cur = static_cast<Stage*>(stage_)->current())
+            static_cast<ChapterPanel*>(panel_)->setBackdrop(
+                QDir(thumbsDir_).filePath(cur->thumbFile));
+    }
 }
 
 void HomePage::rebuild()
