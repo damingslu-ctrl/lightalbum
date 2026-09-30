@@ -28,9 +28,11 @@
 #include "ui/DarkPalette.h"
 #include "ui/Theme.h"
 #include "ui/Splash.h"
+#include "ui/LogPage.h"
 #include "core/MotionPref.h"
 #include "core/Vault.h"
 #include <QPropertyAnimation>
+#include <QRegularExpression>
 
 namespace {
 // P9 AI 修图智能体冒烟：合成「偏暗偏暖发灰」样张 → 测量 → 决策 → 执行。
@@ -391,6 +393,51 @@ int main(int argc, char *argv[])
                      r.errorCount == 0 ? "PASS" : "FAIL");
         std::fflush(stderr);
         return r.errorCount == 0 ? 0 : 1;
+    }
+
+    // P30-C 日志页控制台风格冒烟：合成 EXIF 数据集 → 构造 LogPage（含 recompute）→
+    // 断言 KPI 已填充、状态变更可重算、图表 paintEvent 在 offscreen 下不崩（不抓图，避开 PNG 挂）。
+    if (qEnvironmentVariableIsSet("LA_LOG_SMOKE")) {
+        QVector<Photo> phs;
+        const QStringList cams   = {QStringLiteral("Canon EOS R5"), QStringLiteral("Sony A7IV")};
+        const QStringList lenses = {QStringLiteral("RF24-70mm F2.8"), QStringLiteral("FE 35mm F1.8")};
+        for (int i = 0; i < 40; ++i) {
+            Photo p;
+            p.path   = QStringLiteral("synthetic/%1.jpg").arg(i);
+            p.date   = QStringLiteral("2023-%1-15").arg((i % 12) + 1, 2, 10, QChar('0'));
+            p.year   = 2023 + (i % 2);
+            p.cam    = cams[i % 2];
+            p.lens   = lenses[i % 2];
+            p.ap     = (i % 3 == 0) ? QStringLiteral("f/2.8") : QStringLiteral("f/8");
+            p.sh     = (i % 2) ? QStringLiteral("1/250") : QStringLiteral("1/2s");
+            p.iso    = (i % 2) ? 100 : 1600;
+            p.focal  = (i % 4 == 0) ? 16 : (i % 4 == 1 ? 35 : (i % 4 == 2 ? 85 : 200));
+            p.rating = (i % 5 == 0) ? 5 : 0;
+            p.region = QStringLiteral("china");
+            if (i % 7 == 0) p.ap.clear();           // 缺失 EXIF：须跳过不硬塞
+            if (i % 11 == 0) { p.iso = 0; p.focal = 0; }
+            phs.append(p);
+        }
+        LogPage page(&phs, nullptr);
+        page.setHidePrivate(false);                 // 触发状态变更重算（与 ctor 同路径）
+        page.show();                                // offscreen：触发 paintEvent，不抓图
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 300);
+        const QList<QLabel*> allLbls = page.findChildren<QLabel*>();
+        int totalKpi = -1; bool foundKpi = false;
+        for (QLabel* l : allLbls) {
+            const QString t = l->text();
+            if (t.contains(QStringLiteral("作品总数"))) {
+                const QRegularExpression re(QStringLiteral("<b[^>]*>(\\d+)</b>"));
+                const QRegularExpressionMatch m = re.match(t);
+                if (m.hasMatch()) { totalKpi = m.captured(1).toInt(); foundKpi = true; }
+                break;
+            }
+        }
+        const bool ok = foundKpi && totalKpi == 40 && allLbls.size() >= 10;
+        std::fprintf(stderr, "LA_LOG_SMOKE_%s totalKpi=%d labels=%d\n",
+                     ok ? "OK" : "FAIL", totalKpi, allLbls.size());
+        std::fflush(stderr);
+        return ok ? 0 : 1;
     }
 
     Library lib;
