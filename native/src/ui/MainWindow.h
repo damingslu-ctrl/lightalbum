@@ -41,6 +41,9 @@ public:
     // P13：导航切换联动动效（淡出→换页→淡入+轻微上滑）
     void onNav(int row);
 
+    // P29-H：QA 探针——首页（零 chrome）应返回 false（控制簇已隐藏）
+    bool isWinCtlVisible() const;
+
     // P15：沉浸式灯箱随窗口尺寸铺满
     void resizeEvent(QResizeEvent* e) override;
     bool nativeEvent(const QByteArray& eventType, void* message, qintptr* result) override;
@@ -88,7 +91,8 @@ private:
     QLineEdit*      search_ = nullptr;
     QLabel*         title_ = nullptr;
     QWidget*        topbar_ = nullptr;      // P17：顶栏句柄（首页隐藏全局 chrome）
-    // P29 无标题栏：常驻窗口控制簇（min/max/close），独立于 topbar_，首页隐藏顶栏时仍可用。
+    // P29 无标题栏：窗口控制簇（min/max/close），独立于 topbar_，悬浮右上角。
+    // P29-H：首页（零 chrome 纯沉浸）隐藏该簇；关闭改由 Alt+F4 或切到非首页页再点 ✕。
     QWidget*        winCtl_   = nullptr;
     QPushButton*    winMin_   = nullptr;
     QPushButton*    winMax_   = nullptr;

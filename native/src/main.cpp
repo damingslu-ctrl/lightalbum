@@ -744,7 +744,11 @@ int main(int argc, char *argv[])
     // 由各自页面自行驱动退出，这里不抢跑。
     if (qEnvironmentVariableIsSet("LA_SMOKE") && qEnvironmentVariableIsEmpty("LA_CULL_SMOKE")
         && qEnvironmentVariableIsEmpty("LA_RETOUCH_SMOKE")) {
-        QTimer::singleShot(600, &app, [&lib]{
+        // P29-H：首页（零 chrome 纯沉浸）应隐藏窗口控制簇——同步打印，避开 600ms 自退定时器可能的挂起
+        const bool winCtlHiddenOnHome = !win.isWinCtlVisible();
+        std::fprintf(stderr, "LA_SMOKE_WINCTL home=%d\n", int(winCtlHiddenOnHome));
+        std::fflush(stderr);
+        QTimer::singleShot(600, &app, [&lib, &win]{
             const Kpi& k = lib.kpi();
             std::fprintf(stderr, "LA_P1_SMOKE_OK photos=%d years=%d provs=%d span=%d-%d\n",
                          k.total, k.yearCount, k.provCount, k.minYear, k.maxYear);

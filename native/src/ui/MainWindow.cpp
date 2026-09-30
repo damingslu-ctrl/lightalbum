@@ -500,8 +500,9 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
     seam_->lower();                              // 底色层之下（topShade_ 是 0 号）
     seam_->hide();                               // P19：初始透明态（visible 由 applyTopSolid 接管）
 
-    // P29 无标题栏：常驻窗口控制簇（min/max/close）。独立父于 topbar_，首页隐藏顶栏时仍可用；
-    // 顶栏右侧已预留 120px 间距，避免导入钮被覆盖。悬浮于内容区右上角。
+    // P29 无标题栏：窗口控制簇（min/max/close），悬浮于内容区右上角。
+    // P29-H：首页（零 chrome 纯沉浸）隐藏该簇；关闭改由 Alt+F4 或切到非首页页再点 ✕。
+    // 顶栏右侧已预留 120px 间距，避免导入钮被覆盖。
     winCtl_ = new QWidget(right);
     winCtl_->setFixedSize(116, 36);
     winCtl_->setStyleSheet(QStringLiteral("background:transparent;"));
@@ -686,6 +687,11 @@ void MainWindow::syncTopbarFloat()
         winCtl_->move(host->width() - winCtl_->width(), 9);
         winCtl_->raise();
     }
+}
+
+bool MainWindow::isWinCtlVisible() const
+{
+    return winCtl_ && winCtl_->isVisible();
 }
 
 void MainWindow::applyTopSolid(double t)
@@ -879,6 +885,7 @@ void MainWindow::onNav(int row)
     // 顶栏/发丝线仍按 P19 沉浸逻辑在首页隐藏；HomePage 自身左章节面板在右侧并排。
     const bool home = (row == 0);
     topbar_->setVisible(!home);
+    if (winCtl_) winCtl_->setVisible(!home);   // P29-H：首页零 chrome 纯沉浸 → 隐藏控制簇
     kpis_->hide();                       // P19：模块条退役，永远不显示
     updateTopSolid();                    // P19：切页后按滚动偏移重算底色
     syncTopbarFloat();
