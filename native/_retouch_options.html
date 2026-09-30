@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>LightAlbum 修图页方案 · P26 选题</title>
+<style>
+  :root{
+    --bg:#0e120f; --panel:#141a15; --panel2:#10150f; --line:rgba(232,228,218,.09);
+    --gold:#d9a94e; --gold-dim:rgba(217,169,78,.16); --ink:#e8e4da; --dim:#8b9188; --dim2:#5c625a;
+    --em:#4fc08a; --em2:#6adba6; --bad:#b8574e; --violet:#a88be5; --violet2:#6d54a8;
+    --serif:Georgia,"Noto Serif SC","STSong",serif; --sans:"Segoe UI","Microsoft YaHei UI",sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);font-family:var(--sans);padding:48px 40px 80px;max-width:1160px;margin:0 auto}
+  header h1{font-family:var(--serif);font-weight:600;font-size:30px;letter-spacing:.04em}
+  header h1 em{font-style:normal;color:var(--gold)}
+  header p{color:var(--dim);margin-top:10px;font-size:13.5px;line-height:1.85;max-width:820px}
+  header .note{color:var(--dim2);font-size:12px;margin-top:8px;letter-spacing:.04em}
+  .jump{display:flex;gap:10px;margin:26px 0 8px;flex-wrap:wrap}
+  .jump a{color:var(--dim);text-decoration:none;font-size:12.5px;border:1px solid var(--line);border-radius:999px;padding:6px 14px;letter-spacing:.06em;transition:.2s}
+  .jump a:hover{color:var(--gold);border-color:var(--gold)}
+  section{margin-top:56px}
+  .s-head{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:8px}
+  .s-head .no{font-family:var(--serif);font-size:34px;color:var(--gold);opacity:.9}
+  .s-head h2{font-family:var(--serif);font-size:21px;font-weight:600;letter-spacing:.05em}
+  .tags{display:flex;gap:8px;margin-left:auto}
+  .tag{font-size:11px;letter-spacing:.08em;color:var(--dim);border:1px solid var(--line);border-radius:999px;padding:4px 11px}
+  .tag b{color:var(--ink);font-weight:600}
+  .s-desc{color:var(--dim);font-size:13px;line-height:1.85;margin-bottom:16px;max-width:840px}
+  /* ---- frame (page region; 左 68px 图标轨 + 顶栏 为固定外壳, 不在本页重设计) ---- */
+  .frame{display:flex;flex-direction:column;height:500px;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--panel2)}
+  .c-top{height:50px;border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 20px;gap:14px;flex:none}
+  .c-top .crumb{font-family:var(--serif);font-size:15px;letter-spacing:.12em}
+  .c-top .crumb small{color:var(--dim2);font-family:var(--sans);font-size:10px;letter-spacing:.22em;margin-left:10px}
+  .c-top .cnt{color:var(--dim2);font-size:11.5px;letter-spacing:.06em}
+  .c-top .cnt b{color:var(--gold);font-weight:600}
+  .c-top .lock{margin-left:auto;color:var(--dim2);font-size:11px;border:1px solid var(--line);border-radius:999px;padding:4px 12px;letter-spacing:.08em}
+  .chips{display:flex;gap:8px;align-items:center}
+  .chip{font-size:11px;color:var(--dim);border:1px solid var(--line);border-radius:999px;padding:4px 12px;letter-spacing:.06em}
+  .chip.on{background:var(--gold);border-color:var(--gold);color:#171308;font-weight:600}
+  .g1{background:linear-gradient(135deg,#2a352c,#18211b)} .g2{background:linear-gradient(135deg,#33302a,#1c1a15)}
+  .g3{background:linear-gradient(135deg,#242e33,#141c20)} .g4{background:linear-gradient(135deg,#2e2830,#1b171d)}
+  .g5{background:linear-gradient(135deg,#2f3a2a,#1a2015)} .g6{background:linear-gradient(135deg,#332b26,#1e1915)}
+  .g7{background:linear-gradient(135deg,#26302e,#151d1c)} .g8{background:linear-gradient(135deg,#2c2f2a,#191b17)}
+  .gW{background:linear-gradient(135deg,#3a3a3a,#222)} /* 原图(去色感) */
+  .kbd{font-size:10px;color:var(--dim2);border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;padding:2px 7px;letter-spacing:.06em}
+  .btn{font-size:11px;border-radius:8px;padding:7px 13px;letter-spacing:.06em;border:1px solid var(--line);color:var(--ink);background:var(--panel)}
+  .btn.gd{background:linear-gradient(135deg,#f0d08a,#b0863a);color:#171308;font-weight:700;border:none}
+  .btn.em{background:linear-gradient(135deg,#6adba6,#2f7d57);color:#06130c;font-weight:700;border:none}
+  .btn.vi{background:linear-gradient(135deg,#a88be5,#6d54a8);color:#f2eefc;font-weight:700;border:none}
+
+  /* 通用滑杆行 */
+  .sl{display:grid;grid-template-columns:52px 1fr 38px;align-items:center;gap:8px;padding:5px 0}
+  .sl .lab{font-size:11px;color:var(--dim);letter-spacing:.04em}
+  .sl .trk{height:3px;border-radius:2px;background:rgba(232,228,218,.10);position:relative}
+  .sl .trk i{position:absolute;left:0;top:0;bottom:0;border-radius:2px;background:var(--gold)}
+  .sl .trk.vi i{background:var(--violet)}
+  .sl .v{font-size:10.5px;color:var(--dim2);text-align:right;font-variant-numeric:tabular-nums}
+  .grp{font-size:10px;letter-spacing:.22em;color:var(--dim2);font-weight:600;margin:12px 0 4px}
+
+  /* ===== A 经典工作室 ===== */
+  .edit3{flex:1;display:flex;min-height:0}
+  .toolrail{width:128px;border-right:1px solid var(--line);padding:12px 10px;display:flex;flex-direction:column;gap:7px;background:var(--panel)}
+  .toolbtn{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--dim);border-radius:8px;padding:8px 9px;letter-spacing:.04em;border:1px solid transparent}
+  .toolbtn .ic{width:18px;height:18px;border-radius:5px;background:rgba(232,228,218,.10);flex:none}
+  .toolbtn.on{background:var(--gold-dim);color:var(--gold);border-color:rgba(217,169,78,.4)}
+  .centerA{flex:1;display:flex;gap:14px;padding:16px;min-width:0}
+  .pvA{flex:1;border-radius:10px;position:relative;min-width:0}
+  .pvA small{position:absolute;bottom:8px;left:10px;font-size:10px;letter-spacing:.14em;color:rgba(232,228,218,.7)}
+  .rackA{width:236px;border-left:1px solid var(--line);padding:14px 14px 14px;overflow:auto;background:var(--panel)}
+
+  /* ===== B 胶片暗房 ===== */
+  .heroB{flex:1;position:relative;margin:16px;border-radius:12px;overflow:hidden;min-height:0}
+  .heroB .badge{position:absolute;top:12px;left:14px;font-size:11px;letter-spacing:.16em;color:var(--gold);border:1px solid rgba(217,169,78,.5);border-radius:999px;padding:4px 12px;background:rgba(14,18,15,.4)}
+  .heroB .hint{position:absolute;bottom:12px;right:14px;font-size:10.5px;color:var(--dim2);letter-spacing:.08em}
+  .loupeB{flex:none;height:118px;border-top:1px solid var(--line);display:flex;gap:10px;align-items:center;padding:0 16px;overflow-x:auto}
+  .lth{flex:none;width:84px;border-radius:9px;position:relative;overflow:hidden;border:2px solid transparent}
+  .lth.sel{border-color:var(--gold);box-shadow:0 0 0 2px rgba(217,169,78,.25)}
+  .lth small{position:absolute;left:0;right:0;bottom:0;font-size:9px;text-align:center;color:#e8e4da;background:rgba(14,18,15,.55);padding:2px 0;letter-spacing:.06em}
+
+  /* ===== C 对比手 ===== */
+  .wipeC{flex:1;position:relative;margin:14px;border-radius:12px;overflow:hidden;min-height:0}
+  .wipeC .after,.wipeC .before{position:absolute;inset:0}
+  .wipeC .before{clip-path:inset(0 50% 0 0)}
+  .wipeC .tagB{position:absolute;top:12px;font-size:10.5px;letter-spacing:.16em;color:rgba(232,228,218,.8);background:rgba(14,18,15,.4);padding:4px 10px;border-radius:999px}
+  .wipeC .tagB.l{left:12px}.wipeC .tagB.r{right:12px;color:var(--gold)}
+  .wipeC .handle{position:absolute;top:0;bottom:0;left:50%;width:2px;background:var(--gold);transform:translateX(-1px)}
+  .wipeC .handle b{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:30px;height:30px;border-radius:50%;background:var(--gold);color:#171308;font-size:12px;display:flex;align-items:center;justify-content:center;font-weight:700}
+  .ribbonC{flex:none;display:flex;gap:14px;align-items:flex-end;padding:10px 18px 14px;border-top:1px solid var(--line);overflow-x:auto}
+  .scrub{flex:none;width:54px;text-align:center}
+  .scrub .st{height:46px;width:3px;margin:0 auto;border-radius:2px;background:rgba(232,228,218,.12);position:relative}
+  .scrub .st i{position:absolute;left:0;right:0;bottom:0;border-radius:2px;background:var(--gold)}
+  .scrub small{display:block;font-size:9px;color:var(--dim2);margin-top:5px;letter-spacing:.02em}
+
+  /* ===== D AI 助理座舱 ===== */
+  .agentD{flex:1;display:flex;min-height:0}
+  .leftD{width:262px;border-right:1px solid var(--line);padding:14px;display:flex;flex-direction:column;gap:12px;background:linear-gradient(180deg,rgba(109,84,168,.10),transparent)}
+  .goalD{background:var(--panel);border:1px solid rgba(168,139,229,.4);border-radius:9px;padding:8px 10px;font-size:11px;color:var(--ink)}
+  .goalD small{color:var(--violet);letter-spacing:.1em;display:block;margin-bottom:4px;font-size:9.5px}
+  .planD{flex:1;overflow:auto}
+  .stepD{display:flex;gap:9px;font-size:11px;color:var(--dim);line-height:1.6;padding:6px 0;border-bottom:1px solid var(--line)}
+  .stepD .n{flex:none;width:18px;height:18px;border-radius:50%;background:rgba(168,139,229,.22);color:var(--violet);font-size:10px;display:flex;align-items:center;justify-content:center;font-weight:700;margin-top:1px}
+  .stepD b{color:var(--ink);font-weight:600}
+  .midD{flex:1;padding:16px;min-width:0;display:flex;flex-direction:column;gap:12px}
+  .pvD{flex:1;border-radius:10px;position:relative;min-height:0}
+  .pvD small{position:absolute;bottom:8px;left:10px;font-size:10px;letter-spacing:.14em;color:rgba(232,228,218,.7)}
+  .rackD{width:210px;border-left:1px solid var(--line);padding:14px;overflow:auto;background:var(--panel)}
+
+  /* ===== E 三栏调色台 ===== */
+  .editE{flex:1;display:flex;min-height:0}
+  .presetE{width:196px;border-right:1px solid var(--line);padding:12px;overflow:auto;background:var(--panel)}
+  .presetE h4{font-size:10px;letter-spacing:.22em;color:var(--dim2);font-weight:600;margin-bottom:8px}
+  .pgrid{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+  .pcard{border-radius:8px;height:62px;position:relative;overflow:hidden;border:2px solid transparent}
+  .pcard.sel{border-color:var(--gold)}
+  .pcard small{position:absolute;left:0;right:0;bottom:0;font-size:8.5px;text-align:center;color:#e8e4da;background:rgba(14,18,15,.55);padding:2px 0}
+  .centerE{flex:1;position:relative;margin:14px;border-radius:12px;overflow:hidden;min-width:0}
+  .ovlE{position:absolute;top:12px;left:50%;transform:translateX(-50%);display:flex;gap:6px}
+  .ovlE span{font-size:10px;letter-spacing:.1em;color:var(--dim);border:1px solid var(--line);border-radius:999px;padding:4px 11px}
+  .ovlE span.on{color:var(--gold);border-color:rgba(217,169,78,.5);background:var(--gold-dim)}
+  .rackE{width:236px;border-left:1px solid var(--line);padding:14px;overflow:auto;background:var(--panel)}
+
+  /* ---- table ---- */
+  table{width:100%;border-collapse:collapse;margin-top:64px;font-size:12.5px}
+  caption{font-family:var(--serif);font-size:19px;text-align:left;letter-spacing:.06em;margin-bottom:14px}
+  th{color:var(--dim2);font-weight:600;letter-spacing:.14em;font-size:10.5px;text-align:left;padding:10px 12px;border-bottom:1px solid var(--line)}
+  td{padding:12px;border-bottom:1px solid var(--line);color:var(--dim);line-height:1.7;vertical-align:top}
+  td:first-child{color:var(--ink);font-family:var(--serif);letter-spacing:.04em;white-space:nowrap}
+  td b{color:var(--gold);font-weight:600}
+</style>
+</head>
+<body>
+<header>
+  <h1>LightAlbum 修图页方案 · <em>五个方向</em></h1>
+  <p>基准能力全部一致（RetouchEngine 零云端纯像素运算）：12 项手动滑杆（曝光/亮度/对比/清晰/自然饱和/饱和度/色温/色调/锐化/高光/阴影/暗角）、16 个滤镜预设、一键智能增强（recommend 本地测量）、几何编辑（旋转/翻转/拉直/裁剪）、蒙版局部调整、对比滑动、AI 消除桥、导出副本。五个方案只换「修图决策舞台」的组织方式——左 68px 抛光图标轨与顶栏为固定外壳，不在本页重设计。</p>
+  <nav class="jump">
+    <a href="#a">A · 经典工作室</a><a href="#b">B · 胶片暗房</a><a href="#c">C · 对比手</a><a href="#d">D · AI 助理座舱</a><a href="#e">E · 三栏调色台</a><a href="#t">对比表</a>
+  </nav>
+</header>
+
+<!-- ================= A 经典工作室 ================= -->
+<section id="a">
+  <div class="s-head"><span class="no">A</span><h2>经典工作室 <small style="color:var(--dim2);font-size:12px">（Lightroom 式三栏 · 现状抛光版）</small></h2>
+    <div class="tags"><span class="tag">熟悉度 <b>最高</b></span><span class="tag">成本 <b>最低</b></span><span class="tag">气质 <b>工作站</b></span></div></div>
+  <p class="s-desc">最稳的保底方案：左侧模式轨（预设/调整/几何/蒙版/对比/AI）切换工作区，中央并排「原图 | 修后」，右侧分组滑杆（基础/色彩/光学/氛围）。把现状 RetouchPage 的「左预览+滑杆、右预设」重排成更符合专业直觉的三栏，决策动线最短。</p>
+  <div class="frame">
+    <div class="c-top"><span class="crumb">修图<small>RETOUCH</small></span><span class="cnt">西坡晨雾 · 1 / 6425</span><span class="lock">隐私已锁</span></div>
+    <div class="edit3">
+      <div class="toolrail">
+        <div class="toolbtn on"><span class="ic"></span>预设</div>
+        <div class="toolbtn"><span class="ic"></span>调整</div>
+        <div class="toolbtn"><span class="ic"></span>几何</div>
+        <div class="toolbtn"><span class="ic"></span>蒙版</div>
+        <div class="toolbtn"><span class="ic"></span>对比</div>
+        <div class="toolbtn" style="color:var(--violet)"><span class="ic" style="background:rgba(168,139,229,.3)"></span>AI</div>
+      </div>
+      <div class="centerA">
+        <div class="pvA gW"><small>原图</small></div>
+        <div class="pvA g1"><small>修后</small></div>
+      </div>
+      <div class="rackA">
+        <div class="grp">基础</div>
+        <div class="sl"><span class="lab">曝光</span><span class="trk"><i style="width:52%"></i></span><span class="v">+0.10</span></div>
+        <div class="sl"><span class="lab">亮度</span><span class="trk"><i style="width:40%"></i></span><span class="v">0.00</span></div>
+        <div class="sl"><span class="lab">对比</span><span class="trk"><i style="width:55%"></i></span><span class="v">+0.06</span></div>
+        <div class="sl"><span class="lab">清晰</span><span class="trk"><i style="width:58%"></i></span><span class="v">+0.15</span></div>
+        <div class="grp">色彩</div>
+        <div class="sl"><span class="lab">自然饱和</span><span class="trk"><i style="width:60%"></i></span><span class="v">+0.20</span></div>
+        <div class="sl"><span class="lab">饱和度</span><span class="trk"><i style="width:50%"></i></span><span class="v">0.00</span></div>
+        <div class="sl"><span class="lab">色温</span><span class="trk"><i style="width:70%"></i></span><span class="v">+0.40</span></div>
+        <div class="sl"><span class="lab">色调</span><span class="trk"><i style="width:50%"></i></span><span class="v">0.00</span></div>
+        <div class="grp">光学 / 氛围</div>
+        <div class="sl"><span class="lab">锐化</span><span class="trk"><i style="width:25%"></i></span><span class="v">+0.25</span></div>
+        <div class="sl"><span class="lab">高光</span><span class="trk"><i style="width:50%"></i></span><span class="v">0.00</span></div>
+        <div class="sl"><span class="lab">阴影</span><span class="trk"><i style="width:50%"></i></span><span class="v">0.00</span></div>
+        <div class="sl"><span class="lab">暗角</span><span class="trk"><i style="width:50%"></i></span><span class="v">0.00</span></div>
+      </div>
+    </div>
+    <div style="flex:none;display:flex;gap:8px;padding:10px 16px 14px;border-top:1px solid var(--line)">
+      <button class="btn em">智能增强</button><button class="btn vi">AI 智能体</button><button class="btn">重置</button><button class="btn gd" style="margin-left:auto">导出副本</button>
+    </div>
+  </div>
+</section>
+
+<!-- ================= B 胶片暗房 ================= -->
+<section id="b">
+  <div class="s-head"><span class="no">B</span><h2>胶片暗房</h2>
+    <div class="tags"><span class="tag">决策单元 <b>滤镜</b></span><span class="tag">成本 <b>低</b></span><span class="tag">气质 <b>暗房</b></span></div></div>
+  <p class="s-desc">把「选滤镜」当成暗房选药：中央一张大图承载当前观感，底部一条接触印样式（contact sheet）水平铺开全部 16 个预设缩略图，点选即套用。手动滑杆退居「微调」抽屉——给「用眼睛挑味道、不跟数字较劲」的人；代价是精细参数不够直给。</p>
+  <div class="frame">
+    <div class="c-top"><span class="crumb">修图<small>RETOUCH</small></span><span class="cnt">当前 <b>胶片</b> · 1 / 6425</span><span class="lock">隐私已锁</span></div>
+    <div class="heroB g1"><span class="badge">胶片 · 零云端</span><span class="hint">悬停对比 · 点印样换味</span></div>
+    <div class="loupeB">
+      <div class="lth gW"><small>原图</small></div>
+      <div class="lth g3"><small>智能增强</small></div>
+      <div class="lth g5"><small>鲜艳</small></div>
+      <div class="lth g1"><small>自然</small></div>
+      <div class="lth g2"><small>黑白</small></div>
+      <div class="lth g6"><small>暖调</small></div>
+      <div class="lth g4"><small>冷调</small></div>
+      <div class="lth g7 sel"><small>胶片</small></div>
+      <div class="lth g8"><small>复古</small></div>
+      <div class="lth g3"><small>墨绿</small></div>
+      <div class="lth g5"><small>人像</small></div>
+      <div class="lth g1"><small>风光</small></div>
+      <div class="lth g6"><small>美食</small></div>
+      <div class="lth g4"><small>戏剧</small></div>
+      <div class="lth g2"><small>柔光</small></div>
+      <div class="lth g8"><small>HDR</small></div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= C 对比手 ================= -->
+<section id="c">
+  <div class="s-head"><span class="no">C</span><h2>对比手</h2>
+    <div class="tags"><span class="tag">英雄时刻 <b>对比</b></span><span class="tag">成本 <b>中</b></span><span class="tag">气质 <b>灯箱</b></span></div></div>
+  <p class="s-desc">英雄是「对比」本身：整屏一张图，金色分割手柄左右擦除揭示「原图 → 修后」，手柄可拖。底部一条高密度「色调带」把 12 项参数压成可横扫的迷你滑杆。给最关心「改了到底差多少」的人；参数虽密但每项只给一个手势，适合快速手感微调。</p>
+  <div class="frame">
+    <div class="c-top"><span class="crumb">修图<small>RETOUCH</small></span><span class="cnt">拖动金线看差异 · 1 / 6425</span><span class="lock">隐私已锁</span></div>
+    <div class="wipeC">
+      <div class="after g1"></div>
+      <div class="before gW"></div>
+      <span class="tagB l">原图</span><span class="tagB r">修后</span>
+      <div class="handle"><b>⟺</b></div>
+    </div>
+    <div class="ribbonC">
+      <div class="scrub"><div class="st"><i style="height:52%"></i></div><small>曝光</small></div>
+      <div class="scrub"><div class="st"><i style="height:40%"></i></div><small>亮度</small></div>
+      <div class="scrub"><div class="st"><i style="height:55%"></i></div><small>对比</small></div>
+      <div class="scrub"><div class="st"><i style="height:58%"></i></div><small>清晰</small></div>
+      <div class="scrub"><div class="st"><i style="height:60%"></i></div><small>自然饱和</small></div>
+      <div class="scrub"><div class="st"><i style="height:50%"></i></div><small>饱和度</small></div>
+      <div class="scrub"><div class="st"><i style="height:70%"></i></div><small>色温</small></div>
+      <div class="scrub"><div class="st"><i style="height:50%"></i></div><small>色调</small></div>
+      <div class="scrub"><div class="st"><i style="height:25%"></i></div><small>锐化</small></div>
+      <div class="scrub"><div class="st"><i style="height:50%"></i></div><small>高光</small></div>
+      <div class="scrub"><div class="st"><i style="height:50%"></i></div><small>阴影</small></div>
+      <div class="scrub"><div class="st"><i style="height:50%"></i></div><small>暗角</small></div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= D AI 助理座舱 ================= -->
+<section id="d">
+  <div class="s-head"><span class="no">D</span><h2>AI 助理座舱</h2>
+    <div class="tags"><span class="tag">主路径 <b>AI</b></span><span class="tag">成本 <b>中</b></span><span class="tag">气质 <b>智能体</b></span></div></div>
+  <p class="s-desc">AI 智能体（Lumen × 本地 Ollama，零云端）是默认入口：左侧写目标 → 右侧生成可读「决策食谱」（13 项参数 + 依据），中央 before/after 实时预览，手动滑杆降级为右侧次级标签页。讲清「本地测量 → 本地 LLM 决策 → 所见即所得导出」的零云端故事；代价是手动党要多点一层。</p>
+  <div class="frame">
+    <div class="c-top"><span class="crumb">修图<small>RETOUCH</small></span><span class="cnt">决策中 · 1 / 6425</span><span class="lock">隐私已锁</span></div>
+    <div class="agentD">
+      <div class="leftD">
+        <div class="goalD"><small>目标（可选）</small>风光通透 · 胶片感</div>
+        <div class="planD">
+          <div class="stepD"><span class="n">1</span><b>提亮 +0.10</b> · 拉高阴影，压高光防过曝</div>
+          <div class="stepD"><span class="n">2</span><b>对比 +0.10</b> · 中调层次加强</div>
+          <div class="stepD"><span class="n">3</span><b>清晰 +0.15</b> · 山地边缘提锐</div>
+          <div class="stepD"><span class="n">4</span><b>自然饱和 +0.20</b> · 保已饱和色</div>
+          <div class="stepD"><span class="n">5</span><b>色温 +0.15</b> · 暖意偏晨</div>
+          <div class="stepD"><span class="n">6</span><b>锐化 +0.25</b> · USM 收尾</div>
+          <div class="stepD" style="color:var(--violet)"><span class="n">✓</span>来源 <b>本地 LLM</b> · 零云端</div>
+        </div>
+        <button class="btn vi">AI 智能体执行</button>
+      </div>
+      <div class="midD">
+        <div class="pvD g1"><small>修后 · AI 方案</small></div>
+        <div class="chips"><span class="chip">偏暗·提亮</span><span class="chip">色彩平淡·加自然饱和</span><span class="chip">对比偏弱·加清晰</span></div>
+      </div>
+      <div class="rackD">
+        <div class="grp" style="color:var(--violet)">手动微调（次级）</div>
+        <div class="sl"><span class="lab">曝光</span><span class="trk vi"><i style="width:52%"></i></span><span class="v">+0.10</span></div>
+        <div class="sl"><span class="lab">对比</span><span class="trk vi"><i style="width:55%"></i></span><span class="v">+0.10</span></div>
+        <div class="sl"><span class="lab">清晰</span><span class="trk vi"><i style="width:58%"></i></span><span class="v">+0.15</span></div>
+        <div class="sl"><span class="lab">色温</span><span class="trk vi"><i style="width:65%"></i></span><span class="v">+0.15</span></div>
+        <div class="sl"><span class="lab">锐化</span><span class="trk vi"><i style="width:25%"></i></span><span class="v">+0.25</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= E 三栏调色台 ================= -->
+<section id="e">
+  <div class="s-head"><span class="no">E</span><h2>三栏调色台</h2>
+    <div class="tags"><span class="tag">密度 <b>最高</b></span><span class="tag">成本 <b>中</b></span><span class="tag">气质 <b>广播级</b></span></div></div>
+  <p class="s-desc">给「调色台」思维的人：左栏 16 预设画廊（缩略图点选），中央预览带顶部浮层标签（蒙版/裁剪/对比 三模互斥切换），右栏分组滑杆机架（基础/色彩/光学/氛围）。把几何、蒙版、对比都收进中央浮层，专业密度拉满；代价是新手需要一点学习成本。</p>
+  <div class="frame">
+    <div class="c-top"><span class="crumb">修图<small>RETOUCH</small></span><span class="cnt">胶片 · 1 / 6425</span><span class="lock">隐私已锁</span></div>
+    <div class="editE">
+      <div class="presetE">
+        <h4>滤镜预设</h4>
+        <div class="pgrid">
+          <div class="pcard gW"><small>原图</small></div>
+          <div class="pcard g3"><small>智能增强</small></div>
+          <div class="pcard g5"><small>鲜艳</small></div>
+          <div class="pcard g1"><small>自然</small></div>
+          <div class="pcard g2"><small>黑白</small></div>
+          <div class="pcard g6"><small>暖调</small></div>
+          <div class="pcard g4"><small>冷调</small></div>
+          <div class="pcard g7 sel"><small>胶片</small></div>
+          <div class="pcard g8"><small>复古</small></div>
+          <div class="pcard g3"><small>墨绿</small></div>
+          <div class="pcard g5"><small>人像</small></div>
+          <div class="pcard g1"><small>风光</small></div>
+          <div class="pcard g6"><small>美食</small></div>
+          <div class="pcard g4"><small>戏剧</small></div>
+          <div class="pcard g2"><small>柔光</small></div>
+          <div class="pcard g8"><small>HDR</small></div>
+        </div>
+      </div>
+      <div class="centerE g1">
+        <div class="ovlE"><span>蒙版</span><span class="on">裁剪</span><span>对比</span></div>
+      </div>
+      <div class="rackE">
+        <div class="grp">基础</div>
+        <div class="sl"><span class="lab">曝光</span><span class="trk"><i style="width:52%"></i></span><span class="v">+0.10</span></div>
+        <div class="sl"><span class="lab">亮度</span><span class="trk"><i style="width:40%"></i></span><span class="v">0.00</span></div>
+        <div class="sl"><span class="lab">对比</span><span class="trk"><i style="width:55%"></i></span><span class="v">+0.06</span></div>
+        <div class="sl"><span class="lab">清晰</span><span class="trk"><i style="width:58%"></i></span><span class="v">+0.15</span></div>
+        <div class="grp">色彩</div>
+        <div class="sl"><span class="lab">自然饱和</span><span class="trk"><i style="width:60%"></i></span><span class="v">+0.20</span></div>
+        <div class="sl"><span class="lab">饱和度</span><span class="trk"><i style="width:50%"></i></span><span class="v">0.00</span></div>
+        <div class="sl"><span class="lab">色温</span><span class="trk"><i style="width:70%"></i></span><span class="v">+0.40</span></div>
+        <div class="sl"><span class="lab">色调</span><span class="trk"><i style="width:50%"></i></span><span class="v">0.00</span></div>
+        <div class="grp">光学 / 氛围</div>
+        <div class="sl"><span class="lab">锐化</span><span class="trk"><i style="width:25%"></i></span><span class="v">+0.25</span></div>
+        <div class="sl"><span class="lab">高光</span><span class="trk"><i style="width:50%"></i></span><span class="v">0.00</span></div>
+        <div class="sl"><span class="lab">阴影</span><span class="trk"><i style="width:50%"></i></span><span class="v">0.00</span></div>
+        <div class="sl"><span class="lab">暗角</span><span class="trk"><i style="width:50%"></i></span><span class="v">0.00</span></div>
+      </div>
+    </div>
+    <div style="flex:none;display:flex;gap:8px;padding:10px 16px 14px;border-top:1px solid var(--line)">
+      <button class="btn em">智能增强</button><button class="btn vi">AI 智能体</button><button class="btn">旋转⟳</button><button class="btn">拉直</button><button class="btn gd" style="margin-left:auto">导出副本</button>
+    </div>
+  </div>
+</section>
+
+<!-- ================= table ================= -->
+<table id="t">
+  <caption>方案对比</caption>
+  <tr><th>方案</th><th>决策单元</th><th>预设位置</th><th>适合人群</th><th>实现成本</th><th>一句话定位</th></tr>
+  <tr><td>A 经典工作室</td><td>模式轨 + 分屏 + 滑杆</td><td>左侧模式切换</td><td>所有人（保底）</td><td><b>最低</b>（半天）</td><td>现状抛光，最稳的默认页</td></tr>
+  <tr><td>B 胶片暗房</td><td>大图 + 印样选滤镜</td><td>底部接触印样</td><td>凭眼挑味的直觉派</td><td>低（1 天）</td><td>把选滤镜做成暗房选药</td></tr>
+  <tr><td>C 对比手</td><td>擦除对比 + 色调带</td><td>英雄对比</td><td>关心差多少的人</td><td>中（1–2 天）</td><td>对比即主角，参数横扫微调</td></tr>
+  <tr><td>D AI 助理座舱</td><td>目标 → 决策食谱</td><td>AI 默认 / 手动次级</td><td>信任本地 AI 的人</td><td>中（1–2 天）</td><td>零云端智能体讲清来龙去脉</td></tr>
+  <tr><td>E 三栏调色台</td><td>画廊 + 浮层 + 机架</td><td>左栏画廊</td><td>调色台思维专业户</td><td>中（1–2 天）</td><td>密度拉满的广播级控制台</td></tr>
+</table>
+</body>
+</html>

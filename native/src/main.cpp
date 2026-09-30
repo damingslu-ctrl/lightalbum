@@ -22,6 +22,7 @@
 #include "ui/MainWindow.h"
 #include "ui/MapView.h"
 #include "ui/GalleryPage.h"
+#include "ui/RetouchPage.h"
 #include "ui/HomePage.h"
 #include "ui/DarkPalette.h"
 #include "ui/Theme.h"
@@ -475,8 +476,10 @@ int main(int argc, char *argv[])
         && !qEnvironmentVariableIsSet("LA_LIGHTBOX_SHOT")
         && !qEnvironmentVariableIsSet("LA_CULL_SMOKE")
         && !qEnvironmentVariableIsSet("LA_RETOUCH_SMOKE")
+        && !qEnvironmentVariableIsSet("LA_RETOUCH_A_QA")
         && !qEnvironmentVariableIsSet("LA_MAP_A_QA")
         && !qEnvironmentVariableIsSet("LA_GALLERY_E_QA")
+        && !qEnvironmentVariableIsSet("LA_CULL_DUEL_QA")
         ;
 
     QRect avail = QApplication::primaryScreen()->availableGeometry();
@@ -592,6 +595,28 @@ int main(int argc, char *argv[])
         return 0;
     }
 
+    // P26 修图页 A 经典工作室 像素/几何自测：LA_RETOUCH_A_QA=<png> 时合成样张驱动独立 RetouchPage，
+    // 验证 6 模式轨 + 12 滑杆 + 右栈 6 页 + 金像素，并抓整页 PNG。
+    if (!qEnvironmentVariableIsEmpty("LA_RETOUCH_A_QA")) {
+        const QString p = qEnvironmentVariable("LA_RETOUCH_A_QA");
+        QDir().mkpath(QFileInfo(p).absolutePath());
+        QVector<Photo> synth;
+        for (int i = 0; i < 6; ++i) {
+            Photo ph;
+            ph.path  = QStringLiteral("synthetic/%1.jpg").arg(i);
+            ph.title = QStringLiteral("样张 %1").arg(i + 1);
+            synth.append(ph);
+        }
+        RetouchPage page(&synth, QDir::temp().filePath(QStringLiteral("la_a_qa_thumbs")), nullptr);
+        page.resize(1240, 820);
+        page.show();
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 400);
+        page.qaShootA(p);
+        std::fprintf(stderr, "LA_RETOUCH_A_QA_DONE\n");
+        std::fflush(stderr);
+        return 0;
+    }
+
     // P11 UI 截图探针：LA_UI_SHOT=<dir> 时逐页 widget.grab() 存 PNG（offscreen 可用，
     // 用于颜色/乱码真实验证——颜色校验铁律：必须实测不许猜）。
     if (qEnvironmentVariableIsSet("LA_UI_SHOT")) {
@@ -613,5 +638,6 @@ int main(int argc, char *argv[])
             QApplication::quit();
         });
     }
+    // P25 对决 QA 由 CullPage 内 QTimer::singleShot(600) 在事件循环内完成并 quit
     return app.exec();
 }

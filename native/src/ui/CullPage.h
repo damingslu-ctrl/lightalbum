@@ -13,6 +13,7 @@
 
 class QStackedWidget;
 class QListView;
+class DuelPane;        // P25 对决模式 PK 面板（CullPage.cpp 内定义）
 class QScrollArea;
 class QComboBox;
 class QListWidget;
@@ -33,6 +34,8 @@ public:
     QMap<QString,int> categoryCounts() const;     // 仅统计当前结果集
     QVector<QString> markedThumbs(const QString& mark) const;
     int rowOfThumb(const QString& thumbPath) const;
+    CullItem itemAt(int row) const;               // P25：对决读项（越界返回空项）
+    int upsertItem(const CullItem& it, const QString& thumbsDir);  // P25：不存在则追加并返回行号
 private:
     struct Row { CullItem item; QPixmap pm; QString mark; };
     QVector<Row> items_;
@@ -119,6 +122,18 @@ private slots:
     void onMark(const QString& mark);
 
 private:
+    // P25 对决模式
+    void buildDuelSession();                 // 从报告去重组重建仲裁队
+    void duelEnterMode();
+    void duelExitMode();
+    void duelPick(int side);                 // 0=左留 1=右留（败者标 skip）
+    void duelBoth(const QString& mark);      // "skip"=双弃 / "lock"=双锁
+    void duelAfterDecision();
+    void duelRender();
+    void markDuelItem(const CullItem& it, const QString& mark);
+    void runDuelQa(const QString& png);      // 离屏自测（LA_CULL_DUEL_QA）
+    bool eventFilter(QObject* obj, QEvent* ev) override;
+
     void buildChips(const QMap<QString,int>& counts);
     void rebuildLockArea();
     void rebuildFilmstrip();
@@ -174,4 +189,16 @@ private:
     QMap<QString,int> catCounts_;   // 缓存，供重建 chips
     int             lockCount_ = 0;
     int             lastRadarN_ = 0;
+
+    // P25 对决模式状态
+    struct DuelGroup { QVector<CullItem> members; QVector<int> alive; };
+    QVector<DuelGroup> duelGroups_;
+    int             duelIdx_ = 0;
+    QWidget*        duel_ = nullptr;        // 实际构造为 QFrame（QWidget 不画 QSS 底）
+    DuelPane*       paneL_ = nullptr;
+    DuelPane*       paneR_ = nullptr;
+    QLabel*         duelHead_ = nullptr;
+    QPushButton*    duelBtn_ = nullptr;     // 操作条入口「开始对决」
+    QPushButton*    duelBackBtn_ = nullptr;
+    CullReport      lastReport_;
 };

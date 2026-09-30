@@ -347,8 +347,15 @@ CullReport CullEngine::analyze(const QVector<CullInput>& inputs,
 
     // —— 汇总去重组 ——
     QHash<QString, CullDupGroup> byKept;
-    for (const auto& it : items) {
+    for (auto& it : items) {
         if (it.dupOf.isEmpty()) continue;
+        if (it.total <= 0) {          // 去重被拒项未参与候选评分 → 补算（维度预处理已算好）
+            double cov;
+            it.total = computeTotal(it.sharpness, it.lighting, cov);
+            it.coverage = cov;
+            it.grade = gradeOf(it.total);
+        }
+        rep.dupItems.append(it);      // P25 对决模式素材
         auto g = byKept.find(it.dupOf);
         if (g == byKept.end()) {
             CullDupGroup dg; dg.keptThumb = it.dupOf; dg.reason = it.rejectReason;

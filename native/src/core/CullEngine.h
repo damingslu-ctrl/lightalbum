@@ -54,6 +54,7 @@ struct CullReport {
     int unknownCount = 0;        // 解码失败
     QVector<CullItem>  topItems; // 候选按总分降序
     QVector<CullDupGroup> dupGroups;
+    QVector<CullItem>  dupItems; // 去重被拒项（已补算本地维度分），供 P25 对决模式组队
 };
 
 struct CullOptions {

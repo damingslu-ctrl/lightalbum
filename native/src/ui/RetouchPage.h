@@ -23,6 +23,7 @@ class QScrollArea;
 class QToolButton;
 class QGridLayout;
 class QStackedLayout;
+class QStackedWidget;
 class MaskCanvas;
 class CropCanvas;
 class CompareWidget;
@@ -42,6 +43,7 @@ public:
 
     // P15：由首页/图库灯箱跳转而来——按 path 定位并载入照片（零云端）。
     void openPhoto(const QString& path);
+    void qaShootA(const QString& png);
 
     // 几何变换纯函数（P4-1；供 UI 与冒烟直测）：
     // rot ∈ 0..3（顺时针 90° 步进）→ 拉直 angleDeg（-10..10，先于旋转）→ 翻转 → 居中裁剪 aspect(w/h，0=不裁)。
@@ -67,6 +69,7 @@ private slots:
     // P16.3 右侧预设画廊（自美图迁移）
     void onCardClicked(int i);
     void refreshGallery();
+    void setMode(int m);
 
     // P4-1 几何
     void onGeoRotate(bool left);
@@ -173,4 +176,11 @@ private:
     QVector<QToolButton*> cards_;
     int           selCard_ = -1;
     QWidget*      galleryPanel_ = nullptr;
+
+    // P26 三栏工作室：左模式轨 + 右栈
+    QWidget*        toolrail_ = nullptr;
+    QStackedWidget* rightStack_ = nullptr;
+    QVector<QPushButton*> modeBtns_;
+    QString         railCss_;
+    QString         railOnCss_;
 };

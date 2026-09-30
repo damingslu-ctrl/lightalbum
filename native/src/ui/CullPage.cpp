@@ -20,6 +20,10 @@
 #include <QItemSelectionModel>
 #include <QRegularExpression>
 #include <QSet>
+#include <QHash>
+#include <QTimer>
+#include <QKeyEvent>
+#include <functional>
 #include <algorithm>
 #include <cstdio>
 #include <cmath>
@@ -121,6 +125,27 @@ int CullModel::rowOfThumb(const QString& thumbPath) const
     for (int i = 0; i < items_.size(); ++i)
         if (items_[i].item.thumbPath == thumbPath) return i;
     return -1;
+}
+
+CullItem CullModel::itemAt(int row) const
+{
+    return (row >= 0 && row < items_.size()) ? items_[row].item : CullItem();
+}
+
+// P25：对决胜者若为「被拒相似项」（不在候选网格）→ 追加成候选行，随总览/胶片条/雷达联动
+int CullModel::upsertItem(const CullItem& it, const QString& thumbsDir)
+{
+    const int exist = rowOfThumb(it.thumbPath);
+    if (exist >= 0) return exist;
+    Row r; r.item = it;
+    QPixmap pm(QDir(thumbsDir).filePath(it.thumbPath));
+    if (!pm.isNull())
+        r.pm = pm.scaled(220, 220, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    const int row = items_.size();
+    beginInsertRows(QModelIndex(), row, row);
+    items_.append(r);
+    endInsertRows();
+    return row;
 }
 
 // ---------------------------------------------------------------- CullProxy
@@ -275,6 +300,77 @@ void RadarWidget::paintEvent(QPaintEvent*)
     for (const QPointF& pt : data) p.drawEllipse(pt, 3, 3);
 }
 
+// ---------------------------------------------------------------- DuelPane（P25 对决面板）
+// 自绘：卡底 + 引擎倾向金框/金章 + 等比图 + 金色分条 + 分级分值 + 文件名/拒因
+class DuelPane : public QWidget {
+    Q_OBJECT
+public:
+    explicit DuelPane(QWidget* parent = nullptr) : QWidget(parent) { setMinimumSize(300, 280); }
+    void setItem(const CullItem& it, const QPixmap& pm) { it_ = it; pm_ = pm; update(); }
+    void setFavorite(bool f) { if (fav_ != f) { fav_ = f; update(); } }
+    void clear() { it_ = CullItem(); pm_ = QPixmap(); fav_ = false; update(); }
+
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        const QRect r = rect().adjusted(1, 1, -1, -1);
+        p.setPen(QPen(fav_ ? QColor(0xd9, 0xa9, 0x4e) : QColor(0x26, 0x31, 0x2a),
+                       fav_ ? 2.4 : 1));
+        p.setBrush(QColor(0x13, 0x1a, 0x15));
+        p.drawRoundedRect(r, 12, 12);
+
+        const QRect img = r.adjusted(10, 10, -10, -64);
+        if (!pm_.isNull()) {
+            const QPixmap sc = pm_.scaled(img.size(), Qt::KeepAspectRatio,
+                                          Qt::SmoothTransformation);
+            p.drawPixmap(img.x() + (img.width() - sc.width()) / 2,
+                         img.y() + (img.height() - sc.height()) / 2, sc);
+        } else {
+            p.setPen(QColor(0x5a, 0x6b, 0x60));
+            p.drawText(img, Qt::AlignCenter, QString::fromUtf8("无缩略图"));
+        }
+
+        if (fav_) {   // 引擎倾向：金底徽章（分高者）
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor(0xd9, 0xa9, 0x4e));
+            const QRectF b(r.x() + 10, r.y() + 10, 66, 22);
+            p.drawRoundedRect(b, 7, 7);
+            p.setPen(QColor(0x17, 0x13, 0x08));
+            QFont f = p.font(); f.setBold(true); f.setPointSizeF(10.5); p.setFont(f);
+            p.drawText(b, Qt::AlignCenter, QString::fromUtf8("引擎倾向"));
+        }
+
+        const double sc = qBound(0.0, it_.total, 100.0) / 100.0;
+        QRect bar(r.x() + 12, r.bottom() - 34, r.width() - 24, 4);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(0x26, 0x31, 0x2a));
+        p.drawRoundedRect(bar, 2, 2);
+        if (sc > 0) {
+            QRect fill = bar; fill.setWidth(int(bar.width() * sc));
+            p.setBrush(QColor(0xd9, 0xa9, 0x4e));
+            p.drawRoundedRect(fill, 2, 2);
+        }
+
+        p.setPen(QColor(0xf4, 0xf7, 0xf4));
+        QFont f = p.font(); f.setBold(true); f.setPointSizeF(13); p.setFont(f);
+        p.drawText(QRect(r.x() + 12, r.bottom() - 28, r.width() - 24, 20), Qt::AlignLeft,
+                   QStringLiteral("%1  %2").arg(it_.grade).arg(it_.total, 0, 'f', 1));
+        p.setPen(QColor(0x8d, 0xa3, 0x96));
+        f.setBold(false); f.setPointSizeF(9.5); p.setFont(f);
+        QString sub = QFileInfo(it_.thumbPath).fileName();
+        if (!it_.rejectReason.isEmpty())
+            sub += QString::fromUtf8("  ·  ") + it_.rejectReason;
+        p.drawText(QRect(r.x() + 12, r.bottom() - 12, r.width() - 24, 14),
+                   Qt::AlignLeft, sub);
+    }
+
+private:
+    CullItem it_;
+    QPixmap  pm_;
+    bool     fav_ = false;
+};
+
 // ---------------------------------------------------------------- CullPage
 CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidget* parent)
     : QWidget(parent), photos_(photos), thumbsDir_(thumbsDir)
@@ -349,6 +445,17 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     progress_->setStyleSheet(QStringLiteral("color:#8da396;"));
 
     bl->addWidget(runBtn_);
+
+    // P25 对决模式入口（分析完成后可点；空结果禁用）
+    duelBtn_ = new QPushButton(QString::fromUtf8("开始对决"), bar);
+    duelBtn_->setStyleSheet(QStringLiteral(
+        "QPushButton{background:#131a15;border:1px solid #d9a94e;border-radius:8px;"
+        "padding:6px 16px;color:#d9a94e;}"
+        "QPushButton:disabled{border-color:#26312a;color:#5a6b60;}"));
+    duelBtn_->setEnabled(false);
+    connect(duelBtn_, &QPushButton::clicked, this, [this]{ duelEnterMode(); });
+    bl->addWidget(duelBtn_);
+
     bl->addWidget(stepWrap);
     bl->addWidget(markCombo_);
     bl->addWidget(progress_);
@@ -453,6 +560,70 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     gridStack_->setCurrentIndex(0);
     root->addWidget(gridStack_, 1);
 
+    // ---- P25 B「对决模式」：同组两两 PK——引擎按分预选，人只做仲裁 ----
+    auto* duelFrame = new QFrame(this);        // QWidget 不画 QSS 底，必须 QFrame
+    duelFrame->setFrameShape(QFrame::StyledPanel);
+    duelFrame->setStyleSheet(QStringLiteral(
+        "QFrame{background:#0c100d;border:1px solid #26312a;border-radius:12px;}"));
+    duel_ = duelFrame;
+    duel_->setFocusPolicy(Qt::StrongFocus);
+    auto* dv = new QVBoxLayout(duel_);
+    dv->setContentsMargins(12, 10, 12, 10);
+    dv->setSpacing(10);
+    auto* hrow = new QHBoxLayout;
+    hrow->setSpacing(10);
+    duelHead_ = new QLabel(duel_);
+    duelHead_->setStyleSheet(QStringLiteral("color:#8da396;font-size:12px;border:none;background:transparent;"));
+    duelBackBtn_ = new QPushButton(QString::fromUtf8("返回总览 Esc"), duel_);
+    duelBackBtn_->setStyleSheet(QStringLiteral(
+        "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:8px;"
+        "padding:5px 14px;color:#8da396;}"
+        "QPushButton:hover{color:#f4f7f4;border-color:#4fc08a;}"));
+    hrow->addWidget(duelHead_, 1);
+    hrow->addWidget(duelBackBtn_);
+    dv->addLayout(hrow);
+
+    auto* mid = new QHBoxLayout;
+    mid->setSpacing(14);
+    paneL_ = new DuelPane(duel_);
+    paneR_ = new DuelPane(duel_);
+    auto* pk = new QLabel(QString::fromUtf8("PK"), duel_);
+    pk->setAlignment(Qt::AlignCenter);
+    pk->setStyleSheet(QStringLiteral(
+        "QLabel{color:#d9a94e;border:1.5px solid rgba(217,169,78,.45);border-radius:22px;"
+        "font-family:Georgia,serif;font-size:14px;font-weight:bold;"
+        "min-width:40px;min-height:40px;background:transparent;}"));
+    mid->addWidget(paneL_, 1);
+    mid->addWidget(pk, 0, Qt::AlignVCenter);
+    mid->addWidget(paneR_, 1);
+    dv->addLayout(mid, 1);
+
+    auto* brow = new QHBoxLayout;
+    brow->setSpacing(10);
+    auto mkDuelBtn = [this](const QString& t, std::function<void()> fn) {
+        auto* b = new QPushButton(t, duel_);
+        b->setStyleSheet(QStringLiteral(
+            "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:8px;"
+            "padding:6px 16px;color:#8da396;}"
+            "QPushButton:hover{color:#f4f7f4;border-color:#4fc08a;}"));
+        connect(b, &QPushButton::clicked, this, fn);
+        return b;
+    };
+    brow->addWidget(mkDuelBtn(QString::fromUtf8("左留 ←"), [this]{ duelPick(0); }));
+    brow->addWidget(mkDuelBtn(QString::fromUtf8("双弃 ↓"), [this]{ duelBoth(QStringLiteral("skip")); }));
+    brow->addWidget(mkDuelBtn(QString::fromUtf8("双锁 S"), [this]{ duelBoth(QStringLiteral("lock")); }));
+    brow->addWidget(mkDuelBtn(QString::fromUtf8("右留 →"), [this]{ duelPick(1); }));
+    auto* hint = new QLabel(
+        QString::fromUtf8("引擎按分预选（金框）· 败者自动标「略过」· 幸存者留用"), duel_);
+    hint->setStyleSheet(QStringLiteral("color:#5a6b60;font-size:11px;border:none;background:transparent;"));
+    brow->addStretch(1);
+    brow->addWidget(hint);
+    dv->addLayout(brow);
+
+    gridStack_->addWidget(duel_);       // 2：对决舞台
+    duel_->installEventFilter(this);
+    connect(duelBackBtn_, &QPushButton::clicked, this, [this]{ duelExitMode(); });
+
     // 底部裁剪胶片条
     filmScroll_ = new QScrollArea(this);
     filmScroll_->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
@@ -500,7 +671,8 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
 
     // 自测钩子：LA_CULL_SMOKE / LA_UI_SHOT → 同步跑前 80 张并直接出结果
     const bool shot = !qEnvironmentVariableIsEmpty("LA_CULL_SMOKE")
-                   || !qEnvironmentVariableIsEmpty("LA_UI_SHOT");
+                   || !qEnvironmentVariableIsEmpty("LA_UI_SHOT")
+                   || !qEnvironmentVariableIsEmpty("LA_CULL_DUEL_QA");
     if (shot) autoRun(80);
 }
 
@@ -786,6 +958,17 @@ void CullPage::onFinished(const CullReport& rep)
 
     gridStack_->setCurrentIndex(model_->rowCount() > 0 ? 1 : 0);
 
+    // P25：对决素材组队（每次分析后刷新）
+    lastReport_ = rep;
+    buildDuelSession();
+
+    if (!qEnvironmentVariableIsEmpty("LA_CULL_DUEL_QA")) {
+        const QString png = qEnvironmentVariable("LA_CULL_DUEL_QA");
+        // 构造期窗口未 show：布局未激活，grab()/render() 都拿不到子件 → 延迟到事件循环+show 后再抓
+        QTimer::singleShot(600, this, [this, png] { runDuelQa(png); });
+        return;
+    }
+
     if (!qEnvironmentVariableIsEmpty("LA_CULL_SMOKE")) {
         // 自测断言：标记 → 锁定区 / 胶片条 / 雷达 联动
         int markLock = 0, markLike = 0, markSkip = 0, filmBtns = 0;
@@ -820,3 +1003,192 @@ void CullPage::onFinished(const CullReport& rep)
             .arg(rep.candidateCount).arg(rep.rejectedCount).arg(rep.dupGroups.size()));
     }
 }
+
+// ---------------- P25 对决模式 ----------------
+
+// 从报告去重组重建仲裁队：保留者（候选）+ 被拒相似项（dupItems）。
+// 引擎已按分自动保留每组一张；对决让人重新裁决谁配得上留用。
+void CullPage::buildDuelSession()
+{
+    duelGroups_.clear();
+    duelIdx_ = 0;
+    QHash<QString, CullItem> extra;
+    for (const CullItem& it : lastReport_.dupItems) extra.insert(it.thumbPath, it);
+    for (const CullDupGroup& dg : lastReport_.dupGroups) {
+        CullItem kept;
+        bool have = false;
+        for (const CullItem& c : lastReport_.topItems) {
+            if (c.thumbPath == dg.keptThumb) { kept = c; have = true; break; }
+        }
+        if (!have) {
+            if (extra.contains(dg.keptThumb)) kept = extra.value(dg.keptThumb);
+            else continue;                    // 组员缺失（理论上不发生）→ 跳过该组
+        }
+        DuelGroup g;
+        g.members.append(kept);
+        for (const QString& t : dg.similar)
+            if (extra.contains(t)) g.members.append(extra.value(t));
+        if (g.members.size() < 2) continue;   // 单员不成对决
+        for (int i = 0; i < g.members.size(); ++i) g.alive.append(i);
+        duelGroups_.append(g);
+    }
+    duelBtn_->setEnabled(!duelGroups_.isEmpty());
+    if (!duelGroups_.isEmpty())
+        duelBtn_->setText(QString::fromUtf8("开始对决（%1 组）").arg(duelGroups_.size()));
+}
+
+void CullPage::duelEnterMode()
+{
+    if (duelGroups_.isEmpty()) return;
+    gridStack_->setCurrentIndex(2);
+    duel_->setFocus();
+    duelRender();
+}
+
+void CullPage::duelExitMode()
+{
+    gridStack_->setCurrentIndex(model_->rowCount() > 0 ? 1 : 0);
+}
+
+// 对决标记落库：被拒相似项不在模型 → 先升格入模再标记（总览/胶片条/雷达全联动）
+void CullPage::markDuelItem(const CullItem& it, const QString& mark)
+{
+    int row = model_->rowOfThumb(it.thumbPath);
+    if (row < 0) row = model_->upsertItem(it, thumbsDir_);
+    if (row >= 0) model_->setMark(row, mark);
+}
+
+void CullPage::duelPick(int side)
+{
+    if (duelIdx_ >= duelGroups_.size()) return;
+    DuelGroup& g = duelGroups_[duelIdx_];
+    if (g.alive.size() < 2) return;
+    const int loserVal = g.alive[1 - side];
+    markDuelItem(g.members[loserVal], QStringLiteral("skip"));
+    g.alive.removeOne(loserVal);
+    duelAfterDecision();
+}
+
+void CullPage::duelBoth(const QString& mark)
+{
+    if (duelIdx_ >= duelGroups_.size()) return;
+    DuelGroup& g = duelGroups_[duelIdx_];
+    if (g.alive.size() < 2) return;
+    markDuelItem(g.members[g.alive[0]], mark);
+    markDuelItem(g.members[g.alive[1]], mark);
+    g.alive.removeFirst();
+    g.alive.removeFirst();
+    duelAfterDecision();
+}
+
+void CullPage::duelAfterDecision()
+{
+    rebuildLockArea();
+    rebuildFilmstrip();
+    DuelGroup& g = duelGroups_[duelIdx_];
+    if (g.alive.size() == 1) {                // 组内唯一幸存者 → 留用，进下一组
+        markDuelItem(g.members[g.alive.first()], QStringLiteral("like"));
+        updateRadar();
+        ++duelIdx_;
+    } else if (g.alive.isEmpty()) {           // 全员出局 → 下一组
+        updateRadar();
+        ++duelIdx_;
+    }
+    duelRender();
+}
+
+void CullPage::duelRender()
+{
+    if (duelIdx_ >= duelGroups_.size()) {
+        paneL_->clear();
+        paneR_->clear();
+        duelHead_->setText(QString::fromUtf8("对决完成 · 共 %1 组 · 点「返回总览」查看战果")
+                           .arg(duelGroups_.size()));
+        return;
+    }
+    const DuelGroup& g = duelGroups_[duelIdx_];
+    const CullItem& L = g.members[g.alive[0]];
+    const CullItem& R = g.members[g.alive[1]];
+    duelHead_->setText(QString::fromUtf8("第 %1 / %2 组 · 本组已决 %3 · 在场 %4")
+        .arg(duelIdx_ + 1).arg(duelGroups_.size())
+        .arg(g.members.size() - g.alive.size()).arg(g.alive.size()));
+    auto setPane = [this](DuelPane* pane, const CullItem& it) {
+        QPixmap pm(QDir(thumbsDir_).filePath(it.thumbPath));
+        if (!pm.isNull())
+            pm = pm.scaled(480, 340, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        pane->setItem(it, pm);
+    };
+    setPane(paneL_, L);
+    setPane(paneR_, R);
+    paneL_->setFavorite(L.total > R.total);   // 引擎倾向：分高者金框
+    paneR_->setFavorite(R.total > L.total);
+}
+
+// P25 对决键盘流：← 左留 / → 右留 / ↓ 双弃 / S 双锁 / Esc 返回总览
+bool CullPage::eventFilter(QObject* obj, QEvent* ev)
+{
+    if (obj == duel_ && ev->type() == QEvent::KeyPress) {
+        auto* ke = static_cast<QKeyEvent*>(ev);
+        switch (ke->key()) {
+            case Qt::Key_Left:  duelPick(0); return true;
+            case Qt::Key_Right: duelPick(1); return true;
+            case Qt::Key_Down:  duelBoth(QStringLiteral("skip")); return true;
+            case Qt::Key_S:     duelBoth(QStringLiteral("lock")); return true;
+            case Qt::Key_Escape: duelExitMode(); return true;
+            default: break;
+        }
+    }
+    return QWidget::eventFilter(obj, ev);
+}
+
+// P25 QA：离屏自测——组队（不足则用前 3 候选合成）→ 左留仲裁 → 标记落库 + 金像素实测
+void CullPage::runDuelQa(const QString& png)
+{
+    if (duelGroups_.isEmpty() && model_->rowCount() >= 3) {
+        DuelGroup g;
+        for (int i = 0; i < 3 && i < model_->rowCount(); ++i)
+            g.members.append(model_->itemAt(i));
+        for (int i = 0; i < g.members.size(); ++i) g.alive.append(i);
+        duelGroups_.append(g);
+    }
+    const int groups = duelGroups_.size();
+    const int members0 = groups > 0 ? duelGroups_[0].members.size() : 0;
+    duelEnterMode();
+    const int skipBefore = model_->markedThumbs(QStringLiteral("skip")).size();
+    duelPick(0);                              // 左留 → 右侧标 skip
+    const int skipAfter = model_->markedThumbs(QStringLiteral("skip")).size();
+    const bool markOk = (skipAfter == skipBefore + 1);
+    duel_->resize(920, 580);
+    if (QLayout* ly = duel_->layout())
+        ly->activate();                        // 双保险：抓图前强推一次布局
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 150);
+    QImage img(920, 580, QImage::Format_RGB32);
+    img.fill(Qt::red);                        // QA 诊断底：若图发红说明 render 什么都没画
+    {
+        QPainter rp(&img);
+        duel_->render(&rp, QPoint(0, 0), QRegion(duel_->rect()),
+                      QWidget::DrawWindowBackground | QWidget::DrawChildren);
+        rp.end();
+    }
+    const bool saveOk = img.save(png);
+    std::fprintf(stderr, "  duelSize=920x580 saveOk=%d\n", int(saveOk));
+    std::fflush(stderr);
+    long gold = 0;                            // 金 #d9a94e：引擎倾向金框/徽章/分条
+    for (int y = 0; y < img.height(); y += 2) {
+        const QRgb* row = reinterpret_cast<const QRgb*>(img.constScanLine(y));
+        for (int x = 0; x < img.width(); x += 2) {
+            const QRgb px = row[x];
+            if (qRed(px) > 170 && qGreen(px) > 120 && qGreen(px) < 205 && qBlue(px) < 130)
+                ++gold;
+        }
+    }
+    img.save(png);
+    std::fprintf(stderr,
+        "LA_CULL_DUEL_QA groups=%d members0=%d skipDelta=%d markOk=%d gold=%ld png=%s\n",
+        groups, members0, skipAfter - skipBefore, int(markOk), gold, qPrintable(png));
+    std::fflush(stderr);
+    QApplication::quit();
+}
+
+#include "CullPage.moc"
+
