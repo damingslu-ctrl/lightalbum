@@ -918,6 +918,13 @@ int MainWindow::shootPages(const QString& dir)
     for (int i = 0; i < nav_->count(); ++i) {
         nav_->setCurrentRow(i);
         QCoreApplication::processEvents(QEventLoop::AllEvents, 120);
+        // P27：图库页缩略图为后台线程池异步加载（ThumbCache::LoadTask），
+        // 120ms 不足以让可见缩略图落盘并重绘；专用长等待让其到位后再 grab
+        //（否则 offscreen 直接抓到 96.7% 暗底，误判为黑边问题）。
+        if (QString::fromUtf8(kNav[i].label) == QStringLiteral("图库")) {
+            for (int w = 0; w < 9; ++w)
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 400);
+        }
         const QPixmap pm = grab();
         const QString path = QDir(dir).filePath(
             QStringLiteral("page-%1-%2.png").arg(i, 2, 10, QLatin1Char('0'))

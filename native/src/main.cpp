@@ -22,6 +22,7 @@
 #include "ui/MainWindow.h"
 #include "ui/MapView.h"
 #include "ui/GalleryPage.h"
+#include "ui/GalleryCardPainter.h"
 #include "ui/RetouchPage.h"
 #include "ui/HomePage.h"
 #include "ui/DarkPalette.h"
@@ -480,6 +481,7 @@ int main(int argc, char *argv[])
         && !qEnvironmentVariableIsSet("LA_MAP_A_QA")
         && !qEnvironmentVariableIsSet("LA_GALLERY_E_QA")
         && !qEnvironmentVariableIsSet("LA_CULL_DUEL_QA")
+        && !qEnvironmentVariableIsSet("LA_GALLERY_FILL_QA")
         ;
 
     QRect avail = QApplication::primaryScreen()->availableGeometry();
@@ -593,6 +595,70 @@ int main(int argc, char *argv[])
         std::fprintf(stderr, "LA_GALLERY_E_QA_DONE\n");
         std::fflush(stderr);
         return 0;
+    }
+
+    // P27 图库铺满验证：LA_GALLERY_FILL_QA=<png> 时取真库首张存在的照片，
+    // 直接用 Lumen::paintGalleryCard 渲染 feature 大图 + single 小图两种卡片，
+    // 验证真实照片铺满卡片（无黑边 / 无 letterbox）——绕过异步 ThumbCache 直接测绘制逻辑
+    //（颜色校验铁律：必须实测不许猜）。
+    if (!qEnvironmentVariableIsEmpty("LA_GALLERY_FILL_QA")) {
+        const QString p = qEnvironmentVariable("LA_GALLERY_FILL_QA");
+        QDir().mkpath(QFileInfo(p).absolutePath());
+        // 取真库首张磁盘上存在的照片（绕过异步 ThumbCache，直接验证绘制逻辑）
+        QString photoPath;
+        for (const Photo& ph : lib.photos()) {
+            if (QFile::exists(ph.path)) { photoPath = ph.path; break; }
+        }
+        QPixmap pm;
+        if (!photoPath.isEmpty()) pm.load(photoPath);
+        const bool loaded = !pm.isNull();
+        auto renderCard = [&](int W, int H, bool feature) -> QImage {
+            QImage img(W, H, QImage::Format_RGB32);
+            img.fill(QColor(0x13, 0x1a, 0x15));
+            QPainter painter(&img);
+            Lumen::paintGalleryCard(&painter, QRectF(0, 0, W, H),
+                QStringLiteral("测试作品标题"),
+                QStringLiteral("2024-05-01 · 风光 · 云南"),
+                feature ? QStringLiteral("landscape") : QStringLiteral("portrait"),
+                false, 4, pm, feature, false, false);
+            painter.end();
+            return img;
+        };
+        const QImage feat = renderCard(400, 400, true);
+        const QImage sing = renderCard(240, 240, false);
+        const QString dir = QFileInfo(p).absolutePath();
+        feat.save(p);   // 主交付：feature 大图铺满样张
+        sing.save(QDir(dir).filePath(QStringLiteral("gallery_fill_single.png")));
+        auto measure = [](const QImage& img, long& cardBg, long& photo, long& litext) {
+            const int W = img.width(), H = img.height();
+            cardBg = photo = litext = 0;
+            for (int y = 0; y < H; ++y) {
+                const QRgb* row = reinterpret_cast<const QRgb*>(img.constScanLine(y));
+                for (int x = 0; x < W; ++x) {
+                    const QRgb v = row[x];
+                    const int r = qRed(v), g = qGreen(v), b = qBlue(v);
+                    if (qAbs(r - 19) < 12 && qAbs(g - 26) < 12 && qAbs(b - 21) < 12) ++cardBg;
+                    else if (r > 200 && g > 200 && b > 190) ++litext;
+                    else ++photo;
+                }
+            }
+        };
+        long fcb, fph, flt, scb, sph, slt;
+        measure(feat, fcb, fph, flt);
+        measure(sing, scb, sph, slt);
+        const long fAll = feat.width() * feat.height();
+        const long sAll = sing.width() * sing.height();
+        const double fCbFrac = double(fcb) / fAll, sCbFrac = double(scb) / sAll;
+        const double fPhFrac = double(fph) / fAll, sPhFrac = double(sph) / sAll;
+        // 关键断言：卡片底（黑边 / letterbox）占比极小 → 真实照片铺满、无黑边。
+        // （photo 占比阈值不可靠：亮调照片天空/高光会被误计入 litext，故仅以 cardBg 占比判定）
+        const bool ok = loaded && fCbFrac < 0.02 && sCbFrac < 0.02;
+        std::fprintf(stderr,
+            "LA_GALLERY_FILL_QA loaded=%d photo=%s featCbFrac=%.4f singCbFrac=%.4f "
+            "featPhFrac=%.4f singPhFrac=%.4f featLitext=%ld ok=%d\n",
+            int(loaded), qPrintable(photoPath), fCbFrac, sCbFrac, fPhFrac, sPhFrac, flt, int(ok));
+        std::fflush(stderr);
+        return ok ? 0 : 5;
     }
 
     // P26 修图页 A 经典工作室 像素/几何自测：LA_RETOUCH_A_QA=<png> 时合成样张驱动独立 RetouchPage，

@@ -39,7 +39,7 @@ protected:
         const bool    miss   = model_->data(ix, GalleryModel::MissingRole).toBool();
         const int     rating = model_->data(ix, GalleryModel::RatingRole).toInt();
         const QPixmap pm = model_->pixmapAt(row_);
-        Lumen::paintGalleryCard(&p, QRectF(rect()).adjusted(4, 4, -4, -4),
+        Lumen::paintGalleryCard(&p, QRectF(rect()),
                                 title, sub, orient, miss, rating, pm, feature_, hov_, sel_);
     }
     void mousePressEvent(QMouseEvent* e) override {
@@ -65,8 +65,8 @@ EditorialView::EditorialView(GalleryModel* model, QWidget* parent)
     setStyleSheet(Lumen::scrollbar() + QStringLiteral("QScrollArea{background:transparent;}"));
     content_ = new QWidget(this);
     grid_ = new QGridLayout(content_);
-    grid_->setContentsMargins(16, 12, 16, 16);
-    grid_->setSpacing(12);
+    grid_->setContentsMargins(10, 10, 10, 10);
+    grid_->setSpacing(6);
     setWidget(content_);
 
     connect(model_, &QAbstractItemModel::modelReset, this, &EditorialView::rebuild);
