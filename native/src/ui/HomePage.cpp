@@ -24,6 +24,7 @@
 #include <QResizeEvent>
 #include <QFileInfo>
 #include <QDir>
+#include <QImageReader>
 #include <algorithm>
 #include <cstdio>
 
@@ -61,6 +62,48 @@ QPixmap coverScaled(const QString& path, const QSize& sz)
     QPainter p(&out);
     p.drawPixmap((sz.width() - scaled.width()) / 2,
                  (sz.height() - scaled.height()) / 2, scaled);
+    return out;
+}
+
+// 首页主区（Stage）书高解码：优先「原图」而非缩略图——全出血大图用缩略图会糊。
+// QImageReader 按目标尺寸解码（JPEG 由解码器直接降采样，省内存省时间），
+// EXIF 自动转正；RAW 本地不可解 / 原图缺失损坏 → 诚实回退缩略图。
+QPixmap heroScaled(const Photo* p, const QString& thumbsDir, const QSize& sz)
+{
+    if (!p || sz.isEmpty()) return QPixmap();
+    const QString thumb = QDir(thumbsDir).filePath(p->thumbFile);
+    QString src = p->path;
+    static const QStringList kRaw = {
+        QStringLiteral("raw"), QStringLiteral("cr2"), QStringLiteral("cr3"),
+        QStringLiteral("nef"), QStringLiteral("arw"), QStringLiteral("dng"),
+        QStringLiteral("raf"), QStringLiteral("orf"), QStringLiteral("rw2"),
+        QStringLiteral("pef"), QStringLiteral("sr2"), QStringLiteral("x3f"),
+        QStringLiteral("3fr"), QStringLiteral("mef"), QStringLiteral("mrw"),
+        QStringLiteral("nrw")};
+    if (kRaw.contains(QFileInfo(src).suffix(), Qt::CaseInsensitive)) src = thumb;
+
+    QImageReader r(src);
+    r.setAutoTransform(true);                       // EXIF 方向
+    const QSize full = r.size();                    // 只读头信息
+    if (full.isValid()) {
+        const QSize dst = full.scaled(sz, Qt::KeepAspectRatioByExpanding);
+        if (dst.width() < full.width() && dst.height() < full.height())
+            r.setScaledSize(dst);                   // 仅降采样时启用（避免上采样请求异常）
+    }
+    QImage img = r.read();
+    if (img.isNull() && src != thumb) {             // 原图缺失/损坏 → 缩略图兜底
+        r.setFileName(thumb);
+        r.setScaledSize(QSize());
+        img = r.read();
+    }
+    if (img.isNull()) return QPixmap();
+    QPixmap scaled = QPixmap::fromImage(
+        img.scaled(sz, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation));
+    QPixmap out(sz);
+    out.fill(QColor(0x06, 0x08, 0x06));
+    QPainter pnt(&out);
+    pnt.drawPixmap((sz.width() - scaled.width()) / 2,
+                   (sz.height() - scaled.height()) / 2, scaled);
     return out;
 }
 
@@ -172,6 +215,11 @@ public:
         tag_->setStyleSheet(QStringLiteral(
             "QLabel{background:rgba(6,8,6,120);border-radius:8px;padding:2px 8px;"
             "color:rgba(244,247,244,215);font-size:10px;letter-spacing:3px;}"));
+        // 原图书解码比缩略图重：resize 连续触发时去抖，拖窗不逐帧解码
+        rerenderTimer_ = new QTimer(this);
+        rerenderTimer_->setSingleShot(true);
+        rerenderTimer_->setInterval(120);
+        connect(rerenderTimer_, &QTimer::timeout, this, [this] { rerenderCurrent(); });
     }
 
     void setPhotos(const QVector<const Photo*>& photos, const QString& thumbsDir)
@@ -201,7 +249,8 @@ protected:
     {
         QWidget::resizeEvent(e);
         relayout();
-        rerenderCurrent();
+        if (rerenderTimer_) rerenderTimer_->start();   // 原图解码重 → 去抖
+        else rerenderCurrent();                        // 防御：定时器未建时同步渲
     }
     void showEvent(QShowEvent* e) override
     {
@@ -273,8 +322,7 @@ private:
         QLabel* cur = (shown_ == 0) ? imgA_ : imgB_;
         // 不以 isVisible() 为门槛：首次 resizeEvent 发生在 show 之前，
         // 此时子标签不可见但正需要全尺寸重渲（小图挂到 show 后的根因）。
-        cur->setPixmap(coverScaled(
-            QDir(thumbsDir_).filePath(photos_.at(idx_)->thumbFile), size()));
+        cur->setPixmap(heroScaled(photos_.at(idx_), thumbsDir_, size()));
         cur->setGeometry(imgRect());
     }
     void showIndex(int idx, int dir, bool animate)
@@ -288,8 +336,7 @@ private:
         QLabel* outgoing = (shown_ == 0) ? imgA_ : imgB_;
         QGraphicsOpacityEffect* ie =
             qobject_cast<QGraphicsOpacityEffect*>(incoming->graphicsEffect());
-        incoming->setPixmap(coverScaled(
-            QDir(thumbsDir_).filePath(photos_.at(idx)->thumbFile), size()));
+        incoming->setPixmap(heroScaled(photos_.at(idx), thumbsDir_, size()));
         incoming->setGeometry(imgRect());
         incoming->show();
         incoming->raise();
@@ -331,6 +378,7 @@ private:
     int idx_ = 0;
     int shown_ = 0;      // 双缓冲：0 → 用 A 显 / B 入
     bool anim_ = true;
+    QTimer* rerenderTimer_ = nullptr;   // resize 去抖（原图解码重于缩略图）
 };
 
 // ============================================================================
