@@ -300,8 +300,11 @@ LogPage::LogPage(const QVector<Photo>* photos, QWidget* parent)
 
     auto makeCard = [&](const QString& t, const QString& hint, QWidget* chart, QWidget* legend = nullptr) {
         auto* card = new QWidget(root);
+        // ID 选择器只命中卡片自身；QWidget 类型选择器会级联到全部子控件，
+        // 令标题/提示/图表各自长出一个底+描边框——正是「框中框」根因。
+        card->setObjectName(QStringLiteral("logChartCard"));
         card->setStyleSheet(QStringLiteral(
-            "QWidget{background:#0f1512;border:none;border-radius:8px;}"));
+            "#logChartCard{background:#0f1512;border:none;border-radius:8px;}"));
         auto* cl = new QVBoxLayout(card);
         cl->setContentsMargins(12, 10, 12, 10);
         cl->setSpacing(6);

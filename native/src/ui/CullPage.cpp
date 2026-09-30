@@ -481,7 +481,8 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     auto* sbl = new QHBoxLayout(selBar_);
     sbl->setContentsMargins(12, 8, 12, 8);
     sbl->setSpacing(10);
-    selBar_->setStyleSheet(QStringLiteral("QWidget{background:#0e1410;border:none;"
+    selBar_->setObjectName(QStringLiteral("cullSelBar"));
+    selBar_->setStyleSheet(QStringLiteral("#cullSelBar{background:#0e1410;border:none;"
         "border-radius:10px;}"));
     selBar_->setVisible(false);
     selThumb_ = new QLabel(selBar_);
@@ -512,7 +513,8 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     // 锁定区（顶部）
     lockFrame_ = new QFrame(this);
     lockFrame_->setFrameShape(QFrame::StyledPanel);
-    lockFrame_->setStyleSheet(QStringLiteral("QFrame{background:#0e1410;border:none;border-radius:12px;}"));
+    lockFrame_->setObjectName(QStringLiteral("cullLockFrame"));
+    lockFrame_->setStyleSheet(QStringLiteral("#cullLockFrame{background:#0e1410;border:none;border-radius:12px;}"));
     auto* ll = new QVBoxLayout(lockFrame_);
     ll->setContentsMargins(12, 10, 12, 10); ll->setSpacing(8);
     lockTitle_ = new QLabel(QString::fromUtf8("锁定区"), lockFrame_);
@@ -563,8 +565,9 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     // ---- P25 B「对决模式」：同组两两 PK——引擎按分预选，人只做仲裁 ----
     auto* duelFrame = new QFrame(this);        // QWidget 不画 QSS 底，必须 QFrame
     duelFrame->setFrameShape(QFrame::StyledPanel);
+    duelFrame->setObjectName(QStringLiteral("cullDuelFrame"));
     duelFrame->setStyleSheet(QStringLiteral(
-        "QFrame{background:#0c100d;border:none;border-radius:12px;}"));
+        "#cullDuelFrame{background:#0c100d;border:none;border-radius:12px;}"));
     duel_ = duelFrame;
     duel_->setFocusPolicy(Qt::StrongFocus);
     auto* dv = new QVBoxLayout(duel_);
