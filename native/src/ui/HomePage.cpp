@@ -25,6 +25,9 @@
 #include <QFileInfo>
 #include <QDir>
 #include <QImageReader>
+#include <QThreadPool>
+#include <QHash>
+#include <QSet>
 #include <algorithm>
 #include <cstdio>
 
@@ -65,14 +68,17 @@ QPixmap coverScaled(const QString& path, const QSize& sz)
     return out;
 }
 
-// 首页主区（Stage）书高解码：优先「原图」而非缩略图——全出血大图用缩略图会糊。
-// QImageReader 按目标尺寸解码（JPEG 由解码器直接降采样，省内存省时间），
-// EXIF 自动转正；RAW 本地不可解 / 原图缺失损坏 → 诚实回退缩略图。
-QPixmap heroScaled(const Photo* p, const QString& thumbsDir, const QSize& sz)
+// 首页主区（Stage）原图解码（线程安全核心）：优先「原图」而非缩略图——全出血
+// 大图用缩略图会糊。QImageReader 按目标尺寸解码（JPEG 由解码器直接降采样，省
+// 内存省时间），EXIF 自动转正；RAW 本地不可解 / 原图缺失损坏 → 诚实回退缩略图。
+// 全程只用 QImage 与参数字符串（QImageReader/QImage 可重入），可在后台线程执行；
+// QPixmap 转换与上屏留在 GUI 线程。
+QImage heroImage(const QString& photoPath, const QString& thumbFile,
+                 const QString& thumbsDir, const QSize& sz)
 {
-    if (!p || sz.isEmpty()) return QPixmap();
-    const QString thumb = QDir(thumbsDir).filePath(p->thumbFile);
-    QString src = p->path;
+    if (sz.isEmpty()) return QImage();
+    const QString thumb = QDir(thumbsDir).filePath(thumbFile);
+    QString src = photoPath;
     static const QStringList kRaw = {
         QStringLiteral("raw"), QStringLiteral("cr2"), QStringLiteral("cr3"),
         QStringLiteral("nef"), QStringLiteral("arw"), QStringLiteral("dng"),
@@ -96,15 +102,23 @@ QPixmap heroScaled(const Photo* p, const QString& thumbsDir, const QSize& sz)
         r.setScaledSize(QSize());
         img = r.read();
     }
-    if (img.isNull()) return QPixmap();
-    QPixmap scaled = QPixmap::fromImage(
-        img.scaled(sz, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation));
-    QPixmap out(sz);
+    if (img.isNull()) return QImage();
+    QImage scaled = img.scaled(sz, Qt::KeepAspectRatioByExpanding,
+                               Qt::SmoothTransformation);
+    QImage out(sz, QImage::Format_ARGB32_Premultiplied);
     out.fill(QColor(0x06, 0x08, 0x06));
     QPainter pnt(&out);
-    pnt.drawPixmap((sz.width() - scaled.width()) / 2,
-                   (sz.height() - scaled.height()) / 2, scaled);
+    pnt.drawImage((sz.width() - scaled.width()) / 2,
+                  (sz.height() - scaled.height()) / 2, scaled);
+    pnt.end();
     return out;
+}
+
+// GUI 线程同步路径（首屏 / 缓存未命中兜底）
+QPixmap heroScaled(const Photo* p, const QString& thumbsDir, const QSize& sz)
+{
+    if (!p) return QPixmap();
+    return QPixmap::fromImage(heroImage(p->path, p->thumbFile, thumbsDir, sz));
 }
 
 // 细箭头（左右切图 / 章节翻页共用气质）
@@ -226,6 +240,7 @@ public:
     {
         photos_ = photos;
         thumbsDir_ = thumbsDir;
+        imgCache_.clear(); pending_.clear();        // 换章：旧缓存/在途解码全失效
         idx_ = pickStartIndex();
         shown_ = 0;
         imgA_->hide(); imgB_->hide();
@@ -249,6 +264,7 @@ protected:
     {
         QWidget::resizeEvent(e);
         relayout();
+        imgCache_.clear(); pending_.clear();        // 旧尺寸缓存全失效（在途结果按时比对丢弃）
         if (rerenderTimer_) rerenderTimer_->start();   // 原图解码重 → 去抖
         else rerenderCurrent();                        // 防御：定时器未建时同步渲
     }
@@ -266,6 +282,49 @@ protected:
         QWidget::mousePressEvent(e);
     }
 private:
+    // —— 后台预载（消除切图卡顿）：渲染当前图后，把左右邻图丢进线程池解码，
+    //    结果经队列事件回 GUI 线程入缓存；下次切图直接命中，不再同步解码。
+    void requestPixmap(const Photo* p)
+    {
+        if (!p) return;
+        const QString key = p->path;
+        if (imgCache_.contains(key) || pending_.contains(key)) return;
+        pending_.insert(key);
+        // 只把字符串拷进 worker，绝不跨线程读 Photo*（库快照生命周期由 GUI 侧保证）
+        const QString path = p->path, tf = p->thumbFile, td = thumbsDir_;
+        const QSize sz = size();
+        QThreadPool::globalInstance()->start([this, key, path, tf, td, sz] {
+            const QImage img = heroImage(path, tf, td, sz);
+            QMetaObject::invokeMethod(this, [this, key, img, sz] {
+                pending_.remove(key);
+                if (img.isNull() || sz != size()) return;   // 过期结果（resize 后）丢弃
+                imgCache_.insert(key, img);
+                trimCache();
+            }, Qt::QueuedConnection);
+        });
+    }
+    void trimCache()   // 只保当前图 + 邻图量级，防止缓存无限膨胀
+    {
+        if (imgCache_.size() <= 5) return;
+        const QString cur = current() ? current()->path : QString();
+        for (auto it = imgCache_.begin(); it != imgCache_.end();) {
+            if (it.key() != cur) it = imgCache_.erase(it); else ++it;
+        }
+    }
+    void preloadNeighbors()
+    {
+        if (photos_.isEmpty()) return;
+        const int n = photos_.size();
+        requestPixmap(photos_.at((idx_ + 1) % n));
+        if (n > 1) requestPixmap(photos_.at((idx_ - 1 + n) % n));
+    }
+    QPixmap cachedPixmap(const Photo* p)   // 命中缓存→立即上屏；未命中→同步解码兜底
+    {
+        const auto it = imgCache_.constFind(p->path);
+        if (it != imgCache_.constEnd()) return QPixmap::fromImage(it.value());
+        return heroScaled(p, thumbsDir_, size());
+    }
+
     // 开场起点：日期倒序的前 24 张候选里挑第一张「中央区亮像素占比 ≥ 30%」的
     // （均值会被暗房亮屏/小亮斑骗过，占比更接近观感）；全暗则诚实回退第 0 张。
     // 只挑起点，不改序列与计数（01/N 仍是真实章内序）。
@@ -322,7 +381,7 @@ private:
         QLabel* cur = (shown_ == 0) ? imgA_ : imgB_;
         // 不以 isVisible() 为门槛：首次 resizeEvent 发生在 show 之前，
         // 此时子标签不可见但正需要全尺寸重渲（小图挂到 show 后的根因）。
-        cur->setPixmap(heroScaled(photos_.at(idx_), thumbsDir_, size()));
+        cur->setPixmap(cachedPixmap(photos_.at(idx_)));
         cur->setGeometry(imgRect());
     }
     void showIndex(int idx, int dir, bool animate)
@@ -336,7 +395,7 @@ private:
         QLabel* outgoing = (shown_ == 0) ? imgA_ : imgB_;
         QGraphicsOpacityEffect* ie =
             qobject_cast<QGraphicsOpacityEffect*>(incoming->graphicsEffect());
-        incoming->setPixmap(heroScaled(photos_.at(idx), thumbsDir_, size()));
+        incoming->setPixmap(cachedPixmap(photos_.at(idx)));
         incoming->setGeometry(imgRect());
         incoming->show();
         incoming->raise();
@@ -348,6 +407,7 @@ private:
         counter_->setText(QStringLiteral("%1 / %2")
                               .arg(pad2(idx + 1), pad2(photos_.size())));
         emit indexChanged(idx, photos_.size());
+        preloadNeighbors();   // 渲染当前图后即预载左右邻图（后台线程）
         if (!animate) {
             if (ie) ie->setOpacity(1.0);
             outgoing->hide();
@@ -379,6 +439,8 @@ private:
     int shown_ = 0;      // 双缓冲：0 → 用 A 显 / B 入
     bool anim_ = true;
     QTimer* rerenderTimer_ = nullptr;   // resize 去抖（原图解码重于缩略图）
+    QHash<QString, QImage> imgCache_;   // path → 按当前尺寸渲好的图（后台预载产物）
+    QSet<QString> pending_;             // 正在后台解码的 path（防重复提交）
 };
 
 // ============================================================================
