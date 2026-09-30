@@ -52,7 +52,7 @@ static double parseShutterSec(const QString& s)
 BarChart::BarChart(QWidget* parent) : QWidget(parent)
 {
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    setMinimumHeight(168);
+    setMinimumHeight(150);
 }
 
 void BarChart::setData(const QStringList& labels, const QList<int>& values, const QColor& color)
@@ -105,7 +105,7 @@ void BarChart::paintEvent(QPaintEvent*)
 PieChart::PieChart(QWidget* parent) : QWidget(parent)
 {
     setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
-    setMinimumSize(180, 180);
+    setMinimumSize(150, 150);
 }
 
 void PieChart::setData(const QStringList& keys, const QList<int>& values, const QStringList& colors)
@@ -185,6 +185,7 @@ LogPage::LogPage(const QVector<Photo>* photos, QWidget* parent)
     lay->addWidget(head);
 
     // —— P30-C 顶栏：筛选 chips（年份 / 机身）+ 导出 CSV ——
+    // 修复横向溢出：chips 放进内部横向滚动条，绝不撑宽整页
     toolbar_ = new QWidget(root);
     auto* tlb = new QHBoxLayout(toolbar_);
     tlb->setContentsMargins(0, 0, 0, 0);
@@ -199,8 +200,8 @@ LogPage::LogPage(const QVector<Photo>* photos, QWidget* parent)
     QStringList cList; for (const QString& c : cams) cList.append(c);
     std::sort(yList.begin(), yList.end());
 
-    auto mkChip = [&](const QString& txt, bool on) {
-        auto* b = new QPushButton(txt, toolbar_);
+    auto mkChip = [&](const QString& txt, bool on, QWidget* host) {
+        auto* b = new QPushButton(txt, host);
         b->setCursor(Qt::PointingHandCursor);
         b->setFixedHeight(28);
         b->setStyleSheet(on ? QStringLiteral("QPushButton{background:#4fc08a;color:#06130c;border:none;"
@@ -210,12 +211,34 @@ LogPage::LogPage(const QVector<Photo>* photos, QWidget* parent)
             "QPushButton:hover{color:#f4f7f4;border-color:#3a4a40;}"));
         return b;
     };
-    auto* allChip = mkChip(QStringLiteral("全部"), true);
+
+    // P30-C 修正：chips 横向滚动条（内部滚动，整页不再溢出）
+    auto* chipsScroll = new QScrollArea(toolbar_);
+    chipsScroll->setWidgetResizable(false);
+    chipsScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    chipsScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    chipsScroll->setFrameShape(QFrame::NoFrame);
+    chipsScroll->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    chipsScroll->setFixedHeight(30);
+    chipsScroll->setMinimumWidth(40);
+    chipsScroll->setStyleSheet(QStringLiteral(
+        "QScrollArea{background:transparent;border:none;}"
+        "QScrollBar:horizontal{height:6px;background:transparent;margin:0;}"
+        "QScrollBar::handle:horizontal{background:#26312a;border-radius:3px;}"
+        "QScrollBar::add-line:horizontal,QScrollBar::sub-line:horizontal{width:0;height:0;}"));
+    auto* chipsWidget = new QWidget(chipsScroll);
+    auto* chipsLay = new QHBoxLayout(chipsWidget);
+    chipsLay->setContentsMargins(0, 0, 0, 0);
+    chipsLay->setSpacing(8);
+    chipsScroll->setWidget(chipsWidget);
+
+    auto* allChip = mkChip(QStringLiteral("全部"), true, chipsWidget);
     chips_.append(allChip);
-    tlb->addWidget(allChip);
-    for (const QString& y : yList) { auto* c = mkChip(y, false); chips_.append(c); tlb->addWidget(c); }
-    for (const QString& c : cList) { auto* b = mkChip(c, false); chips_.append(b); tlb->addWidget(b); }
-    tlb->addStretch(1);
+    chipsLay->addWidget(allChip);
+    for (const QString& y : yList) { auto* c = mkChip(y, false, chipsWidget); chips_.append(c); chipsLay->addWidget(c); }
+    for (const QString& c : cList) { auto* b = mkChip(c, false, chipsWidget); chips_.append(b); chipsLay->addWidget(b); }
+    tlb->addWidget(chipsScroll, 1);
+
     exportBtn_ = new QPushButton(QStringLiteral("导出 CSV"), toolbar_);
     exportBtn_->setCursor(Qt::PointingHandCursor);
     exportBtn_->setFixedHeight(28);
@@ -497,11 +520,11 @@ void LogPage::recompute()
     QList<QLabel*> kpiLbls = kpiRow_->findChildren<QLabel*>();
     for (int i = 0; i < 6 && i < kpiLbls.size(); ++i) {
         kpiLbls[i]->setText(QStringLiteral(
-            "<b style='font-family:Consolas,monospace;font-size:18px;color:#7fe6ac;'>%1</b><br>"
+            "<b style='font-family:Consolas,monospace;font-size:16px;color:#7fe6ac;'>%1</b><br>"
             "<span style='font-size:11px;color:#8da996;'>%2</span>").arg(kpiV[i], kpiL[i]));
         kpiLbls[i]->setStyleSheet(QStringLiteral(
             "QLabel{background:#0f1512;border:1px solid #26312a;border-radius:8px;"
-            "padding:10px 12px;}"));
+            "padding:9px 10px;}"));
     }
 
     // —— 洞察（终端风）——

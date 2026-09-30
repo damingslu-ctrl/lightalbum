@@ -18,7 +18,7 @@ class BarChart : public QWidget {
 public:
     explicit BarChart(QWidget* parent = nullptr);
     void setData(const QStringList& labels, const QList<int>& values, const QColor& color);
-    QSize sizeHint() const override { return QSize(360, 168); }
+    QSize sizeHint() const override { return QSize(240, 150); }
 protected:
     void paintEvent(QPaintEvent*) override;
 private:
@@ -33,7 +33,7 @@ class PieChart : public QWidget {
 public:
     explicit PieChart(QWidget* parent = nullptr);
     void setData(const QStringList& keys, const QList<int>& values, const QStringList& colors);
-    QSize sizeHint() const override { return QSize(180, 180); }
+    QSize sizeHint() const override { return QSize(150, 150); }
 protected:
     void paintEvent(QPaintEvent*) override;
 private:

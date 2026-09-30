@@ -33,6 +33,7 @@
 #include "core/Vault.h"
 #include <QPropertyAnimation>
 #include <QRegularExpression>
+#include <QScrollArea>
 
 namespace {
 // P9 AI 修图智能体冒烟：合成「偏暗偏暖发灰」样张 → 测量 → 决策 → 执行。
@@ -436,6 +437,14 @@ int main(int argc, char *argv[])
         const bool ok = foundKpi && totalKpi == 40 && allLbls.size() >= 10;
         std::fprintf(stderr, "LA_LOG_SMOKE_%s totalKpi=%d labels=%d\n",
                      ok ? "OK" : "FAIL", totalKpi, allLbls.size());
+        // 横向溢出测量（P29-H 反馈修正：chips 内滚后整页不应被撑宽）
+        QScrollArea* outer = nullptr;
+        for (QScrollArea* s : page.findChildren<QScrollArea*>())
+            if (s->parent() == &page) { outer = s; break; }
+        QWidget* rootW = outer ? outer->widget() : nullptr;
+        const int rootMin = rootW ? rootW->minimumSizeHint().width() : -1;
+        const int pageMin = page.minimumSizeHint().width();
+        std::fprintf(stderr, "LA_LOG_OVERFLOW rootMin=%d pageMin=%d\n", rootMin, pageMin);
         std::fflush(stderr);
         return ok ? 0 : 1;
     }
@@ -707,6 +716,42 @@ int main(int argc, char *argv[])
             int(loaded), qPrintable(photoPath), fCbFrac, sCbFrac, fPhFrac, sPhFrac, flt, int(ok));
         std::fflush(stderr);
         return ok ? 0 : 5;
+    }
+
+    // P30-C / P29-H 诊断：离屏渲染日志页/首页到 PNG（QWidget::render 直绘 QImage，
+    // 避开 shootPages 的 grab 挂起族）。仅供目视诊断，不进正式回归门。
+    if (!qEnvironmentVariableIsEmpty("LA_LOG_SHOT")) {
+        const QString p = qEnvironmentVariable("LA_LOG_SHOT");
+        QDir().mkpath(QFileInfo(p).absolutePath());
+        LogPage page(&lib.photos(), nullptr);
+        page.resize(1440, 940);
+        page.show();
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 400);
+        QImage img(page.size(), QImage::Format_ARGB32);
+        img.fill(Qt::transparent);
+        QPainter painter(&img);
+        page.render(&painter);
+        painter.end();
+        img.save(p);
+        std::fprintf(stderr, "LA_LOG_SHOT_DONE %s\n", qPrintable(p));
+        std::fflush(stderr);
+        return 0;
+    }
+    if (!qEnvironmentVariableIsEmpty("LA_HOME_SHOT")) {
+        const QString p = qEnvironmentVariable("LA_HOME_SHOT");
+        QDir().mkpath(QFileInfo(p).absolutePath());
+        win.setGeometry(80, 80, 1440, 940);
+        win.show();
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 600);
+        QImage img(win.size(), QImage::Format_ARGB32);
+        img.fill(Qt::transparent);
+        QPainter painter(&img);
+        win.render(&painter);
+        painter.end();
+        img.save(p);
+        std::fprintf(stderr, "LA_HOME_SHOT_DONE %s\n", qPrintable(p));
+        std::fflush(stderr);
+        return 0;
     }
 
     // P26 修图页 A 经典工作室 像素/几何自测：LA_RETOUCH_A_QA=<png> 时合成样张驱动独立 RetouchPage，

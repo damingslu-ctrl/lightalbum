@@ -528,7 +528,8 @@ HomePage::HomePage(Library* lib, const QString& thumbsDir, QWidget* parent)
             "border-radius:15px;color:#d9a94e;}"));
         tl->addWidget(avatar);
     }
-    root->addWidget(topBar_);
+        root->addWidget(topBar_);
+        topBar_->hide();   // P29-H 纯沉浸：首页顶栏字标/导航条整体隐藏，仅留左栏 + 翻页箭头
 
     if (chapters_.isEmpty()) {
         // 空库（无可定位作品）：诚实的空态 + 导入入口
