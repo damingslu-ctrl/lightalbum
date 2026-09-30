@@ -50,6 +50,12 @@
 #include <algorithm>
 #include <cstdio>
 
+#include <QComboBox>
+
+#ifdef Q_OS_WIN
+#include <windows.h>   // MinGW os_defines.h 已定义 NOMINMAX，避免 min/max 宏污染
+#endif
+
 namespace {
 struct NavItem { const char* label; const char* phase; };
 // 与 web 版导航一致：首页/足迹/图库 · 智能选片/修图 · 日志/关于（三组分隔在 P1 用间隔项体现）
@@ -62,6 +68,21 @@ const NavItem kNav[] = {
 // 导航图标名（与 kNav 一一对应；历史映射：日志→enhance、关于→log，勿重排）
 // P24 A 抛光图标轨：激活态在 updateNavActive 用金色重绘同一图标。
 const char* kNavIcons[] = { "home", "map", "gallery", "cull", "retouch", "enhance", "log" };
+
+// P29 无标题栏：判定某点下的控件是否「交互型」（按钮/输入/列表/滚动等）→
+// 命中交互控件时不抢作窗口拖拽区（WM_NCHITTEST 用）。
+static bool isInteractiveAt(QWidget* w)
+{
+    while (w) {
+        if (qobject_cast<QPushButton*>(w) || qobject_cast<QToolButton*>(w) ||
+            qobject_cast<QLineEdit*>(w)   || qobject_cast<QListWidget*>(w) ||
+            qobject_cast<QScrollArea*>(w) || qobject_cast<QAbstractSlider*>(w) ||
+            qobject_cast<QComboBox*>(w))
+            return true;
+        w = w->parentWidget();
+    }
+    return false;
+}
 
 // P12「美术馆策展」：方形圆角缩略图（KeepAspectRatioByExpanding + 路径裁剪）
 QPixmap roundedThumb(const QString& path, int size, int radius)
@@ -323,6 +344,8 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
                        const QString& dbPath, QWidget* parent)
     : QMainWindow(parent), lib_(lib), dbPath_(dbPath)
 {
+    // P29 无标题栏：移除原生 Windows 标题栏，改由自定义顶栏 + 常驻控制簇（winCtl_）承载。
+    setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
     auto* central = new QWidget(this);
     auto* root = new QHBoxLayout(central);
     root->setContentsMargins(0, 0, 0, 0);
@@ -463,6 +486,7 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
     importBtn->setStyleSheet(Lumen::btnGold());
     connect(importBtn, &QPushButton::clicked, this, &MainWindow::startImport);
     tl->addWidget(importBtn);
+    tl->addSpacing(120);   // P29 预留窗口控制簇宽度，避免导入钮被 winCtl_ 覆盖
     topbar->installEventFilter(this);            // P19：入栏渐显
     // 顶栏底部翡翠→金渐变发丝线（品牌双色的呼吸缝；P19 起随底色渐显，seam
     // 成为 topbar 子控件，几何由 syncTopbarFloat 同步，不进布局）
@@ -475,6 +499,36 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
     seam_->setGraphicsEffect(seamEff_);
     seam_->lower();                              // 底色层之下（topShade_ 是 0 号）
     seam_->hide();                               // P19：初始透明态（visible 由 applyTopSolid 接管）
+
+    // P29 无标题栏：常驻窗口控制簇（min/max/close）。独立父于 topbar_，首页隐藏顶栏时仍可用；
+    // 顶栏右侧已预留 120px 间距，避免导入钮被覆盖。悬浮于内容区右上角。
+    winCtl_ = new QWidget(right);
+    winCtl_->setFixedSize(116, 36);
+    winCtl_->setStyleSheet(QStringLiteral("background:transparent;"));
+    auto* wl = new QHBoxLayout(winCtl_);
+    wl->setContentsMargins(0, 0, 2, 0);
+    wl->setSpacing(4);
+    wl->addStretch(1);
+    winMin_   = new QPushButton(QStringLiteral("—"), winCtl_);   // 最小化
+    winMax_   = new QPushButton(QStringLiteral("▢"), winCtl_);   // 最大化/还原
+    winClose_ = new QPushButton(QStringLiteral("✕"), winCtl_);   // 关闭
+    for (QPushButton* b : {winMin_, winMax_, winClose_}) {
+        b->setFixedSize(32, 32);
+        b->setCursor(Qt::PointingHandCursor);
+        b->setStyleSheet(Lumen::btnGhost());
+    }
+    winClose_->setStyleSheet(QStringLiteral(
+        "QPushButton{background:#131a15;border:1px solid #4a2630;border-radius:9px;color:#e6a3a3;}"
+        "QPushButton:hover{background:#2a1318;border-color:#e06a6a;color:#ffd7d7;}"));
+    wl->addWidget(winMin_);
+    wl->addWidget(winMax_);
+    wl->addWidget(winClose_);
+    connect(winMin_, &QPushButton::clicked, this, &QWidget::showMinimized);
+    connect(winMax_, &QPushButton::clicked, this, [this] {
+        if (isMaximized()) showNormal(); else showMaximized();
+    });
+    connect(winClose_, &QPushButton::clicked, this, &QWidget::close);
+    winCtl_->raise();
 
     // ---- P19：模块名称条退役——moduleLbl_ 已迁入悬浮顶栏；kpis_ 保留对象
     //      （onNav 等处有引用）但常隐，不再占布局。----
@@ -628,6 +682,10 @@ void MainWindow::syncTopbarFloat()
     topbar_->raise();                    // 悬浮于 stack_ 之上
     topShade_->setGeometry(0, 0, w, 54); // 底色层不进布局，必须手动铺满
     seam_->setGeometry(0, 52, w, 2);
+    if (winCtl_) {                       // P29：常驻控制簇钉在内容区右上角
+        winCtl_->move(host->width() - winCtl_->width(), 9);
+        winCtl_->raise();
+    }
 }
 
 void MainWindow::applyTopSolid(double t)
@@ -687,6 +745,43 @@ void MainWindow::resizeEvent(QResizeEvent* e)
     if (lightbox_ && lightbox_->isVisible())
         lightbox_->setGeometry(rect());
     syncTopbarFloat();                   // P19：悬浮顶栏跟随窗口
+}
+
+// P29 无标题栏：拦截 WM_NCHITTEST，把窗口顶部带（顶栏/首页沉浸式头部）模拟成标题栏
+// （HTCAPTION → 拖拽 + 双击最大化 + Aero 吸附），四周 6px 模拟可缩放边。命中交互控件
+// 时不抢占，保证按钮/输入/列表正常工作。另处理窗口状态变化更新最大化图标。
+#ifdef Q_OS_WIN
+bool MainWindow::nativeEvent(const QByteArray& eventType, void* message, qintptr* result)
+{
+    Q_UNUSED(eventType);
+    MSG* msg = static_cast<MSG*>(message);
+    if (msg->message == WM_NCHITTEST) {
+        const int frame = 6;       // 可缩放边宽
+        const int band  = 54;      // 顶部拖拽带高（对齐顶栏）
+        const QRect r = rect();
+        const QPoint p = mapFromGlobal(QCursor::pos());
+        const int x = p.x(), y = p.y();
+        if (x < frame && y < frame)               { *result = HTTOPLEFT;     return true; }
+        if (x > r.width() - frame && y < frame)   { *result = HTTOPRIGHT;    return true; }
+        if (x < frame && y > r.height() - frame)  { *result = HTBOTTOMLEFT;  return true; }
+        if (x > r.width() - frame && y > r.height() - frame) { *result = HTBOTTOMRIGHT; return true; }
+        if (x < frame)              { *result = HTLEFT;   return true; }
+        if (x > r.width() - frame)  { *result = HTRIGHT;  return true; }
+        if (y < frame)              { *result = HTTOP;    return true; }
+        if (y > r.height() - frame) { *result = HTBOTTOM; return true; }
+        if (y < band && !isInteractiveAt(childAt(p))) { *result = HTCAPTION; return true; }
+    }
+    return QMainWindow::nativeEvent(eventType, message, result);
+}
+#else
+bool MainWindow::nativeEvent(const QByteArray&, void*, qintptr*) { return false; }
+#endif
+
+void MainWindow::changeEvent(QEvent* e)
+{
+    if (e->type() == QEvent::WindowStateChange && winMax_)
+        winMax_->setText(isMaximized() ? QStringLiteral("❐") : QStringLiteral("▢"));
+    QMainWindow::changeEvent(e);
 }
 
 // P16 隐私库：顶栏锁按钮分流 —— 未初始化 → 设密码；锁定 → 输密码解锁；已解锁 → 重新上锁。

@@ -43,6 +43,8 @@ public:
 
     // P15：沉浸式灯箱随窗口尺寸铺满
     void resizeEvent(QResizeEvent* e) override;
+    bool nativeEvent(const QByteArray& eventType, void* message, qintptr* result) override;
+    void changeEvent(QEvent* e) override;
 
 private:
     // P12「美术馆策展」已由 P17「Quiet Frame」沉浸式首页取代（HomePage）
@@ -86,6 +88,11 @@ private:
     QLineEdit*      search_ = nullptr;
     QLabel*         title_ = nullptr;
     QWidget*        topbar_ = nullptr;      // P17：顶栏句柄（首页隐藏全局 chrome）
+    // P29 无标题栏：常驻窗口控制簇（min/max/close），独立于 topbar_，首页隐藏顶栏时仍可用。
+    QWidget*        winCtl_   = nullptr;
+    QPushButton*    winMin_   = nullptr;
+    QPushButton*    winMax_   = nullptr;
+    QPushButton*    winClose_ = nullptr;
     QStackedWidget* stack_ = nullptr;
     QWidget*        kpis_ = nullptr;
     QLabel*         moduleLbl_ = nullptr;   // P15.2：顶栏模块名称（随导航切换）
