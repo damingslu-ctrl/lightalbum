@@ -47,6 +47,8 @@ namespace Motion {
 inline constexpr int    kSplashIntroMs    = 420;   // 开场整体淡入（原 360）
 inline constexpr int    kSplashHoldMs     = 1300;  // 呼吸停留（原 1500）
 inline constexpr int    kSplashContractMs = 720;   // 收缩进缝（原 680）
+inline constexpr int    kSplashApertureMs = 900;   // P_B 光圈开合时长
+inline constexpr int    kSplashBladeCount = 8;     // P_B 光圈叶片数
 inline constexpr int    kExpandMs         = 700;   // 客户端从缝展开（原 620）
 inline constexpr int    kNavFadeMs        = 170;   // 页面切换淡出（原 150）
 inline constexpr int    kNavSlideMs       = 280;   // 页面上滑+淡入（原 260）

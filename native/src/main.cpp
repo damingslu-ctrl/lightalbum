@@ -487,18 +487,19 @@ int main(int argc, char *argv[])
     QRect avail = QApplication::primaryScreen()->availableGeometry();
     QRect fullRect((avail.width() - 1440) / 2, (avail.height() - 940) / 2, 1440, 940);
 
-    // P13 开场动画探针：LA_SPLASH_SHOT=<dir> 时抓 3 帧（完整/收缩中/成缝）存 PNG 后退出。
+    // P13 开场动画探针：LA_SPLASH_SHOT=<dir> 时抓 3 帧（开合/停留/成缝）存 PNG 后退出。
     if (qEnvironmentVariableIsSet("LA_SPLASH_SHOT")) {
         const QString dir = qEnvironmentVariable("LA_SPLASH_SHOT");
         QDir().mkpath(dir);
         SplashWindow sp(fullRect);
-        QTimer::singleShot(900, &app, [&sp, &dir] {
-            sp.grab().save(QDir(dir).filePath(QStringLiteral("splash-1-full.png")));
-            std::fprintf(stderr, "LA_SPLASH_SHOT full saved\n"); std::fflush(stderr);
+        QTimer::singleShot(250, &app, [&sp, &dir] {
+            sp.grab().save(QDir(dir).filePath(QStringLiteral("splash-1-open.png")));
+            sp.grabIris().save(QDir(dir).filePath(QStringLiteral("splash-4-iris.png")));
+            std::fprintf(stderr, "LA_SPLASH_SHOT open+iris saved\n"); std::fflush(stderr);
         });
-        QTimer::singleShot(1850, &app, [&sp, &dir] {
-            sp.grab().save(QDir(dir).filePath(QStringLiteral("splash-2-contract.png")));
-            std::fprintf(stderr, "LA_SPLASH_SHOT contract saved\n"); std::fflush(stderr);
+        QTimer::singleShot(1600, &app, [&sp, &dir] {
+            sp.grab().save(QDir(dir).filePath(QStringLiteral("splash-2-hold.png")));
+            std::fprintf(stderr, "LA_SPLASH_SHOT hold saved\n"); std::fflush(stderr);
         });
         QTimer::singleShot(2450, &app, [&sp, &dir] {
             sp.grab().save(QDir(dir).filePath(QStringLiteral("splash-3-slit.png")));

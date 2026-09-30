@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>LightAlbum 开场动画方案</title>
+<style>
+  body{margin:0;background:#06100b;color:#e8efe9;font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;}
+  .wrap{max-width:1000px;margin:0 auto;padding:28px 24px 40px;}
+  h1{font-size:22px;font-weight:700;margin:0 0 4px;color:#f4f7f4;}
+  .sub{color:#8da396;font-size:13px;margin-bottom:8px;line-height:1.6;}
+  .board{background:#06100b;border-radius:18px;display:block;width:100%;max-width:960px;margin:14px auto 0;}
+  table{width:100%;border-collapse:collapse;margin-top:26px;font-size:13px;}
+  th,td{border:1px solid #1d2e26;padding:10px 12px;text-align:left;vertical-align:top;}
+  th{background:#0c1611;color:#cfd8d2;font-weight:600;}
+  td .tag{color:#d9a94e;}
+  .rec{margin-top:24px;background:#0c1611;border:1px solid #1d2e26;border-radius:12px;padding:16px 18px;font-size:14px;line-height:1.75;}
+  .rec b{color:#4fc08a;}
+  .muted{color:#8da996;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>LightAlbum 开场动画方案 · 分镜故事板</h1>
+  <div class="sub">现有 P13：淡入 + 翡翠呼吸 → 收缩成缝 → 客户端从缝展开（约 3.1s，kSplash* 常量）。<br>下图 5 个方向均复用 SplashWindow 与已验证的「缝」衔接；A 为现状保留，B–E 换视觉母题。</div>
+
+  <svg class="board" viewBox="0 0 960 660" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+        <stop offset="0%" stop-color="#4fc08a" stop-opacity="0.6"/>
+        <stop offset="55%" stop-color="#4fc08a" stop-opacity="0.2"/>
+        <stop offset="100%" stop-color="#4fc08a" stop-opacity="0"/>
+      </radialGradient>
+    </defs>
+    <line x1="20" y1="100" x2="940" y2="100" stroke="#1d2e26" stroke-width="1"/>
+    <g fill="#cfd8d2" font-size="11.5" text-anchor="middle" font-weight="600">
+      <text x="320" y="92">① 起始帧</text>
+      <text x="500" y="92">② 峰值帧</text>
+      <text x="680" y="92">③ 衔接帧</text>
+    </g>
+
+    <!-- ===== A 墨韵呼吸·裂屏 ===== -->
+    <text x="26" y="150" fill="#d9a94e" font-size="22" font-weight="700">A</text>
+    <text x="26" y="170" fill="#cfd8d2" font-size="11">墨韵呼吸·裂屏</text>
+    <rect x="240" y="110" width="160" height="84" rx="10" fill="#0c1611" stroke="#1d2e26"/>
+    <circle cx="320" cy="152" r="20" fill="url(#glow)"/>
+    <text x="320" y="150" fill="#e8efe9" font-size="12" text-anchor="middle" font-weight="700">光影集</text>
+    <text x="320" y="166" fill="#d9a94e" font-size="6.5" text-anchor="middle" letter-spacing="1">LIGHTALBUM</text>
+    <rect x="420" y="110" width="160" height="84" rx="10" fill="#0c1611" stroke="#1d2e26"/>
+    <circle cx="500" cy="152" r="40" fill="url(#glow)"/>
+    <text x="500" y="150" fill="#e8efe9" font-size="12" text-anchor="middle" font-weight="700">光影集</text>
+    <text x="500" y="166" fill="#d9a94e" font-size="6.5" text-anchor="middle" letter-spacing="1">LIGHTALBUM</text>
+    <rect x="600" y="110" width="160" height="84" rx="10" fill="#0c1611" stroke="#1d2e26"/>
+    <rect x="600" y="150" width="160" height="3" fill="#d9a94e"/>
+    <text x="680" y="174" fill="#8da996" font-size="7" text-anchor="middle">→ 客户端展开</text>
+
+    <!-- ===== B 光圈开合·镜头唤醒 ===== -->
+    <text x="26" y="250" fill="#d9a94e" font-size="22" font-weight="700">B</text>
+    <text x="26" y="270" fill="#cfd8d2" font-size="11">光圈开合·镜头唤醒</text>
+    <rect x="240" y="210" width="160" height="84" rx="10" fill="#0c1611" stroke="#1d2e26"/>
+    <polygon points="332,252 326,241 314,241 308,252 314,263 326,263" fill="none" stroke="#4fc08a" stroke-width="1.5"/>
+    <rect x="420" y="210" width="160" height="84" rx="10" fill="#0c1611" stroke="#1d2e26"/>
+    <polygon points="534,252 517,223 483,223 466,252 483,281 517,281" fill="none" stroke="#4fc08a" stroke-width="1.5"/>
+    <circle cx="500" cy="252" r="20" fill="none" stroke="#4fc08a" stroke-width="1"/>
+    <line x1="500" y1="252" x2="534" y2="252" stroke="#4fc08a" stroke-width="0.8"/>
+    <line x1="500" y1="252" x2="517" y2="223" stroke="#4fc08a" stroke-width="0.8"/>
+    <line x1="500" y1="252" x2="483" y2="223" stroke="#4fc08a" stroke-width="0.8"/>
+    <line x1="500" y1="252" x2="466" y2="252" stroke="#4fc08a" stroke-width="0.8"/>
+    <line x1="500" y1="252" x2="483" y2="281" stroke="#4fc08a" stroke-width="0.8"/>
+    <line x1="500" y1="252" x2="517" y2="281" stroke="#4fc08a" stroke-width="0.8"/>
+    <text x="500" y="256" fill="#e8efe9" font-size="11" text-anchor="middle" font-weight="700">光影集</text>
+    <rect x="600" y="210" width="160" height="84" rx="10" fill="#0c1611" stroke="#1d2e26"/>
+    <rect x="600" y="250" width="160" height="3" fill="#d9a94e"/>
+    <text x="680" y="274" fill="#8da996" font-size="7" text-anchor="middle">→ 客户端展开</text>
+
+    <!-- ===== C 胶片划过·帧闪 ===== -->
+    <text x="26" y="350" fill="#d9a94e" font-size="22" font-weight="700">C</text>
+    <text x="26" y="370" fill="#cfd8d2" font-size="11">胶片划过·帧闪</text>
+    <rect x="240" y="310" width="160" height="84" rx="10" fill="#0c1611" stroke="#1d2e26"/>
+    <rect x="252" y="328" width="34" height="48" rx="3" fill="#0c1611" stroke="#2a3a32"/>
+    <circle cx="269" cy="334" r="2" fill="#2a3a32"/><circle cx="269" cy="370" r="2" fill="#2a3a32"/>
+    <rect x="259" y="340" width="20" height="14" fill="#1d2e26"/>
+    <rect x="420" y="310" width="160" height="84" rx="10" fill="#0c1611" stroke="#1d2e26"/>
+    <rect x="430" y="328" width="120" height="48" rx="3" fill="#0c1611" stroke="#2a3a32"/>
+    <rect x="438" y="336" width="32" height="32" fill="#1d2e26"/>
+    <rect x="476" y="336" width="32" height="32" fill="#244a3a"/>
+    <rect x="514" y="336" width="32" height="32" fill="#3a3320"/>
+    <text x="490" y="388" fill="#8da996" font-size="7" text-anchor="middle">帧闪</text>
+    <rect x="600" y="310" width="160" height="84" rx="10" fill="#0c1611" stroke="#1d2e26"/>
+    <rect x="600" y="350" width="160" height="3" fill="#d9a94e"/>
+    <text x="680" y="374" fill="#8da996" font-size="7" text-anchor="middle">→ 客户端展开</text>
+
+    <!-- ===== D 光斑汇聚·博克 ===== -->
+    <text x="26" y="450" fill="#d9a94e" font-size="22" font-weight="700">D</text>
+    <text x="26" y="470" fill="#cfd8d2" font-size="11">光斑汇聚·博克</text>
+    <rect x="240" y="410" width="160" height="84" rx="10" fill="#0c1611" stroke="#1d2e26"/>
+    <circle cx="280" cy="440" r="7" fill="#4fc08a" opacity="0.5"/>
+    <circle cx="340" cy="430" r="6" fill="#4fc08a" opacity="0.4"/>
+    <circle cx="310" cy="470" r="8" fill="#4fc08a" opacity="0.45"/>
+    <circle cx="360" cy="475" r="5" fill="#4fc08a" opacity="0.35"/>
+    <circle cx="290" cy="465" r="6" fill="#4fc08a" opacity="0.4"/>
+    <rect x="420" y="410" width="160" height="84" rx="10" fill="#0c1611" stroke="#1d2e26"/>
+    <circle cx="500" cy="452" r="42" fill="url(#glow)"/>
+    <text x="500" y="450" fill="#e8efe9" font-size="12" text-anchor="middle" font-weight="700">光影集</text>
+    <text x="500" y="466" fill="#d9a94e" font-size="6.5" text-anchor="middle" letter-spacing="1">LIGHTALBUM</text>
+    <rect x="600" y="410" width="160" height="84" rx="10" fill="#0c1611" stroke="#1d2e26"/>
+    <rect x="600" y="450" width="160" height="3" fill="#d9a94e"/>
+    <text x="680" y="474" fill="#8da996" font-size="7" text-anchor="middle">→ 客户端展开</text>
+
+    <!-- ===== E 缩略拼贴·网格 ===== -->
+    <text x="26" y="550" fill="#d9a94e" font-size="22" font-weight="700">E</text>
+    <text x="26" y="570" fill="#cfd8d2" font-size="11">缩略拼贴·网格</text>
+    <rect x="240" y="510" width="160" height="84" rx="10" fill="#0c1611" stroke="#1d2e26"/>
+    <rect x="255" y="525" width="12" height="12" fill="#1d2e26"/>
+    <rect x="300" y="520" width="12" height="12" fill="#244a3a"/>
+    <rect x="270" y="560" width="12" height="12" fill="#3a3320"/>
+    <rect x="330" y="565" width="12" height="12" fill="#1d2e26"/>
+    <rect x="310" y="535" width="12" height="12" fill="#244a3a"/>
+    <rect x="285" y="548" width="12" height="12" fill="#3a3320"/>
+    <rect x="420" y="510" width="160" height="84" rx="10" fill="#0c1611" stroke="#1d2e26"/>
+    <rect x="455" y="525" width="20" height="16" fill="#1d2e26"/>
+    <rect x="480" y="525" width="20" height="16" fill="#244a3a"/>
+    <rect x="505" y="525" width="20" height="16" fill="#3a3320"/>
+    <rect x="455" y="548" width="20" height="16" fill="#244a3a"/>
+    <rect x="480" y="548" width="20" height="16" fill="#1d2e26"/>
+    <rect x="505" y="548" width="20" height="16" fill="#3a3320"/>
+    <rect x="600" y="510" width="160" height="84" rx="10" fill="#0c1611" stroke="#1d2e26"/>
+    <rect x="612" y="520" width="40" height="28" fill="#1d2e26"/>
+    <rect x="658" y="520" width="40" height="28" fill="#244a3a"/>
+    <rect x="704" y="520" width="40" height="28" fill="#3a3320"/>
+    <rect x="612" y="554" width="40" height="28" fill="#244a3a"/>
+    <rect x="658" y="554" width="40" height="28" fill="#1d2e26"/>
+    <rect x="704" y="554" width="40" height="28" fill="#3a3320"/>
+    <text x="680" y="600" fill="#8da996" font-size="7" text-anchor="middle">→ 直接进图库</text>
+  </svg>
+
+  <table>
+    <tr><th>方案</th><th>视觉母题 / 气质</th><th>关键动作</th><th>与「缝」衔接</th><th>实现量</th><th>风险</th></tr>
+    <tr><td><span class="tag">A</span> 墨韵呼吸·裂屏<br><span class="muted">(现状)</span></td><td>沉稳留白</td><td>淡入 + 翡翠呼吸 → 成缝</td><td>复用</td><td>已上线</td><td>无</td></tr>
+    <tr><td><span class="tag">B</span> 光圈开合·镜头唤醒</td><td>摄影 / 镜头感</td><td>光圈叶片开合露出品牌 → 虹膜塌缩成缝</td><td>复用（虹膜塌缩≈缝）</td><td>中</td><td>叶片几何计算</td></tr>
+    <tr><td><span class="tag">C</span> 胶片划过·帧闪</td><td>胶片怀旧</td><td>胶片条划过 + 样张帧闪 → 成缝</td><td>复用</td><td>中</td><td>取样图加载时序</td></tr>
+    <tr><td><span class="tag">D</span> 光斑汇聚·博克</td><td>梦幻 / 光</td><td>多博克光斑汇聚成辉光 → 成缝</td><td>复用</td><td>小</td><td>低</td></tr>
+    <tr><td><span class="tag">E</span> 缩略拼贴·网格</td><td>直接秀照片</td><td>缩略图飞入拼成网格 → 直接展开进图库</td><td>改为直接进（跳过缝）</td><td>大</td><td>重，改 handoff</td></tr>
+  </table>
+
+  <div class="rec">
+    <b>推荐：B 或 D。</b> 两者都换掉「现状呼吸」的单一母题、带来新鲜感，又<b>完全复用已验证的「缝 → 客户端展开」衔接</b>，改动只落在 SplashWindow 内部，风险最低最稳：<br>
+    · <b>B 光圈开合</b> 最贴「摄影 app」身份，镜头/光圈的语言和「光影集」品牌天然咬合；峰值帧画一个开合光圈即可，衔接时把光圈塌缩成缝。<br>
+    · <b>D 光斑汇聚</b> 最轻盈梦幻，实现量最小（在现有呼吸辉光基础上加几个可动的博克光斑 + 汇聚 tween），几乎零风险。<br>
+    · 若想最直接地证明「这是你的照片馆」，选 <b>E</b>（缩略图网格），但工作量最大，且要把 main.cpp 的「缝展开」改成「直接进图库」。<br>
+    <span class="muted">注：以上时间均沿用现有 kSplash* 常量（约 3.1s）；无障碍「减弱动效」仍走 playStatic() 静态品牌画面。</span>
+  </div>
+</div>
+</body>
+</html>

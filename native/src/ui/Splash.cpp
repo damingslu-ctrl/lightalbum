@@ -14,6 +14,56 @@
 #include <QSequentialAnimationGroup>
 #include <QTimer>
 #include <QtMath>
+#include <QPen>
+
+// ---- P_B 光圈叶片覆盖层：随 aperture 张开、bladeAlpha 淡出，露出墨韵底 + 呼吸光晕 + 标题 ----
+static const double kIrisPi = 3.141592653589793;
+
+class SplashWindow::IrisOverlay : public QWidget {
+public:
+    explicit IrisOverlay(SplashWindow* host, QWidget* parent = nullptr)
+        : QWidget(parent), host_(host) {}
+    void paintEvent(QPaintEvent*) override {
+        const qreal ba = host_->bladeAlpha_;
+        if (ba <= 0.002) return;                 // 完全淡出，无需绘制
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        QPainterPath clip;
+        clip.addRoundedRect(0, 0, width(), height(), 22.0, 22.0);
+        p.setClipPath(clip);
+
+        const qreal cx = width() / 2.0, cy = height() / 2.0;
+        const qreal maxR = qMin(width(), height()) * 0.62;
+        const int   N  = Lumen::Motion::kSplashBladeCount;
+        const qreal Rb = maxR * 1.05;
+        const qreal ap = host_->aperture_;
+        const qreal off = Rb + ap * maxR;         // 叶片中心外移 → 中央孔张开
+        p.setOpacity(ba);
+
+        for (int i = 0; i < N; ++i) {
+            const qreal ang = i * 2.0 * kIrisPi / N;
+            const qreal bx = cx + off * qCos(ang);
+            const qreal by = cy + off * qSin(ang);
+            QRadialGradient g(bx, by, Rb);
+            g.setColorAt(0.0,  QColor(0x18, 0x22, 0x1c));
+            g.setColorAt(0.72, QColor(0x0e, 0x16, 0x11));
+            g.setColorAt(1.0,  QColor(0x07, 0x0d, 0x09));
+            p.setBrush(g);
+            p.setPen(QPen(QColor(0x4f, 0xc0, 0x8a, 80), 1.1));
+            p.drawEllipse(QRectF(bx - Rb, by - Rb, 2 * Rb, 2 * Rb));
+        }
+        // 中央「唤醒光点」：随开合淡出，似镜头上电点亮
+        QRadialGradient cg(cx, cy, maxR * 0.24);
+        cg.setColorAt(0.0, QColor(0x7f, 0xe6, 0xac, 235));
+        cg.setColorAt(1.0, QColor(0x7f, 0xe6, 0xac, 0));
+        p.setBrush(cg);
+        p.setPen(Qt::NoPen);
+        p.drawEllipse(QRectF(cx - maxR * 0.24, cy - maxR * 0.24,
+                            2 * maxR * 0.24, 2 * maxR * 0.24));
+    }
+    SplashWindow* host_;
+};
+
 
 SplashWindow::SplashWindow(const QRect& target, QWidget* parent)
     : QWidget(parent), target_(target)
@@ -78,6 +128,14 @@ SplashWindow::SplashWindow(const QRect& target, QWidget* parent)
     tl->addWidget(sub_, 0, Qt::AlignHCenter);
     tl->addWidget(tag_, 0, Qt::AlignHCenter);
     v->addWidget(text, 0, Qt::AlignHCenter);
+
+    // 光圈叶片覆盖层：置于标题之上，随 aperture 张开、bladeAlpha 淡出露出品牌
+    iris_ = new IrisOverlay(this, this);
+    iris_->setAttribute(Qt::WA_TranslucentBackground, true);
+    iris_->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    iris_->setGeometry(0, 0, width(), height());
+    iris_->raise();
+
     // 注：glow_ 已在构造函数上方作为自由子控件创建（不在布局内），
     // 位置在 play()（窗口已显示、尺寸已知）时居中。
 }
@@ -111,7 +169,28 @@ void SplashWindow::play()
     raise();
     // 窗口尺寸已知后居中呼吸光晕（柔翡翠径向光，压在标题后方）
     glow_->setGeometry((width() - 520) / 2, (height() - 520) / 2, 520, 520);
-    // 光晕呼吸：0.42 ↔ 0.7，循环
+    if (iris_) { iris_->setGeometry(0, 0, width(), height()); iris_->raise(); }
+
+    // 初始：光圈闭合、叶片不透明
+    setAperture(0.0);
+    setBladeAlpha(1.0);
+
+    // 光圈开合：叶片随 aperture 外移张开，并随 bladeAlpha 淡出，露出墨韵底 + 光晕 + 标题
+    auto* ap = new QPropertyAnimation(this, "aperture");
+    ap->setDuration(Lumen::Motion::kSplashApertureMs);
+    ap->setStartValue(0.0);
+    ap->setEndValue(1.0);
+    ap->setEasingCurve(QEasingCurve::OutCubic);
+    ap->start(QAbstractAnimation::DeleteWhenStopped);
+
+    auto* ba = new QPropertyAnimation(this, "bladeAlpha");
+    ba->setDuration(Lumen::Motion::kSplashApertureMs);
+    ba->setStartValue(1.0);
+    ba->setEndValue(0.0);
+    ba->setEasingCurve(QEasingCurve::OutCubic);
+    ba->start(QAbstractAnimation::DeleteWhenStopped);
+
+    // 光晕呼吸：0.42 ↔ 0.7，循环（被逐步张开的光圈显露）
     auto* a1 = new QPropertyAnimation(glowEff_, "opacity");
     a1->setDuration(2200);
     a1->setStartValue(0.42);
@@ -135,8 +214,9 @@ void SplashWindow::play()
     intro_->setEasingCurve(QEasingCurve::OutCubic);
     intro_->start(QAbstractAnimation::DeleteWhenStopped);
 
-    // 定时后收缩成缝
-    QTimer::singleShot(Lumen::Motion::kSplashHoldMs, this, [this] {
+    // 开合 + 停留 后收缩成缝（沿用现有「缝 → 客户端展开」衔接）
+    QTimer::singleShot(Lumen::Motion::kSplashApertureMs + Lumen::Motion::kSplashHoldMs,
+                       this, [this] {
         if (breath_) { breath_->stop(); }
         const QRect slit(target_.x(), target_.center().y() - 1,
                          target_.width(), 2);
@@ -158,9 +238,31 @@ void SplashWindow::playStatic()
 {
     show();
     raise();
+    // 静态态：光圈直接全开、叶片透明，避免覆盖品牌（reduced-motion 无开合动效）
+    setAperture(1.0);
+    setBladeAlpha(0.0);
     glow_->setGeometry((width() - 520) / 2, (height() - 520) / 2, 520, 520);
     setWindowOpacity(1.0);
     QTimer::singleShot(600, this, [this] {
         emit finished();
     });
+}
+
+void SplashWindow::setAperture(qreal v)
+{
+    aperture_ = v;
+    if (iris_) iris_->update();
+    update();
+}
+
+void SplashWindow::setBladeAlpha(qreal v)
+{
+    bladeAlpha_ = v;
+    if (iris_) iris_->update();
+    update();
+}
+
+QPixmap SplashWindow::grabIris() const
+{
+    return iris_ ? iris_->grab() : QPixmap();
 }
