@@ -536,6 +536,7 @@ int main(int argc, char *argv[])
         && !qEnvironmentVariableIsSet("LA_RETOUCH_A_QA")
         && !qEnvironmentVariableIsSet("LA_MAP_A_QA")
         && !qEnvironmentVariableIsSet("LA_MAP_REGION_QA")
+        && !qEnvironmentVariableIsSet("LA_MAP_CLICK_QA")
         && !qEnvironmentVariableIsSet("LA_GALLERY_E_QA")
         && !qEnvironmentVariableIsSet("LA_CULL_DUEL_QA")
         && !qEnvironmentVariableIsSet("LA_GALLERY_FILL_QA")
@@ -639,6 +640,14 @@ int main(int argc, char *argv[])
         QDir().mkpath(QFileInfo(p).absolutePath());
         if (MapView* mv = win.mapView()) mv->qaShootRegion(p, id);
         std::fprintf(stderr, "LA_MAP_REGION_QA_DONE\n");
+        std::fflush(stderr);
+        return 0;
+    }
+
+    // A 点击链路自测：LA_MAP_CLICK_QA=1 时合成鼠标事件，实测世界锚点/省面两级命中。
+    if (!qEnvironmentVariableIsEmpty("LA_MAP_CLICK_QA")) {
+        if (MapView* mv = win.mapView()) mv->qaClickProbe();
+        std::fprintf(stderr, "LA_MAP_CLICK_QA_DONE\n");
         std::fflush(stderr);
         return 0;
     }

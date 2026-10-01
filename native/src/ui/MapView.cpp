@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <QHash>
 #include <QPoint>
+#include <QCoreApplication>
 
 // —— 预投影：经纬度 → [0,MAP_W]x[0,MAP_H]（与 web 版 eqX/eqY 一致）——
 static double eqX(double lon) { return (lon + 180.0) / 360.0 * MapView::MAP_W; }
@@ -523,6 +524,59 @@ void MapView::qaShootRegion(const QString& path, const QString& id)
     std::fflush(stderr);
 }
 
+// 点击链路 QA：在「用户看见的位置」合成鼠标事件，实测两级命中是否触发。
+// ① 世界层：按绘制数学算出中国金色锚点的屏幕坐标 → 合成左键点击 → 应进入 Region；
+// ② 大区层：enterRegion(china) 后按 fitRect 算出青海省中心屏幕坐标 → 合成点击 → 应进入 Province。
+// （颜色校验铁律的交互版：命中必须实测，不许猜。）
+void MapView::qaClickProbe()
+{
+    // —— 世界层 ——
+    const QRectF dst = rect().adjusted(8, 8, -8, -8);
+    const double scale = dst.height() / MAP_H;
+    const double span = MAP_W * scale;
+    const RegionInfo* china = nullptr;
+    for (const RegionInfo& ri : regions_)
+        if (ri.id == QLatin1String("china")) { china = &ri; break; }
+    if (!china && !regions_.isEmpty()) china = &regions_.first();
+    QString worldResult = QStringLiteral("skip");
+    if (china) {
+        const QPointF w = preToWidget(china->proj, dst, scale, -driftPx_);
+        double wx = dst.x() + fmod(w.x() - dst.x(), span);
+        if (wx < dst.x()) wx += span;
+        const QPointF pos(wx, w.y());
+        QMouseEvent press(QEvent::MouseButtonPress, pos,
+                          Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QCoreApplication::sendEvent(this, &press);
+        worldResult = (level_ == Region)
+            ? QStringLiteral("OK") : QStringLiteral("FAIL(level=%1)").arg(int(level_));
+    }
+    // —— 大区层：中国省面 ——
+    QString provResult = QStringLiteral("skip");
+    enterRegion(QStringLiteral("china"));
+    if (!curProvinces_.isEmpty()) {
+        const ProvinceInfo* pick = nullptr;
+        for (const ProvinceInfo& pv : curProvinces_)
+            if (pv.name == QLatin1String("青海省")) { pick = &pv; break; }
+        if (!pick) pick = &curProvinces_.first();
+        QRectF bbox; bool first = true;
+        for (const ProvinceInfo& pv : curProvinces_) {
+            if (first) { bbox = pv.bbox; first = false; } else bbox |= pv.bbox;
+        }
+        double sc = 1;
+        const QRectF fr = fitRect(bbox, rect().adjusted(8, 8, -8, -8), sc);
+        const QPointF pos = fr.topLeft() + pick->ctr * sc;
+        QMouseEvent press(QEvent::MouseButtonPress, pos,
+                          Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QCoreApplication::sendEvent(this, &press);
+        provResult = (level_ == Province && hasCurProvince_)
+            ? QStringLiteral("OK(%1)").arg(pick->zh.isEmpty() ? pick->name : pick->zh)
+            : QStringLiteral("FAIL(level=%1)").arg(int(level_));
+    }
+    std::fprintf(stderr, "LA_MAP_CLICK_QA world->region=%s china-province=%s\n",
+                 qPrintable(worldResult), qPrintable(provResult));
+    std::fflush(stderr);
+}
+
 // —— 很精细优化辅助 ——
 
 // 预渲染翡翠足迹点精灵（一次），逐帧 blit，避免每帧重建径向梯度
@@ -704,9 +758,9 @@ void MapView::resizeEvent(QResizeEvent* e)
 void MapView::mouseMoveEvent(QMouseEvent* e)
 {
     if (level_ == World) {
-        // 命中测试：大区锚点
-        const double scale = rect().height() / MAP_H;
+        // 命中测试：大区锚点（scale 与 renderWorldInto 绘制基准一致，见 mousePressEvent 注释）
         const QRectF dst = rect().adjusted(8, 8, -8, -8);
+        const double scale = dst.height() / MAP_H;
         const double span = MAP_W * scale;
         for (const RegionInfo& ri : regions_) {
             QPointF w = preToWidget(ri.proj, dst, scale, -driftPx_);
@@ -743,8 +797,11 @@ void MapView::mousePressEvent(QMouseEvent* e)
 {
     if (e->button() != Qt::LeftButton) return;
     if (level_ == World) {
-        const double scale = rect().height() / MAP_H;
+        // scale 基准必须与 renderWorldInto 的绘制 scale（dst.height()/MAP_H）完全一致，
+        // 否则热区相对可见金点整体偏移（8px 内边距 × 预投影坐标，最大 ~30px），
+        // 而点击半径只有 10px → 用户对着金点点击却毫无反应。
         const QRectF dst = rect().adjusted(8, 8, -8, -8);
+        const double scale = dst.height() / MAP_H;
         const double span = MAP_W * scale;
         for (const RegionInfo& ri : regions_) {
             QPointF w = preToWidget(ri.proj, dst, scale, -driftPx_);
