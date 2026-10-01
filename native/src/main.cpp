@@ -109,9 +109,11 @@ int runGeoSmoke()
     struct P { double lat, lon; const char* r; const char* pv; const char* ct; };
     static const P pts[] = {
         {64.15, -21.94,  "iceland", "Capital Region",   "雷克雅未克"},
-        {39.90, 116.41,  "china",   "Beijing Municipality", "北京"},
-        {23.13, 113.26,  "china",   "Guangzhou Province", "广州"},
-        {38.91, 121.61,  "china",   "Liaoning Province", "大连"},   // 沿海缝隙 → 城市兜底
+        // 注：DataV 34 省切换后，多边形主路径返回中文省名（北京市/广东省/辽宁省），
+        // kCities 英文兜底为残留债务（见迭代指导书台账）；以下期望对齐设计内中文真值。
+        {39.90, 116.41,  "china",   "北京市", "北京"},
+        {23.13, 113.26,  "china",   "广东省", "广州"},
+        {38.91, 121.61,  "china",   "辽宁省", "大连"},   // 主路径命中辽宁省多边形
         {15.46, 111.13,  "",        "",                 ""},       // 南海海域 → 诚实空
     };
     for (const P& p : pts) {

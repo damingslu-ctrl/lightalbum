@@ -3,6 +3,28 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.2.1] - 2026-10-02
+
+### 修复（QA 门修正，无用户态行为变化）
+- **`LA_GEO_SMOKE` 由红转绿**：DataV 34 省切换后，多边形主路径返回**中文省名**
+  （北京市 / 广东省 / 辽宁省），但测试仍期望英文（`Beijing Municipality` 等），
+  该门自切换后一直 RED 且因历史未跑 + Git Bash 吞输出长期未被发现。
+  将 3 处测试期望对齐到设计内中文真值。
+
+### 变更
+- 新增 `docs/客户端迭代指导书.md`（全模块 SOP：模块总览 + 全门禁目录 + 工具链 +
+  铁律 + CheckList + 迭代 4 实例）。
+- **关键运维发现写入 SOP**：原生 Windows Qt exe 在 Git Bash(MSYS) 下输出被吞、
+  表现为「门禁无输出/秒退」假阴性；跑全部门禁**必须用 PowerShell**（`& $exe 2>&1`）。
+
+### 已知债务
+- `src/core/GeoIndex.cpp` 的 `kCities` 中国条目省名仍为英文（兜底路径），与多边形
+  中文不一致；需从 `mapdata.json` 取精确中文省名逐条映射，留待专门迭代。
+
+### 实测
+- `LA_GEO_SMOKE PASS loaded=1`（5 已知点全 ok：雷克雅未克 / 北京 / 广州 / 大连 / 南海诚实空）
+- 构建零 error；产物 `LightAlbum-2.2.1-win64.zip`（版本号由 `release.ps1` 从 CMakeLists 解析）
+
 ## [2.2.0] - 2026-10-02
 
 ### 新增
