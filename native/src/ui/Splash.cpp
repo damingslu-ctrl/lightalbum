@@ -8,6 +8,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QRadialGradient>
+#include <QPixmap>
 #include <QBrush>
 #include <QGraphicsOpacityEffect>
 #include <QPropertyAnimation>
@@ -17,15 +18,19 @@
 #include <QPen>
 
 // ---- P_B 光圈叶片覆盖层：随 aperture 张开、bladeAlpha 淡出，露出墨韵底 + 呼吸光晕 + 标题 ----
+// 流畅性：叶片圆盘与中央唤醒光点均「一次性渲染成 pixmap」，逐帧只 blit（8×径向渐变/帧 → 8×blit/帧），
+// 避免每帧重建径向渐变（Qt 光栅引擎每帧 8 个径向渐变填充是开合卡顿主因）。
 static const double kIrisPi = 3.141592653589793;
 
 class SplashWindow::IrisOverlay : public QWidget {
 public:
     explicit IrisOverlay(SplashWindow* host, QWidget* parent = nullptr)
         : QWidget(parent), host_(host) {}
+
     void paintEvent(QPaintEvent*) override {
         const qreal ba = host_->bladeAlpha_;
         if (ba <= 0.002) return;                 // 完全淡出，无需绘制
+        if (width() <= 0 || height() <= 0) return;
         QPainter p(this);
         p.setRenderHint(QPainter::Antialiasing, true);
         QPainterPath clip;
@@ -38,30 +43,57 @@ public:
         const qreal Rb = maxR * 1.05;
         const qreal ap = host_->aperture_;
         const qreal off = Rb + ap * maxR;         // 叶片中心外移 → 中央孔张开
-        p.setOpacity(ba);
 
+        // 叶片圆盘 pixmap 懒渲染（尺寸随 Rb 变化，尺寸不符即重渲一次）
+        if (bladePix_.isNull() || bladePix_.width() != int(2 * Rb) + 2)
+            renderBlade(Rb);
+        // 中央唤醒光点 pixmap 懒渲染
+        const qreal gr = maxR * 0.24;
+        if (glowPix_.isNull() || glowPix_.width() != int(2 * gr) + 2)
+            renderGlow(gr);
+
+        p.setOpacity(ba);
         for (int i = 0; i < N; ++i) {
             const qreal ang = i * 2.0 * kIrisPi / N;
             const qreal bx = cx + off * qCos(ang);
             const qreal by = cy + off * qSin(ang);
-            QRadialGradient g(bx, by, Rb);
-            g.setColorAt(0.0,  QColor(0x18, 0x22, 0x1c));
-            g.setColorAt(0.72, QColor(0x0e, 0x16, 0x11));
-            g.setColorAt(1.0,  QColor(0x07, 0x0d, 0x09));
-            p.setBrush(g);
-            p.setPen(QPen(QColor(0x4f, 0xc0, 0x8a, 80), 1.1));
-            p.drawEllipse(QRectF(bx - Rb, by - Rb, 2 * Rb, 2 * Rb));
+            p.drawPixmap(QPointF(bx - Rb, by - Rb), bladePix_);
         }
         // 中央「唤醒光点」：随开合淡出，似镜头上电点亮
-        QRadialGradient cg(cx, cy, maxR * 0.24);
+        p.drawPixmap(QPointF(cx - gr, cy - gr), glowPix_);
+    }
+
+private:
+    void renderBlade(qreal Rb) {
+        const int S = int(2 * Rb) + 2;
+        bladePix_ = QPixmap(S, S);
+        bladePix_.fill(Qt::transparent);
+        QPainter p(&bladePix_);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        QRadialGradient g(Rb, Rb, Rb);
+        g.setColorAt(0.0,  QColor(0x18, 0x22, 0x1c));
+        g.setColorAt(0.72, QColor(0x0e, 0x16, 0x11));
+        g.setColorAt(1.0,  QColor(0x07, 0x0d, 0x09));
+        p.setBrush(g);
+        p.setPen(QPen(QColor(0x4f, 0xc0, 0x8a, 80), 1.1));
+        p.drawEllipse(QRectF(0, 0, 2 * Rb, 2 * Rb));
+    }
+    void renderGlow(qreal r) {
+        const int S = int(2 * r) + 2;
+        glowPix_ = QPixmap(S, S);
+        glowPix_.fill(Qt::transparent);
+        QPainter p(&glowPix_);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        QRadialGradient cg(r, r, r);
         cg.setColorAt(0.0, QColor(0x7f, 0xe6, 0xac, 235));
         cg.setColorAt(1.0, QColor(0x7f, 0xe6, 0xac, 0));
         p.setBrush(cg);
         p.setPen(Qt::NoPen);
-        p.drawEllipse(QRectF(cx - maxR * 0.24, cy - maxR * 0.24,
-                            2 * maxR * 0.24, 2 * maxR * 0.24));
+        p.drawEllipse(QRectF(0, 0, 2 * r, 2 * r));
     }
     SplashWindow* host_;
+    QPixmap bladePix_;
+    QPixmap glowPix_;
 };
 
 
@@ -143,7 +175,19 @@ SplashWindow::SplashWindow(const QRect& target, QWidget* parent)
 void SplashWindow::paintEvent(QPaintEvent* e)
 {
     Q_UNUSED(e);
+    // 底板是静态渐变+seam，仅在尺寸变化时重渲一次，逐帧只 blit（避免每帧重画渐变 → 开合更顺）。
+    if (boardPix_.isNull() || boardPix_.size() != size())
+        renderBoard();
     QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.drawPixmap(0, 0, boardPix_);
+}
+
+void SplashWindow::renderBoard()
+{
+    boardPix_ = QPixmap(size());
+    boardPix_.fill(Qt::transparent);
+    QPainter p(&boardPix_);
     p.setRenderHint(QPainter::Antialiasing, true);
     // 圆角底板：对角翡翠→曜石→金低语渐变
     QPainterPath path;
@@ -251,15 +295,14 @@ void SplashWindow::playStatic()
 void SplashWindow::setAperture(qreal v)
 {
     aperture_ = v;
+    // 底板是静态缓存，随 aperture 不变 → 只重绘 iris 覆盖层，不再 update() 整窗（减少每帧重绘开销）
     if (iris_) iris_->update();
-    update();
 }
 
 void SplashWindow::setBladeAlpha(qreal v)
 {
     bladeAlpha_ = v;
     if (iris_) iris_->update();
-    update();
 }
 
 QPixmap SplashWindow::grabIris() const

@@ -48,4 +48,6 @@ private:
     IrisOverlay*             iris_     = nullptr;   // 光圈叶片覆盖层（标题之上）
     qreal aperture_   = 0.0;   // 0=闭合 1=全开
     qreal bladeAlpha_ = 1.0;   // 叶片不透明度（随开合淡出）
+    QPixmap boardPix_;         // 静态底板（渐变+seam）一次性渲染，逐帧 blit，避免每帧重绘渐变
+    void renderBoard();        // 懒渲染底板到 boardPix_
 };
