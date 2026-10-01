@@ -809,34 +809,56 @@ void MapView::qaClickProbe()
             : QStringLiteral("FAIL(%1/%2 bad:%3)").arg(okN).arg(regions_.size()).arg(bad.join(QLatin1Char(';')));
     }
 
-    // ⑥ 无专辑国家（蒙古）→ 国家视图（国界轮廓 + 该国 GPS 作品路径）
+    // ⑥ 无专辑国家 → 国家视图 + 爆炸：逐个亚洲候选国找第一个「有 GPS 作品」的，
+    //    点其照片光点的屏幕位置 → 应进入国家视图并爆炸（thumbs>0）
     QString ctryResult = QStringLiteral("skip");
+    QString cburstResult = QStringLiteral("skip");
     while (level_ != World) goUp();
     worldZoom_ = 1.0;
     worldOffY_ = 0.0;
     {
-        int mfi = -1;
-        for (int i = 0; i < worldNames_.size(); ++i)
-            if (worldNames_[i] == QStringLiteral("Mongolia")) { mfi = i; break; }
-        if (mfi >= 0) {
-            const QRectF& bb = featureBbox_[mfi];
-            const double cxa = (bb.left() + bb.right()) * 0.5;
-            const double cya = (bb.top() + bb.bottom()) * 0.5;
-            driftPx_ = wrapX(cxa - dst.center().x() / (dst.height() / MAP_H));
-            worldOffY_ = 0.0;
-            sendClick(QPointF(rect().center().x(), dst.y() + cya * (dst.height() / MAP_H)));
-            ctryResult = (level_ == Region && curProvinces_.isEmpty()
-                          && curRegionName_ == QStringLiteral("Mongolia"))
-                ? QStringLiteral("OK(paths=%1)").arg(countryPaths_.size())
-                : QStringLiteral("FAIL(lvl=%1 name=%2)").arg(int(level_)).arg(curRegionName_);
+        static const char* kCands[] = {
+            "Thailand", "India", "Vietnam", "Indonesia", "South Korea", "Malaysia",
+            "Philippines", "Mongolia", "Myanmar", "Nepal", "Kazakhstan", "Laos",
+            "Cambodia", "Sri Lanka", "Pakistan", "North Korea", "Bhutan", "Bangladesh",
+        };
+        int cfi = -1;
+        for (const char* cn : kCands) {
+            const QString qn = QString::fromLatin1(cn);
+            int fi = -1;
+            for (int i = 0; i < worldNames_.size(); ++i)
+                if (worldNames_[i] == qn) { fi = i; break; }
+            if (fi < 0) continue;
+            enterCountry(fi);
+            if (!countryPaths_.isEmpty()) { cfi = fi; break; }
+            while (level_ != World) goUp();
+        }
+        if (cfi >= 0) {
+            ctryResult = QStringLiteral("OK(%1 paths=%2)")
+                             .arg(curRegionName_, QString::number(countryPaths_.size()));
+            // 点击第一个匹配照片光点的屏幕位置（pip 已保证在国界内）
+            const double sc2 = dst.height() / MAP_H * worldZoom_;
+            const double span2 = MAP_W * sc2;
+            const QPointF& pt0 = countryPts_.first();
+            double sx = (pt0.x() - wrapX(driftPx_)) * sc2;
+            sx = dst.x() + fmod(sx - dst.x(), span2);
+            if (sx < dst.x()) sx += span2;
+            sendClick(QPointF(sx, dst.y() + pt0.y() * sc2 - worldOffYClamped()));
+            cburstResult = (burstActive_ && !burstThumbs_.isEmpty())
+                ? QStringLiteral("OK(thumbs=%1)").arg(burstThumbs_.size())
+                : QStringLiteral("FAIL(burst=%1 thumbs=%2)")
+                      .arg(burstActive_ ? 1 : 0).arg(burstThumbs_.size());
+        } else {
+            ctryResult = QStringLiteral("OK(库内无亚洲非专辑 GPS 作品，跳过)");
         }
     }
 
-    std::fprintf(stderr, "LA_MAP_CLICK_QA country=%s anchor=%s province=%s burst=%s card=%s blank=%s zoom=%s all=%s ctry=%s\n",
+    std::fprintf(stderr, "LA_MAP_CLICK_QA country=%s anchor=%s province=%s burst=%s card=%s blank=%s zoom=%s all=%s ctry=%s cburst=%s\n",
                  qPrintable(countryResult), qPrintable(worldResult),
                  qPrintable(provResult), qPrintable(burstResult),
                  qPrintable(cardResult), qPrintable(blankResult),
-                 qPrintable(zoomResult), qPrintable(allResult), qPrintable(ctryResult));
+                 qPrintable(zoomResult), qPrintable(allResult),
+                 qPrintable(ctryResult), qPrintable(cburstResult));
     std::fflush(stderr);
 }
 
@@ -868,9 +890,12 @@ void MapView::assignFeatureRegions()
 // 省视图爆炸弹层：MapPage 注入缩略图后触发。从省中心逐张错峰飞出，
 // 金色连线 + 圆角照片卡 + 冲击波双环；reduceMotion 直接呈现终态。
 // paths 与 thumbs 一一对应（点击卡片 → openPhotoRequested）。
+// 国家视图（Region 层 + countryFeature_）同样可播——焦点几何由 focusGeometry 决定。
 void MapView::startBurst(const QVector<QPixmap>& thumbs, const QStringList& paths)
 {
-    if (level_ != Province || !hasCurProvince_) return;
+    const bool inProvince = (level_ == Province && hasCurProvince_);
+    const bool inCountry  = (level_ == Region && countryFeature_ >= 0 && curProvinces_.isEmpty());
+    if (!inProvince && !inCountry) return;
     burstThumbs_ = thumbs;
     burstPaths_ = paths;
     burstActive_ = true;
@@ -879,15 +904,29 @@ void MapView::startBurst(const QVector<QPixmap>& thumbs, const QStringList& path
     update();
 }
 
+// 当前爆炸焦点：省视图=省 bbox/中心；国家视图=国 bbox/中心
+void MapView::focusGeometry(QRectF& bbox, QPointF& ctr) const
+{
+    if (level_ == Province && hasCurProvince_) {
+        bbox = curProvince_.bbox;
+        ctr = curProvince_.ctr;
+    } else if (countryFeature_ >= 0 && countryFeature_ < featureBbox_.size()) {
+        bbox = featureBbox_[countryFeature_];
+        ctr = QPointF((bbox.left() + bbox.right()) * 0.5, (bbox.top() + bbox.bottom()) * 0.5);
+    }
+}
+
 // 稳态卡片矩形：角度扇形布点 + 画布内钳制（DataV center 贴省边界如西宁，防飞出）。
 // 绘制（动画终点）与命中测试共用，保证「画在哪就能点哪」。
 QRectF MapView::burstCardRect(int i, const QRectF& dst) const
 {
     const int n = burstThumbs_.size();
     if (i < 0 || i >= n) return QRectF();
+    QRectF bbox; QPointF ctr;
+    focusGeometry(bbox, ctr);
     double sc = 1;
-    const QRectF fr = fitRect(curProvince_.bbox, dst, sc);
-    const QPointF c = fr.topLeft() + curProvince_.ctr * sc;
+    const QRectF fr = fitRect(bbox, dst, sc);
+    const QPointF c = fr.topLeft() + ctr * sc;
     const double rx = dst.width() * 0.34, ry = dst.height() * 0.32;
     const double tw = 96.0, th = 72.0;
     const double a = qDegreesToRadians(-90.0 + i * 360.0 / n);
@@ -902,10 +941,12 @@ void MapView::drawBurst(QPainter& p, const QRectF& dst) const
     if (!burstActive_) return;
     const qint64 t0 = burstTOverride_ >= 0 ? burstTOverride_
                      : (reduceMotion_ ? 99999 : qint64(burstClock_.elapsed()));
-    // 中心 = 当前省中心（与 renderProvince 同一拟合变换，不随点击点抖动）
+    // 中心 = 当前焦点中心（省视图=省中心；国家视图=国 bbox 中心），不随点击点抖动
+    QRectF bbox; QPointF ctr;
+    focusGeometry(bbox, ctr);
     double sc = 1;
-    const QRectF fr = fitRect(curProvince_.bbox, dst, sc);
-    const QPointF c = fr.topLeft() + curProvince_.ctr * sc;
+    const QRectF fr = fitRect(bbox, dst, sc);
+    const QPointF c = fr.topLeft() + ctr * sc;
 
     // —— 冲击波双环（金 + 翡翠）：扩散 + 淡出，爆炸感核心 ——
     auto ring = [&](qint64 delay, double maxR, const QColor& base, double w) {
@@ -1205,8 +1246,10 @@ void MapView::paintEvent(QPaintEvent*)
     else
         renderProvince(p, dst);
 
-    if (level_ == Province && burstActive_)
-        drawBurst(p, dst);   // 爆炸弹层：金色连线 + 照片卡 + 冲击波
+    const bool burstView = (level_ == Province && hasCurProvince_) ||
+                           (level_ == Region && countryFeature_ >= 0 && curProvinces_.isEmpty());
+    if (burstView && burstActive_)
+        drawBurst(p, dst);   // 爆炸弹层：金色连线 + 照片卡 + 冲击波（省视图/国家视图共用）
 
     if (level_ == World)
         drawLegend(p);   // 很精细：世界视图图例
@@ -1389,10 +1432,21 @@ void MapView::mousePressEvent(QMouseEvent* e)
                 hp.closeSubpath();
                 cpath.addPath(hp);
             }
-            if (cpath.contains(e->pos()))
+            if (cpath.contains(e->pos())) {
                 emit countryBurstRequested(curRegionName_, countryPaths_);
-            else
-                goUp();
+            } else {
+                // 离岸/近海照片点 pip 在国界外但可见（bbox 内绘制）——
+                // 点在光点附近同样触发爆炸，不误判为「点空白返回」
+                bool nearDot = false;
+                for (const QPointF& pt : countryPts_) {
+                    const QPointF sp = oc + pt * scc;
+                    if (QLineF(sp, e->pos()).length() < 14.0) { nearDot = true; break; }
+                }
+                if (nearDot)
+                    emit countryBurstRequested(curRegionName_, countryPaths_);
+                else
+                    goUp();
+            }
             return;
         }
         double scale = 1;
@@ -1481,15 +1535,32 @@ void MapView::enterCountry(int fi)
     curProvinces_.clear();
     hasCurProvince_ = false;
     level_ = Region;
-    // 该国 GPS 照片路径（pip 于外环、不在湖泊内环）
+    // 该国 GPS 照片路径（pip 于外环；离岸容差：距国界顶点 <3 预投影单位 ≈1°，
+    // 顶点距离 ≥ 真实边界距离 → 判定方向保守）。湖泊内环中的点不接受容差。
     countryPaths_.clear();
+    countryPts_.clear();
     const WorldFeature& wf = worldFeatures_[fi];
     const QRectF& bb = featureBbox_[fi];
     for (int i = 0; i < gpsPts_.size(); ++i) {
         const QPointF& pt = gpsPts_[i];
         if (!bb.contains(pt)) continue;
-        if (!pointInFeature(pt, wf)) continue;
+        bool inHole = false;
+        for (const QVector<QPointF>& h : wf.holes)
+            if (pip(h, pt)) { inHole = true; break; }
+        if (inHole) continue;
+        bool ok = pip(wf.exterior, pt);
+        if (!ok) {
+            double best = 1e18;
+            for (const QPointF& v : wf.exterior) {
+                const double dd = (v.x() - pt.x()) * (v.x() - pt.x())
+                                + (v.y() - pt.y()) * (v.y() - pt.y());
+                if (dd < best) best = dd;
+            }
+            ok = (best < 9.0);
+        }
+        if (!ok) continue;
         if (i < gpsPaths_.size()) countryPaths_.append(gpsPaths_[i]);
+        countryPts_.append(pt);
     }
     update();
     emit breadcrumbChanged(breadcrumb());
@@ -1539,7 +1610,7 @@ void MapView::enterProvince(const QString& name)
 void MapView::goUp()
 {
     if (level_ == Province) { level_ = Region; hasCurProvince_ = false; }
-    else if (level_ == Region) { level_ = World; curProvinces_.clear(); countryFeature_ = -1; countryPaths_.clear(); }
+    else if (level_ == Region) { level_ = World; curProvinces_.clear(); countryFeature_ = -1; countryPaths_.clear(); countryPts_.clear(); }
     update();
     emit breadcrumbChanged(breadcrumb());
 }

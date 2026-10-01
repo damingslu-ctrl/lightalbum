@@ -177,7 +177,9 @@ private:
     void renderCountryOnly(QPainter& p, const QRectF& dst) const;
     int         countryFeature_ = -1;            // 当前国家视图对应的世界要素
     QStringList countryPaths_;                   // 该国 GPS 照片路径（enterCountry 时算好）
+    QVector<QPointF> countryPts_;                // 与 countryPaths_ 对应的预投影点（点击命中用）
     QStringList gpsPaths_;                       // 与 gpsPts_ 一一对应的照片路径
+    void focusGeometry(QRectF& bbox, QPointF& ctr) const;   // 爆炸焦点（省=省bbox/中心，国家=国bbox/中心）
 
     // 世界层滚轮缩放（光标锚定）+ 初始居中中国
     void    centerWorldOn(double preX, double preY);  // 把预投影点置于视口中心（含漂移/纵向偏移）
