@@ -122,13 +122,18 @@ QString MapView::zhOf(const QString& en) const
 
 void MapView::computeProvinceBBox(ProvinceInfo& pv)
 {
-    QRectF b;
-    bool first = true;
+    if (pv.ring.pts.isEmpty()) { pv.bbox = QRectF(); return; }
+    // 注意：零尺寸 QRectF 被 Qt 视为 isEmpty()，operator|= 会短路返回右操作数，
+    // 导致并集永远不累积 → bbox 退化成单点。故用显式 min/max 计算。
+    double l = pv.ring.pts.first().x(), r = l;
+    double t = pv.ring.pts.first().y(), b = t;
     for (const QPointF& p : pv.ring.pts) {
-        if (first) { b = QRectF(p, QSizeF(0, 0)); first = false; }
-        else b |= QRectF(p.x(), p.y(), 0, 0);
+        if (p.x() < l) l = p.x();
+        if (p.x() > r) r = p.x();
+        if (p.y() < t) t = p.y();
+        if (p.y() > b) b = p.y();
     }
-    pv.bbox = b;
+    pv.bbox = QRectF(l, t, r - l, b - t);
 }
 
 void MapView::computeRegionBBox()
@@ -477,6 +482,47 @@ void MapView::qaShootA(const QString& path)
     std::fflush(stderr);
 }
 
+// 下钻区/省视图像素自测：强制 enterRegion(id) 后离屏渲染该大区省视图并统计省面像素。
+// 用于 CI/offscreen 验证「中国 34 省 DataV 几何已落地」「省面真实绘制」（颜色校验铁律：实测不许猜）。
+void MapView::qaShootRegion(const QString& path, const QString& id)
+{
+    // 确定性合成足迹点（北京/上海/广州/成都/乌鲁木齐，均落在中国 bbox 内）→ 验证下钻视图航线/足迹
+    gpsPts_ = {
+        QPointF(eqX(116.40), eqY(39.90)),
+        QPointF(eqX(121.47), eqY(31.23)),
+        QPointF(eqX(113.26), eqY(23.13)),
+        QPointF(eqX(104.07), eqY(30.57)),
+        QPointF(eqX(87.62),  eqY(43.82)),
+    };
+    arcRegionIds_.clear();
+    enterRegion(id);                       // 载入该大区省几何，level_ -> Region
+    const int W = int(MAP_W), H = int(MAP_H);
+    QImage img(W, H, QImage::Format_ARGB32);
+    img.fill(Qt::transparent);
+    {
+        QPainter p(&img);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        const QRectF dst = QRectF(8, 8, W - 16, H - 16);
+        renderRegion(p, dst);
+    }
+    int land = 0;
+    const uchar* bits = img.constBits();
+    const int bpl = img.bytesPerLine();
+    for (int y = 0; y < H; ++y) {
+        const uchar* row = bits + y * bpl;
+        for (int x = 0; x < W; ++x) {
+            const uchar* px = row + x * 4;
+            const int b = px[0], g = px[1], r = px[2];
+            // 省面基色 land(47,70,88)：与背景透明/深色及金色高亮均有显著差
+            if (std::abs(r - 47) + std::abs(g - 70) + std::abs(b - 88) < 42) ++land;
+        }
+    }
+    if (!path.isEmpty()) img.save(path);
+    std::fprintf(stderr, "LA_MAP_REGION_QA region=%s provinces=%d land=%d png=%s\n",
+                 qPrintable(id), curProvinces_.size(), land, qPrintable(path));
+    std::fflush(stderr);
+}
+
 // —— 很精细优化辅助 ——
 
 // 预渲染翡翠足迹点精灵（一次），逐帧 blit，避免每帧重建径向梯度
@@ -573,6 +619,9 @@ void MapView::drawGraticule(QPainter& p, const QRectF& bbox, const QRectF& dst) 
 void MapView::drawLabel(QPainter& p, const QPointF& pos, const QString& text, const QColor& fill) const
 {
     if (text.isEmpty()) return;
+    // save/restore：绝不让 pen/brush 泄漏给调用方 —— 否则后续 drawPath 会用
+    // 残留的 cream 笔刷把省面整体误填充（下钻视图省份全变奶油色的根因）
+    p.save();
     const QFont f = p.font();
     QPainterPath path;
     path.addText(pos, f, text);
@@ -582,6 +631,7 @@ void MapView::drawLabel(QPainter& p, const QPointF& pos, const QString& text, co
     p.setPen(QPen(fill, 1));
     p.setBrush(fill);
     p.drawPath(path);
+    p.restore();
 }
 
 // 世界视图右下角图例
@@ -727,6 +777,31 @@ void MapView::mousePressEvent(QMouseEvent* e)
     }
 }
 
+// 鲁棒解析省环：兼容 扁平 [x,y,x,y,...]、双层 [[x,y,...]]、点对 [[x,y],[x,y],...]
+// （历史数据各 region 格式不统一，统一收敛避免下钻视图退化为单点）
+static QVector<QPointF> parseProvinceRing(const QJsonValue& v)
+{
+    QVector<QPointF> pts;
+    const QJsonArray a = v.toArray();
+    if (a.isEmpty()) return pts;
+    if (a[0].isArray()) {
+        if (a.size() == 1) {                       // 双层：唯一子数组即扁平环
+            const QJsonArray inner = a[0].toArray();
+            for (int i = 0; i + 1 < inner.size(); i += 2)
+                pts.append(QPointF(inner[i].toDouble(), inner[i + 1].toDouble()));
+            return pts;
+        }
+        for (const QJsonValue& sub : a) {          // 点对列表
+            const QJsonArray p = sub.toArray();
+            if (p.size() >= 2) pts.append(QPointF(p[0].toDouble(), p[1].toDouble()));
+        }
+        return pts;
+    }
+    for (int i = 0; i + 1 < a.size(); i += 2)      // 扁平
+        pts.append(QPointF(a[i].toDouble(), a[i + 1].toDouble()));
+    return pts;
+}
+
 void MapView::enterRegion(const QString& id)
 {
     const QJsonValue arr = provJson_.value(id);
@@ -741,10 +816,7 @@ void MapView::enterRegion(const QString& id)
         if (e.size() < 4) continue;
         ProvinceInfo pv;
         pv.name = e[0].toString();
-        const QJsonArray ring = e[1].toArray();
-        pv.ring.pts.reserve(ring.size() / 2);
-        for (int i = 0; i + 1 < ring.size(); i += 2)
-            pv.ring.pts.append(QPointF(ring[i].toDouble(), ring[i + 1].toDouble()));
+        pv.ring.pts = parseProvinceRing(e[1]);
         pv.ctr = QPointF(e[2].toDouble(), e[3].toDouble());
         pv.zh = zhOf(pv.name);
         computeProvinceBBox(pv);

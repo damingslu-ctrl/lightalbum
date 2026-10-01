@@ -69,6 +69,8 @@ public:
 
     // A 现状墨韵·抛光：像素自测探针（offscreen 渲染世界层 + 翡翠像素统计）
     void qaShootA(const QString& path);
+    // A 下钻区/省视图像素自测：强制 enterRegion(id) 后离屏渲染该大区省视图 + 省面像素统计
+    void qaShootRegion(const QString& path, const QString& id);
 
 signals:
     void breadcrumbChanged(const QString& text);

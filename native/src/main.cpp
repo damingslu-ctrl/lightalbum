@@ -535,6 +535,7 @@ int main(int argc, char *argv[])
         && !qEnvironmentVariableIsSet("LA_RETOUCH_SMOKE")
         && !qEnvironmentVariableIsSet("LA_RETOUCH_A_QA")
         && !qEnvironmentVariableIsSet("LA_MAP_A_QA")
+        && !qEnvironmentVariableIsSet("LA_MAP_REGION_QA")
         && !qEnvironmentVariableIsSet("LA_GALLERY_E_QA")
         && !qEnvironmentVariableIsSet("LA_CULL_DUEL_QA")
         && !qEnvironmentVariableIsSet("LA_GALLERY_FILL_QA")
@@ -624,6 +625,20 @@ int main(int argc, char *argv[])
         QDir().mkpath(QFileInfo(p).absolutePath());
         if (MapView* mv = win.mapView()) mv->qaShootA(p);
         std::fprintf(stderr, "LA_MAP_A_QA_DONE\n");
+        std::fflush(stderr);
+        return 0;
+    }
+
+    // A 下钻区/省视图像素自测：LA_MAP_REGION_QA=<png>[,<regionId>] 时强制 enterRegion 后
+    // 离屏渲染该大区省视图。默认 regionId=china（验证 DataV 34 省落地）。
+    if (!qEnvironmentVariableIsEmpty("LA_MAP_REGION_QA")) {
+        const QString v = qEnvironmentVariable("LA_MAP_REGION_QA");
+        QString p = v, id = QStringLiteral("china");
+        const int idx = v.indexOf(QLatin1Char(','));
+        if (idx >= 0) { p = v.left(idx); id = v.mid(idx + 1); }
+        QDir().mkpath(QFileInfo(p).absolutePath());
+        if (MapView* mv = win.mapView()) mv->qaShootRegion(p, id);
+        std::fprintf(stderr, "LA_MAP_REGION_QA_DONE\n");
         std::fflush(stderr);
         return 0;
     }
