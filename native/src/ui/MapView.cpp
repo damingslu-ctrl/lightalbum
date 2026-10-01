@@ -610,33 +610,49 @@ void MapView::qaClickProbe()
         worldResult = (level_ == Region)
             ? QStringLiteral("OK") : QStringLiteral("FAIL(level=%1)").arg(int(level_));
     }
-    // ③ 大区层省面 → 省 + 爆炸弹层（MapPage 已连接 burstRequested → startBurst）
+    // ③ 大区层省面 → 省 + 爆炸弹层 + 卡片灯箱（MapPage/MainWindow 已连接）
+    //    库依赖：逐省尝试，取第一个「有照片」的省做爆炸/卡片断言。
     QString provResult = QStringLiteral("skip");
     QString burstResult = QStringLiteral("skip");
+    QString cardResult = QStringLiteral("skip");
+    QString blankResult = QStringLiteral("skip");
     enterRegion(QStringLiteral("china"));
     if (!curProvinces_.isEmpty()) {
-        const ProvinceInfo* pick = nullptr;
-        for (const ProvinceInfo& pv : curProvinces_)
-            if (pv.name == QStringLiteral("青海省")) { pick = &pv; break; }
-        if (!pick) pick = &curProvinces_.first();
-        QRectF bbox; bool first = true;
+        const QRectF dstP = rect().adjusted(8, 8, -8, -8);
         for (const ProvinceInfo& pv : curProvinces_) {
-            if (first) { bbox = pv.bbox; first = false; } else bbox |= pv.bbox;
+            enterProvince(pv.name);
+            QRectF bbox; bool first = true;
+            for (const ProvinceInfo& q : curProvinces_) {
+                if (first) { bbox = q.bbox; first = false; } else bbox |= q.bbox;
+            }
+            double sc = 1;
+            const QRectF fr = fitRect(bbox, dstP, sc);
+            provResult = QStringLiteral("OK");
+            burstActive_ = false;                 // 去陈旧状态，断言只反映本次点击
+            sendClick(fr.topLeft() + pv.ctr * sc);   // 省面点击 → 爆炸
+            if (!burstActive_) continue;          // 未触发（点在空白被回退等）→ 下一省
+            burstResult = QStringLiteral("OK(thumbs=%1)").arg(burstThumbs_.size());
+            if (!burstPaths_.isEmpty()) {
+                bool opened = false;
+                const QMetaObject::Connection oc =
+                    connect(this, &MapView::openPhotoRequested,
+                            [&opened](const QString&) { opened = true; });
+                sendClick(burstCardRect(0, dstP).center());   // 卡片点击 → 灯箱
+                disconnect(oc);
+                cardResult = opened ? QStringLiteral("OK") : QStringLiteral("FAIL");
+            }
+            // 空白点击 → 返回上一级（省 → 大区；Region 层走同一 goUp 路径）
+            const int lvlBefore = int(level_);
+            sendClick(QPointF(rect().left() + 3.0, rect().top() + 3.0));
+            blankResult = (int(level_) == lvlBefore - 1)
+                ? QStringLiteral("OK") : QStringLiteral("FAIL(%1->%2)").arg(lvlBefore).arg(int(level_));
+            break;
         }
-        double sc = 1;
-        const QRectF fr = fitRect(bbox, rect().adjusted(8, 8, -8, -8), sc);
-        sendClick(fr.topLeft() + pick->ctr * sc);
-        provResult = (level_ == Province && hasCurProvince_)
-            ? QStringLiteral("OK") : QStringLiteral("FAIL(level=%1)").arg(int(level_));
-        // 省视图内再次点击 → 爆炸弹层（burstRequested → MapPage → startBurst）
-        sendClick(fr.topLeft() + pick->ctr * sc);
-        burstResult = burstActive_
-            ? QStringLiteral("OK(thumbs=%1)").arg(burstThumbs_.size())
-            : QStringLiteral("FAIL");
     }
-    std::fprintf(stderr, "LA_MAP_CLICK_QA country=%s anchor=%s province=%s burst=%s\n",
+    std::fprintf(stderr, "LA_MAP_CLICK_QA country=%s anchor=%s province=%s burst=%s card=%s blank=%s\n",
                  qPrintable(countryResult), qPrintable(worldResult),
-                 qPrintable(provResult), qPrintable(burstResult));
+                 qPrintable(provResult), qPrintable(burstResult),
+                 qPrintable(cardResult), qPrintable(blankResult));
     std::fflush(stderr);
 }
 
@@ -667,14 +683,34 @@ void MapView::assignFeatureRegions()
 
 // 省视图爆炸弹层：MapPage 注入缩略图后触发。从省中心逐张错峰飞出，
 // 金色连线 + 圆角照片卡 + 冲击波双环；reduceMotion 直接呈现终态。
-void MapView::startBurst(const QVector<QPixmap>& thumbs)
+// paths 与 thumbs 一一对应（点击卡片 → openPhotoRequested）。
+void MapView::startBurst(const QVector<QPixmap>& thumbs, const QStringList& paths)
 {
     if (level_ != Province || !hasCurProvince_) return;
     burstThumbs_ = thumbs;
+    burstPaths_ = paths;
     burstActive_ = true;
     burstClock_.start();
     if (!reduceMotion_) burstTimer_.start(16);
     update();
+}
+
+// 稳态卡片矩形：角度扇形布点 + 画布内钳制（DataV center 贴省边界如西宁，防飞出）。
+// 绘制（动画终点）与命中测试共用，保证「画在哪就能点哪」。
+QRectF MapView::burstCardRect(int i, const QRectF& dst) const
+{
+    const int n = burstThumbs_.size();
+    if (i < 0 || i >= n) return QRectF();
+    double sc = 1;
+    const QRectF fr = fitRect(curProvince_.bbox, dst, sc);
+    const QPointF c = fr.topLeft() + curProvince_.ctr * sc;
+    const double rx = dst.width() * 0.34, ry = dst.height() * 0.32;
+    const double tw = 96.0, th = 72.0;
+    const double a = qDegreesToRadians(-90.0 + i * 360.0 / n);
+    const QPointF raw = c + QPointF(rx * std::cos(a), ry * std::sin(a));
+    const QPointF pos(qBound(dst.left() + tw / 2 + 6.0, raw.x(), dst.right() - tw / 2 - 6.0),
+                      qBound(dst.top() + th / 2 + 6.0, raw.y(), dst.bottom() - th / 2 - 6.0));
+    return QRectF(pos.x() - tw / 2, pos.y() - th / 2, tw, th);
 }
 
 void MapView::drawBurst(QPainter& p, const QRectF& dst) const
@@ -703,18 +739,13 @@ void MapView::drawBurst(QPainter& p, const QRectF& dst) const
 
     // —— 金色连线 + 圆角照片卡：逐张错峰飞出（70ms/张，520ms OutCubic）——
     const int n = burstThumbs_.size();
-    const double rx = dst.width() * 0.34, ry = dst.height() * 0.32;
     const double tw = 96.0, th = 72.0;
     for (int i = 0; i < n; ++i) {
-        const double a = qDegreesToRadians(-90.0 + i * 360.0 / n);
-        const QPointF tgt = c + QPointF(rx * std::cos(a), ry * std::sin(a));
+        const QPointF tgt = burstCardRect(i, dst).center();   // 钳制后的稳态落点
         const double lt = qBound(0.0, double(t0 - i * 70) / 520.0, 1.0);
         if (lt <= 0.0) continue;
         const double e = 1.0 - std::pow(1.0 - lt, 3.0);
-        // 落点钳制在画布内：DataV center 常贴省边界（如西宁），不钳制卡片会飞出可视区
-        const QPointF pos = QPointF(
-            qBound(dst.left() + tw / 2 + 6.0,  c.x() + (tgt.x() - c.x()) * e, dst.right()  - tw / 2 - 6.0),
-            qBound(dst.top()  + th / 2 + 6.0,  c.y() + (tgt.y() - c.y()) * e, dst.bottom() - th / 2 - 6.0));
+        const QPointF pos = c + (tgt - c) * e;
         // 连线（金色，中心 → 卡片）
         QColor lc(0xd9, 0xa9, 0x4e);
         lc.setAlphaF(0.75 * e);
@@ -781,14 +812,16 @@ void MapView::qaShootBurst(const QString& path)
     if (!pick && !curProvinces_.isEmpty()) pick = &curProvinces_.first();
     if (!pick) return;
     enterProvince(pick->name);
-    // 合成缩略图：翡翠 / 金 / 奶油三张实心卡
+    // 合成缩略图：翡翠 / 金 / 奶油三张实心卡（paths 同步合成，卡片命中测试可跑）
     burstThumbs_.clear();
+    burstPaths_.clear();
     const QColor cardCols[3] = { QColor(0x5f, 0xdc, 0xa6), QColor(0xd9, 0xa9, 0x4e),
                                  QColor(0xe8, 0xe2, 0xd4) };
     for (int i = 0; i < 3; ++i) {
         QPixmap pm(96, 72);
         pm.fill(cardCols[i]);
         burstThumbs_.append(pm);
+        burstPaths_.append(QStringLiteral("synthetic/%1.jpg").arg(i));
     }
     burstActive_ = true;
     burstTOverride_ = 2000;   // 终态（连线/卡片驻留，冲击波已散）
@@ -858,7 +891,7 @@ void MapView::drawFootprintDot(QPainter& p, const QPointF& c, double coreR, int 
     const double d = std::min(dens, 8);
     const double sizeFactor = 0.85 + d * 0.05;     // 0.85..1.25
     const double op = 0.55 + d * 0.06;             // 0.55..1.03
-    const double draw = 5.0 * coreR * sizeFactor; // 精灵核(4px)→coreR 映射（5.0：光点收小一档，世界层光晕直径 ~8-11px）
+    const double draw = 3.5 * coreR * sizeFactor; // 精灵核(4px)→coreR 映射（3.5：光点再收小一档，世界层光晕直径 ~6-8px）
     const qreal saved = p.opacity();
     p.setOpacity(qMin(1.0, op));
     p.drawPixmap(QRectF(c.x() - draw / 2, c.y() - draw / 2, draw, draw),
@@ -1104,10 +1137,36 @@ void MapView::mousePressEvent(QMouseEvent* e)
                 return;
             }
         }
+        // 空白处点击 → 返回上一级（大区 → 世界）
+        goUp();
     } else if (level_ == Province && hasCurProvince_) {
-        // 省视图点击 → 爆炸弹层（MapPage 按省收集缩略图回灌 startBurst）
-        const QString label = curProvince_.zh.isEmpty() ? curProvince_.name : curProvince_.zh;
-        emit burstRequested(curProvince_.name, label);
+        // ① 爆炸卡片命中 → 打开该照片灯箱
+        if (burstActive_ && !burstPaths_.isEmpty()) {
+            const QRectF dst = rect().adjusted(8, 8, -8, -8);
+            const int nCard = qMin(burstThumbs_.size(), burstPaths_.size());
+            for (int i = 0; i < nCard; ++i) {
+                if (burstCardRect(i, dst).contains(e->pos())) {
+                    emit openPhotoRequested(burstPaths_[i]);
+                    return;
+                }
+            }
+        }
+        // ② 省面命中 → 爆炸弹层（MapPage 按省收集缩略图回灌 startBurst）
+        double sc = 1;
+        const QRectF fr = fitRect(curProvince_.bbox, rect().adjusted(8, 8, -8, -8), sc);
+        QPainterPath path;
+        const QPointF o = fr.topLeft();
+        path.moveTo(o + curProvince_.ring.pts.first() * sc);
+        for (int i = 1; i < curProvince_.ring.pts.size(); ++i)
+            path.lineTo(o + curProvince_.ring.pts[i] * sc);
+        path.closeSubpath();
+        if (path.contains(e->pos())) {
+            const QString label = curProvince_.zh.isEmpty() ? curProvince_.name : curProvince_.zh;
+            emit burstRequested(curProvince_.name, label);
+            return;
+        }
+        // ③ 空白处点击 → 返回上一级（省 → 大区）
+        goUp();
     }
 }
 

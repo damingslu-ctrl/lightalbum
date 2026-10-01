@@ -15,6 +15,7 @@ public:
 
 signals:
     void requestGallery(const QString& regionId, const QString& provEn); // 在图库查看
+    void requestLightbox(const QString& path);   // 爆炸卡片点击 → 灯箱看大图
 
 private slots:
     void onPicked(const QString& key, const QString& label, bool isProvince);

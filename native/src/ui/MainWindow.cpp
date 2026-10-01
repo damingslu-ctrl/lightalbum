@@ -588,6 +588,9 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
                 gallery_->applyGeoFilter(regionId, provEn);
                 nav_->setCurrentRow(2);
             });
+    // 地图爆炸卡片点击 → 沉浸式灯箱看大图
+    connect(map_, &MapPage::requestLightbox, this,
+            [this](const QString& path) { openLightbox(path); });
     animEnabled_ = uiAnimEnabled();
     setupBreathing();
     registerBreath(seamEff_, 0.72, 0.28, 1.0);

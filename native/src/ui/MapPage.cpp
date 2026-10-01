@@ -115,6 +115,7 @@ MapPage::MapPage(const QVector<Photo>* photos, const QString& thumbsDir,
     });
     connect(view_, &MapView::picked, this, &MapPage::onPicked);
     connect(view_, &MapView::burstRequested, this, &MapPage::onBurstRequest);
+    connect(view_, &MapView::openPhotoRequested, this, &MapPage::requestLightbox);
     connect(viewBtn_, &QPushButton::clicked, this, &MapPage::onViewInGallery);
     connect(relocBtn_, &QPushButton::clicked, this, &MapPage::onRelocate);
 }
@@ -212,6 +213,7 @@ void MapPage::onBurstRequest(const QString& key, const QString& label)
 {
     Q_UNUSED(label);
     QVector<QPixmap> thumbs;
+    QStringList paths;
     if (photos_) {
         const QString k = key.toLower();
         for (const Photo& ph : *photos_) {
@@ -224,9 +226,10 @@ void MapPage::onBurstRequest(const QString& key, const QString& label)
             thumbs.append(pm.scaled(192, 144,
                                     Qt::KeepAspectRatioByExpanding,
                                     Qt::SmoothTransformation));
+            paths.append(ph.path);
         }
     }
-    view_->startBurst(thumbs);
+    view_->startBurst(thumbs, paths);
 }
 
 // P16.4.2 重新定位：城市预设 / 自定义经纬度 → setHomePoint。

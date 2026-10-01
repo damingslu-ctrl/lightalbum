@@ -78,7 +78,8 @@ public:
 
     // 省视图「爆炸弹层」：MapPage 注入该省照片缩略图后，从省中心爆炸弹出
     // 金色连线 + 圆角照片卡（冲击波双环 + 逐张错峰飞出）。reduceMotion 直接终态。
-    void startBurst(const QVector<QPixmap>& thumbs);
+    // paths 与 thumbs 一一对应（点击卡片 → openPhotoRequested 打开灯箱）。
+    void startBurst(const QVector<QPixmap>& thumbs, const QStringList& paths);
     bool burstActive() const { return burstActive_; }
 
 signals:
@@ -86,6 +87,8 @@ signals:
     void picked(const QString& key, const QString& label, bool isProvince); // 区域/省点击
     // 省视图点击 → 请求爆炸弹层（MapPage 按省收集缩略图后回灌 startBurst）
     void burstRequested(const QString& key, const QString& label);
+    // 爆炸卡片点击 → 打开该照片灯箱
+    void openPhotoRequested(const QString& path);
 
 protected:
     void paintEvent(QPaintEvent*) override;
@@ -158,7 +161,9 @@ private:
 
     // 省视图爆炸弹层状态
     void drawBurst(QPainter& p, const QRectF& dst) const;
+    QRectF burstCardRect(int i, const QRectF& dst) const;   // 稳态卡片矩形（绘制/命中共用）
     QVector<QPixmap> burstThumbs_;               // MapPage 注入的照片缩略图（≤10）
+    QStringList      burstPaths_;                // 与 thumbs 一一对应的照片路径
     bool             burstActive_ = false;
     QElapsedTimer    burstClock_;
     QTimer           burstTimer_;                // 动画期 16ms 驱动 update，终态后自停
