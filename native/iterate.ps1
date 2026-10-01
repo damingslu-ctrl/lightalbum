@@ -46,8 +46,12 @@ if ($doBuild) {
 }
 
 # Run the gate runner (it prints live and also writes a machine-readable JSON result).
-$argOnly = if ($Only) { "-Only $Only" } else { "" }
-& powershell -ExecutionPolicy Bypass -File $qaRunner -Exe $Exe -Timeout $Timeout $argOnly -Result $resultJson
+# NOTE: -Only and its value MUST be two separate argv tokens. A single glued
+# string like "-Only LA_GEO_SMOKE" is passed as ONE argument to the child
+# powershell -File parser, which then never binds qa_runner.ps1's -Only param.
+$qaArgs = @("-ExecutionPolicy","Bypass","-File",$qaRunner,"-Exe",$Exe,"-Timeout",$Timeout,"-Result",$resultJson)
+if ($Only) { $qaArgs += "-Only"; $qaArgs += $Only }
+& powershell @qaArgs
 
 # Consume the JSON result (decoupled from PowerShell stream redirection).
 $data = $null
