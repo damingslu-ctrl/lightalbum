@@ -538,6 +538,7 @@ int main(int argc, char *argv[])
         && !qEnvironmentVariableIsSet("LA_MAP_REGION_QA")
         && !qEnvironmentVariableIsSet("LA_MAP_CLICK_QA")
         && !qEnvironmentVariableIsSet("LA_MAP_BURST_QA")
+        && !qEnvironmentVariableIsSet("LA_MAP_COUNTRY_QA")
         && !qEnvironmentVariableIsSet("LA_GALLERY_E_QA")
         && !qEnvironmentVariableIsSet("LA_CULL_DUEL_QA")
         && !qEnvironmentVariableIsSet("LA_GALLERY_FILL_QA")
@@ -660,6 +661,20 @@ int main(int argc, char *argv[])
         QDir().mkpath(QFileInfo(p).absolutePath());
         if (MapView* mv = win.mapView()) mv->qaShootBurst(p);
         std::fprintf(stderr, "LA_MAP_BURST_QA_DONE\n");
+        std::fflush(stderr);
+        return 0;
+    }
+
+    // A 国家视图像素自测：LA_MAP_COUNTRY_QA=<png>[,<国家名>] 时 enterCountry →
+    // 离屏渲染国界轮廓 + 石板色统计（默认 India，bbox 中心必在国内）。
+    if (!qEnvironmentVariableIsEmpty("LA_MAP_COUNTRY_QA")) {
+        const QString v = qEnvironmentVariable("LA_MAP_COUNTRY_QA");
+        QString p = v, nm = QStringLiteral("India");
+        const int idx = v.indexOf(QLatin1Char(','));
+        if (idx >= 0) { p = v.left(idx); nm = v.mid(idx + 1); }
+        QDir().mkpath(QFileInfo(p).absolutePath());
+        if (MapView* mv = win.mapView()) mv->qaShootCountry(p, nm);
+        std::fprintf(stderr, "LA_MAP_COUNTRY_QA_DONE\n");
         std::fflush(stderr);
         return 0;
     }

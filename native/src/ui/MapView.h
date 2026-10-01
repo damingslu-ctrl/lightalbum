@@ -48,6 +48,7 @@ public:
     // 导航 API（由上层面包屑/返回按钮调用）
     void enterRegion(const QString& id);
     void enterProvince(const QString& name);
+    void enterCountry(int featureIndex);   // 无专辑国家 → 国家视图（国界轮廓 + 该国 GPS 作品）
     void goUp();
     Level level() const { return level_; }
     QString breadcrumb() const;
@@ -73,6 +74,8 @@ public:
     void qaShootRegion(const QString& path, const QString& id);
     // A 点击链路自测：合成鼠标事件实测「世界锚点→大区」「大区省面→省」两级命中
     void qaClickProbe();
+    // A 国家视图像素自测：按国家名 enterCountry → 离屏渲染国界轮廓 + 分色统计
+    void qaShootCountry(const QString& path, const QString& name);
     // A 爆炸弹层像素自测：进入省视图 + 合成缩略图 → 离屏渲染终态 + 分色统计
     void qaShootBurst(const QString& path);
 
@@ -82,6 +85,10 @@ public:
     void startBurst(const QVector<QPixmap>& thumbs, const QStringList& paths);
     bool burstActive() const { return burstActive_; }
 
+    // 国家视图（无省级数据的国家）：世界层点任意国家即下钻到国界轮廓 +
+    // 该国 GPS 足迹/航线；点国内触发爆炸弹层（该国 GPS 作品）
+    void setGpsPaths(const QStringList& paths) { gpsPaths_ = paths; }
+
 signals:
     void breadcrumbChanged(const QString& text);
     void picked(const QString& key, const QString& label, bool isProvince); // 区域/省点击
@@ -89,6 +96,10 @@ signals:
     void burstRequested(const QString& key, const QString& label);
     // 爆炸卡片点击 → 打开该照片灯箱
     void openPhotoRequested(const QString& path);
+    // 进入国家视图（MapPage 更新统计：该国 GPS 作品数）
+    void countryPicked(const QString& name, const QStringList& paths);
+    // 国家视图点击国内 → 请求该国爆炸弹层
+    void countryBurstRequested(const QString& name, const QStringList& paths);
 
 protected:
     void paintEvent(QPaintEvent*) override;
@@ -160,6 +171,13 @@ private:
     void assignFeatureRegions();                 // loadData 时一次性标记 + 预计算 bbox
     QVector<int>    featureRegion_;              // worldFeatures_ → regions_ 下标（-1=无作品国家）
     QVector<QRectF> featureBbox_;                // 世界要素 bbox（命中早退）
+    QVector<QString> worldNames_;                // 世界要素国家名（与 worldFeatures_ 对齐）
+
+    // 国家视图状态（level_==Region 且 curProvinces_ 为空时生效）
+    void renderCountryOnly(QPainter& p, const QRectF& dst) const;
+    int         countryFeature_ = -1;            // 当前国家视图对应的世界要素
+    QStringList countryPaths_;                   // 该国 GPS 照片路径（enterCountry 时算好）
+    QStringList gpsPaths_;                       // 与 gpsPts_ 一一对应的照片路径
 
     // 世界层滚轮缩放（光标锚定）+ 初始居中中国
     void    centerWorldOn(double preX, double preY);  // 把预投影点置于视口中心（含漂移/纵向偏移）

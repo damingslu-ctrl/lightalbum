@@ -55,7 +55,11 @@ MapPage::MapPage(const QVector<Photo>* photos, const QString& thumbsDir,
 
     view_ = new MapView(left);
     view_->setGpsCount(computeGpsCount());     // P16.1：注入真实 GPS 足迹数
-    view_->setGpsPoints(computeGpsPoints());   // P16.4：注入真实 GPS 足迹点
+    {
+        QStringList gpsPaths;
+        view_->setGpsPoints(computeGpsPoints(&gpsPaths));   // P16.4：注入真实 GPS 足迹点
+        view_->setGpsPaths(gpsPaths);                       // 与点一一对应的照片路径（国家视图）
+    }
     view_->setArcRegionIds(computeArcRegionIds()); // P16.4.2：有作品大区 → 航线目标
     ll->addWidget(view_, 1);
     lay->addWidget(left, 1);
@@ -116,6 +120,8 @@ MapPage::MapPage(const QVector<Photo>* photos, const QString& thumbsDir,
     connect(view_, &MapView::picked, this, &MapPage::onPicked);
     connect(view_, &MapView::burstRequested, this, &MapPage::onBurstRequest);
     connect(view_, &MapView::openPhotoRequested, this, &MapPage::requestLightbox);
+    connect(view_, &MapView::countryPicked, this, &MapPage::onCountryPicked);
+    connect(view_, &MapView::countryBurstRequested, this, &MapPage::onCountryBurst);
     connect(viewBtn_, &QPushButton::clicked, this, &MapPage::onViewInGallery);
     connect(relocBtn_, &QPushButton::clicked, this, &MapPage::onRelocate);
 }
@@ -124,7 +130,11 @@ void MapPage::setHidePrivate(bool hide)
 {
     hidePrivate_ = hide;
     view_->setGpsCount(computeGpsCount());         // P16.1：隐私门切换 → 足迹数同步
-    view_->setGpsPoints(computeGpsPoints());       // P16.4：隐私门切换 → 足迹点同步
+    {
+        QStringList gpsPaths;
+        view_->setGpsPoints(computeGpsPoints(&gpsPaths));       // P16.4：足迹点同步
+        view_->setGpsPaths(gpsPaths);
+    }
     view_->setArcRegionIds(computeArcRegionIds()); // P16.4.2：航线目标同步
     // 已选区域时重算一次统计，保持口径一致
     if (!lastRegion_.isEmpty() || !lastProv_.isEmpty())
@@ -143,9 +153,11 @@ int MapPage::computeGpsCount() const
 }
 
 // P16.4 真实 GPS 足迹点：仅 hasGps 且未被隐私门屏蔽的照片；经纬度 → 预投影空间（与 MapView 一致）
-QVector<QPointF> MapPage::computeGpsPoints() const
+// pathsOut 非空时同步给出与点一一对应的照片原路径（国家视图 pip 匹配用）
+QVector<QPointF> MapPage::computeGpsPoints(QStringList* pathsOut) const
 {
     QVector<QPointF> pts;
+    if (pathsOut) pathsOut->clear();
     if (!photos_) return pts;
     pts.reserve(photos_->size());
     for (const Photo& p : *photos_) {
@@ -154,6 +166,7 @@ QVector<QPointF> MapPage::computeGpsPoints() const
         const double x = (p.lo + 180.0) / 360.0 * MapView::MAP_W;
         const double y = (90.0 - p.la) / 180.0 * MapView::MAP_H;
         pts.append(QPointF(x, y));
+        if (pathsOut) pathsOut->append(p.path);
     }
     return pts;
 }
@@ -205,6 +218,44 @@ void MapPage::onPicked(const QString& key, const QString& label, bool isProvince
 void MapPage::onViewInGallery()
 {
     emit requestGallery(lastRegion_, lastProv_);
+}
+
+// 国家视图统计：该国 GPS 作品数（pip 由 MapView 完成），不接入图库筛选（无 region 键）
+void MapPage::onCountryPicked(const QString& name, const QStringList& paths)
+{
+    lastRegion_.clear();
+    lastProv_.clear();
+    lastIsProv_ = false;
+    statsTitle_->setText(name);
+    QString body = QStringLiteral("本库作品总计：<b>%1</b> 幅<br>").arg(photos_ ? photos_->size() : 0);
+    body += QStringLiteral("该国家/地区 GPS 作品：<b>%1</b> 幅").arg(paths.size());
+    if (paths.isEmpty())
+        body += QStringLiteral("<br><span style='color:#5a6b60;'>（该国暂无 GPS 作品）</span>");
+    statsBody_->setText(body);
+    viewBtn_->setEnabled(false);
+}
+
+// 国家视图爆炸弹层：按路径匹配照片 → 缩略图（与省视图同一爆炸演出）
+void MapPage::onCountryBurst(const QString& name, const QStringList& paths)
+{
+    Q_UNUSED(name);
+    QVector<QPixmap> thumbs;
+    if (photos_) {
+        for (const QString& p : paths) {
+            if (thumbs.size() >= 10) break;
+            for (const Photo& ph : *photos_) {
+                if (ph.path != p) continue;
+                if (ph.thumbFile.isEmpty()) continue;
+                QPixmap pm(QDir(thumbsDir_).filePath(ph.thumbFile));
+                if (pm.isNull()) break;
+                thumbs.append(pm.scaled(192, 144,
+                                        Qt::KeepAspectRatioByExpanding,
+                                        Qt::SmoothTransformation));
+                break;
+            }
+        }
+    }
+    view_->startBurst(thumbs, paths);
 }
 
 // 省视图爆炸弹层：按省收集照片缩略图（≤10 张，尊重隐私门），回灌 MapView 播放。

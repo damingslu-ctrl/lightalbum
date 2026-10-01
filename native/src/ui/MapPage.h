@@ -22,10 +22,12 @@ private slots:
     void onViewInGallery();
     void onRelocate();   // P16.4.2 重新定位航线基点（「我的位置」）
     void onBurstRequest(const QString& key, const QString& label); // 省视图爆炸弹层
+    void onCountryPicked(const QString& name, const QStringList& paths);   // 国家视图统计
+    void onCountryBurst(const QString& name, const QStringList& paths);    // 国家视图爆炸弹层
 
 private:
     int computeGpsCount() const;   // P16.1 真实 GPS 足迹计数（尊重隐私门）
-    QVector<QPointF> computeGpsPoints() const;   // P16.4 真实 GPS 足迹点（预投影空间）
+    QVector<QPointF> computeGpsPoints(QStringList* pathsOut = nullptr) const;   // P16.4 真实 GPS 足迹点（pathsOut 同步给出对应照片路径）
     QStringList computeArcRegionIds() const;     // P16.4.2 有作品的大区 id（航线目标）
 
 private:

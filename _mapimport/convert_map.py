@@ -86,6 +86,7 @@ def polygons_of(geom):
 
 def build_world(geo):
     feats = []
+    names = []
     for f in geo.get("features", []):
         g = f.get("geometry") or {}
         props = f.get("properties") or {}
@@ -107,7 +108,8 @@ def build_world(geo):
                 if len(xy) < 4:
                     continue
                 feats.append([flat(xy)] + (hole_flats if i == 0 else []))
-    return feats
+                names.append(name)
+    return feats, names
 
 
 def largest_exterior(geom):
@@ -160,7 +162,7 @@ def main():
     old = json.load(open(OLD, encoding="utf-8"))
     # --- world (10m) ---
     geo = json.load(open(NE10M, encoding="utf-8"))
-    world = build_world(geo)
+    world, wnames = build_world(geo)
     # --- china provinces (DataV) ---
     datav = json.load(open(DATAV, encoding="utf-8"))
     china = build_china_provinces(datav)
@@ -168,6 +170,7 @@ def main():
     provinces = old.get("provinces", {})
     provinces["china"] = china  # 替换中国区，其余大区保留
     old["world"] = world
+    old["worldNames"] = wnames   # 与 world 逐要素对齐的国家名（点击国家下钻用）
     old["provinces"] = provinces
     json.dump(old, open(OLD, "w", encoding="utf-8"), ensure_ascii=False, separators=(",", ":"))
 
