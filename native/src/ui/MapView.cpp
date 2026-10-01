@@ -391,7 +391,7 @@ void MapView::drawGpsDots(QPainter& p, const QRectF& bbox, const QRectF& dst) co
         const QPointF& pt = gpsPts_[i];
         if (pt.x() < bbox.left() - 2 || pt.x() > bbox.right() + 2 ||
             pt.y() < bbox.top() - 2 || pt.y() > bbox.bottom() + 2) continue;
-        drawFootprintDot(p, o + pt * scale, 2.4 * scale, dens[i]);
+        drawFootprintDot(p, o + pt * scale, 2.4 * std::sqrt(scale), dens[i]); // sqrt：下钻放大时光点次线性增长，避免 zoom 后光晕成巨斑
     }
     p.restore();
 }
@@ -559,7 +559,7 @@ void MapView::drawFootprintDot(QPainter& p, const QPointF& c, double coreR, int 
     const double d = std::min(dens, 8);
     const double sizeFactor = 0.85 + d * 0.05;     // 0.85..1.25
     const double op = 0.55 + d * 0.06;             // 0.55..1.03
-    const double draw = 10.0 * coreR * sizeFactor; // 精灵核(4px)→coreR 映射
+    const double draw = 5.0 * coreR * sizeFactor; // 精灵核(4px)→coreR 映射（5.0：光点收小一档，世界层光晕直径 ~8-11px）
     const qreal saved = p.opacity();
     p.setOpacity(qMin(1.0, op));
     p.drawPixmap(QRectF(c.x() - draw / 2, c.y() - draw / 2, draw, draw),
