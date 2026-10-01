@@ -912,12 +912,27 @@ void MapView::qaClickProbe()
             : QStringLiteral("FAIL(zoom=%1 dx=%2)").arg(worldZoom_, 0, 'f', 2).arg(std::abs(d), 0, 'f', 2);
     }
 
-    std::fprintf(stderr, "LA_MAP_CLICK_QA country=%s anchor=%s province=%s burst=%s card=%s blank=%s zoom=%s all=%s ctry=%s cburst=%s reset=%s\n",
+    // ⑧ 大区层（专辑国家）爆炸：startBurst 在大区层应被接受
+    QString regBurstResult = QStringLiteral("skip");
+    while (level_ != World) goUp();
+    enterRegion(QStringLiteral("china"));
+    {
+        QVector<QPixmap> th;
+        QPixmap pm(96, 72);
+        pm.fill(QColor(0x5f, 0xdc, 0xa6));
+        th.append(pm);
+        burstActive_ = false;
+        startBurst(th, QStringList(QStringLiteral("synthetic/region.jpg")));
+        regBurstResult = burstActive_ ? QStringLiteral("OK") : QStringLiteral("FAIL");
+    }
+
+    std::fprintf(stderr, "LA_MAP_CLICK_QA country=%s anchor=%s province=%s burst=%s card=%s blank=%s zoom=%s all=%s ctry=%s cburst=%s reset=%s regBurst=%s\n",
                  qPrintable(countryResult), qPrintable(worldResult),
                  qPrintable(provResult), qPrintable(burstResult),
                  qPrintable(cardResult), qPrintable(blankResult),
                  qPrintable(zoomResult), qPrintable(allResult),
-                 qPrintable(ctryResult), qPrintable(cburstResult), qPrintable(resetResult));
+                 qPrintable(ctryResult), qPrintable(cburstResult), qPrintable(resetResult),
+                 qPrintable(regBurstResult));
     std::fflush(stderr);
 }
 
@@ -952,9 +967,10 @@ void MapView::assignFeatureRegions()
 // 国家视图（Region 层 + countryFeature_）同样可播——焦点几何由 focusGeometry 决定。
 void MapView::startBurst(const QVector<QPixmap>& thumbs, const QStringList& paths)
 {
+    // 省视图 / 国家视图（Region+国家要素）/ 大区视图（Region+省数据）均可播放
     const bool inProvince = (level_ == Province && hasCurProvince_);
-    const bool inCountry  = (level_ == Region && countryFeature_ >= 0 && curProvinces_.isEmpty());
-    if (!inProvince && !inCountry) return;
+    const bool inRegion   = (level_ == Region);   // 含专辑大区与国家视图
+    if (!inProvince && !inRegion) return;
     burstThumbs_ = thumbs;
     burstPaths_ = paths;
     burstActive_ = true;
@@ -966,11 +982,16 @@ void MapView::startBurst(const QVector<QPixmap>& thumbs, const QStringList& path
 // 当前爆炸焦点：省视图=省 bbox/中心；国家视图=国 bbox/中心
 void MapView::focusGeometry(QRectF& bbox, QPointF& ctr) const
 {
+    // 当前爆炸焦点：省视图=省 bbox/中心；国家视图=国 bbox/中心；大区视图=全区 bbox/中心
     if (level_ == Province && hasCurProvince_) {
         bbox = curProvince_.bbox;
         ctr = curProvince_.ctr;
-    } else if (countryFeature_ >= 0 && countryFeature_ < featureBbox_.size()) {
+    } else if (countryFeature_ >= 0 && curProvinces_.isEmpty() &&
+               countryFeature_ < featureBbox_.size()) {
         bbox = featureBbox_[countryFeature_];
+        ctr = QPointF((bbox.left() + bbox.right()) * 0.5, (bbox.top() + bbox.bottom()) * 0.5);
+    } else {
+        bbox = curViewBbox_;
         ctr = QPointF((bbox.left() + bbox.right()) * 0.5, (bbox.top() + bbox.bottom()) * 0.5);
     }
 }
@@ -1348,8 +1369,7 @@ void MapView::paintMap(QPainter& p)
             drawArcs(p, curViewBbox_, dst);   // 少量航线：流动虚线动画
     }
 
-    const bool burstView = (level_ == Province && hasCurProvince_) ||
-                           (level_ == Region && countryFeature_ >= 0 && curProvinces_.isEmpty());
+    const bool burstView = (level_ == Province && hasCurProvince_) || (level_ == Region);
     if (burstView && burstActive_)
         drawBurst(p, dst);   // 爆炸弹层：金色连线 + 照片卡 + 冲击波（省视图/国家视图共用）
 

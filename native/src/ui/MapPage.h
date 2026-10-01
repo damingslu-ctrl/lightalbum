@@ -23,6 +23,7 @@ private slots:
     void onRelocate();   // P16.4.2 重新定位航线基点（「我的位置」）
     void onBurstRequest(const QString& key, const QString& label); // 省视图爆炸弹层
     void onRecenter();   // 「⌂ 回到中国」：世界层回到默认视角
+    void onPlayAll();    // 「▶ 播放本区作品」：省/大区/国家三层级通用的爆炸弹层
     void onCountryPicked(const QString& name, const QStringList& paths);   // 国家视图统计
     void onCountryBurst(const QString& name, const QStringList& paths);    // 国家视图爆炸弹层
 
@@ -44,8 +45,10 @@ private:
     QLabel*      statsTitle_ = nullptr;
     QLabel*      statsBody_ = nullptr;
     QPushButton* viewBtn_ = nullptr;
+    QPushButton* playBtn_ = nullptr;    // 迭代 2：「▶ 播放本区作品」
     const QVector<Photo>* photos_ = nullptr;
     QString     thumbsDir_;            // 缩略图目录（爆炸弹层取图用）
+    QStringList lastCountryPaths_;      // 国家视图的该国 GPS 照片路径（播放按钮用）
     bool    hidePrivate_ = true;   // P16 隐私门（默认锁）
     QString lastRegion_;   // 最近一次 pick 的大区 id（空=世界）
     QString lastProv_;     // 最近一次 pick 的省 en 名（空=未选省）

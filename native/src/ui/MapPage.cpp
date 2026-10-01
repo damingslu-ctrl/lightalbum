@@ -110,6 +110,19 @@ MapPage::MapPage(const QVector<Photo>* photos, const QString& thumbsDir,
     viewBtn_->setStyleSheet(Lumen::btnGold());
     sl->addWidget(viewBtn_);
 
+    // 迭代 2：一键用爆炸弹层播放「当前区域」全部作品（省 / 大区 / 国家三层级通用）
+    playBtn_ = new QPushButton(QString::fromUtf8("▶ 播放本区作品"), stats_);
+    playBtn_->setCursor(Qt::PointingHandCursor);
+    playBtn_->setToolTip(QString::fromUtf8("用爆炸弹层播放该省/国家/大区的全部作品（最多 10 张）"));
+    playBtn_->setEnabled(false);
+    playBtn_->setStyleSheet(QStringLiteral(
+        "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:9px;"
+        "padding:5px 12px;color:#4fc08a;}"
+        "QPushButton:hover{border-color:#4fc08a;}"
+        "QPushButton:disabled{color:#5a6b60;border-color:#1d2620;}"));
+    connect(playBtn_, &QPushButton::clicked, this, &MapPage::onPlayAll);
+    sl->addWidget(playBtn_);
+
     // P16.4.2 航线基点提示（数据事实：默认上海，可经「重新定位」修改）
     homeHint_ = new QLabel(stats_);
     homeHint_->setStyleSheet("color:#8da396;font-size:11px;");
@@ -128,6 +141,10 @@ MapPage::MapPage(const QVector<Photo>* photos, const QString& thumbsDir,
         Q_UNUSED(t);
         back_->setEnabled(view_->level() != MapView::World);
         recenterBtn_->setEnabled(view_->level() == MapView::World);   // 仅世界层可回到默认视角
+        if (view_->level() == MapView::World) {
+            lastCountryPaths_.clear();          // 回世界层：清理国家视图上下文
+            playBtn_->setEnabled(false);
+        }
     });
     connect(view_, &MapView::picked, this, &MapPage::onPicked);
     connect(view_, &MapView::burstRequested, this, &MapPage::onBurstRequest);
@@ -225,11 +242,51 @@ void MapPage::onPicked(const QString& key, const QString& label, bool isProvince
         body += QStringLiteral("<br><span style='color:#5a6b60;'>（该区域暂无 GPS 作品，可导入带 GPS 的照片）</span>");
     statsBody_->setText(body);
     viewBtn_->setEnabled(true);
+    playBtn_->setEnabled(match > 0);
+    lastCountryPaths_.clear();   // 进入省/大区视图：清掉国家视图上下文
 }
 
 void MapPage::onViewInGallery()
 {
     emit requestGallery(lastRegion_, lastProv_);
+}
+
+// 一键播放「当前区域」全部作品：国家视图用 MapView 算好的该国 GPS 路径，
+// 其余按 region/prov 键匹配（与统计口径一致，尊重隐私门），最多 10 张。
+void MapPage::onPlayAll()
+{
+    QStringList paths;
+    const bool countryView = !lastCountryPaths_.isEmpty();
+    if (countryView) {
+        paths = lastCountryPaths_;
+    } else if (photos_) {
+        const QString k = (lastIsProv_ ? lastProv_ : lastRegion_).toLower();
+        if (!k.isEmpty()) {
+            for (const Photo& ph : *photos_) {
+                if (paths.size() >= 10) break;
+                if (hidePrivate_ && ph.priv) continue;
+                if ((lastIsProv_ ? ph.prov : ph.region).toLower() != k) continue;
+                paths.append(ph.path);
+            }
+        }
+    }
+    QVector<QPixmap> thumbs;
+    if (photos_) {
+        for (const QString& p : paths) {
+            if (thumbs.size() >= 10) break;
+            for (const Photo& ph : *photos_) {
+                if (ph.path != p) continue;
+                if (ph.thumbFile.isEmpty()) break;
+                QPixmap pm(QDir(thumbsDir_).filePath(ph.thumbFile));
+                if (pm.isNull()) break;
+                thumbs.append(pm.scaled(192, 144,
+                                        Qt::KeepAspectRatioByExpanding,
+                                        Qt::SmoothTransformation));
+                break;
+            }
+        }
+    }
+    view_->startBurst(thumbs, paths);
 }
 
 // 回到默认视角（世界层）：缩放归 1 + 中国居中
@@ -251,6 +308,8 @@ void MapPage::onCountryPicked(const QString& name, const QStringList& paths)
         body += QStringLiteral("<br><span style='color:#5a6b60;'>（该国暂无 GPS 作品）</span>");
     statsBody_->setText(body);
     viewBtn_->setEnabled(false);
+    lastCountryPaths_ = paths;          // 供「▶ 播放本区作品」使用
+    playBtn_->setEnabled(!paths.isEmpty());
 }
 
 // 国家视图爆炸弹层：按路径匹配照片 → 缩略图（与省视图同一爆炸演出）

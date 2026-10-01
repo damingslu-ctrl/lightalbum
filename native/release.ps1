@@ -6,11 +6,21 @@
 # needed Qt DLLs/plugins (no CMake .obj/Makefile junk). Delete-free: uses
 # Move-Item to relocate trimmed files and any prior zip/staging.
 param(
-  [string]$Version = "2.0.0",
+  [string]$Version = "",
   [switch]$TrimNetwork
 )
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Definition
+# 版本号单一真源：未显式传参时从 CMakeLists 的 project(... VERSION x.y.z) 解析，
+# 避免「构建定义 + 打包脚本」两处硬编码不同步（标准化 SOP §3）
+if ([string]::IsNullOrWhiteSpace($Version)) {
+  $cm = Join-Path $root "CMakeLists.txt"
+  if (-not (Test-Path $cm)) { throw "CMakeLists.txt not found; pass -Version explicitly" }
+  $m = Select-String -Path $cm -Pattern 'project\s*\(\s*[^)]*VERSION\s+(\d+\.\d+\.\d+)' | Select-Object -First 1
+  if (-not $m) { throw "Cannot parse version from CMakeLists.txt; pass -Version explicitly" }
+  $Version = $m.Matches[0].Groups[1].Value
+}
+Write-Host "Version: $Version (from CMakeLists.txt)"
 $build = Join-Path $root "build"
 $exeSrc = Join-Path $build "LightAlbum.exe"
 if (-not (Test-Path $exeSrc)) { throw "build/LightAlbum.exe not found; run cmake + mingw32-make first" }
