@@ -205,6 +205,13 @@ private:
     void invalidateViewCache() { viewPixValid_ = false; }
     QPixmap viewPix_;
     bool    viewPixValid_ = false;
+    // 下钻视图滚轮缩放（1–8x，光标锚定）+ 拖拽平移；viewOrigin 为变换唯一真源
+    QPointF viewOrigin(const QRectF& bbox, const QRectF& dst, double& s) const;
+    void    clampViewPan(const QRectF& bbox, const QRectF& dst, double s);
+    void    resetViewZoom();                      // 进入视图时重置缩放/平移
+    double  viewZoom_ = 1.0;
+    QPointF viewPan_;
+
     QRectF  curViewBbox_;                            // 当前视图 bbox（动态航线拟合用）
     mutable QVector<int>        densCache_;          // 密度分级缓存（gpsPts_ 变更时失效）
     mutable bool                densDirty_  = true;

@@ -431,6 +431,33 @@ void MapView::renderWorldInto(QPainter& p, const QRectF& dst) const
     }
 }
 
+// 下钻视图变换「唯一真源」：s = 拟合 scale × viewZoom_，原点含 viewPan_ 平移。
+// 绘制（省面/国界/网格/足迹/航线/爆炸）与命中（省点击/国家点击/卡片/空白）
+// 全部走它 —— 否则放大后「看得见却点不着」（铁律：绘制与命中同源）。
+// viewZoom_=1 且无平移时与 fitRect().topLeft() 逐像素等价。
+QPointF MapView::viewOrigin(const QRectF& bbox, const QRectF& dst, double& s) const
+{
+    s = fitScale(bbox, dst) * viewZoom_;
+    const QPointF bc((bbox.left() + bbox.right()) * 0.5, (bbox.top() + bbox.bottom()) * 0.5);
+    return dst.center() + viewPan_ - QPointF(bc.x() * s, bc.y() * s);
+}
+
+// 平移夹取：保证内容至少部分可见（防止拖到完全空白）
+void MapView::clampViewPan(const QRectF& bbox, const QRectF& dst, double s)
+{
+    const double limX = bbox.width() * s * 0.5 + dst.width() * 0.5;
+    const double limY = bbox.height() * s * 0.5 + dst.height() * 0.5;
+    viewPan_.setX(qBound(-limX, viewPan_.x(), limX));
+    viewPan_.setY(qBound(-limY, viewPan_.y(), limY));
+}
+
+// 进入任一下钻视图：重置缩放/平移
+void MapView::resetViewZoom()
+{
+    viewZoom_ = 1.0;
+    viewPan_ = QPointF();
+}
+
 void MapView::renderRegion(QPainter& p, const QRectF& dst) const
 {
     renderRegionStatic(p, dst);
@@ -452,14 +479,14 @@ void MapView::renderRegionStatic(QPainter& p, const QRectF& dst) const
         else bbox |= pv.bbox;
     }
     double scale = 1;
-    const QRectF fr = fitRect(bbox, dst, scale);
+    const QPointF vo = viewOrigin(bbox, dst, scale);
     const QColor land(0x2f, 0x46, 0x58);
     const QColor border(0x4a, 0x66, 0x78);
     const QColor hl(0xc9, 0xa2, 0x4b);
     drawGraticule(p, bbox, dst);   // 很精细：经纬网格
     for (const ProvinceInfo& pv : curProvinces_) {
         QPainterPath path;
-        const QPointF o = fr.topLeft();
+        const QPointF o = vo;
         path.moveTo(o + pv.ring.pts.first() * scale);
         for (int i = 1; i < pv.ring.pts.size(); ++i)
             path.lineTo(o + pv.ring.pts[i] * scale);
@@ -483,8 +510,7 @@ void MapView::renderCountryOnly(QPainter& p, const QRectF& dst) const
     const WorldFeature& wf = worldFeatures_[countryFeature_];
     const QRectF& bbox = featureBbox_[countryFeature_];
     double scale = 1;
-    const QRectF fr = fitRect(bbox, dst, scale);
-    const QPointF o = fr.topLeft();
+    const QPointF o = viewOrigin(bbox, dst, scale);
     QPainterPath path;
     path.moveTo(o + wf.exterior.first() * scale);
     for (int i = 1; i < wf.exterior.size(); ++i)
@@ -519,8 +545,7 @@ void MapView::renderProvinceStatic(QPainter& p, const QRectF& dst) const
 {
     if (!hasCurProvince_) return;
     double scale = 1;
-    const QRectF fr = fitRect(curProvince_.bbox, dst, scale);
-    const QPointF o = fr.topLeft();
+    const QPointF o = viewOrigin(curProvince_.bbox, dst, scale);
     QPainterPath path;
     path.moveTo(o + curProvince_.ring.pts.first() * scale);
     for (int i = 1; i < curProvince_.ring.pts.size(); ++i)
@@ -540,8 +565,7 @@ void MapView::drawGpsDots(QPainter& p, const QRectF& bbox, const QRectF& dst) co
 {
     if (gpsPts_.isEmpty()) return;
     double scale = 1;
-    const QRectF fr = fitRect(bbox, dst, scale);
-    const QPointF o = fr.topLeft();
+    const QPointF o = viewOrigin(bbox, dst, scale);
     p.save();
     p.setClipRect(dst);
     // 很精细：密度分级 + 精灵 blit（与世界烘焙层共用 drawFootprintDot）
@@ -562,8 +586,7 @@ void MapView::drawArcs(QPainter& p, const QRectF& bbox, const QRectF& dst) const
     if (gpsPts_.isEmpty() && arcRegionIds_.isEmpty()) return;
     const QVector<QPointF> targets = arcTargets();
     double scale = 1;
-    const QRectF fr = fitRect(bbox, dst, scale);
-    const QPointF o = fr.topLeft();
+    const QPointF o = viewOrigin(bbox, dst, scale);
     const QPointF h(o.x() + eqX(homeLon_) * scale, o.y() + eqY(homeLat_) * scale);
     p.save();
     p.setClipRect(dst);
@@ -746,6 +769,14 @@ void MapView::qaClickProbe()
                           Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
         QCoreApplication::sendEvent(this, &press);
     };
+    auto sendTap = [this](const QPointF& pos) {   // 完整点击：按下 + 原地松开
+        QMouseEvent press(QEvent::MouseButtonPress, pos,
+                          Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QMouseEvent rel(QEvent::MouseButtonRelease, pos,
+                        Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+        QCoreApplication::sendEvent(this, &press);
+        QCoreApplication::sendEvent(this, &rel);
+    };
 
     // ① 世界层·国家轮廓命中：预投影 (乌鲁木齐 87.62E,43.82E)（启动时漂移≈0 且可见区内）
     QString countryResult = QStringLiteral("skip");
@@ -785,10 +816,10 @@ void MapView::qaClickProbe()
                 if (first) { bbox = q.bbox; first = false; } else bbox |= q.bbox;
             }
             double sc = 1;
-            const QRectF fr = fitRect(bbox, dstP, sc);
+            const QPointF vo = viewOrigin(bbox, dstP, sc);
             provResult = QStringLiteral("OK");
             burstActive_ = false;                 // 去陈旧状态，断言只反映本次点击
-            sendClick(fr.topLeft() + pv.ctr * sc);   // 省面点击 → 爆炸
+            sendClick(vo + pv.ctr * sc);   // 省面点击 → 爆炸
             if (!burstActive_) continue;          // 未触发（点在空白被回退等）→ 下一省
             burstResult = QStringLiteral("OK(thumbs=%1)").arg(burstThumbs_.size());
             if (!burstPaths_.isEmpty()) {
@@ -802,7 +833,7 @@ void MapView::qaClickProbe()
             }
             // 空白点击 → 返回上一级（省 → 大区；Region 层走同一 goUp 路径）
             const int lvlBefore = int(level_);
-            sendClick(QPointF(rect().left() + 3.0, rect().top() + 3.0));
+            sendTap(QPointF(rect().left() + 3.0, rect().top() + 3.0));
             blankResult = (int(level_) == lvlBefore - 1)
                 ? QStringLiteral("OK") : QStringLiteral("FAIL(%1->%2)").arg(lvlBefore).arg(int(level_));
             break;
@@ -926,13 +957,36 @@ void MapView::qaClickProbe()
         regBurstResult = burstActive_ ? QStringLiteral("OK") : QStringLiteral("FAIL");
     }
 
-    std::fprintf(stderr, "LA_MAP_CLICK_QA country=%s anchor=%s province=%s burst=%s card=%s blank=%s zoom=%s all=%s ctry=%s cburst=%s reset=%s regBurst=%s\n",
+    // ⑨ 下钻视图滚轮缩放：放大后命中仍与绘制一致（viewOrigin 为唯一变换真源）
+    QString vzoomResult = QStringLiteral("skip");
+    while (level_ != World) goUp();
+    enterRegion(QStringLiteral("china"));
+    {
+        const QPointF c0 = rect().center();
+        for (int i = 0; i < 2; ++i) {
+            QWheelEvent we(c0, c0, QPoint(), QPoint(0, 120),
+                           Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+            QCoreApplication::sendEvent(this, &we);
+        }
+        // 取某省中心点，用当前 viewOrigin 正变换出屏幕位置，点击应进入该省
+        const ProvinceInfo* pv0 = &curProvinces_.first();
+        const double zBefore = viewZoom_;   // 进入省视图会重置缩放 → 点击前取值
+        double sv = 1;
+        const QPointF ov = viewOrigin(curViewBbox_, rect().adjusted(8, 8, -8, -8), sv);
+        sendClick(ov + pv0->ctr * sv);
+        vzoomResult = (level_ == Province && zBefore > 1.0)
+            ? QStringLiteral("OK(zoom=%1)").arg(zBefore, 0, 'f', 2)
+            : QStringLiteral("FAIL(zoom=%1 lvl=%2)").arg(zBefore, 0, 'f', 2).arg(int(level_));
+    }
+
+    std::fprintf(stderr, "LA_MAP_CLICK_QA country=%s anchor=%s province=%s burst=%s card=%s blank=%s zoom=%s all=%s ctry=%s cburst=%s reset=%s regBurst=%s vzoom=%s\n",
                  qPrintable(countryResult), qPrintable(worldResult),
                  qPrintable(provResult), qPrintable(burstResult),
                  qPrintable(cardResult), qPrintable(blankResult),
                  qPrintable(zoomResult), qPrintable(allResult),
                  qPrintable(ctryResult), qPrintable(cburstResult), qPrintable(resetResult),
-                 qPrintable(regBurstResult));
+                 qPrintable(regBurstResult),
+                 qPrintable(vzoomResult));
     std::fflush(stderr);
 }
 
@@ -1005,8 +1059,7 @@ QRectF MapView::burstCardRect(int i, const QRectF& dst) const
     QRectF bbox; QPointF ctr;
     focusGeometry(bbox, ctr);
     double sc = 1;
-    const QRectF fr = fitRect(bbox, dst, sc);
-    const QPointF c = fr.topLeft() + ctr * sc;
+    const QPointF c = viewOrigin(bbox, dst, sc) + ctr * sc;
     const double rx = dst.width() * 0.34, ry = dst.height() * 0.32;
     const double tw = 96.0, th = 72.0;
     const double a = qDegreesToRadians(-90.0 + i * 360.0 / n);
@@ -1025,8 +1078,7 @@ void MapView::drawBurst(QPainter& p, const QRectF& dst) const
     QRectF bbox; QPointF ctr;
     focusGeometry(bbox, ctr);
     double sc = 1;
-    const QRectF fr = fitRect(bbox, dst, sc);
-    const QPointF c = fr.topLeft() + ctr * sc;
+    const QPointF c = viewOrigin(bbox, dst, sc) + ctr * sc;
 
     // —— 冲击波双环（金 + 翡翠）：扩散 + 淡出，爆炸感核心 ——
     auto ring = [&](qint64 delay, double maxR, const QColor& base, double w) {
@@ -1238,8 +1290,7 @@ QVector<int> MapView::computeDensity() const
 void MapView::drawGraticule(QPainter& p, const QRectF& bbox, const QRectF& dst) const
 {
     double scale = 1;
-    const QRectF fr = fitRect(bbox, dst, scale);
-    const QPointF o = fr.topLeft();
+    const QPointF o = viewOrigin(bbox, dst, scale);
     p.save();
     p.setClipRect(dst);
     QPen pen(QColor(0x7f, 0x97, 0xa8, 30));
@@ -1445,15 +1496,36 @@ void MapView::mouseReleaseEvent(QMouseEvent* e)
     Q_UNUSED(e);
     if (!panning_) return;
     panning_ = false;
-    if (!panMoved_ && level_ == World) goUp();
+    if (!panMoved_) goUp();   // 世界层 goUp 为空操作
 }
 
 // 世界层滚轮缩放（1x..4x，光标锚定）：缩放前后光标下的预投影点保持不动——
 // 横向调 driftPx_、纵向调 worldOffY_（越界自动夹取）
 void MapView::wheelEvent(QWheelEvent* e)
 {
-    if (level_ != World) { e->ignore(); return; }
     const QRectF dst = rect().adjusted(8, 8, -8, -8);
+    if (level_ != World) {
+        // 下钻视图（大区/省/国家）：同样支持滚轮缩放，光标为锚点（变换与绘制同源）
+        e->accept();
+        double s0 = 1;
+        const QPointF o0 = viewOrigin(curViewBbox_, dst, s0);
+        const QPointF pre = (e->position() - o0) / s0;
+        const double f = e->angleDelta().y() > 0 ? 1.25 : 1.0 / 1.25;
+        const double nz = qBound(1.0, viewZoom_ * f, 8.0);
+        if (qFuzzyCompare(nz, viewZoom_)) return;
+        viewZoom_ = nz;
+        double s1 = 1;
+        viewOrigin(curViewBbox_, dst, s1);
+        const QPointF bc((curViewBbox_.left() + curViewBbox_.right()) * 0.5,
+                         (curViewBbox_.top() + curViewBbox_.bottom()) * 0.5);
+        // 光标下的预投影点不动：o1 = cursor - pre*s1 → 反解 viewPan_
+        viewPan_ = e->position() - QPointF(pre.x() * s1, pre.y() * s1)
+                   - dst.center() + QPointF(bc.x() * s1, bc.y() * s1);
+        clampViewPan(curViewBbox_, dst, s1);
+        invalidateViewCache();
+        update();
+        return;
+    }
     const double base = dst.height() / MAP_H;
     const double oldScale = base * worldZoom_;
     const double oldOffY = worldOffYClamped();
@@ -1474,14 +1546,22 @@ void MapView::wheelEvent(QWheelEvent* e)
 
 void MapView::mouseMoveEvent(QMouseEvent* e)
 {
-    // 拖拽平移（世界层）：拖右→地图右移（漂移减小），拖下→地图下移（纵向偏移减小）
+    // 拖拽平移：世界层→调漂移/纵向偏移；下钻视图→按屏幕像素平移 viewPan_
     if (panning_) {
         const QRectF dst = rect().adjusted(8, 8, -8, -8);
-        const double scale = dst.height() / MAP_H * worldZoom_;
         const QPointF d = e->pos() - panLast_;
         panLast_ = e->pos();
-        driftPx_  = wrapX(driftPx_ - d.x() / scale);
-        worldOffY_ -= d.y() / scale;
+        if (level_ == World) {
+            const double scale = dst.height() / MAP_H * worldZoom_;
+            driftPx_  = wrapX(driftPx_ - d.x() / scale);
+            worldOffY_ -= d.y() / scale;
+        } else {
+            viewPan_ += d;
+            double sp = 1;
+            viewOrigin(curViewBbox_, dst, sp);
+            clampViewPan(curViewBbox_, dst, sp);
+            invalidateViewCache();
+        }
         if (std::abs(e->pos().x() - panStart_.x()) +
             std::abs(e->pos().y() - panStart_.y()) > 4.0) panMoved_ = true;
         update();
@@ -1518,10 +1598,10 @@ void MapView::mouseMoveEvent(QMouseEvent* e)
         double scale = 1;
         QRectF bbox; bool first = true;
         for (const ProvinceInfo& pv : curProvinces_) { if (first){bbox=pv.bbox;first=false;} else bbox|=pv.bbox; }
-        const QRectF fr = fitRect(bbox, rect().adjusted(8,8,-8,-8), scale);
+        const QPointF vo = viewOrigin(bbox, rect().adjusted(8,8,-8,-8), scale);
         for (const ProvinceInfo& pv : curProvinces_) {
             QPainterPath path;
-            const QPointF o = fr.topLeft();
+            const QPointF o = vo;
             path.moveTo(o + pv.ring.pts.first()*scale);
             for (int i=1;i<pv.ring.pts.size();++i) path.lineTo(o + pv.ring.pts[i]*scale);
             path.closeSubpath();
@@ -1581,10 +1661,10 @@ void MapView::mousePressEvent(QMouseEvent* e)
         if (curProvinces_.isEmpty() && countryFeature_ >= 0) {
             const WorldFeature& wf = worldFeatures_[countryFeature_];
             double scc = 1;
-            const QRectF frc = fitRect(featureBbox_[countryFeature_],
-                                       rect().adjusted(8, 8, -8, -8), scc);
+            const QPointF vocc = viewOrigin(featureBbox_[countryFeature_],
+                                            rect().adjusted(8, 8, -8, -8), scc);
             QPainterPath cpath;
-            const QPointF oc = frc.topLeft();
+            const QPointF oc = vocc;
             cpath.moveTo(oc + wf.exterior.first() * scc);
             for (int i = 1; i < wf.exterior.size(); ++i)
                 cpath.lineTo(oc + wf.exterior[i] * scc);
@@ -1607,20 +1687,23 @@ void MapView::mousePressEvent(QMouseEvent* e)
                     const QPointF sp = oc + pt * scc;
                     if (QLineF(sp, e->pos()).length() < 14.0) { nearDot = true; break; }
                 }
-                if (nearDot)
+                if (nearDot) {
                     emit countryBurstRequested(curRegionName_, countryPaths_);
-                else
-                    goUp();
+                } else {
+                    panning_ = true;
+                    panMoved_ = false;
+                    panStart_ = panLast_ = e->pos();
+                }
             }
             return;
         }
         double scale = 1;
         QRectF bbox; bool first = true;
         for (const ProvinceInfo& pv : curProvinces_) { if (first){bbox=pv.bbox;first=false;} else bbox|=pv.bbox; }
-        const QRectF fr = fitRect(bbox, rect().adjusted(8,8,-8,-8), scale);
+        const QPointF vo = viewOrigin(bbox, rect().adjusted(8,8,-8,-8), scale);
         for (const ProvinceInfo& pv : curProvinces_) {
             QPainterPath path;
-            const QPointF o = fr.topLeft();
+            const QPointF o = vo;
             path.moveTo(o + pv.ring.pts.first()*scale);
             for (int i=1;i<pv.ring.pts.size();++i) path.lineTo(o + pv.ring.pts[i]*scale);
             path.closeSubpath();
@@ -1631,8 +1714,10 @@ void MapView::mousePressEvent(QMouseEvent* e)
                 return;
             }
         }
-        // 空白处点击 → 返回上一级（大区 → 世界）
-        goUp();
+        // 空白处：按下进入平移待命，松开时未拖动 → 返回上一级（大区 → 世界）
+        panning_ = true;
+        panMoved_ = false;
+        panStart_ = panLast_ = e->pos();
     } else if (level_ == Province && hasCurProvince_) {
         // ① 爆炸卡片命中 → 打开该照片灯箱
         if (burstActive_ && !burstPaths_.isEmpty()) {
@@ -1647,9 +1732,9 @@ void MapView::mousePressEvent(QMouseEvent* e)
         }
         // ② 省面命中 → 爆炸弹层（MapPage 按省收集缩略图回灌 startBurst）
         double sc = 1;
-        const QRectF fr = fitRect(curProvince_.bbox, rect().adjusted(8, 8, -8, -8), sc);
+        const QPointF vo = viewOrigin(curProvince_.bbox, rect().adjusted(8, 8, -8, -8), sc);
         QPainterPath path;
-        const QPointF o = fr.topLeft();
+        const QPointF o = vo;
         path.moveTo(o + curProvince_.ring.pts.first() * sc);
         for (int i = 1; i < curProvince_.ring.pts.size(); ++i)
             path.lineTo(o + curProvince_.ring.pts[i] * sc);
@@ -1659,8 +1744,10 @@ void MapView::mousePressEvent(QMouseEvent* e)
             emit burstRequested(curProvince_.name, label);
             return;
         }
-        // ③ 空白处点击 → 返回上一级（省 → 大区）
-        goUp();
+        // ③ 空白处：按下进入平移待命，松开时未拖动 → 返回上一级（省 → 大区）
+        panning_ = true;
+        panMoved_ = false;
+        panStart_ = panLast_ = e->pos();
     }
 }
 
@@ -1728,6 +1815,7 @@ void MapView::enterCountry(int fi)
         countryPts_.append(pt);
     }
     curViewBbox_ = bb;
+    resetViewZoom();
     invalidateViewCache();
     update();
     emit breadcrumbChanged(breadcrumb());
@@ -1763,6 +1851,7 @@ void MapView::enterRegion(const QString& id)
             else curViewBbox_ |= pv.bbox;
         }
     }
+    resetViewZoom();
     invalidateViewCache();
     update();
     emit breadcrumbChanged(breadcrumb());
@@ -1776,6 +1865,7 @@ void MapView::enterProvince(const QString& name)
             hasCurProvince_ = true;
             level_ = Province;
             curViewBbox_ = pv.bbox;
+            resetViewZoom();
             invalidateViewCache();
             update();
             emit breadcrumbChanged(breadcrumb());
@@ -1788,6 +1878,7 @@ void MapView::goUp()
 {
     if (level_ == Province) { level_ = Region; hasCurProvince_ = false; }
     else if (level_ == Region) { level_ = World; curProvinces_.clear(); countryFeature_ = -1; countryPaths_.clear(); countryPts_.clear(); }
+    resetViewZoom();
     invalidateViewCache();
     update();
     emit breadcrumbChanged(breadcrumb());
