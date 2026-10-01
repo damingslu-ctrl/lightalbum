@@ -95,6 +95,7 @@ protected:
     void resizeEvent(QResizeEvent*) override;
     void mousePressEvent(QMouseEvent*) override;
     void mouseMoveEvent(QMouseEvent*) override;
+    void mouseReleaseEvent(QMouseEvent*) override;
     void wheelEvent(QWheelEvent*) override;   // 世界层滚轮缩放（光标锚定）
 
 private:
@@ -166,6 +167,12 @@ private:
     double  worldZoom_  = 1.0;                        // 缩放倍率 [1,4]
     double  worldOffY_  = 0.0;                        // 纵向视口偏移（预投影×scale 像素）
     bool    worldInited_ = false;                     // 首帧已做「中国居中」初始化
+
+    // 世界层拖拽平移：按下空白/海洋进入待命，拖动平移，原地松开=点空白（返回上一级）
+    bool    panning_   = false;
+    bool    panMoved_  = false;
+    QPointF panStart_;
+    QPointF panLast_;
 
     // 省视图爆炸弹层状态
     void drawBurst(QPainter& p, const QRectF& dst) const;

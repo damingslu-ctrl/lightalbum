@@ -698,10 +698,37 @@ void MapView::qaClickProbe()
         ? QStringLiteral("OK(zoom=%1)").arg(worldZoom_, 0, 'f', 2)
         : QStringLiteral("FAIL(zoom=%1 level=%2)").arg(worldZoom_, 0, 'f', 2).arg(int(level_));
 
-    std::fprintf(stderr, "LA_MAP_CLICK_QA country=%s anchor=%s province=%s burst=%s card=%s blank=%s zoom=%s\n",
+    // ⑤ 十大区国家轮廓全部可点：逐国居中 → 点屏幕中心 → 应进入大区
+    //    （居中消解"美洲国家初始在屏外"——它们本来就可点，只是看不到）
+    QString allResult = QStringLiteral("skip");
+    while (level_ != World) goUp();
+    {
+        int okN = 0;
+        QStringList bad;
+        // zoom=1 纵向不可平移（全图可见）→ 横向居中 + 点击锚点的实际屏幕位置
+        worldZoom_ = 1.0;
+        worldOffY_ = 0.0;
+        const double sc1 = dst.height() / MAP_H;
+        const double span1 = MAP_W * sc1;
+        for (const RegionInfo& ri : regions_) {
+            driftPx_ = wrapX(ri.proj.x() - dst.center().x() / sc1);
+            worldOffY_ = 0.0;
+            const QPointF pos(rect().center().x(), dst.y() + ri.proj.y() * sc1);
+            sendClick(pos);
+            if (level_ == Region) ++okN;
+            else bad.append(ri.id);
+            while (level_ != World) goUp();
+        }
+        allResult = (okN == regions_.size())
+            ? QStringLiteral("OK(%1/%2)").arg(okN).arg(regions_.size())
+            : QStringLiteral("FAIL(%1/%2 bad:%3)").arg(okN).arg(regions_.size()).arg(bad.join(QLatin1Char(';')));
+    }
+
+    std::fprintf(stderr, "LA_MAP_CLICK_QA country=%s anchor=%s province=%s burst=%s card=%s blank=%s zoom=%s all=%s\n",
                  qPrintable(countryResult), qPrintable(worldResult),
                  qPrintable(provResult), qPrintable(burstResult),
-                 qPrintable(cardResult), qPrintable(blankResult), qPrintable(zoomResult));
+                 qPrintable(cardResult), qPrintable(blankResult),
+                 qPrintable(zoomResult), qPrintable(allResult));
     std::fflush(stderr);
 }
 
@@ -1079,7 +1106,7 @@ void MapView::paintEvent(QPaintEvent*)
     // 诚实足迹提示（GPS 数由 MapPage 经 setGpsCount 注入，绝不硬编码）
     p.setPen(QColor(0x8d, 0xa3, 0x96));
     const QString foot = (level_ == World)
-        ? QString("足迹地图 · 10 大区 / 233 省 · 本库 GPS 足迹 %1")
+        ? QString::fromUtf8("足迹地图 · 10 大区 / 233 省 · 本库 GPS 足迹 %1（滚轮缩放 · 拖动平移）")
             .arg(gpsCount_)
         : QString();
     if (!foot.isEmpty())
@@ -1094,6 +1121,15 @@ void MapView::resizeEvent(QResizeEvent* e)
 {
     QWidget::resizeEvent(e);
     update();
+}
+
+// 拖拽平移收尾：原地松开（位移 ≤4px）视为「点击空白」→ 返回上一级
+void MapView::mouseReleaseEvent(QMouseEvent* e)
+{
+    Q_UNUSED(e);
+    if (!panning_) return;
+    panning_ = false;
+    if (!panMoved_ && level_ == World) goUp();
 }
 
 // 世界层滚轮缩放（1x..4x，光标锚定）：缩放前后光标下的预投影点保持不动——
@@ -1122,6 +1158,19 @@ void MapView::wheelEvent(QWheelEvent* e)
 
 void MapView::mouseMoveEvent(QMouseEvent* e)
 {
+    // 拖拽平移（世界层）：拖右→地图右移（漂移减小），拖下→地图下移（纵向偏移减小）
+    if (panning_) {
+        const QRectF dst = rect().adjusted(8, 8, -8, -8);
+        const double scale = dst.height() / MAP_H * worldZoom_;
+        const QPointF d = e->pos() - panLast_;
+        panLast_ = e->pos();
+        driftPx_  = wrapX(driftPx_ - d.x() / scale);
+        worldOffY_ -= d.y() / scale;
+        if (std::abs(e->pos().x() - panStart_.x()) +
+            std::abs(e->pos().y() - panStart_.y()) > 4.0) panMoved_ = true;
+        update();
+        return;
+    }
     if (level_ == World) {
         // 命中测试：大区锚点（scale 与 renderWorldInto 绘制基准一致，见 mousePressEvent 注释）
         const QRectF dst = rect().adjusted(8, 8, -8, -8);
@@ -1205,6 +1254,10 @@ void MapView::mousePressEvent(QMouseEvent* e)
                 return;
             }
         }
+        // ③ 空白/海洋（含无作品国家）：进入拖拽平移待命；原地松开 = 点空白 → 返回上一级
+        panning_ = true;
+        panMoved_ = false;
+        panStart_ = panLast_ = e->pos();
     } else if (level_ == Region) {
         double scale = 1;
         QRectF bbox; bool first = true;
