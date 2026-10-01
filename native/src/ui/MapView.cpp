@@ -60,16 +60,26 @@ void MapView::loadData()
     const QJsonObject root = QJsonDocument::fromJson(f.readAll()).object();
     f.close();
 
-    // 世界环
+    // 世界环（高精度：Natural Earth 50m 国家/海岸线，含湖泊镂空）
     const QJsonArray world = root.value("world").toArray();
-    worldRings_.clear();
-    worldRings_.reserve(world.size());
-    for (const QJsonValue& v : world) {
-        const QJsonArray a = v.toArray();
-        Ring r; r.pts.reserve(a.size() / 2);
-        for (int i = 0; i + 1 < a.size(); i += 2)
-            r.pts.append(QPointF(a[i].toDouble(), a[i + 1].toDouble()));
-        if (r.pts.size() >= 3) worldRings_.append(r);
+    worldFeatures_.clear();
+    worldFeatures_.reserve(world.size());
+    for (const QJsonValue& fv : world) {
+        const QJsonArray rings = fv.toArray();
+        if (rings.isEmpty()) continue;
+        WorldFeature wf;
+        const QJsonArray ext = rings[0].toArray();
+        wf.exterior.reserve(ext.size() / 2);
+        for (int i = 0; i + 1 < ext.size(); i += 2)
+            wf.exterior.append(QPointF(ext[i].toDouble(), ext[i + 1].toDouble()));
+        for (int r = 1; r < rings.size(); ++r) {
+            const QJsonArray ha = rings[r].toArray();
+            QVector<QPointF> hole; hole.reserve(ha.size() / 2);
+            for (int i = 0; i + 1 < ha.size(); i += 2)
+                hole.append(QPointF(ha[i].toDouble(), ha[i + 1].toDouble()));
+            if (hole.size() >= 3) wf.holes.append(hole);
+        }
+        if (wf.exterior.size() >= 3) worldFeatures_.append(wf);
     }
 
     // 大区
@@ -96,8 +106,10 @@ void MapView::loadData()
         int tot = 0;
         for (auto it = provJson_.constBegin(); it != provJson_.constEnd(); ++it)
             tot += it.value().toArray().size();
+        int worldRings = 0;
+        for (const WorldFeature& wf : worldFeatures_) worldRings += 1 + wf.holes.size();
         std::fprintf(stderr, "LA_MAP_SMOKE rings=%d regions=%d provinces=%d zh=%d\n",
-                     worldRings_.size(), regions_.size(), tot, provZh_.size());
+                     worldRings, regions_.size(), tot, provZh_.size());
         std::fflush(stderr);
     }
 }
@@ -151,17 +163,23 @@ void MapView::buildWorldPixmap()
             p.drawLine(QPointF(0, y), QPointF(MAP_W, y));
         }
     }
-    for (const Ring& r : worldRings_) {
+    QPen borderPen(border, 0.8);
+    QPen rimPen(QColor(0x9f, 0xc4, 0xd6, 40), 0.7);
+    for (const WorldFeature& wf : worldFeatures_) {
+        if (wf.exterior.isEmpty()) continue;
         QPainterPath path;
-        path.moveTo(r.pts.first());
-        for (int i = 1; i < r.pts.size(); ++i) path.lineTo(r.pts[i]);
+        path.moveTo(wf.exterior.first());
+        for (int i = 1; i < wf.exterior.size(); ++i) path.lineTo(wf.exterior[i]);
         path.closeSubpath();
-        p.fillPath(path, land);
-        p.setPen(QPen(border, 0.9));
-        p.drawPath(path);
-        // 很精细：海岸 rim-light 二次描边（雾隐·墨韵 精细感）
-        p.setPen(QPen(QColor(0x9f, 0xc4, 0xd6, 40), 0.7));
-        p.drawPath(path);
+        for (const QVector<QPointF>& hole : wf.holes) {   // 湖泊内环 → 镂空
+            if (hole.size() < 3) continue;
+            path.moveTo(hole.first());
+            for (int i = 1; i < hole.size(); ++i) path.lineTo(hole[i]);
+            path.closeSubpath();
+        }
+        p.fillPath(path, land);                 // 默认 OddEvenFill → 湖泊镂空为水
+        p.setPen(borderPen); p.drawPath(path);  // 海岸 + 国界 + 湖岸
+        p.setPen(rimPen);     p.drawPath(path);  // 海岸 rim-light 二次描边
     }
     // P16.4.2 金色航线：以「我的位置」为基点，向每一处拍摄地延伸（画在足迹点下层）。
     // 与 web 版 arcsA/arcsB 同思路：经度是循环的，整条弧在 ±MAP_W 各复制一份，接缝处自然衔接。

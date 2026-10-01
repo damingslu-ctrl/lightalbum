@@ -16,6 +16,12 @@
 // 预投影坐标系：所有环/省/经纬都落在 [0,MAP_W]x[0,MAP_H] 的等距圆柱平面
 struct Ring { QVector<QPointF> pts; };
 
+// 高精度世界要素：外环 + 湖泊内环（OddEven 镂空）；来自 Natural Earth 50m
+struct WorldFeature {
+    QVector<QPointF> exterior;
+    QVector<QVector<QPointF>> holes;
+};
+
 struct RegionInfo {
     QString id;
     QString name;
@@ -105,7 +111,7 @@ private:
 
     // 数据
     static constexpr double DRIFT_SPEED = 4.5;   // px/s（预投影空间）
-    QVector<Ring>       worldRings_;
+    QVector<WorldFeature> worldFeatures_;     // 高精度世界（Natural Earth 50m）
     QVector<RegionInfo> regions_;
     QJsonObject         provJson_;              // region -> [ [name,ring,cx,cy], ... ]
     QJsonObject         provZh_;
