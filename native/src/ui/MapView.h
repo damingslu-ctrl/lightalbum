@@ -73,10 +73,19 @@ public:
     void qaShootRegion(const QString& path, const QString& id);
     // A 点击链路自测：合成鼠标事件实测「世界锚点→大区」「大区省面→省」两级命中
     void qaClickProbe();
+    // A 爆炸弹层像素自测：进入省视图 + 合成缩略图 → 离屏渲染终态 + 分色统计
+    void qaShootBurst(const QString& path);
+
+    // 省视图「爆炸弹层」：MapPage 注入该省照片缩略图后，从省中心爆炸弹出
+    // 金色连线 + 圆角照片卡（冲击波双环 + 逐张错峰飞出）。reduceMotion 直接终态。
+    void startBurst(const QVector<QPixmap>& thumbs);
+    bool burstActive() const { return burstActive_; }
 
 signals:
     void breadcrumbChanged(const QString& text);
     void picked(const QString& key, const QString& label, bool isProvince); // 区域/省点击
+    // 省视图点击 → 请求爆炸弹层（MapPage 按省收集缩略图后回灌 startBurst）
+    void burstRequested(const QString& key, const QString& label);
 
 protected:
     void paintEvent(QPaintEvent*) override;
@@ -141,4 +150,17 @@ private:
     // 很精细优化：状态与缓存
     double              arcDashOffset_ = 0;     // 流动航线虚线相位
     QPixmap             footDotPix_;            // 翡翠足迹点精灵缓存
+
+    // 世界层国家轮廓命中：锚点落入其中的要素 → 大区下钻（点国家任意处即下钻）
+    void assignFeatureRegions();                 // loadData 时一次性标记 + 预计算 bbox
+    QVector<int>    featureRegion_;              // worldFeatures_ → regions_ 下标（-1=无作品国家）
+    QVector<QRectF> featureBbox_;                // 世界要素 bbox（命中早退）
+
+    // 省视图爆炸弹层状态
+    void drawBurst(QPainter& p, const QRectF& dst) const;
+    QVector<QPixmap> burstThumbs_;               // MapPage 注入的照片缩略图（≤10）
+    bool             burstActive_ = false;
+    QElapsedTimer    burstClock_;
+    QTimer           burstTimer_;                // 动画期 16ms 驱动 update，终态后自停
+    qint64           burstTOverride_ = -1;       // QA：>=0 时强制动画时间（终态渲染用）
 };

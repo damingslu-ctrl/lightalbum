@@ -1,6 +1,8 @@
 #include "MapPage.h"
 #include "Theme.h"
 #include <QPointF>
+#include <QDir>
+#include <QPixmap>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -11,7 +13,8 @@
 #include <QDoubleValidator>
 #include <QDialogButtonBox>
 
-MapPage::MapPage(const QVector<Photo>* photos, QWidget* parent) : QWidget(parent), photos_(photos)
+MapPage::MapPage(const QVector<Photo>* photos, const QString& thumbsDir,
+                 QWidget* parent) : QWidget(parent), photos_(photos), thumbsDir_(thumbsDir)
 {
     auto* lay = new QHBoxLayout(this);
     lay->setContentsMargins(0, 0, 0, 0);
@@ -111,6 +114,7 @@ MapPage::MapPage(const QVector<Photo>* photos, QWidget* parent) : QWidget(parent
         back_->setEnabled(view_->level() != MapView::World);
     });
     connect(view_, &MapView::picked, this, &MapPage::onPicked);
+    connect(view_, &MapView::burstRequested, this, &MapPage::onBurstRequest);
     connect(viewBtn_, &QPushButton::clicked, this, &MapPage::onViewInGallery);
     connect(relocBtn_, &QPushButton::clicked, this, &MapPage::onRelocate);
 }
@@ -200,6 +204,29 @@ void MapPage::onPicked(const QString& key, const QString& label, bool isProvince
 void MapPage::onViewInGallery()
 {
     emit requestGallery(lastRegion_, lastProv_);
+}
+
+// 省视图爆炸弹层：按省收集照片缩略图（≤10 张，尊重隐私门），回灌 MapView 播放。
+// 缩略图读 thumbsDir/thumbFile；无照片 → 空表（MapView 只播冲击波，不假装有图）。
+void MapPage::onBurstRequest(const QString& key, const QString& label)
+{
+    Q_UNUSED(label);
+    QVector<QPixmap> thumbs;
+    if (photos_) {
+        const QString k = key.toLower();
+        for (const Photo& ph : *photos_) {
+            if (thumbs.size() >= 10) break;
+            if (hidePrivate_ && ph.priv) continue;
+            if (ph.prov.toLower() != k) continue;
+            if (ph.thumbFile.isEmpty()) continue;
+            QPixmap pm(QDir(thumbsDir_).filePath(ph.thumbFile));
+            if (pm.isNull()) continue;
+            thumbs.append(pm.scaled(192, 144,
+                                    Qt::KeepAspectRatioByExpanding,
+                                    Qt::SmoothTransformation));
+        }
+    }
+    view_->startBurst(thumbs);
 }
 
 // P16.4.2 重新定位：城市预设 / 自定义经纬度 → setHomePoint。

@@ -52,9 +52,9 @@ bool GeoIndex::ensureLoaded()
             const QJsonArray item = pv.toArray();
             const QString key = item.at(0).toString();
             const QJsonArray ringsArr = item.at(1).toArray();
-            for (const QJsonValue& rv : ringsArr) {
-                const QJsonArray a = rv.toArray();
-                if (a.size() < 8) continue;
+            // 兼容两种历史格式：[[扁平环],...]（双层包裹）与 [x0,y0,...]（单个扁平环）
+            auto emitRing = [&](const QJsonArray& a) {
+                if (a.size() < 8) return;
                 Ring r;
                 r.region = rid;
                 r.prov = key;
@@ -66,6 +66,12 @@ bool GeoIndex::ensureLoaded()
                     r.y0 = std::min(r.y0, y); r.y1 = std::max(r.y1, y);
                 }
                 rings_.push_back(std::move(r));
+            };
+            if (!ringsArr.isEmpty() && ringsArr.at(0).isArray()) {
+                for (const QJsonValue& rv : ringsArr)
+                    emitRing(rv.toArray());
+            } else {
+                emitRing(ringsArr);   // 整表即一个扁平环
             }
         }
     }

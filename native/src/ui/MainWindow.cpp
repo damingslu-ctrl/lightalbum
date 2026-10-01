@@ -544,7 +544,7 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
     connect(home_, &HomePage::photoActivated, this, &MainWindow::openLightbox);
     connect(home_, &HomePage::importRequested, this, &MainWindow::startImport);
     stack_->addWidget(home_);
-    map_ = new MapPage(&lib_->photos(), stack_);
+    map_ = new MapPage(&lib_->photos(), thumbsDir, stack_);
     stack_->addWidget(map_);
     gallery_ = new GalleryPage(&lib_->photos(), thumbsDir, stack_);
     stack_->addWidget(gallery_);
