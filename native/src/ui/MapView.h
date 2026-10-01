@@ -95,6 +95,7 @@ protected:
     void resizeEvent(QResizeEvent*) override;
     void mousePressEvent(QMouseEvent*) override;
     void mouseMoveEvent(QMouseEvent*) override;
+    void wheelEvent(QWheelEvent*) override;   // 世界层滚轮缩放（光标锚定）
 
 private:
     void loadData();
@@ -158,6 +159,13 @@ private:
     void assignFeatureRegions();                 // loadData 时一次性标记 + 预计算 bbox
     QVector<int>    featureRegion_;              // worldFeatures_ → regions_ 下标（-1=无作品国家）
     QVector<QRectF> featureBbox_;                // 世界要素 bbox（命中早退）
+
+    // 世界层滚轮缩放（光标锚定）+ 初始居中中国
+    void    centerWorldOn(double preX, double preY);  // 把预投影点置于视口中心（含漂移/纵向偏移）
+    double  worldOffYClamped() const;                 // 纵向偏移按当前 zoom 夹取
+    double  worldZoom_  = 1.0;                        // 缩放倍率 [1,4]
+    double  worldOffY_  = 0.0;                        // 纵向视口偏移（预投影×scale 像素）
+    bool    worldInited_ = false;                     // 首帧已做「中国居中」初始化
 
     // 省视图爆炸弹层状态
     void drawBurst(QPainter& p, const QRectF& dst) const;

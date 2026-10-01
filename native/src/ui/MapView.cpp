@@ -7,6 +7,7 @@
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QMouseEvent>
+#include <QWheelEvent>
 #include <QPainterPath>
 #include <QLineF>
 #include <QDebug>
@@ -45,14 +46,17 @@ static bool pointInFeature(const QPointF& p, const WorldFeature& wf)
     return true;
 }
 
-// 世界层逆变换：widget 坐标 → 预投影（与 renderWorldInto 的 worldPix_ 平铺一致，含漂移回绕）
-// 绘制：screenX = (pre.x - wrapX(drift))*scale + k*MAP_W*scale → pre.x = screenX/scale + drift (mod MAP_W)
-static QPointF widgetToPre(const QPointF& w, const QRectF& dst, double scale, double drift)
+// 世界层逆变换：widget 坐标 → 预投影（与 renderWorldInto 的 worldPix_ 平铺一致，
+// 含漂移回绕、缩放与纵向偏移）
+// 绘制：screenX = (pre.x - wrapX(drift))*scale + k*MAP_W*scale
+//       screenY = dst.y + pre.y*scale - offY
+static QPointF widgetToPre(const QPointF& w, const QRectF& dst, double scale,
+                           double drift, double offY)
 {
     double px = w.x() / scale + drift;
     px = fmod(px, MapView::MAP_W);
     if (px < 0) px += MapView::MAP_W;
-    return QPointF(px, (w.y() - dst.y()) / scale);
+    return QPointF(px, (w.y() - dst.y() + offY) / scale);
 }
 
 MapView::MapView(QWidget* parent) : QWidget(parent)
@@ -188,11 +192,15 @@ void MapView::computeRegionBBox()
 
 void MapView::buildWorldPixmap()
 {
+    // 3x 超采样烘焙：逻辑坐标仍 1000×500，device 像素 3000×1500 ——
+    // 滚轮缩放到 4x 时依旧有充足源像素（18MB 常驻，桌面端可接受）
+    constexpr double PIX = 3.0;
     const int W = int(MAP_W), H = int(MAP_H);
-    worldPix_ = QPixmap(W, H);
+    worldPix_ = QPixmap(int(MAP_W * PIX), int(MAP_H * PIX));
     worldPix_.fill(Qt::transparent);
     QPainter p(&worldPix_);
     p.setRenderHint(QPainter::Antialiasing, true);
+    p.scale(PIX, PIX);   // 之后全部按 1000×500 逻辑坐标绘制（线宽随变换同步放大）
 
     const QColor ocean(0x0e, 0x16, 0x1f);   // 深海（雾隐深色）
     const QColor land(0x2f, 0x46, 0x58);    // 陆地基色（与 web .cty 对齐）
@@ -336,28 +344,49 @@ QRectF MapView::fitRect(const QRectF& bbox, const QRectF& dst, double& outScale)
     return QRectF(x, y, w, h);
 }
 
+// 纵向视口偏移按当前 zoom 夹取（zoom=1 时恒 0）
+double MapView::worldOffYClamped() const
+{
+    const QRectF dst = rect().adjusted(8, 8, -8, -8);
+    const double scale = dst.height() / MAP_H * worldZoom_;
+    return qBound(0.0, worldOffY_, qMax(0.0, MAP_H * scale - dst.height()));
+}
+
+// 把预投影点 (preX,preY) 置于视口中心：调整横向漂移与纵向偏移（缩放前后均可用）
+void MapView::centerWorldOn(double preX, double preY)
+{
+    const QRectF dst = rect().adjusted(8, 8, -8, -8);
+    const double scale = dst.height() / MAP_H * worldZoom_;
+    driftPx_  = wrapX(preX - dst.center().x() / scale);
+    worldOffY_ = preY * scale - dst.height() / 2.0;
+}
+
 void MapView::renderWorldInto(QPainter& p, const QRectF& dst) const
 {
-    // 离屏世界按 dst 高度等比缩放，宽度=2*高度（等距圆柱 2:1）
-    const double scale = dst.height() / MAP_H;
-    const double mapWpx = MAP_W * scale;
-    const QRectF src(0, 0, MAP_W, MAP_H);
-    // 横向环绕：绘制足够副本覆盖 dst 宽度
+    // 离屏世界按 dst 高度 × zoom 缩放，宽度=2*高度（等距圆柱 2:1）；zoom>1 时纵向可平移
+    const double scale = dst.height() / MAP_H * worldZoom_;
+    const double mapWpx = MAP_W * scale, mapHpx = MAP_H * scale;
+    const double offY = worldOffYClamped();
+    const QRectF src(0, 0, worldPix_.width(), worldPix_.height());
+    // 横向环绕：绘制足够副本覆盖 dst 宽度（屏外剔除）
     double off = -wrapX(driftPx_) * scale;
     for (double x0 = off; x0 < dst.right() + mapWpx; x0 += mapWpx) {
-        QRectF d(x0, dst.y(), mapWpx, dst.height());
+        if (x0 + mapWpx < dst.left() || x0 > dst.right()) continue;
+        const QRectF d(x0, dst.y() - offY, mapWpx, mapHpx);
+        if (d.bottom() < dst.y() || d.top() > dst.bottom()) continue;
         p.drawPixmap(d, worldPix_, src);
     }
     // 大区旅行锚点（金色点 + 名）
     QColor gold(0xc9, 0xa2, 0x4b);
     for (const RegionInfo& ri : regions_) {
         const QPointF w = preToWidget(ri.proj, dst, scale, -driftPx_);
-        // 环绕后的实际绘制 x
+        // 环绕后的实际绘制 x（含纵向偏移）
         double wx = w.x();
         const double span = mapWpx;
         wx = dst.x() + fmod(wx - dst.x(), span);
         if (wx < dst.x()) wx += span;
-        const QPointF pos(wx, w.y());
+        const QPointF pos(wx, w.y() - offY);
+        if (pos.y() < dst.y() - 20 || pos.y() > dst.bottom() + 20) continue;
         p.setPen(QPen(gold, 1.4));
         p.setBrush(gold);
         p.drawEllipse(pos, 3.2, 3.2);
@@ -508,7 +537,9 @@ void MapView::qaShootA(const QString& path)
     {
         QPainter p(&img);
         p.setRenderHint(QPainter::Antialiasing, true);
-        p.drawPixmap(0, 0, worldPix_);
+        p.setRenderHint(QPainter::SmoothPixmapTransform, true);
+        // worldPix_ 为 3x 超采样（3000×1500），缩放绘制到逻辑 1000×500
+        p.drawPixmap(QRectF(0, 0, W, H), worldPix_, worldPix_.rect());
     }
     int jade = 0;
     const uchar* bits = img.constBits();
@@ -649,10 +680,28 @@ void MapView::qaClickProbe()
             break;
         }
     }
-    std::fprintf(stderr, "LA_MAP_CLICK_QA country=%s anchor=%s province=%s burst=%s card=%s blank=%s\n",
+    // ④ 滚轮缩放一致性：放大两档 → 居中乌鲁木齐 → 国家轮廓点击仍命中
+    //    （验证缩放后 render/命中两套变换仍逐像素一致）
+    QString zoomResult = QStringLiteral("skip");
+    while (level_ != World) goUp();
+    worldZoom_ = 1.0;
+    worldOffY_ = 0.0;
+    for (int i = 0; i < 2; ++i) {
+        const QPointF c0 = rect().center();
+        QWheelEvent we(c0, c0, QPoint(), QPoint(0, 120),
+                       Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+        QCoreApplication::sendEvent(this, &we);
+    }
+    centerWorldOn(eqX(87.62), eqY(43.82));   // 乌鲁木齐置于视口中心
+    sendClick(rect().center());
+    zoomResult = (level_ == Region)
+        ? QStringLiteral("OK(zoom=%1)").arg(worldZoom_, 0, 'f', 2)
+        : QStringLiteral("FAIL(zoom=%1 level=%2)").arg(worldZoom_, 0, 'f', 2).arg(int(level_));
+
+    std::fprintf(stderr, "LA_MAP_CLICK_QA country=%s anchor=%s province=%s burst=%s card=%s blank=%s zoom=%s\n",
                  qPrintable(countryResult), qPrintable(worldResult),
                  qPrintable(provResult), qPrintable(burstResult),
-                 qPrintable(cardResult), qPrintable(blankResult));
+                 qPrintable(cardResult), qPrintable(blankResult), qPrintable(zoomResult));
     std::fflush(stderr);
 }
 
@@ -860,7 +909,9 @@ void MapView::qaShootBurst(const QString& path)
 // 预渲染翡翠足迹点精灵（一次），逐帧 blit，避免每帧重建径向梯度
 void MapView::renderFootDotSprite()
 {
-    const int D = 40;
+    // 120px 高分辨率精灵：世界烘焙层在 3x 变换下按逻辑尺寸 blit 仍清晰；
+    // 下钻层（无变换）绘制时为缩小采样，同样清晰
+    const int D = 120;
     footDotPix_ = QPixmap(D, D);
     footDotPix_.fill(Qt::transparent);
     QPainter p(&footDotPix_);
@@ -1003,8 +1054,17 @@ void MapView::paintEvent(QPaintEvent*)
     p.fillRect(rect(), bg);
 
     const QRectF dst = rect().adjusted(8, 8, -8, -8);
-    if (level_ == World)
+    if (level_ == World) {
+        // 首帧初始化：中国居中（zoom=1 时纵向自然居中，无需额外偏移）
+        if (!worldInited_ && width() > 100) {
+            worldInited_ = true;
+            double cx = eqX(105.0);
+            for (const RegionInfo& ri : regions_)
+                if (ri.id == QLatin1String("china")) { cx = ri.proj.x(); break; }
+            centerWorldOn(cx, 150.0);
+        }
         renderWorldInto(p, dst);
+    }
     else if (level_ == Region)
         renderRegion(p, dst);
     else
@@ -1036,15 +1096,40 @@ void MapView::resizeEvent(QResizeEvent* e)
     update();
 }
 
+// 世界层滚轮缩放（1x..4x，光标锚定）：缩放前后光标下的预投影点保持不动——
+// 横向调 driftPx_、纵向调 worldOffY_（越界自动夹取）
+void MapView::wheelEvent(QWheelEvent* e)
+{
+    if (level_ != World) { e->ignore(); return; }
+    const QRectF dst = rect().adjusted(8, 8, -8, -8);
+    const double base = dst.height() / MAP_H;
+    const double oldScale = base * worldZoom_;
+    const double oldOffY = worldOffYClamped();
+    const QPointF cur = e->position();
+    const QPointF pre = widgetToPre(cur, dst, oldScale, wrapX(driftPx_), oldOffY);
+
+    const double f = e->angleDelta().y() > 0 ? 1.25 : 1.0 / 1.25;
+    const double nz = qBound(1.0, worldZoom_ * f, 4.0);
+    if (qFuzzyCompare(nz, worldZoom_)) { e->accept(); return; }
+
+    const double newScale = base * nz;
+    driftPx_  = wrapX(pre.x() - cur.x() / newScale);
+    worldOffY_ = pre.y() * newScale - (cur.y() - dst.y());
+    worldZoom_ = nz;
+    e->accept();
+    update();
+}
+
 void MapView::mouseMoveEvent(QMouseEvent* e)
 {
     if (level_ == World) {
         // 命中测试：大区锚点（scale 与 renderWorldInto 绘制基准一致，见 mousePressEvent 注释）
         const QRectF dst = rect().adjusted(8, 8, -8, -8);
-        const double scale = dst.height() / MAP_H;
+        const double scale = dst.height() / MAP_H * worldZoom_;
+        const double offY = worldOffYClamped();
         const double span = MAP_W * scale;
         // ① 国家轮廓悬停：有作品国家 → 手型光标 + 大区名提示
-        const QPointF pre = widgetToPre(e->pos(), dst, scale, wrapX(driftPx_));
+        const QPointF pre = widgetToPre(e->pos(), dst, scale, wrapX(driftPx_), offY);
         for (int fi = 0; fi < worldFeatures_.size(); ++fi) {
             const int r = featureRegion_.value(fi, -1);
             if (r < 0) continue;
@@ -1059,7 +1144,7 @@ void MapView::mouseMoveEvent(QMouseEvent* e)
             QPointF w = preToWidget(ri.proj, dst, scale, -driftPx_);
             double wx = dst.x() + fmod(w.x() - dst.x(), span);
             if (wx < dst.x()) wx += span;
-            if (std::hypot(wx - e->pos().x(), w.y() - e->pos().y()) < 8) {
+            if (std::hypot(wx - e->pos().x(), (w.y() - offY) - e->pos().y()) < 8) {
                 if (hoverHint_ != ri.name) { hoverHint_ = ri.name; setCursor(Qt::PointingHandCursor); update(); }
                 return;
             }
@@ -1094,11 +1179,12 @@ void MapView::mousePressEvent(QMouseEvent* e)
         // 否则热区相对可见金点整体偏移（8px 内边距 × 预投影坐标，最大 ~30px），
         // 而点击半径只有 10px → 用户对着金点点击却毫无反应。
         const QRectF dst = rect().adjusted(8, 8, -8, -8);
-        const double scale = dst.height() / MAP_H;
+        const double scale = dst.height() / MAP_H * worldZoom_;
+        const double offY = worldOffYClamped();
         const double span = MAP_W * scale;
         // ① 国家轮廓命中（优先）：点有作品国家的任意位置即下钻。
-        //    逆变换与 worldPix_ 平铺一致（含漂移回绕），bbox 早退 + 偶奇规则含湖泊镂空。
-        const QPointF pre = widgetToPre(e->pos(), dst, scale, wrapX(driftPx_));
+        //    逆变换与 worldPix_ 平铺一致（含漂移回绕/缩放/纵向偏移），bbox 早退 + 偶奇规则含湖泊镂空。
+        const QPointF pre = widgetToPre(e->pos(), dst, scale, wrapX(driftPx_), offY);
         for (int fi = 0; fi < worldFeatures_.size(); ++fi) {
             const int r = featureRegion_.value(fi, -1);
             if (r < 0) continue;
@@ -1113,7 +1199,7 @@ void MapView::mousePressEvent(QMouseEvent* e)
             QPointF w = preToWidget(ri.proj, dst, scale, -driftPx_);
             double wx = dst.x() + fmod(w.x() - dst.x(), span);
             if (wx < dst.x()) wx += span;
-            if (std::hypot(wx - e->pos().x(), w.y() - e->pos().y()) < 10) {
+            if (std::hypot(wx - e->pos().x(), (w.y() - offY) - e->pos().y()) < 10) {
                 emit picked(ri.id, ri.name, false);
                 enterRegion(ri.id);
                 return;

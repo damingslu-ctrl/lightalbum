@@ -18,9 +18,9 @@ OLD = ROOT + r"/native/data/mapdata.json"
 NE10M = SRC_DIR + r"/ne_10m_countries.geojson"
 DATAV = SRC_DIR + r"/datav_china_100000.json"
 
-# 抽稀阈值（预投影单位）：world 只看全球缩放，0.3≈0.1° 无损；省下钻放大，更细
-MIN_DIST_WORLD = 0.3
-MIN_DIST_PROV = 0.15
+# 抽稀阈值（预投影单位）：滚轮缩放最高 4x，0.18≈0.065° 保证放大后仍精细；省下钻更细
+MIN_DIST_WORLD = 0.18
+MIN_DIST_PROV = 0.08
 
 
 def proj(lon, lat):
