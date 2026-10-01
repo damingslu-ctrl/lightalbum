@@ -74,6 +74,8 @@ public:
     void qaShootRegion(const QString& path, const QString& id);
     // A 点击链路自测：合成鼠标事件实测「世界锚点→大区」「大区省面→省」两级命中
     void qaClickProbe();
+    // A 帧耗时自测：LA_MAP_PERF=1 时逐层级渲染 20 帧打印平均毫秒/帧（先测再改）
+    void qaPerf();
     // A 国家视图像素自测：按国家名 enterCountry → 离屏渲染国界轮廓 + 分色统计
     void qaShootCountry(const QString& path, const QString& name);
     // A 爆炸弹层像素自测：进入省视图 + 合成缩略图 → 离屏渲染终态 + 分色统计
@@ -110,11 +112,14 @@ protected:
     void wheelEvent(QWheelEvent*) override;   // 世界层滚轮缩放（光标锚定）
 
 private:
+    void paintMap(QPainter& p);   // 绘制主体（paintEvent 与帧耗时自测共用调度）
     void loadData();
     void buildWorldPixmap();                 // 离屏渲染静态世界（环填充）
     void renderWorldInto(QPainter& p, const QRectF& dst) const;
     void renderRegion(QPainter& p, const QRectF& dst) const;
+    void renderRegionStatic(QPainter& p, const QRectF& dst) const;   // 静态部分（网格/省面/标签/足迹点）
     void renderProvince(QPainter& p, const QRectF& dst) const;
+    void renderProvinceStatic(QPainter& p, const QRectF& dst) const; // 静态部分（轮廓/网格/标签/足迹点）
     // P16.4 在大区/省视图按拟合变换投影真实 GPS 足迹点（裁剪到 dst）
     void drawGpsDots(QPainter& p, const QRectF& bbox, const QRectF& dst) const;
     // P16.4.2 金色航线：以基点连向每处 GPS 足迹（二次贝塞尔向上拱起，短路径过接缝）
@@ -193,6 +198,18 @@ private:
     bool    panMoved_  = false;
     QPointF panStart_;
     QPointF panLast_;
+
+    // 流畅性：下钻视图「静态层」缓存（网格/省面/国界/标签/足迹点每视图只栅格化一次）
+    void invalidateViewCache() { viewPixValid_ = false; }
+    QPixmap viewPix_;
+    bool    viewPixValid_ = false;
+    QRectF  curViewBbox_;                            // 当前视图 bbox（动态航线拟合用）
+    mutable QVector<int>        densCache_;          // 密度分级缓存（gpsPts_ 变更时失效）
+    mutable bool                densDirty_  = true;
+    struct CacheEntry { QPixmap pm; QPointF off; };
+    mutable QHash<QString, CacheEntry> labelPixCache_;  // 文字 halo 预渲染缓存（按 文本|色|字体）
+    mutable QVector<QPointF> arcTargetsCache_;          // 航线目标集缓存（gpsPts_/arcRegionIds_ 变更时失效）
+    mutable bool             arcTargetsDirty_ = true;
 
     // 省视图爆炸弹层状态
     void drawBurst(QPainter& p, const QRectF& dst) const;

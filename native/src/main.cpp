@@ -539,6 +539,7 @@ int main(int argc, char *argv[])
         && !qEnvironmentVariableIsSet("LA_MAP_CLICK_QA")
         && !qEnvironmentVariableIsSet("LA_MAP_BURST_QA")
         && !qEnvironmentVariableIsSet("LA_MAP_COUNTRY_QA")
+        && !qEnvironmentVariableIsSet("LA_MAP_PERF")
         && !qEnvironmentVariableIsSet("LA_GALLERY_E_QA")
         && !qEnvironmentVariableIsSet("LA_CULL_DUEL_QA")
         && !qEnvironmentVariableIsSet("LA_GALLERY_FILL_QA")
@@ -661,6 +662,14 @@ int main(int argc, char *argv[])
         QDir().mkpath(QFileInfo(p).absolutePath());
         if (MapView* mv = win.mapView()) mv->qaShootBurst(p);
         std::fprintf(stderr, "LA_MAP_BURST_QA_DONE\n");
+        std::fflush(stderr);
+        return 0;
+    }
+
+    // A 帧耗时自测：LA_MAP_PERF=1 时逐层级渲染 20 帧打印平均毫秒/帧。
+    if (!qEnvironmentVariableIsEmpty("LA_MAP_PERF")) {
+        if (MapView* mv = win.mapView()) mv->qaPerf();
+        std::fprintf(stderr, "LA_MAP_PERF_DONE\n");
         std::fflush(stderr);
         return 0;
     }

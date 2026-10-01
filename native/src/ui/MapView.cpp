@@ -22,6 +22,9 @@ static double eqX(double lon) { return (lon + 180.0) / 360.0 * MapView::MAP_W; }
 static double eqY(double lat) { return (90.0 - lat) / 180.0 * MapView::MAP_H; }
 static double wrapX(double x) { return fmod(fmod(x, MapView::MAP_W) + MapView::MAP_W, MapView::MAP_W); }
 
+// 航线「流动虚线动画」vs「并入静态层」阈值：超过后逐帧描数千条弧不可读也过重
+static constexpr int kArcBakeThreshold = 256;
+
 // 偶奇规则点在多边形内（与 QPainterPath OddEvenFill 语义一致；用于国家轮廓命中）
 static bool pip(const QVector<QPointF>& r, const QPointF& p)
 {
@@ -287,6 +290,9 @@ void MapView::buildWorldPixmap()
 void MapView::setGpsPoints(const QVector<QPointF>& pts)
 {
     gpsPts_ = pts;
+    densDirty_ = true;          // 密度分级缓存失效
+    arcTargetsDirty_ = true;    // 航线目标集缓存失效
+    invalidateViewCache();      // 下钻静态层含足迹点 → 失效
     buildWorldPixmap();          // 重新烘焙世界静态层（含足迹点，随漂移一起移动）
     update();
 }
@@ -305,13 +311,16 @@ void MapView::setArcRegionIds(const QStringList& ids)
 {
     if (ids == arcRegionIds_) return;
     arcRegionIds_ = ids;
+    arcTargetsDirty_ = true;    // 航线目标集缓存失效
     buildWorldPixmap();
     update();
 }
 
 // 航线目标集 = GPS 足迹点 ∪ 有作品大区的中心点（预投影空间，去重）
+// 结果缓存（流畅性）：此前每帧复制 6400+ 点向量 + O(n) 去重
 QVector<QPointF> MapView::arcTargets() const
 {
+    if (!arcTargetsDirty_) return arcTargetsCache_;
     QVector<QPointF> ts = gpsPts_;
     for (const QString& id : arcRegionIds_) {
         for (const RegionInfo& ri : regions_) {
@@ -321,6 +330,8 @@ QVector<QPointF> MapView::arcTargets() const
             }
         }
     }
+    arcTargetsCache_ = ts;
+    arcTargetsDirty_ = false;
     return ts;
 }
 
@@ -374,6 +385,7 @@ void MapView::renderWorldInto(QPainter& p, const QRectF& dst) const
     const double mapWpx = MAP_W * scale, mapHpx = MAP_H * scale;
     const double offY = worldOffYClamped();
     const QRectF src(0, 0, worldPix_.width(), worldPix_.height());
+    p.setRenderHint(QPainter::SmoothPixmapTransform, true);   // 3x 烘焙 → 屏幕缩放采样，消除漂移边缘闪烁
     // 横向环绕：绘制足够副本覆盖 dst 宽度（屏外剔除）
     double off = -wrapX(driftPx_) * scale;
     for (double x0 = off; x0 < dst.right() + mapWpx; x0 += mapWpx) {
@@ -402,6 +414,14 @@ void MapView::renderWorldInto(QPainter& p, const QRectF& dst) const
 }
 
 void MapView::renderRegion(QPainter& p, const QRectF& dst) const
+{
+    renderRegionStatic(p, dst);
+    drawArcs(p, curViewBbox_, dst);   // P16.4.2 金色航线
+}
+
+// 大区层静态部分：网格 + 省面 + 省名 + 足迹点（航线动态，单独画）。
+// 供「静态层缓存」一次性栅格化，避免每帧重建 34 条省路径。
+void MapView::renderRegionStatic(QPainter& p, const QRectF& dst) const
 {
     if (curProvinces_.isEmpty()) {
         if (countryFeature_ >= 0) renderCountryOnly(p, dst);
@@ -434,7 +454,6 @@ void MapView::renderRegion(QPainter& p, const QRectF& dst) const
         const QPointF c = o + pv.ctr * scale;
         drawLabel(p, c + QPointF(4, 4), pv.zh.isEmpty() ? pv.name : pv.zh, QColor(0xe8, 0xe2, 0xd4));
     }
-    drawArcs(p, bbox, dst);      // P16.4.2 金色航线
     drawGpsDots(p, bbox, dst);   // P16.4
 }
 
@@ -468,11 +487,17 @@ void MapView::renderCountryOnly(QPainter& p, const QRectF& dst) const
     const QPointF c = o + QPointF((bbox.left() + bbox.right()) * 0.5 * scale,
                                   (bbox.top() + bbox.bottom()) * 0.5 * scale);
     drawLabel(p, c, curRegionName_, QColor(0xe8, 0xe2, 0xd4));
-    drawArcs(p, bbox, dst);
     drawGpsDots(p, bbox, dst);
 }
 
 void MapView::renderProvince(QPainter& p, const QRectF& dst) const
+{
+    renderProvinceStatic(p, dst);
+    drawArcs(p, curProvince_.bbox, dst);      // P16.4.2 金色航线
+}
+
+// 省层静态部分：轮廓 + 网格 + 省名 + 足迹点（航线动态，单独画）
+void MapView::renderProvinceStatic(QPainter& p, const QRectF& dst) const
 {
     if (!hasCurProvince_) return;
     double scale = 1;
@@ -490,7 +515,6 @@ void MapView::renderProvince(QPainter& p, const QRectF& dst) const
     const QPointF c = o + curProvince_.ctr * scale;
     const QString label = (curProvince_.zh.isEmpty() ? curProvince_.name : curProvince_.zh);
     drawLabel(p, c + QPointF(6, 5), label, QColor(0xe8, 0xe2, 0xd4));
-    drawArcs(p, curProvince_.bbox, dst);      // P16.4.2 金色航线
     drawGpsDots(p, curProvince_.bbox, dst);   // P16.4
 }
 
@@ -525,8 +549,11 @@ void MapView::drawArcs(QPainter& p, const QRectF& bbox, const QRectF& dst) const
     const QPointF h(o.x() + eqX(homeLon_) * scale, o.y() + eqY(homeLat_) * scale);
     p.save();
     p.setClipRect(dst);
-    p.setBrush(Qt::NoBrush);
+    // 流畅性：全部弧线合并为一条路径、端点光点合并为一条路径——
+    // 数千条逐条 drawPath（含每条建路径/切笔）曾是下钻视图每帧最大开销
     const bool flow = !reduceMotion_;
+    QPainterPath arcs;
+    QPainterPath glowDots;
     for (const QPointF& pt : targets) {
         if (pt.x() < bbox.left() - 2 || pt.x() > bbox.right() + 2 ||
             pt.y() < bbox.top() - 2 || pt.y() > bbox.bottom() + 2) continue;
@@ -534,21 +561,19 @@ void MapView::drawArcs(QPainter& p, const QRectF& bbox, const QRectF& dst) const
         const double dx = t.x() - h.x(), dy = t.y() - h.y();
         const double len = std::sqrt(dx * dx + dy * dy);
         const double lift = std::min(120.0, len * 0.25);
-        QPainterPath arc;
-        arc.moveTo(h);
-        arc.quadTo(QPointF((h.x() + t.x()) / 2.0, (h.y() + t.y()) / 2.0 - lift), t);
-        // 很精细：流动金色虚线（reduceMotion 时退化为实线）
-        p.setBrush(Qt::NoBrush);
-        QPen pen(QColor(0xd9, 0xa9, 0x4e, 150), 1.2);
-        if (flow) { pen.setStyle(Qt::DashLine); pen.setDashPattern({6.0, 6.0}); pen.setDashOffset(-arcDashOffset_); }
-        p.setPen(pen);
-        p.drawPath(arc);
-        // 端点光点（目标 = 拍摄地）
-        p.setPen(Qt::NoPen);
-        p.setBrush(QColor(0xd9, 0xa9, 0x4e, 210));
-        p.drawEllipse(t, 2.2, 2.2);
-        p.setBrush(Qt::NoBrush);
+        arcs.moveTo(h);
+        arcs.quadTo(QPointF((h.x() + t.x()) / 2.0, (h.y() + t.y()) / 2.0 - lift), t);
+        glowDots.addEllipse(t, 2.2, 2.2);   // 端点光点（目标 = 拍摄地）
     }
+    // 很精细：流动金色虚线（reduceMotion 时退化为实线）——整条路径一次描边
+    p.setBrush(Qt::NoBrush);
+    QPen pen(QColor(0xd9, 0xa9, 0x4e, 150), 1.2);
+    if (flow) { pen.setStyle(Qt::DashLine); pen.setDashPattern({6.0, 6.0}); pen.setDashOffset(-arcDashOffset_); }
+    p.setPen(pen);
+    p.drawPath(arcs);
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(0xd9, 0xa9, 0x4e, 210));
+    p.drawPath(glowDots);
     // 基点标记（在 bbox 内才画；世界层已画过一次）
     if (eqX(homeLon_) >= bbox.left() && eqX(homeLon_) <= bbox.right() &&
         eqY(homeLat_) >= bbox.top() && eqY(homeLat_) <= bbox.bottom()) {
@@ -1126,9 +1151,11 @@ void MapView::drawFootprintDot(QPainter& p, const QPointF& c, double coreR, int 
     p.setOpacity(saved);
 }
 
-// 局部密度（网格计数，O(n)）：用于足迹点分级
+// 局部密度（网格计数，O(n)）：用于足迹点分级。
+// 结果缓存（流畅性）：gpsPts_ 最多 6000+ 点，此前每帧重算 + QHash 分配。
 QVector<int> MapView::computeDensity() const
 {
+    if (!densDirty_) return densCache_;
     const double cell = 22.0;
     QHash<QPoint, int> grid;
     for (const QPointF& pt : gpsPts_) {
@@ -1147,6 +1174,8 @@ QVector<int> MapView::computeDensity() const
                 c += grid.value(QPoint(ix + dx, iy + dy), 0);
         out.append(c);
     }
+    densCache_ = out;
+    densDirty_ = false;
     return out;
 }
 
@@ -1178,19 +1207,36 @@ void MapView::drawGraticule(QPainter& p, const QRectF& bbox, const QRectF& dst) 
 void MapView::drawLabel(QPainter& p, const QPointF& pos, const QString& text, const QColor& fill) const
 {
     if (text.isEmpty()) return;
-    // save/restore：绝不让 pen/brush 泄漏给调用方 —— 否则后续 drawPath 会用
-    // 残留的 cream 笔刷把省面整体误填充（下钻视图省份全变奶油色的根因）
-    p.save();
-    const QFont f = p.font();
-    QPainterPath path;
-    path.addText(pos, f, text);
-    p.setPen(QPen(QColor(0x06, 0x0c, 0x10, 210), 2.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-    p.setBrush(Qt::NoBrush);
-    p.drawPath(path);
-    p.setPen(QPen(fill, 1));
-    p.setBrush(fill);
-    p.drawPath(path);
-    p.restore();
+    // 预渲染缓存（流畅性）：同 文本|颜色|字体 的 halo 只栅格化一次，逐帧 blit。
+    // 世界层锚点/图例与下钻省名每帧文字栅格化曾是每帧主要开销之一。
+    const QString key = QString::number(fill.rgba(), 16) + QLatin1Char('|')
+                        + text + QLatin1Char('|') + p.font().key();
+    QPixmap pix = labelPixCache_.value(key).pm;
+    QPointF off;
+    if (pix.isNull()) {
+        QPainterPath path;
+        path.addText(QPointF(0, 0), p.font(), text);
+        const QRectF br = path.boundingRect();
+        const qreal pad = 4.0;
+        QPixmap pm(int(br.width()) + int(pad * 2) + 2, int(br.height()) + int(pad * 2) + 2);
+        pm.fill(Qt::transparent);
+        QPainter lp(&pm);
+        lp.setRenderHint(QPainter::Antialiasing, true);
+        lp.translate(-br.left() + pad, -br.top() + pad);
+        lp.setPen(QPen(QColor(0x06, 0x0c, 0x10, 210), 2.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        lp.setBrush(Qt::NoBrush);
+        lp.drawPath(path);
+        lp.setPen(QPen(fill, 1));
+        lp.setBrush(fill);
+        lp.drawPath(path);
+        lp.end();
+        off = br.topLeft() - QPointF(pad, pad);
+        labelPixCache_.insert(key, CacheEntry{ pm, off });
+        pix = pm;
+    } else {
+        off = labelPixCache_.value(key).off;
+    }    // pixmap(0,0) 对应场景坐标 pos+br.topLeft()-pad → 与原 addText(pos) 逐像素同位
+    p.drawPixmap(pos + off, pix);
 }
 
 // 世界视图右下角图例
@@ -1226,6 +1272,12 @@ void MapView::paintEvent(QPaintEvent*)
 {
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing, true);
+    paintMap(p);
+}
+
+// 绘制主体（paintEvent 与 LA_MAP_PERF 帧耗时自测共用同一调度）
+void MapView::paintMap(QPainter& p)
+{
     const QColor bg(0x0a, 0x10, 0x16);
     p.fillRect(rect(), bg);
 
@@ -1241,10 +1293,29 @@ void MapView::paintEvent(QPaintEvent*)
         }
         renderWorldInto(p, dst);
     }
-    else if (level_ == Region)
-        renderRegion(p, dst);
-    else
-        renderProvince(p, dst);
+    else {
+        // 静态层缓存（流畅性核心）：网格/省面/国界/标签/足迹点每视图只栅格化一次，
+        // 每帧仅 1 次 blit + 动态航线（流动虚线）+ 爆炸弹层。
+        // 失效时机：进入/退出任一层级、窗口尺寸变化、足迹点更新。
+        if (!viewPixValid_) {
+            viewPix_ = QPixmap(size());
+            viewPix_.fill(Qt::transparent);
+            QPainter vp(&viewPix_);
+            vp.setRenderHint(QPainter::Antialiasing, true);
+            const bool bakeArcs = arcTargets().size() > kArcBakeThreshold;
+            if (level_ == Region)
+                renderRegionStatic(vp, dst);
+            else
+                renderProvinceStatic(vp, dst);
+            if (bakeArcs)
+                drawArcs(vp, curViewBbox_, dst);   // 航线数千条时流动动画不可读 → 并入静态层
+            vp.end();
+            viewPixValid_ = true;
+        }
+        p.drawPixmap(0, 0, viewPix_);
+        if (arcTargets().size() <= kArcBakeThreshold)
+            drawArcs(p, curViewBbox_, dst);   // 少量航线：流动虚线动画
+    }
 
     const bool burstView = (level_ == Province && hasCurProvince_) ||
                            (level_ == Region && countryFeature_ >= 0 && curProvinces_.isEmpty());
@@ -1268,9 +1339,46 @@ void MapView::paintEvent(QPaintEvent*)
     }
 }
 
+// 帧耗时自测：LA_MAP_PERF=1 时逐层级各渲染 20 帧并打印平均毫秒/帧
+// （离屏 QImage + 与 paintEvent 完全相同的调度；先测再改）
+void MapView::qaPerf()
+{
+    resize(1200, 800);   // 离屏门里 MapView 是堆叠页非当前页、尺寸极小 → 强制真实尺寸
+    invalidateViewCache();
+    QImage img(size(), QImage::Format_ARGB32_Premultiplied);
+    img.fill(0xff0a1016);
+    auto bench = [&](const char* name, const std::function<void()>& enter) {
+        enter();
+        {   // warmup：首帧含懒加载/缓存烘焙，不计入
+            QPainter p(&img);
+            paintMap(p);
+        }
+        QElapsedTimer t;
+        t.start();
+        for (int i = 0; i < 20; ++i) {
+            QPainter p(&img);
+            paintMap(p);
+        }
+        std::fprintf(stderr, "LA_MAP_PERF %s=%.2fms\n", name, double(t.elapsed()) / 20.0);
+        std::fflush(stderr);
+    };
+    bench("world", [] {});
+    bench("region", [this] { enterRegion(QStringLiteral("china")); });
+    bench("province", [this] {
+        if (!curProvinces_.isEmpty()) enterProvince(curProvinces_.first().name);
+    });
+    bench("country", [this] {
+        while (level_ != World) goUp();
+        for (int i = 0; i < worldNames_.size(); ++i)
+            if (worldNames_[i] == QStringLiteral("Vietnam")) { enterCountry(i); break; }
+    });
+    while (level_ != World) goUp();
+}
+
 void MapView::resizeEvent(QResizeEvent* e)
 {
     QWidget::resizeEvent(e);
+    invalidateViewCache();
     update();
 }
 
@@ -1562,11 +1670,12 @@ void MapView::enterCountry(int fi)
         if (i < gpsPaths_.size()) countryPaths_.append(gpsPaths_[i]);
         countryPts_.append(pt);
     }
+    curViewBbox_ = bb;
+    invalidateViewCache();
     update();
     emit breadcrumbChanged(breadcrumb());
     emit countryPicked(curRegionName_, countryPaths_);
 }
-
 void MapView::enterRegion(const QString& id)
 {
     const QJsonValue arr = provJson_.value(id);
@@ -1589,6 +1698,15 @@ void MapView::enterRegion(const QString& id)
     }
     hasCurProvince_ = false;
     level_ = Region;
+    curViewBbox_ = QRectF();
+    {
+        bool first = true;
+        for (const ProvinceInfo& pv : curProvinces_) {
+            if (first) { curViewBbox_ = pv.bbox; first = false; }
+            else curViewBbox_ |= pv.bbox;
+        }
+    }
+    invalidateViewCache();
     update();
     emit breadcrumbChanged(breadcrumb());
 }
@@ -1600,6 +1718,8 @@ void MapView::enterProvince(const QString& name)
             curProvince_ = pv;
             hasCurProvince_ = true;
             level_ = Province;
+            curViewBbox_ = pv.bbox;
+            invalidateViewCache();
             update();
             emit breadcrumbChanged(breadcrumb());
             return;
@@ -1611,6 +1731,7 @@ void MapView::goUp()
 {
     if (level_ == Province) { level_ = Region; hasCurProvince_ = false; }
     else if (level_ == Region) { level_ = World; curProvinces_.clear(); countryFeature_ = -1; countryPaths_.clear(); countryPts_.clear(); }
+    invalidateViewCache();
     update();
     emit breadcrumbChanged(breadcrumb());
 }
