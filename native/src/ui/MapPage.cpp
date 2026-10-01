@@ -41,6 +41,17 @@ MapPage::MapPage(const QVector<Photo>* photos, const QString& thumbsDir,
     crumb_->setStyleSheet(QStringLiteral("color:#f0d08a;font-size:13px;"));
     bl->addWidget(back_);
     bl->addWidget(crumb_);
+    // 迭代 1：世界层导航 —— 平移/缩放后一键回到默认视角（缩放归 1 + 中国居中）
+    recenterBtn_ = new QPushButton(QString::fromUtf8("\u2302 \u56de\u5230\u4e2d\u56fd"), bar);
+    recenterBtn_->setCursor(Qt::PointingHandCursor);
+    recenterBtn_->setToolTip(QString::fromUtf8("回到默认视角：缩放归 1、中国居中"));
+    recenterBtn_->setStyleSheet(QStringLiteral(
+        "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:9px;"
+        "padding:5px 12px;color:#4fc08a;}"
+        "QPushButton:hover{border-color:#4fc08a;}"
+        "QPushButton:disabled{color:#5a6b60;border-color:#1d2620;}"));
+    connect(recenterBtn_, &QPushButton::clicked, this, &MapPage::onRecenter);
+    bl->addWidget(recenterBtn_);
     bl->addStretch(1);
     // P16.4.2 重新定位（web 版 relocateBtn 对应物：基点=「我的位置」，金色航线起点）
     relocBtn_ = new QPushButton(QString::fromUtf8("◎ 重新定位"), bar);
@@ -116,6 +127,7 @@ MapPage::MapPage(const QVector<Photo>* photos, const QString& thumbsDir,
     connect(view_, &MapView::breadcrumbChanged, this, [this](const QString& t) {
         Q_UNUSED(t);
         back_->setEnabled(view_->level() != MapView::World);
+        recenterBtn_->setEnabled(view_->level() == MapView::World);   // 仅世界层可回到默认视角
     });
     connect(view_, &MapView::picked, this, &MapPage::onPicked);
     connect(view_, &MapView::burstRequested, this, &MapPage::onBurstRequest);
@@ -218,6 +230,12 @@ void MapPage::onPicked(const QString& key, const QString& label, bool isProvince
 void MapPage::onViewInGallery()
 {
     emit requestGallery(lastRegion_, lastProv_);
+}
+
+// 回到默认视角（世界层）：缩放归 1 + 中国居中
+void MapPage::onRecenter()
+{
+    view_->resetWorldView();
 }
 
 // 国家视图统计：该国 GPS 作品数（pip 由 MapView 完成），不接入图库筛选（无 region 键）

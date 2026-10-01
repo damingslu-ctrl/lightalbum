@@ -369,6 +369,24 @@ double MapView::worldOffYClamped() const
     return qBound(0.0, worldOffY_, qMax(0.0, MAP_H * scale - dst.height()));
 }
 
+// 默认视口中心：中国大区锚点（数据缺失时回退 105°E）
+double MapView::defaultCenterX() const
+{
+    double cx = eqX(105.0);
+    for (const RegionInfo& ri : regions_)
+        if (ri.id == QLatin1String("china")) { cx = ri.proj.x(); break; }
+    return cx;
+}
+
+// 回到默认视角：缩放归 1、纵向偏移归 0、中国居中（平移/缩放后防「迷路」）
+void MapView::resetWorldView()
+{
+    worldZoom_ = 1.0;
+    centerWorldOn(defaultCenterX(), 150.0);
+    worldOffY_ = 0.0;   // zoom=1 时夹取后本就为 0，显式归零避免与断言/调试读数分歧
+    update();
+}
+
 // 把预投影点 (preX,preY) 置于视口中心：调整横向漂移与纵向偏移（缩放前后均可用）
 void MapView::centerWorldOn(double preX, double preY)
 {
@@ -589,13 +607,13 @@ void MapView::drawArcs(QPainter& p, const QRectF& bbox, const QRectF& dst) const
 void MapView::qaShootA(const QString& path)
 {
     // 确定性合成足迹点（北京/上海/广州/成都/乌鲁木齐），与真实库无关，保证可复现
-    gpsPts_ = {
+    setGpsPoints({
         QPointF(eqX(116.40), eqY(39.90)),
         QPointF(eqX(121.47), eqY(31.23)),
         QPointF(eqX(113.26), eqY(23.13)),
         QPointF(eqX(104.07), eqY(30.57)),
         QPointF(eqX(87.62),  eqY(43.82)),
-    };
+    });
     arcRegionIds_.clear();
     buildWorldPixmap();
 
@@ -673,13 +691,13 @@ void MapView::qaShootCountry(const QString& path, const QString& name)
 void MapView::qaShootRegion(const QString& path, const QString& id)
 {
     // 确定性合成足迹点（北京/上海/广州/成都/乌鲁木齐，均落在中国 bbox 内）→ 验证下钻视图航线/足迹
-    gpsPts_ = {
+    setGpsPoints({
         QPointF(eqX(116.40), eqY(39.90)),
         QPointF(eqX(121.47), eqY(31.23)),
         QPointF(eqX(113.26), eqY(23.13)),
         QPointF(eqX(104.07), eqY(30.57)),
         QPointF(eqX(87.62),  eqY(43.82)),
-    };
+    });
     arcRegionIds_.clear();
     enterRegion(id);                       // 载入该大区省几何，level_ -> Region
     const int W = int(MAP_W), H = int(MAP_H);
@@ -878,12 +896,28 @@ void MapView::qaClickProbe()
         }
     }
 
-    std::fprintf(stderr, "LA_MAP_CLICK_QA country=%s anchor=%s province=%s burst=%s card=%s blank=%s zoom=%s all=%s ctry=%s cburst=%s\n",
+    // ⑦ 回到中国（resetWorldView）：扰动后重置 → zoom=1 / offY=0 / 中国锚点回到视口中心
+    QString resetResult = QStringLiteral("skip");
+    while (level_ != World) goUp();
+    {
+        worldZoom_ = 2.5;
+        worldOffY_ = 60.0;
+        driftPx_ = 3.0;
+        resetWorldView();
+        const double sc3 = dst.height() / MAP_H;
+        const double preCx = wrapX(dst.center().x() / sc3 + wrapX(driftPx_));
+        const double d = fmod(wrapX(preCx - defaultCenterX()) + MAP_W * 1.5, MAP_W) - MAP_W * 0.5;
+        resetResult = (worldZoom_ == 1.0 && worldOffYClamped() == 0.0 && std::abs(d) < 1.5)
+            ? QStringLiteral("OK")
+            : QStringLiteral("FAIL(zoom=%1 dx=%2)").arg(worldZoom_, 0, 'f', 2).arg(std::abs(d), 0, 'f', 2);
+    }
+
+    std::fprintf(stderr, "LA_MAP_CLICK_QA country=%s anchor=%s province=%s burst=%s card=%s blank=%s zoom=%s all=%s ctry=%s cburst=%s reset=%s\n",
                  qPrintable(countryResult), qPrintable(worldResult),
                  qPrintable(provResult), qPrintable(burstResult),
                  qPrintable(cardResult), qPrintable(blankResult),
                  qPrintable(zoomResult), qPrintable(allResult),
-                 qPrintable(ctryResult), qPrintable(cburstResult));
+                 qPrintable(ctryResult), qPrintable(cburstResult), qPrintable(resetResult));
     std::fflush(stderr);
 }
 
@@ -1049,11 +1083,11 @@ void MapView::drawBurst(QPainter& p, const QRectF& dst) const
 // （颜色校验铁律：连线/卡片/冲击波是否落地必须实测）
 void MapView::qaShootBurst(const QString& path)
 {
-    gpsPts_ = {
+    setGpsPoints({
         QPointF(eqX(116.40), eqY(39.90)), QPointF(eqX(121.47), eqY(31.23)),
         QPointF(eqX(113.26), eqY(23.13)), QPointF(eqX(104.07), eqY(30.57)),
         QPointF(eqX(87.62),  eqY(43.82)),
-    };
+    });
     arcRegionIds_.clear();
     enterRegion(QStringLiteral("china"));
     const ProvinceInfo* pick = nullptr;
@@ -1286,10 +1320,7 @@ void MapView::paintMap(QPainter& p)
         // 首帧初始化：中国居中（zoom=1 时纵向自然居中，无需额外偏移）
         if (!worldInited_ && width() > 100) {
             worldInited_ = true;
-            double cx = eqX(105.0);
-            for (const RegionInfo& ri : regions_)
-                if (ri.id == QLatin1String("china")) { cx = ri.proj.x(); break; }
-            centerWorldOn(cx, 150.0);
+            centerWorldOn(defaultCenterX(), 150.0);
         }
         renderWorldInto(p, dst);
     }
@@ -1333,6 +1364,12 @@ void MapView::paintMap(QPainter& p)
         : QString();
     if (!foot.isEmpty())
         p.drawText(rect().adjusted(12, 0, 0, -10), Qt::AlignLeft | Qt::AlignBottom, foot);
+    // 缩放倍数可见（>1 时才显示，避免常态噪音）
+    if (level_ == World && worldZoom_ > 1.01) {
+        p.setPen(QColor(0xd9, 0xa9, 0x4e));
+        p.drawText(rect().adjusted(0, 0, -12, -10), Qt::AlignRight | Qt::AlignBottom,
+                   QString::fromUtf8("缩放 ×%1").arg(worldZoom_, 0, 'f', 2));
+    }
     if (!hoverHint_.isEmpty()) {
         p.setPen(QColor(0xe8, 0xc8, 0x7a));
         p.drawText(rect().adjusted(12, 10, 0, 0), Qt::AlignLeft | Qt::AlignTop, hoverHint_);

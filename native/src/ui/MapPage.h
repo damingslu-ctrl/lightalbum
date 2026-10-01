@@ -22,6 +22,7 @@ private slots:
     void onViewInGallery();
     void onRelocate();   // P16.4.2 重新定位航线基点（「我的位置」）
     void onBurstRequest(const QString& key, const QString& label); // 省视图爆炸弹层
+    void onRecenter();   // 「⌂ 回到中国」：世界层回到默认视角
     void onCountryPicked(const QString& name, const QStringList& paths);   // 国家视图统计
     void onCountryBurst(const QString& name, const QStringList& paths);    // 国家视图爆炸弹层
 
@@ -34,6 +35,7 @@ private:
     MapView* view_ = nullptr;
     QLabel*  crumb_ = nullptr;
     QPushButton* back_ = nullptr;
+    QPushButton* recenterBtn_ = nullptr;   // 迭代 1：世界层「⌂ 回到中国」
     QPushButton* relocBtn_ = nullptr;   // P16.4.2 重新定位
     QLabel*      homeHint_ = nullptr;   // P16.4.2 基点提示
     QString      homeName_ = QString::fromUtf8("上海");

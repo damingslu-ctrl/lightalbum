@@ -90,6 +90,7 @@ public:
     // 国家视图（无省级数据的国家）：世界层点任意国家即下钻到国界轮廓 +
     // 该国 GPS 足迹/航线；点国内触发爆炸弹层（该国 GPS 作品）
     void setGpsPaths(const QStringList& paths) { gpsPaths_ = paths; }
+    void resetWorldView();   // 回到默认视角：缩放归 1 + 中国居中（顶部「⌂ 回到中国」用）
 
 signals:
     void breadcrumbChanged(const QString& text);
@@ -188,6 +189,7 @@ private:
 
     // 世界层滚轮缩放（光标锚定）+ 初始居中中国
     void    centerWorldOn(double preX, double preY);  // 把预投影点置于视口中心（含漂移/纵向偏移）
+    double  defaultCenterX() const;                   // 默认视口中心 x（中国锚点，缺省 105°E）
     double  worldOffYClamped() const;                 // 纵向偏移按当前 zoom 夹取
     double  worldZoom_  = 1.0;                        // 缩放倍率 [1,4]
     double  worldOffY_  = 0.0;                        // 纵向视口偏移（预投影×scale 像素）
