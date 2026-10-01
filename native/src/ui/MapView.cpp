@@ -8,9 +8,12 @@
 #include <QJsonDocument>
 #include <QMouseEvent>
 #include <QPainterPath>
+#include <QLineF>
 #include <QDebug>
 #include <cmath>
 #include <algorithm>
+#include <QHash>
+#include <QPoint>
 
 // —— 预投影：经纬度 → [0,MAP_W]x[0,MAP_H]（与 web 版 eqX/eqY 一致）——
 static double eqX(double lon) { return (lon + 180.0) / 360.0 * MapView::MAP_W; }
@@ -25,12 +28,19 @@ MapView::MapView(QWidget* parent) : QWidget(parent)
 
     loadData();
     computeRegionBBox();
+    renderFootDotSprite();              // 很精细：预渲染翡翠足迹点精灵
 
     connect(&driftTimer_, &QTimer::timeout, this, [this] {
-        if (level_ != World || reduceMotion_) return;
         const double dt = timer_.isValid() ? timer_.restart() / 1000.0 : 0.0;
-        driftPx_ = wrapX(driftPx_ + DRIFT_SPEED * dt);
-        update();
+        if (reduceMotion_) return;
+        if (level_ == World) {
+            driftPx_ = wrapX(driftPx_ + DRIFT_SPEED * dt);
+            update();
+        } else {
+            // 很精细：下钻视图金色航线流动虚线
+            arcDashOffset_ = std::fmod(arcDashOffset_ + 16.0 * dt, 24.0);
+            update();
+        }
     });
     timer_.start();
     driftTimer_.start(33); // ~30fps 漂移
@@ -127,6 +137,20 @@ void MapView::buildWorldPixmap()
     const QColor border(0x4a, 0x66, 0x78);
 
     p.fillRect(0, 0, W, H, ocean);
+    // 很精细：经纬网格（baked，仅落于海洋，陆地覆盖其上→干净）
+    {
+        QPen gpen(QColor(0x7f, 0x97, 0xa8, 28));
+        gpen.setWidthF(0.6);
+        p.setPen(gpen);
+        for (int lon = -180; lon <= 180; lon += 30) {
+            const double x = eqX(lon);
+            p.drawLine(QPointF(x, 0), QPointF(x, MAP_H));
+        }
+        for (int lat = -90; lat <= 90; lat += 30) {
+            const double y = eqY(lat);
+            p.drawLine(QPointF(0, y), QPointF(MAP_W, y));
+        }
+    }
     for (const Ring& r : worldRings_) {
         QPainterPath path;
         path.moveTo(r.pts.first());
@@ -134,6 +158,9 @@ void MapView::buildWorldPixmap()
         path.closeSubpath();
         p.fillPath(path, land);
         p.setPen(QPen(border, 0.9));
+        p.drawPath(path);
+        // 很精细：海岸 rim-light 二次描边（雾隐·墨韵 精细感）
+        p.setPen(QPen(QColor(0x9f, 0xc4, 0xd6, 40), 0.7));
         p.drawPath(path);
     }
     // P16.4.2 金色航线：以「我的位置」为基点，向每一处拍摄地延伸（画在足迹点下层）。
@@ -163,21 +190,13 @@ void MapView::buildWorldPixmap()
         p.setBrush(QColor(0xf0, 0xd0, 0x8a));
         p.drawEllipse(h, 3.2, 3.2);
     }
-    // P16.4 真实 GPS 足迹点：翡翠柔光晕 + 实心芯（A 现状墨韵·抛光：加光晕、对齐翡翠 #5fdca6）
+    // 很精细：翡翠足迹点（精灵 blit + 密度分级柔光晕 + 翡翠描边环），与世界烘焙层一致
     if (!gpsPts_.isEmpty()) {
-        const QColor jade(0x5f, 0xdc, 0xa6);
-        p.setPen(Qt::NoPen);
-        // 柔光晕（半透明，落点更易被看见）
-        p.setBrush(QColor(0x5f, 0xdc, 0xa6, 82));
-        for (const QPointF& pt : gpsPts_) {
+        const QVector<int> dens = computeDensity();
+        for (int i = 0; i < gpsPts_.size(); ++i) {
+            const QPointF& pt = gpsPts_[i];
             if (pt.x() < 0 || pt.x() > MAP_W || pt.y() < 0 || pt.y() > MAP_H) continue;
-            p.drawEllipse(pt, 5.0, 5.0);
-        }
-        // 实心芯
-        p.setBrush(jade);
-        for (const QPointF& pt : gpsPts_) {
-            if (pt.x() < 0 || pt.x() > MAP_W || pt.y() < 0 || pt.y() > MAP_H) continue;
-            p.drawEllipse(pt, 2.0, 2.0);
+            drawFootprintDot(p, pt, 2.0, dens[i]);
         }
     }
     p.end();
@@ -275,8 +294,7 @@ void MapView::renderWorldInto(QPainter& p, const QRectF& dst) const
         p.setBrush(gold);
         p.drawEllipse(pos, 3.2, 3.2);
         p.setBrush(Qt::NoBrush);
-        p.setPen(QColor(0xe8, 0xe2, 0xd4));
-        p.drawText(pos + QPointF(6, 4), ri.name);
+        drawLabel(p, pos + QPointF(6, 4), ri.name, QColor(0xe8, 0xe2, 0xd4));
     }
 }
 
@@ -294,6 +312,7 @@ void MapView::renderRegion(QPainter& p, const QRectF& dst) const
     const QColor land(0x2f, 0x46, 0x58);
     const QColor border(0x4a, 0x66, 0x78);
     const QColor hl(0xc9, 0xa2, 0x4b);
+    drawGraticule(p, bbox, dst);   // 很精细：经纬网格
     for (const ProvinceInfo& pv : curProvinces_) {
         QPainterPath path;
         const QPointF o = fr.topLeft();
@@ -305,10 +324,9 @@ void MapView::renderRegion(QPainter& p, const QRectF& dst) const
         p.fillPath(path, isCur ? hl : land);
         p.setPen(QPen(isCur ? QColor(0xe8, 0xc8, 0x7a) : border, isCur ? 1.6 : 0.9));
         p.drawPath(path);
-        // 省名标签
+        // 省名标签（很精细：描边 halo 保证可读）
         const QPointF c = o + pv.ctr * scale;
-        p.setPen(QColor(0xe8, 0xe2, 0xd4));
-        p.drawText(c + QPointF(4, 4), pv.zh.isEmpty() ? pv.name : pv.zh);
+        drawLabel(p, c + QPointF(4, 4), pv.zh.isEmpty() ? pv.name : pv.zh, QColor(0xe8, 0xe2, 0xd4));
     }
     drawArcs(p, bbox, dst);      // P16.4.2 金色航线
     drawGpsDots(p, bbox, dst);   // P16.4
@@ -328,10 +346,10 @@ void MapView::renderProvince(QPainter& p, const QRectF& dst) const
     p.fillPath(path, QColor(0x35, 0x50, 0x63));
     p.setPen(QPen(QColor(0xc9, 0xa2, 0x4b), 1.8));
     p.drawPath(path);
+    drawGraticule(p, curProvince_.bbox, dst);   // 很精细：经纬网格
     const QPointF c = o + curProvince_.ctr * scale;
-    p.setPen(QColor(0xe8, 0xe2, 0xd4));
     const QString label = (curProvince_.zh.isEmpty() ? curProvince_.name : curProvince_.zh);
-    p.drawText(c + QPointF(6, 5), label);
+    drawLabel(p, c + QPointF(6, 5), label, QColor(0xe8, 0xe2, 0xd4));
     drawArcs(p, curProvince_.bbox, dst);      // P16.4.2 金色航线
     drawGpsDots(p, curProvince_.bbox, dst);   // P16.4
 }
@@ -344,19 +362,13 @@ void MapView::drawGpsDots(QPainter& p, const QRectF& bbox, const QRectF& dst) co
     const QPointF o = fr.topLeft();
     p.save();
     p.setClipRect(dst);
-    p.setPen(Qt::NoPen);
-    // A 现状墨韵·抛光：柔光晕 + 翡翠实心芯（与世界层一致，半径随缩放保持光晕比）
-    p.setBrush(QColor(0x5f, 0xdc, 0xa6, 82));
-    for (const QPointF& pt : gpsPts_) {
+    // 很精细：密度分级 + 精灵 blit（与世界烘焙层共用 drawFootprintDot）
+    const QVector<int> dens = computeDensity();
+    for (int i = 0; i < gpsPts_.size(); ++i) {
+        const QPointF& pt = gpsPts_[i];
         if (pt.x() < bbox.left() - 2 || pt.x() > bbox.right() + 2 ||
             pt.y() < bbox.top() - 2 || pt.y() > bbox.bottom() + 2) continue;
-        p.drawEllipse(o + pt * scale, 5.5 * scale, 5.5 * scale);
-    }
-    p.setBrush(QColor(0x5f, 0xdc, 0xa6));
-    for (const QPointF& pt : gpsPts_) {
-        if (pt.x() < bbox.left() - 2 || pt.x() > bbox.right() + 2 ||
-            pt.y() < bbox.top() - 2 || pt.y() > bbox.bottom() + 2) continue;
-        p.drawEllipse(o + pt * scale, 2.4 * scale, 2.4 * scale);
+        drawFootprintDot(p, o + pt * scale, 2.4 * scale, dens[i]);
     }
     p.restore();
 }
@@ -374,7 +386,7 @@ void MapView::drawArcs(QPainter& p, const QRectF& bbox, const QRectF& dst) const
     p.save();
     p.setClipRect(dst);
     p.setBrush(Qt::NoBrush);
-    p.setPen(QPen(QColor(0xd9, 0xa9, 0x4e, 120), 1.1));
+    const bool flow = !reduceMotion_;
     for (const QPointF& pt : targets) {
         if (pt.x() < bbox.left() - 2 || pt.x() > bbox.right() + 2 ||
             pt.y() < bbox.top() - 2 || pt.y() > bbox.bottom() + 2) continue;
@@ -385,7 +397,17 @@ void MapView::drawArcs(QPainter& p, const QRectF& bbox, const QRectF& dst) const
         QPainterPath arc;
         arc.moveTo(h);
         arc.quadTo(QPointF((h.x() + t.x()) / 2.0, (h.y() + t.y()) / 2.0 - lift), t);
+        // 很精细：流动金色虚线（reduceMotion 时退化为实线）
+        p.setBrush(Qt::NoBrush);
+        QPen pen(QColor(0xd9, 0xa9, 0x4e, 150), 1.2);
+        if (flow) { pen.setStyle(Qt::DashLine); pen.setDashPattern({6.0, 6.0}); pen.setDashOffset(-arcDashOffset_); }
+        p.setPen(pen);
         p.drawPath(arc);
+        // 端点光点（目标 = 拍摄地）
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(0xd9, 0xa9, 0x4e, 210));
+        p.drawEllipse(t, 2.2, 2.2);
+        p.setBrush(Qt::NoBrush);
     }
     // 基点标记（在 bbox 内才画；世界层已画过一次）
     if (eqX(homeLon_) >= bbox.left() && eqX(homeLon_) <= bbox.right() &&
@@ -437,6 +459,142 @@ void MapView::qaShootA(const QString& path)
     std::fflush(stderr);
 }
 
+// —— 很精细优化辅助 ——
+
+// 预渲染翡翠足迹点精灵（一次），逐帧 blit，避免每帧重建径向梯度
+void MapView::renderFootDotSprite()
+{
+    const int D = 40;
+    footDotPix_ = QPixmap(D, D);
+    footDotPix_.fill(Qt::transparent);
+    QPainter p(&footDotPix_);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    const QPointF c(D / 2.0, D / 2.0);
+    // 柔光晕（径向梯度，翡翠→透明）
+    QRadialGradient g(c, D * 0.45);
+    g.setColorAt(0.0,  QColor(0x5f, 0xdc, 0xa6, 150));
+    g.setColorAt(0.35, QColor(0x5f, 0xdc, 0xa6, 80));
+    g.setColorAt(1.0,  QColor(0x5f, 0xdc, 0xa6, 0));
+    p.setBrush(g);
+    p.setPen(Qt::NoPen);
+    p.drawEllipse(c, D * 0.45, D * 0.45);
+    // 翡翠描边环
+    p.setBrush(Qt::NoBrush);
+    p.setPen(QPen(QColor(0x5f, 0xdc, 0xa6, 140), 1.4));
+    p.drawEllipse(c, D * 0.18, D * 0.18);
+    // 实心翡翠芯
+    p.setBrush(QColor(0x7f, 0xe6, 0xb6));
+    p.setPen(Qt::NoPen);
+    p.drawEllipse(c, D * 0.10, D * 0.10);
+}
+
+// 密度分级足迹点：blit 精灵，密度越高光晕越大越亮
+void MapView::drawFootprintDot(QPainter& p, const QPointF& c, double coreR, int dens) const
+{
+    if (footDotPix_.isNull()) return;
+    const double d = std::min(dens, 8);
+    const double sizeFactor = 0.85 + d * 0.05;     // 0.85..1.25
+    const double op = 0.55 + d * 0.06;             // 0.55..1.03
+    const double draw = 10.0 * coreR * sizeFactor; // 精灵核(4px)→coreR 映射
+    const qreal saved = p.opacity();
+    p.setOpacity(qMin(1.0, op));
+    p.drawPixmap(QRectF(c.x() - draw / 2, c.y() - draw / 2, draw, draw),
+                 footDotPix_, footDotPix_.rect());
+    p.setOpacity(saved);
+}
+
+// 局部密度（网格计数，O(n)）：用于足迹点分级
+QVector<int> MapView::computeDensity() const
+{
+    const double cell = 22.0;
+    QHash<QPoint, int> grid;
+    for (const QPointF& pt : gpsPts_) {
+        const int ix = int(std::floor(pt.x() / cell));
+        const int iy = int(std::floor(pt.y() / cell));
+        grid[QPoint(ix, iy)]++;
+    }
+    QVector<int> out;
+    out.reserve(gpsPts_.size());
+    for (const QPointF& pt : gpsPts_) {
+        const int ix = int(std::floor(pt.x() / cell));
+        const int iy = int(std::floor(pt.y() / cell));
+        int c = 0;
+        for (int dx = -1; dx <= 1; ++dx)
+            for (int dy = -1; dy <= 1; ++dy)
+                c += grid.value(QPoint(ix + dx, iy + dy), 0);
+        out.append(c);
+    }
+    return out;
+}
+
+// 经纬网格（下钻视图）：预投影空间 → fitRect 变换
+void MapView::drawGraticule(QPainter& p, const QRectF& bbox, const QRectF& dst) const
+{
+    double scale = 1;
+    const QRectF fr = fitRect(bbox, dst, scale);
+    const QPointF o = fr.topLeft();
+    p.save();
+    p.setClipRect(dst);
+    QPen pen(QColor(0x7f, 0x97, 0xa8, 30));
+    pen.setWidthF(0.6);
+    p.setPen(pen);
+    for (int lon = -180; lon <= 180; lon += 30) {
+        const double x = o.x() + eqX(lon) * scale;
+        if (x < dst.left() - 1 || x > dst.right() + 1) continue;
+        p.drawLine(QPointF(x, dst.top()), QPointF(x, dst.bottom()));
+    }
+    for (int lat = -90; lat <= 90; lat += 30) {
+        const double y = o.y() + eqY(lat) * scale;
+        if (y < dst.top() - 1 || y > dst.bottom() + 1) continue;
+        p.drawLine(QPointF(dst.left(), y), QPointF(dst.right(), y));
+    }
+    p.restore();
+}
+
+// 文字描边 halo（深色描边 + 亮色填充），保证浅色标签在地图背景可读
+void MapView::drawLabel(QPainter& p, const QPointF& pos, const QString& text, const QColor& fill) const
+{
+    if (text.isEmpty()) return;
+    const QFont f = p.font();
+    QPainterPath path;
+    path.addText(pos, f, text);
+    p.setPen(QPen(QColor(0x06, 0x0c, 0x10, 210), 2.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    p.setBrush(Qt::NoBrush);
+    p.drawPath(path);
+    p.setPen(QPen(fill, 1));
+    p.setBrush(fill);
+    p.drawPath(path);
+}
+
+// 世界视图右下角图例
+void MapView::drawLegend(QPainter& p) const
+{
+    const QRectF r = rect();
+    const double bw = 150, bh = 66;
+    const double lx = r.right() - bw - 10, ly = r.bottom() - bh - 10;
+    p.setPen(QPen(QColor(0x3a, 0x4e, 0x5a, 180), 1));
+    p.setBrush(QColor(0x0c, 0x14, 0x1a, 150));
+    p.drawRoundedRect(lx, ly, bw, bh, 6, 6);
+    int y = int(ly) + 14;
+    // 拍摄地
+    p.setBrush(QColor(0x7f, 0xe6, 0xb6));
+    p.setPen(Qt::NoPen);
+    p.drawEllipse(QPointF(lx + 12, y), 3, 3);
+    drawLabel(p, QPointF(lx + 22, y - 3), "拍摄地", QColor(0xd8, 0xe2, 0xd4));
+    y += 20;
+    // 航线
+    p.setPen(QPen(QColor(0xd9, 0xa9, 0x4e), 1.5));
+    p.setBrush(Qt::NoBrush);
+    p.drawLine(QLineF(lx + 6, y, lx + 18, y));
+    drawLabel(p, QPointF(lx + 22, y - 3), "航线", QColor(0xd8, 0xe2, 0xd4));
+    y += 20;
+    // 我的位置
+    p.setPen(QPen(QColor(0xd9, 0xa9, 0x4e), 1.5));
+    p.setBrush(Qt::NoBrush);
+    p.drawEllipse(QPointF(lx + 12, y), 4, 4);
+    drawLabel(p, QPointF(lx + 22, y - 3), "我的位置", QColor(0xd8, 0xe2, 0xd4));
+}
+
 void MapView::paintEvent(QPaintEvent*)
 {
     QPainter p(this);
@@ -451,6 +609,9 @@ void MapView::paintEvent(QPaintEvent*)
         renderRegion(p, dst);
     else
         renderProvince(p, dst);
+
+    if (level_ == World)
+        drawLegend(p);   // 很精细：世界视图图例
 
     // 诚实足迹提示（GPS 数由 MapPage 经 setGpsCount 注入，绝不硬编码）
     p.setPen(QColor(0x8d, 0xa3, 0x96));

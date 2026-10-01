@@ -9,6 +9,9 @@
 #include <QString>
 #include <QStringList>
 #include <QPointF>
+#include <QHash>
+#include <QColor>
+#include <QPainter>
 
 // 预投影坐标系：所有环/省/经纬都落在 [0,MAP_W]x[0,MAP_H] 的等距圆柱平面
 struct Ring { QVector<QPointF> pts; };
@@ -92,6 +95,14 @@ private:
     void computeProvinceBBox(ProvinceInfo& pv);
     QString zhOf(const QString& en) const;
 
+    // 足迹地图「很精细」优化（墨韵·抛光 2）
+    void renderFootDotSprite();                 // 预渲染翡翠足迹点精灵（blit，避免逐帧梯度）
+    void drawFootprintDot(QPainter& p, const QPointF& c, double coreR, int dens) const;
+    QVector<int> computeDensity() const;        // 局部密度（网格法 O(n)）
+    void drawGraticule(QPainter& p, const QRectF& bbox, const QRectF& dst) const; // 经纬网格
+    void drawLabel(QPainter& p, const QPointF& pos, const QString& text, const QColor& fill) const; // 描边 halo
+    void drawLegend(QPainter& p) const;          // 世界视图图例
+
     // 数据
     static constexpr double DRIFT_SPEED = 4.5;   // px/s（预投影空间）
     QVector<Ring>       worldRings_;
@@ -116,4 +127,8 @@ private:
     double              homeLon_ = 121.47;     // P16.4.2 航线基点（默认上海，经纬度）
     double              homeLat_ = 31.23;
     QStringList         arcRegionIds_;         // P16.4.2 有作品的大区（中心点为航线目标）
+
+    // 很精细优化：状态与缓存
+    double              arcDashOffset_ = 0;     // 流动航线虚线相位
+    QPixmap             footDotPix_;            // 翡翠足迹点精灵缓存
 };
