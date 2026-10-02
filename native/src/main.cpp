@@ -38,6 +38,7 @@
 #include <QPropertyAnimation>
 #include <QRegularExpression>
 #include <QScrollArea>
+#include <QScrollBar>
 
 namespace {
 // P9 AI 修图智能体冒烟：合成「偏暗偏暖发灰」样张 → 测量 → 决策 → 执行。
@@ -349,6 +350,95 @@ int runScaleSmoke()
     std::fflush(stderr);
     return ok ? 0 : 1;
 }
+
+// 方向 D 第二步：规模化流畅性基线门禁（先测再改：量化首屏/滚动，守护回归）。
+// 复用 runScaleSmoke 的库定位逻辑；构造 GalleryPage（EditorialView 窗口化网格），
+// 量化 ① 首屏耗时（构造→首绘）② N 次滚动跳变帧 paint 均值/峰值（保持 <120ms 节流，
+// 隔离纯 paint，不触发缩略图预取）。预算经 env 覆盖（默认宽松防 CI 误红），实测后校准。
+// 重要：复用 main() 既有 QApplication，禁新建 QCoreApplication（双实例退场 SIGSEGV）。
+int runScalePerf()
+{
+    QString db = qEnvironmentVariable("LA_SCALE_DB");
+    if (db.isEmpty()) db = qEnvironmentVariable("LA_DB");
+    if (db.isEmpty()) {
+        QString dir = QCoreApplication::applicationDirPath();
+        for (int i = 0; i < 6; ++i) {
+            const QString cand = dir + QStringLiteral("/_scale_fixture.db");
+            if (QFileInfo::exists(cand)) { db = cand; break; }
+            const QString up = QDir(dir).filePath(QStringLiteral(".."));
+            if (up == dir) break;
+            dir = QDir::cleanPath(up);
+        }
+    }
+    const qint64 firstBudgetMs  = qEnvironmentVariable("LA_SCALE_PERF_FIRST",  QStringLiteral("3000")).toLongLong();
+    const qint64 scrollBudgetMs = qEnvironmentVariable("LA_SCALE_PERF_SCROLL", QStringLiteral("50")).toLongLong();
+    const int    jumps          = qEnvironmentVariable("LA_SCALE_PERF_JUMPS",  QStringLiteral("20")).toInt();
+
+    QString err;
+    Library lib;
+    if (!lib.open(db, &err)) {
+        std::fprintf(stderr, "LA_SCALE_PERF FAIL open=%s (%s)\n", qPrintable(db), qPrintable(err));
+        std::fflush(stderr);
+        return 2;
+    }
+    const auto& phs = lib.photos();
+    const int n = int(phs.size());
+
+    int galleryCtrls = -1;
+    qint64 firstMs = -1, scrollAvgMs = -1, scrollMaxMs = -1;
+    {
+        const qint64 tA = QDateTime::currentMSecsSinceEpoch();
+        GalleryPage page(&phs, QString(), nullptr);
+        page.setHidePrivate(false);
+        page.resize(1200, 800);
+        page.show();
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 400); // 首屏 + 布局 + 可见区预取
+        const qint64 tB = QDateTime::currentMSecsSinceEpoch();
+        firstMs = tB - tA;
+        galleryCtrls = page.findChildren<QWidget*>().size();
+
+        // 滚动跳变帧 paint 测量：设 scrollbar 值 → update → 短 processEvents
+        // （<120ms 节流，隔离纯 paint，不触发缩略图预取）。
+        QScrollBar* sb = page.qaScrollBar();
+        if (sb && sb->maximum() > 0 && jumps > 0) {
+            qint64 sum = 0, mx = 0;
+            for (int j = 1; j <= jumps; ++j) {
+                const int v = int(sb->maximum() * j / (jumps + 1));
+                const qint64 t0 = QDateTime::currentMSecsSinceEpoch();
+                sb->setValue(v);
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 30);
+                const qint64 dt = QDateTime::currentMSecsSinceEpoch() - t0;
+                sum += dt; if (dt > mx) mx = dt;
+            }
+            scrollAvgMs = sum / jumps;
+            scrollMaxMs = mx;
+        } else {
+            scrollAvgMs = 0; scrollMaxMs = 0;   // 内容未超出视口：无需滚动，成本记 0
+        }
+        std::fprintf(stderr,
+            "LA_SCALE_PERF firstMs=%lld scrollAvgMs=%lld scrollMaxMs=%lld ctrls=%d jumps=%d\n",
+            firstMs, scrollAvgMs, scrollMaxMs, galleryCtrls, jumps);
+        std::fflush(stderr);
+    }
+
+    bool ok = (n >= 1000)
+            && (firstMs >= 0 && firstMs <= firstBudgetMs)
+            && (scrollMaxMs >= 0 && scrollMaxMs <= scrollBudgetMs);
+    if (ok) {
+        std::fprintf(stderr,
+            "LA_SCALE_PERF PASS photos=%d firstMs=%lld scrollAvgMs=%lld scrollMaxMs=%lld ctrls=%d db=%s\n",
+            n, firstMs, scrollAvgMs, scrollMaxMs, galleryCtrls, qPrintable(QFileInfo(db).fileName()));
+    } else {
+        QStringList fails;
+        if (n < 1000) fails << QStringLiteral("photos=%1<1000").arg(n);
+        if (firstMs < 0 || firstMs > firstBudgetMs) fails << QStringLiteral("firstMs=%1>budget=%2").arg(firstMs).arg(firstBudgetMs);
+        if (scrollMaxMs < 0 || scrollMaxMs > scrollBudgetMs) fails << QStringLiteral("scrollMaxMs=%1>budget=%2").arg(scrollMaxMs).arg(scrollBudgetMs);
+        std::fprintf(stderr, "LA_SCALE_PERF FAIL reason=%s photos=%d firstMs=%lld scrollMaxMs=%lld\n",
+                     qPrintable(fails.join(QChar(';'))), n, firstMs, scrollMaxMs);
+    }
+    std::fflush(stderr);
+    return ok ? 0 : 1;
+}
 } // namespace（P10 geo 冒烟）
 
 namespace {
@@ -593,6 +683,10 @@ int main(int argc, char *argv[])
     if (qEnvironmentVariableIsSet("LA_SCALE_SMOKE"))
         return runScaleSmoke();
 
+    // 方向 D 第二步：规模化流畅性基线门禁（量化首屏/滚动，守护回归）
+    if (qEnvironmentVariableIsSet("LA_SCALE_PERF"))
+        return runScalePerf();
+
     // P8 原生导入器冒烟：扫描 LA_SCAN_ROOT 入库到 LA_SCAN_DB（独立于正式库），
     // 打印增量结果后退出；同一命令重跑应 added=0 / unchanged=N（增量幂等）。
     if (qEnvironmentVariableIsSet("LA_SCAN_SMOKE")) {
@@ -757,6 +851,7 @@ int main(int argc, char *argv[])
         && !qEnvironmentVariableIsSet("LA_GALLERY_E_QA")
         && !qEnvironmentVariableIsSet("LA_CULL_DUEL_QA")
         && !qEnvironmentVariableIsSet("LA_GALLERY_FILL_QA")
+        && !qEnvironmentVariableIsSet("LA_SCALE_PERF")
         ;
 
     QRect avail = QApplication::primaryScreen()->availableGeometry();

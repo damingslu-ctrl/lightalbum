@@ -3,6 +3,25 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.2.6] - 2026-10-02
+
+### 功能（方向 D·规模化与流畅性：第二步流畅性基线门禁）
+- **新增门禁 `LA_SCALE_PERF`（规模化流畅性基线）**：复用 `LA_SCALE_SMOKE` 库定位逻辑（env
+  `LA_SCALE_DB` → `LA_DB` → 向上搜 `_scale_fixture.db` 合成 6425 张），构造 `GalleryPage`
+  量化 ① 首屏耗时（`firstMs`：构造→首绘，含 6425 瓦片实例化 + 布局 + 可见区预取）② N 次滚动跳变帧
+  paint 均值/峰值（`scrollAvgMs`/`scrollMaxMs`，保持 <120ms 节流、隔离纯 paint、不触发缩略图预取）。
+  预算经 env 覆盖：`LA_SCALE_PERF_FIRST`（默认 3000ms）/ `LA_SCALE_PERF_SCROLL`（默认 50ms）/
+  `LA_SCALE_PERF_JUMPS`（默认 20）。`GalleryPage` 新增公开访问器 `qaScrollBar()` 暴露
+  `EditorialView` 滚动条供 offscreen 模拟滚动。断言 `photos≥1000` 且两项 ≤ 预算。
+- **取证结论（先测再改基线）**：当前 `EditorialView` 在 `rebuild()` 实例化**全部 6425 个 `GalleryTile`
+  控件**（非虚拟化），`firstMs≈815–994ms`、滚动帧 `≤12ms`；`ctrls=6470`（6425 瓦片 + ~45 chrome）。
+  本门为后续「列表虚拟化」优化（§8.2）建立可回归守护——虚拟化落地后数值将显著下降，届时收紧预算。
+- **双 QApplication 铁律再守**：`runScalePerf()` 复用 `main()` 既有 `QApplication`，仅自建 `Library`，
+  不新建 `QCoreApplication`（避免退场 `SIGSEGV`）。
+- **实测**：`LA_SCALE_PERF PASS photos=6425 firstMs=841 scrollAvgMs=10 scrollMaxMs=12`
+  `ctrls=6470`（EXIT=0）；`LA_SCALE_PERF_FIRST=500` 时正确 `FAIL`（阈值断言生效，非空心 PASS）；
+  `qa_runner -Only` 报告 `[OK]`。`qa_runner.ps1` 登记第 21 门。版本 2.2.5→2.2.6。
+
 ## [2.2.5] - 2026-10-02
 
 ### 功能（方向 D·规模化与流畅性：第一步真实库回归门禁）

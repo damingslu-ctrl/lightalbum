@@ -21,6 +21,7 @@ public:
     void setHidePrivate(bool hide);                                      // P16 隐私门（重建 chips 计数）
     void refresh();                                                      // 灯箱改评分/私密后刷新
     void qaShootE(const QString& png);                                   // P23 E 像素/几何自测（offscreen）
+    QScrollBar* qaScrollBar() const;   // 方向 D2：offscreen 性能门访问 EditorialView 滚动条
 
 signals:
     void photoActivated(const QString& path);   // 点击卡片 → 沉浸式灯箱

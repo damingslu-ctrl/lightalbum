@@ -49,6 +49,7 @@ $gates = @(
   @{n="LA_RETOUCH_UNDO_QA";png=$false}  # B: undo/redo pure state machine
   @{n="LA_GALLERY_SEARCH_QA";png=$false}  # C: gallery search filter
   @{n="LA_SCALE_SMOKE";    png=$false}  # D: real-library scale regression (6425 fixture)
+  @{n="LA_SCALE_PERF";     png=$false}  # D: scale performance baseline (6425 fixture)
 )
 
 function Eval($lines, $exitCode, $killed) {

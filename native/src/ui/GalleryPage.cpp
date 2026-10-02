@@ -363,3 +363,8 @@ void GalleryPage::qaShootE(const QString& png)
         int(featureOK), qPrintable(png));
     std::fflush(stderr);
 }
+
+QScrollBar* GalleryPage::qaScrollBar() const
+{
+    return view_ ? view_->verticalScrollBar() : nullptr;
+}
