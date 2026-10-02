@@ -35,6 +35,7 @@ $gates = @(
   @{n="LA_GEO_SMOKE";      png=$false},
   @{n="LA_SCAN_SMOKE";     png=$false; need=@("LA_SCAN_ROOT","LA_SCAN_DB")},
   @{n="LA_ICLOUD_QA";      png=$false},  # 2.6.0: iCloud album import (sandbox tree, no real iCloud needed)
+  @{n="LA_EXIT_QA";        png=$false},  # 2.7.0: gate self-exit contract (early/deferred/watchdog probes)
   @{n="LA_LOG_SMOKE";      png=$false},
   @{n="LA_HOME_SMOKE";     png=$false},
   @{n="LA_RW_SMOKE";       png=$false},
@@ -103,6 +104,9 @@ foreach ($g in $gates) {
   $val = if ($g.png) { $pngArg } else { "1" }
   $env:QT_QPA_PLATFORM = "offscreen"
   Set-Item -Path "Env:$($g.n)" -Value $val
+  # 2.7.0: tell the app which gate is running, so the self-exit watchdog can
+  # attribute a hang to a gate name instead of just saying "something hung".
+  Set-Item -Path "Env:LA_GATE" -Value $g.n
 
   # Launch via raw System.Diagnostics.Process. This avoids the Start-Process
   # 'Path'/'PATH' case-clash dictionary collision that breaks on this machine.

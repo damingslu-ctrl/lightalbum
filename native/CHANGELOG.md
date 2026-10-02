@@ -3,6 +3,33 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.7.0] - 2026-10-03
+
+### 修复（门禁自退时序缺陷 —— 此前被误记为「环境噪声」的真缺陷）
+- **`LA_CULL_SMOKE` 永久挂死根因**：`CullPage::onFinished()` 的自测分支在**构造期**同步调用 `QApplication::quit()`，而 `app.exec()` 尚未进入。Qt 的 `quit()` 只给「当前事件循环」发退出信号，没有事件循环时它是 **no-op** —— exe 打印完所有断言后照常进入 `app.exec()` 永久空转，门禁表现为 `[KILL]`。历史上被归入「控制台依赖 / 环境族」，本次用最小探针**实证**为代码缺陷。
+- 最小复现（探针对照实测，非推断）：`quit()` 在 `exec()` **之前**调用 → `RC=124` 挂死；在事件循环**内**（timer）调用 → `RC=0` 正常退出。
+- 修复效果：`LA_CULL_SMOKE` 从 `RC=124` 挂死（曾需 25s 超时被 kill）变为 `RC=0` / 3.9s 自退，输出逐字节一致（250 bytes）。
+- 同类审计：全库 9 处 `QApplication::quit()` **逐一核实时机**，确认仅 `CullPage.cpp:1003` 一处违规（其余 8 处本就在事件循环内）。为防复发，9 处**全部**收敛到新契约。
+
+### 新增（自退契约 `src/core/qaExit.{h,cpp}`）
+- `QaExit::requestExit(code)`：**幂等**、**无条件** `QTimer::singleShot(0,...)` 排队退出。铁律：不判断「是否在事件循环内」再决定同步/异步——Qt 无公开 API 判断该状态，猜错就是挂死；无条件排队则构造期注册也会在 `exec()` 启动后触发，事件循环内调用仅延迟一个事件迭代（~0ms），**一条路径覆盖两种时机**。
+- `QaExit::armWatchdog()`：仅在检测到 `LA_*` 门禁变量时挂载（`activeGate()` 返回空串即直接 return，**真实交互启动绝不挂、绝不杀用户进程**）。超时未退出 → 打印 `LA_WATCHDOG FAIL gate=<门名> budget_ms=<ms> reason=no-exit-request` 并 `_exit(3)`。默认预算 20s，**必须 < runner 的 `-Timeout` 25s**，保证看门狗先于 runner 超时触发，从而拿到归因而非无信息的 `[KILL]`。
+- `QaExit::activeGate()`：优先读 `LA_GATE`（运行器显式设），回退扫描环境变量找第一个非辅助 `LA_*`（**排除清单**而非白名单——两者都靠人工维护但失效方向相反：白名单漏新门禁→看门狗不挂→回到静默挂死；排除清单漏新辅助变量→仅归因消息不好看，退出行为不受影响）。
+- 全库 `grep "QApplication::quit"` 现在仅在 `qaExit.cpp` 实现内部与注释中命中，`src/` 下裸调用为 0。
+
+### QA（新增 `LA_EXIT_QA`，9 断言全绿 + 同源反例）
+- 设计要点：门禁**自身**用 `QProcess` 拉起同一 exe 的三种子进程模式（`LA_EXIT_PROBE=early|deferred|hang`），把「Qt 的 quit 时序语义」这一外部事实**固化为可断言契约**。
+- (A) 契约 2 项：`early`（exec 前裸 `quit()`，**预期挂死**）必须 `waitForFinished` 返回 false；`deferred`（`QaExit::requestExit`）必须 `rc=0` 且带 `deferred PASS` 标记。
+- (B) **同源反例 E4**：断言两模式 `finished` **必须不同**。事故的整个教训就是「两种时序行为不同」；若哪天变成相同，契约即失去意义 → FAIL「assertion is vacuous」。
+- (C) 看门狗 4 项：故意不请求退出时，必须在预算内以 `rc=3` 退出，且归因行同时含 `LA_WATCHDOG FAIL`（E7）与 `gate=<门名>`（E8，**指名道姓**，而非笼统「有个门挂了」）。
+- (D) 纯函数 2 项：`activeGate()` 在本进程应返回 `LA_EXIT_QA`（E9）；`requestExit` 连调三次仍只触发一次退出（幂等）。
+- **反例有效性已实测（双重验证，防断言空心）**：把 `requestExit` 实现改回同步 `QCoreApplication::exit(code)`（精确复现事故形态）后重建 → ① `LA_EXIT_QA` `RC=1` RED，`fails=2`（E3 + E4 双重命中）；② 真实门 `LA_CULL_SMOKE` 被看门狗抓住，`RC=3` + `LA_WATCHDOG FAIL gate=LA_CULL_SMOKE`。随后恢复正确实现。
+- **本门在设计过程中当场抓到自身的第二个盲区**：看门狗原挂在 `MainWindow` 构造前，而 `LA_EXIT_PROBE` 子进程入口在 `main()` 顶部就 `return app.exec()`，走不到挂载点 → E5 报「watchdog never fired」。据此把挂载点前移到 `QApplication` 构造之后、任何分支之前。**这正是「先写断言再实现」的价值：盲区是门禁自己发现的，不是靠复盘。**
+- 门数 26 → **27**；运行器新增设 `LA_GATE`，使看门狗归因能指名门名。
+
+### 门数
+- 26 → **27** 门。历史遗留的 `LA_CULL_SMOKE [KILL]`（此前被当作「已知环境族」放过）现已修复为正常绿门。
+
 ## [2.6.0] - 2026-10-03
 
 ### 功能（导入 iCloud 相册）

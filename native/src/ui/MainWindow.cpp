@@ -9,6 +9,7 @@
 #include "RetouchPage.h"
 #include "../core/Scanner.h"
 #include "../core/ICloudSource.h"
+#include "../core/qaExit.h"      // 2.7.0 门禁自退契约（禁裸调 quit）
 #include "../core/MotionPref.h"
 #include "../core/Vault.h"
 #include <QDialog>
@@ -1214,7 +1215,7 @@ void MainWindow::runImportInto(const QString& dir, const QString& title)
                 box.exec();
                 if (box.clickedButton() == restart) {
                     QProcess::startDetached(QCoreApplication::applicationFilePath(), {});
-                    QApplication::quit();
+                    QaExit::requestExit(0);   // 2.7.0：收敛到自退契约
                 }
             });
     watcher->setFuture(QtConcurrent::run([dbPath, dir, dlgGuard, cancelled]() {

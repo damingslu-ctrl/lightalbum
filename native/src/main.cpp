@@ -14,6 +14,8 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QImage>
+#include <QProcess>            // 2.7.0 LA_EXIT_QA：自退契约子进程探针
+#include <QProcessEnvironment>
 #include <cstdio>
 #include <cmath>
 #include "core/Library.h"
@@ -23,6 +25,7 @@
 #include "core/RtHistory.h"
 #include "core/Scanner.h"
 #include "core/ICloudSource.h"
+#include "core/qaExit.h"        // 2.7.0 门禁自退契约 + 自退看门狗
 #include "ui/MainWindow.h"
 #include "ui/MapView.h"
 #include "ui/GalleryPage.h"
@@ -1400,6 +1403,150 @@ static int runICloudQa()
     std::fflush(stderr);
     return fails == 0 ? 0 : 1;
 }
+// ============================================================================
+// 2.7.0 门禁自退契约门禁（LA_EXIT_QA）
+//
+// 背景（2026-10-03 事故）：`LA_CULL_SMOKE` 永久挂死被记为「环境噪声 / 控制台
+// 依赖」，实为代码缺陷 —— `QApplication::quit()` 在 `app.exec()` **之前**调用是
+// no-op（Qt 只是给「当前事件循环」发退出信号，没有事件循环就什么都不做）。
+// 最小复现（探针实证）：early 模式 RC=124 挂死，deferred 模式 RC=0 正常退出。
+//
+// 本门把该事实**固化为可断言契约**，三组断言：
+//   (A) 同一 exe 子进程跑两种 quit 时序 —— early（exec 前裸 quit）必须挂死，
+//       deferred（QaExit::requestExit）必须正常退出。
+//   (B) 反例：若两者行为相同（都退或都不退），说明 (A) 是空心断言 → FAIL。
+//   (C) 看门狗：故意不请求退出时，看门狗必须在预算内触发并给出归因行。
+//
+// ★ 关键设计：断言 (A) 的 early 分支**期望进程挂死**，故不能靠 exitCode 判定，
+//   必须用「waitForFinished(timeout) 返回 false = 确实没退出」+ 事后 kill。
+//   这与本文件族其它门「rc==0 即绿」的判定方式相反，是刻意的。
+// ============================================================================
+static int runExitQa()
+{
+    int fails = 0;
+    auto fail = [&](const QString& id, const QString& detail) {
+        ++fails;
+        std::fprintf(stderr, "LA_EXIT_QA fail %s: %s\n",
+                     qPrintable(id), qPrintable(detail));
+    };
+
+    const QString selfExe = QCoreApplication::applicationFilePath();
+    if (!QFileInfo(selfExe).isFile())
+        return fail(QStringLiteral("E0"), QStringLiteral("cannot locate own exe: ") + selfExe), 1;
+
+    // 子进程运行器：给定 mode 环境变量，限时 waitForFinished(ms)。
+    // 返回 {finishedInTime, exitCode, combinedOutput}
+    struct RunResult { bool finished; int code; QString out; };
+    auto runProbe = [&](const char* mode, int timeoutMs) -> RunResult {
+        QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+        env.insert(QStringLiteral("LA_EXIT_PROBE"), QLatin1String(mode));
+        env.insert(QStringLiteral("LA_GATE"), QStringLiteral("LA_EXIT_PROBE"));
+        env.remove(QStringLiteral("LA_EXIT_QA"));
+        env.insert(QStringLiteral("QT_QPA_PLATFORM"), QStringLiteral("offscreen"));
+
+        QProcess p;
+        p.setProcessEnvironment(env);
+        p.start(selfExe, QStringList());
+        RunResult r{false, -1, QString()};
+        if (!p.waitForStarted(5000)) {
+            r.out = QStringLiteral("waitForStarted failed");
+            return r;
+        }
+        r.finished = p.waitForFinished(timeoutMs);
+        if (r.finished) r.code = p.exitCode();
+        else p.kill();               // early 模式预期挂死 → 必须 kill，否则门自己会卡住
+        r.out = QString::fromLocal8Bit(p.readAllStandardOutput())
+              + QString::fromLocal8Bit(p.readAllStandardError());
+        return r;
+    };
+
+    // ---- (A) early：exec() 之前裸调 quit() → 契约要求「挂死」----
+    // 探针代码在 main() 顶部（LA_EXIT_PROBE=early 分支）显式复现事故调用形态。
+    const RunResult early = runProbe("early", 4000);
+    // 早退的其它原因（探针自己没跑起来）会表现为「没输出」，必须区分开。
+    const bool earlyReallyRan = early.out.contains(QStringLiteral("LA_EXIT_PROBE early"));
+    if (!earlyReallyRan)
+        fail(QStringLiteral("E1"), QStringLiteral("early probe produced no marker, out=") + early.out.left(200));
+    if (early.finished && early.code == 0)
+        fail(QStringLiteral("E2"),
+             QStringLiteral("early quit() exited rc=0 -- Qt semantics changed, contract invalid"));
+
+    // ---- (A) deferred：QaExit::requestExit() → 契约要求「正常退出」----
+    const RunResult deferred = runProbe("deferred", 8000);
+    const bool deferredOk = deferred.finished && deferred.code == 0
+                         && deferred.out.contains(QStringLiteral("LA_EXIT_PROBE deferred PASS"));
+    if (!deferredOk)
+        fail(QStringLiteral("E3"),
+             QStringLiteral("deferred requestExit did NOT self-exit cleanly: finished=")
+             + (deferred.finished ? QStringLiteral("1") : QStringLiteral("0"))
+             + " code=" + QString::number(deferred.code)
+             + " out=" + deferred.out.left(200));
+
+    // ---- (B) 反例：两模式行为必须不同，否则 (A)(A) 是空心断言 ----
+    // 事故的整个教训就是「两种时序行为不同」；若哪天变成相同，契约失去意义。
+    if (early.finished == deferred.finished)
+        fail(QStringLiteral("E4"),
+             QStringLiteral("counter-example: early.finished=")
+             + (early.finished ? QStringLiteral("1") : QStringLiteral("0"))
+             + " == deferred.finished=" + (deferred.finished ? QStringLiteral("1") : QStringLiteral("0"))
+             + QStringLiteral(" -- assertion is vacuous"));
+
+    // ---- (C) 看门狗：故意不请求退出 → 必须在预算内触发并给出归因 ----
+    // 用 1500ms 预算（远小于默认 20s），让本门整体仍能在秒级完成。
+    {
+        QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+        env.insert(QStringLiteral("LA_EXIT_PROBE"), QStringLiteral("hang"));
+        env.insert(QStringLiteral("LA_GATE"), QStringLiteral("LA_EXIT_PROBE_HANG"));
+        env.insert(QStringLiteral("LA_WATCHDOG_MS"), QStringLiteral("1500"));
+        env.remove(QStringLiteral("LA_EXIT_QA"));
+        env.insert(QStringLiteral("QT_QPA_PLATFORM"), QStringLiteral("offscreen"));
+        QProcess p;
+        p.setProcessEnvironment(env);
+        p.start(selfExe, QStringList());
+        const bool wdFinished = p.waitForStarted(5000) && p.waitForFinished(12000);
+        const int wdCode = wdFinished ? p.exitCode() : -1;
+        const QString wdOut = QString::fromLocal8Bit(p.readAllStandardOutput())
+                           + QString::fromLocal8Bit(p.readAllStandardError());
+        if (!wdFinished) {
+            p.kill();
+            fail(QStringLiteral("E5"), QStringLiteral("watchdog probe hung past 12s (watchdog never fired)"));
+        } else {
+            if (wdCode != 3)
+                fail(QStringLiteral("E6"),
+                     QStringLiteral("watchdog exit code=") + QString::number(wdCode)
+                     + QStringLiteral(" expect 3, out=") + wdOut.left(200));
+            if (!wdOut.contains(QStringLiteral("LA_WATCHDOG FAIL")))
+                fail(QStringLiteral("E7"),
+                     QStringLiteral("watchdog fired without attribution line, out=") + wdOut.left(200));
+            // 归因必须指名道姓是哪个门挂死，而不是笼统的「有个门挂了」
+            if (!wdOut.contains(QStringLiteral("gate=LA_EXIT_PROBE_HANG")))
+                fail(QStringLiteral("E8"),
+                     QStringLiteral("watchdog attribution lost gate name, out=") + wdOut.left(200));
+        }
+    }
+
+    // ---- (D) 契约纯函数断言：activeGate() 识别与幂等 ----
+    {
+        const QString g = QaExit::activeGate();
+        if (g != QStringLiteral("LA_EXIT_QA"))
+            fail(QStringLiteral("E9"),
+                 QStringLiteral("activeGate()=") + g + QStringLiteral(" expect LA_EXIT_QA"));
+
+        // 幂等：连调三次 requestExit 只应触发一次退出请求，进程仍以 0 退出。
+        // 若实现里去掉了 g_exited 守卫，这里会看到非 0 退出码或行为差异。
+        QaExit::requestExit(0);
+        QaExit::requestExit(0);
+        QaExit::requestExit(0);
+    }
+
+    std::fprintf(stderr,
+        "LA_EXIT_QA %s fails=%d earlyHung=%d deferredExited=%d watchdogCode=3\n",
+        fails == 0 ? "PASS" : "FAIL", fails,
+        early.finished ? 0 : 1, deferred.finished ? 1 : 0);
+    std::fflush(stderr);
+    return fails == 0 ? 0 : 1;
+}
+
 } // namespace
 
 
@@ -1407,6 +1554,55 @@ int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("LightAlbum"));
+
+    // 2.7.0 门禁自退看门狗 —— 抓「事件循环活着但无人请求退出」这一类挂死，
+    // 正是 LA_CULL_SMOKE 构造期裸调 quit() 的形态。
+    //
+    // 挂载点必须紧跟 QApplication 构造、**在任何分支之前**：原先挂在
+    // MainWindow 构造前，但 LA_EXIT_PROBE 子进程入口在其之前就
+    // `return app.exec()`，走不到那里 —— LA_EXIT_QA 的 E5 断言
+    // 「watchdog never fired」当场抓到了这个盲区。越早挂越不可能被新分支绕过。
+    //
+    // 真实交互启动安全性：armWatchdog() 在无 LA_* 门禁变量时 activeGate()
+    // 返回空串并直接 return，即什么也不挂 —— 用户正常开相册绝不会被杀。
+    // 预算 20s（可由 LA_WATCHDOG_MS 覆盖）必须 < qa_runner.ps1 的 -Timeout
+    // 25s，保证看门狗先于 runner 超时触发，从而拿到归因而非无信息的 [KILL]。
+    QaExit::armWatchdog();
+
+    app.setOrganizationName(QStringLiteral("lightalbum"));
+
+
+    // 2.7.0 自退契约子进程探针（仅由 LA_EXIT_QA 拉起，见 runExitQa）。
+    // 三种模式分别复现 / 验证 2026-10-03 LA_CULL_SMOKE 挂死事故的时序：
+    //   early    —— exec() 之前裸调 quit()（事故形态，预期挂死 → 父进程 kill）
+    //   deferred —— 经 QaExit 契约退出（预期正常）
+    //   hang     —— 故意不请求退出（预期看门狗归因后 _exit(3)）
+    if (qEnvironmentVariableIsSet("LA_EXIT_PROBE")) {
+        const QString probe = qEnvironmentVariable("LA_EXIT_PROBE");
+        if (probe == QLatin1String("early")) {
+            std::fprintf(stderr, "LA_EXIT_PROBE early: calling quit() BEFORE exec()\n");
+            std::fflush(stderr);
+            QApplication::quit();      // 刻意复现事故：此刻无事件循环，quit 是 no-op
+        } else if (probe == QLatin1String("deferred")) {
+            std::fprintf(stderr, "LA_EXIT_PROBE deferred: requestExit before exec()\n");
+            std::fflush(stderr);
+            QaExit::requestExit(0);    // 契约：无条件排队，exec() 启动后立即生效
+        } else if (probe == QLatin1String("hang")) {
+            std::fprintf(stderr, "LA_EXIT_PROBE hang: no exit request on purpose\n");
+            std::fflush(stderr);
+            // 什么都不做 → 看门狗必须在 LA_WATCHDOG_MS 内触发
+        }
+        const int probeRc = app.exec();
+        if (probe == QLatin1String("deferred")) {
+            std::fprintf(stderr, "LA_EXIT_PROBE deferred %s rc=%d\n",
+                         probeRc == 0 ? "PASS" : "FAIL", probeRc);
+        } else {
+            std::fprintf(stderr, "LA_EXIT_PROBE %s exited rc=%d\n",
+                         qPrintable(probe), probeRc);
+        }
+        std::fflush(stderr);
+        return probeRc;
+    }
     app.setOrganizationName(QStringLiteral("lightalbum"));
     Dark::apply(app);
 
@@ -1503,6 +1699,10 @@ int main(int argc, char *argv[])
     // 2.6.0 导入 iCloud 相册门禁（沙盒自建 iCloud 风格目录树，纯离屏自退）
     if (qEnvironmentVariableIsSet("LA_ICLOUD_QA"))
         return runICloudQa();
+
+    // 2.7.0 门禁自退契约门禁（子进程跑 early/deferred/watchdog 三种 quit 时序）
+    if (qEnvironmentVariableIsSet("LA_EXIT_QA"))
+        return runExitQa();
 
     // P8 原生导入器冒烟：扫描 LA_SCAN_ROOT 入库到 LA_SCAN_DB（独立于正式库），
     // 打印增量结果后退出；同一命令重跑应 added=0 / unchanged=N（增量幂等）。
@@ -1694,7 +1894,7 @@ int main(int argc, char *argv[])
         QTimer::singleShot(2450, &app, [&sp, &dir] {
             sp.grab().save(QDir(dir).filePath(QStringLiteral("splash-3-slit.png")));
             std::fprintf(stderr, "LA_SPLASH_SHOT slit saved\n"); std::fflush(stderr);
-            QApplication::quit();
+            QaExit::requestExit(0);   // 2.7.0：收敛到自退契约
         });
         sp.play();
         return app.exec();
@@ -1987,7 +2187,7 @@ int main(int argc, char *argv[])
             std::fprintf(stderr, "LA_P1_SMOKE_OK photos=%d years=%d provs=%d span=%d-%d\n",
                          k.total, k.yearCount, k.provCount, k.minYear, k.maxYear);
             std::fflush(stderr);
-            QApplication::quit();
+            QaExit::requestExit(0);   // 2.7.0：收敛到自退契约
         });
     }
     // P25 对决 QA 由 CullPage 内 QTimer::singleShot(600) 在事件循环内完成并 quit

@@ -1,4 +1,5 @@
 #include "CullPage.h"
+#include "../core/qaExit.h"   // 2.7.0 门禁自退契约（禁裸调 quit）
 #include "Theme.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -1000,7 +1001,10 @@ void CullPage::onFinished(const CullReport& rep)
             "LA_CULL_SMOKE_MARKS lock=%d like=%d skip=%d lockOk=%d film=%d radarMarked=%d\n",
             markLock, markLike, markSkip, lockOk ? 1 : 0, filmBtns, lastRadarN_);
         std::fflush(stderr);
-        QApplication::quit();
+        // 2.7.0：原为裸 QApplication::quit() —— 构造期调用时事件循环尚未
+        // 进入，quit() 是 no-op，导致本门永久挂死（[KILL]，曾被误判为环境
+        // 噪声）。收敛到 QaExit 契约：无条件排队，构造期/事件循环内都真退。
+        QaExit::requestExit(0);
     } else {
         progress_->setText(QString::fromUtf8("完成 · 候选 %1 / 废片 %2 / 去重 %3 组")
             .arg(rep.candidateCount).arg(rep.rejectedCount).arg(rep.dupGroups.size()));
@@ -1190,7 +1194,7 @@ void CullPage::runDuelQa(const QString& png)
         "LA_CULL_DUEL_QA groups=%d members0=%d skipDelta=%d markOk=%d gold=%ld png=%s\n",
         groups, members0, skipAfter - skipBefore, int(markOk), gold, qPrintable(png));
     std::fflush(stderr);
-    QApplication::quit();
+    QaExit::requestExit(0);   // 2.7.0：收敛到自退契约
 }
 
 #include "CullPage.moc"

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(LightAlbumNative VERSION 2.6.0 LANGUAGES CXX)
+project(LightAlbumNative VERSION 2.7.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -21,6 +21,8 @@ set(LA_SOURCES
     src/core/Scanner.cpp
     src/core/ICloudSource.h
     src/core/ICloudSource.cpp
+    src/core/qaExit.h
+    src/core/qaExit.cpp
     src/core/LumenAgent.h
     src/core/LumenAgent.cpp
     src/core/GeoIndex.h

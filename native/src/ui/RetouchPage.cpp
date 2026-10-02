@@ -1,4 +1,5 @@
 #include "RetouchPage.h"
+#include "../core/qaExit.h"   // 2.7.0 门禁自退契约（禁裸调 quit）
 #include "MaskCanvas.h"
 #include "CropCanvas.h"
 #include "CompareWidget.h"
@@ -545,7 +546,7 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
         QTimer::singleShot(0, this, [this]{
             if (usableIdx_.isEmpty()) {
                 std::fprintf(stderr, "LA_RETOUCH_SMOKE no_usable_photo\n");
-                std::fflush(stderr); QApplication::quit(); return;
+                std::fflush(stderr); QaExit::requestExit(0); return;   // 2.7.0 契约
             }
             loadPhoto(0);
             const QImage rot1 = applyGeometry(geoSrc_, 1, false, false, 0, 0);
@@ -591,7 +592,7 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
                 maskBlend ? 1 : 0, cropNormOk ? 1 : 0,
                 (blockedOk && backfillOk) ? 1 : 0);
             std::fflush(stderr);
-            QApplication::quit();
+            QaExit::requestExit(0);   // 2.7.0：收敛到自退契约
         });
     }
 }
@@ -672,7 +673,7 @@ void RetouchPage::qaShootA(const QString& png)
     img1.save(png);
     const QString presetPng = QString(png).section(QLatin1Char('.'), 0, 0) + QStringLiteral("_preset.png");
     img0.save(presetPng);
-    QApplication::quit();
+    QaExit::requestExit(0);   // 2.7.0：收敛到自退契约
 }
 void RetouchPage::clearCardSel()
 {
