@@ -1,10 +1,11 @@
 # LightAlbum native CI - quality gate on every push/PR that touches native source.
 #
-# TEMPLATE - requires the Windows runner to be provisioned with a toolchain that
-# matches the LOCAL one (Qt 6.8.3 + MinGW-w64). The aqtinstall step below pulls
-# Qt's bundled MinGW (gcc 13.1); if you build locally with a different MinGW
-# (e.g. winlibs GCC 16.2.0), either install that toolchain here or accept the
-# ABI-matched Qt MinGW. Adjust CMAKE_PREFIX_PATH / Qt version to your setup.
+# TEMPLATE - provisions Qt 6.8.3 + MinGW-w64 gcc 13.1 via aqtinstall. This
+# matches the LOCAL LightAlbum toolchain (winlibs GCC 13.1 at D:/qt/Tools/
+# mingw1310_64, Qt 6.8.3 at D:/qt/6.8.3/mingw_64) ABI-for-ABI, so iterate.ps1 /
+# qa_runner.ps1 run here unchanged. The exe path and cmake are auto-resolved by
+# iterate.ps1 (no hardcoded user paths), and the MinGW bin is added to PATH below
+# so `cmake --build` (MinGW Makefiles) finds mingw32-make.
 name: LightAlbum QA
 
 on:
@@ -33,6 +34,12 @@ jobs:
           python -m aqt install-qt windows desktop 6.8.3 win64_mingw --outputdir C:/Qt
           python -m aqt install-tool windows desktop tools_mingw qt.tools.win64_mingw1310 --outputdir C:/Qt
         shell: bash
+
+      - name: Add MinGW toolchain to PATH
+        # cmake --build with "MinGW Makefiles" invokes mingw32-make from PATH;
+        # aqtinstall places it under C:/Qt/Tools/mingw1310_64/bin.
+        run: echo "C:/Qt/Tools/mingw1310_64/bin" | Out-File -Append -FilePath $env:GITHUB_PATH
+        shell: pwsh
 
       - name: Configure
         run: |

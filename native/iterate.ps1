@@ -12,8 +12,8 @@
   powershell -ExecutionPolicy Bypass -File iterate.ps1 -Only LA_GEO_SMOKE
 #>
 param(
-  [string]$Exe = "D:\Test\workbuddy\2026-09-18-09-00-13\native\build\LightAlbum.exe",
-  [string]$Cmake = "C:/Users/damin/.workbuddy/binaries/python/envs/default/Lib/site-packages/cmake/data/bin/cmake.exe",
+  [string]$Exe = "",
+  [string]$Cmake = "",
   [switch]$Build = $true,
   [switch]$NoBuild = $false,
   [switch]$Package = $false,
@@ -25,6 +25,22 @@ param(
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
 Push-Location $root | Out-Null
+# Portable resolution: exe is always <scriptDir>/build/LightAlbum.exe, and cmake
+# is auto-detected (PATH first, then known local/CI fallbacks) so the SAME script
+# runs locally and on CI without any hardcoded user-specific paths.
+if (-not $Exe) { $Exe = Join-Path $root "build/LightAlbum.exe" }
+if (-not $Cmake) {
+  $cm = Get-Command cmake -ErrorAction SilentlyContinue
+  if ($cm) { $Cmake = $cm.Source }
+  else {
+    $cands = @(
+      "C:/Users/damin/.workbuddy/binaries/python/envs/default/Lib/site-packages/cmake/data/bin/cmake.exe",
+      "C:/Qt/Tools/CMake/bin/cmake.exe"
+    )
+    foreach ($c in $cands) { if (Test-Path $c) { $Cmake = $c; break } }
+  }
+  if (-not $Cmake) { Write-Host "WARN: cmake not found on PATH or known locations; build will FAIL." }
+}
 $qaRunner  = Join-Path $root "qa_runner.ps1"
 $release   = Join-Path $root "release.ps1"
 $resultJson = Join-Path $env:TEMP ("qa_result_" + (Get-Date -Format "yyyyMMdd_HHmmss") + ".json")

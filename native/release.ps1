@@ -8,7 +8,8 @@
 param(
   [string]$Version = "",
   [switch]$TrimNetwork,
-  [switch]$SkipGate
+  [switch]$SkipGate,
+  [string]$Windeployqt = ""
 )
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Definition
@@ -63,6 +64,23 @@ if ($SkipGate) {
   }
 }
 
+# === Locate Qt6 windeployqt (portable: local D:/qt default, CI C:/Qt fallback, or explicit) ===
+$qtDir = ""
+if ($Windeployqt) {
+  if (-not (Test-Path $Windeployqt)) { throw "Windeployqt not found at $Windeployqt" }
+  $qtDir = Split-Path (Split-Path $Windeployqt)
+} else {
+  if ($env:Qt6_DIR -and (Test-Path $env:Qt6_DIR)) { $qtDir = $env:Qt6_DIR }
+  elseif ($env:CMAKE_PREFIX_PATH -and (Test-Path $env:CMAKE_PREFIX_PATH)) { $qtDir = $env:CMAKE_PREFIX_PATH }
+  else {
+    $qtCandidates = @("D:/qt/6.8.3/mingw_64", "C:/Qt/6.8.3/mingw_64")
+    foreach ($q in $qtCandidates) { if (Test-Path (Join-Path $q "bin/windeployqt.exe")) { $qtDir = $q; break } }
+  }
+  if (-not $qtDir) { throw "Cannot locate Qt6 windeployqt; pass -Windeployqt <path> explicitly" }
+  $Windeployqt = Join-Path $qtDir "bin/windeployqt.exe"
+}
+Write-Host "windeployqt: $Windeployqt"
+
 $stagingName = "LightAlbum-$Version-win64"
 $stagingBase = Join-Path $root $stagingName
 $staging = $stagingBase
@@ -97,14 +115,14 @@ $ErrorActionPreference = "Continue"
 # NativeCommandError only under redirection/pipe (P13: 2>&1|, P17: *>file --
 # both truncated the deploy between DLL copy and plugin copy). Bare call is
 # immune; dxcompiler warning just prints.
-& "D:/qt/6.8.3/mingw_64/bin/windeployqt.exe" --release --force --no-translations --no-qml --no-opengl-sw (Join-Path $staging "LightAlbum.exe")
+& $Windeployqt --release --force --no-translations --no-qml --no-opengl-sw (Join-Path $staging "LightAlbum.exe")
 Write-Host "windeployqt exit code: $LASTEXITCODE"
 $ErrorActionPreference = "Stop"
 if ($LASTEXITCODE -ne 0) { throw "windeployqt failed with exit code $LASTEXITCODE" }
 if (-not (Test-Path (Join-Path $staging "platforms"))) { throw "windeployqt left no platforms/ dir" }
 
 # 3) offscreen platform plugin for CI/smoke
-Copy-Item "D:/qt/6.8.3/mingw_64/plugins/platforms/qoffscreen.dll" (Join-Path $staging "platforms/qoffscreen.dll") -Force
+Copy-Item (Join-Path $qtDir "plugins/platforms/qoffscreen.dll") (Join-Path $staging "platforms/qoffscreen.dll") -Force
 
 # 3.5) user manual (matched via ASCII wildcard; copied as USER-MANUAL.md)
 $docsDir = Join-Path $root "..\docs"

@@ -11,13 +11,16 @@
   powershell -ExecutionPolicy Bypass -File qa_runner.ps1 -Only LA_GEO_SMOKE
 #>
 param(
-  [string]$Exe = "D:\Test\workbuddy\2026-09-18-09-00-13\native\build\LightAlbum.exe",
+  [string]$Exe = "",
   [string]$Only = "",
   [int]$Timeout = 25,
   [string]$Result = (Join-Path $env:TEMP "qa_client\qa_result.json")
 )
 $ErrorActionPreference = "Stop"
 $tmp = Join-Path $env:TEMP "qa_client"; New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+
+# Portable default: exe is <scriptDir>/build/LightAlbum.exe (scriptDir = native/).
+if (-not $Exe) { $Exe = Join-Path $PSScriptRoot "build/LightAlbum.exe" }
 
 # Gate definitions: n=gate name; png=needs a png path argument; arg=extra suffix after png (e.g. ",china")
 # need=env vars that must be present or the gate is skipped (e.g. scan needs its own root/db)
