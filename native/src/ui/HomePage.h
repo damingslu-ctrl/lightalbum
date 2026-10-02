@@ -47,6 +47,7 @@ signals:
     void navigateTo(int navRow);          // 顶部文字导航 → MainWindow::onNav
     void photoActivated(const QString& path);   // 点图 → 沉浸式灯箱
     void importRequested();               // 空库 → 导入目录
+    void icloudImportRequested();         // 2.6.0：空库 → 导入 iCloud 相册
 
 protected:
     void resizeEvent(QResizeEvent* e) override;

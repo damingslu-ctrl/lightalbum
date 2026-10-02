@@ -3,6 +3,32 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.6.0] - 2026-10-03
+
+### 功能（导入 iCloud 相册）
+- 顶栏「＋」导入钮改为**下拉菜单**：`导入目录…` / `导入 iCloud 相册` / （分隔线）/ 探测状态行。空库空态同步给出并排双按钮——新用户第一次接触应用的入口不能把 iCloud 藏在下拉里。
+- 新增 `src/core/ICloudSource.{h,cpp}`：iCloud 本地落盘根**多候选探测**（`iCloud Photos/Photos` → `iCloud Photos` → `iCloud Drive/Photos`，相对 `QStandardPaths::PicturesLocation`）。写死一条会在别的机器上静默「导入 0 张」，故按优先级取第一个真实存在者。
+- **空壳拒绝**：`detectRoot()` 要求候选目录里至少有一个媒体文件，只有 `desktop.ini` 的空壳不算命中——避免虚假「已找到 iCloud」。探测不到时菜单项**禁用**并说明原因，绝不静默导入 0 张后报「完成」。
+- 确认弹窗展示真实根路径 + 真实文件数，并说明「云端未下载的占位文件会跳过，在 iCloud 下载完成后重跑即可增量补齐」。
+- **写入路径不新建**：iCloud 与普通目录两个入口都收敛到新抽出的 `runImportInto(dir, title)`，缩略图缓存键、增量规则（size+mtime 未变则跳过）、missing 标记语义完全同源（铁律：缓存/写入入口必须唯一）。
+
+### 取证（先测再改，本机实测而非推断）
+- iCloud 落盘形态：`%USERPROFILE%\Pictures\iCloud Photos\Photos` 实测存在，**平铺** 6778 个文件（仅 1 个子目录 `untitled.afcatalog`），不按相册分目录。扩展名分布：`.jpg` 5088 / `.heic` 777 / `.png` 561 / `.mp4` 120 / `.mov` 102 / `.dng` 58 / `.arw` 39。
+- **基线先行**：改动前先用现有 `LA_SCAN_SMOKE` 门跑 iCloud 风格沙盒，得 `added=6 placeholders=2 total=8` —— 证明 `Scanner::syncRoot` **本就能正确处理 iCloud 目录**（含占位符跳过）。故本次不动扫描器核心，缺口在**入口可发现性**。
+- **格式支持实测**（自建 `QImageReader` 探针，逐格式 read() 实测，禁猜）：`.jpg` ok 4656×3496；`.heic` **ok 3840×2160**（Qt 能解，白名单已有）；`.png` ok；`.dng`/`.arw` **NULL `Unsupported image format`**；`.mp4`/`.mov` 同。→ RAW 与视频**不纳入**白名单（纳入只会产出空缩略图卡片），`.dng/.arw` 保持被 `kImgExt` 静默忽略。
+- 占位符判定为**两条独立判据**（实测覆盖）：`< 24KB`（`isIcloud` 时）与 `.icloud` sidecar / `RECALL_ON_OPEN` 文件属性。门禁对两条分别构造样本。
+
+### QA（新增 `LA_ICLOUD_QA`，15 断言全绿 + 反例）
+- (A) 探测纯函数 8 项：候选数=3、首选路径、默认 PicturesLocation 非空、命中沙盒根、文件数=9、**空壳拒绝**、根下 true / 无关目录 false。
+- (B) 端到端 `syncRoot` 5 项：`total=5`（3 png + 2 占位；DNG/AAE/ini/afcatalog 全部不计）、`added=3`、`placeholders=2`、`errors=0`、**幂等** `added=0 unchanged=3`。
+- (C) **反例 2 项**：另建**不含 "icloud" 子串**的独立临时根跑同样内容 → `placeholders=0 added=4`，与正例 `(2, 3)` 显著不同；C2 断言正反例**必须不同**，若相同则 B3 是空心断言。实测踩到两个坑并修掉：① 1px PNG 仅 ~70 字节，会被 `isIcloud && size<24KB` 判成占位（`placeholders=6 added=0`）→ 改用撑到 ~30KB 的合法 PNG；② 反例根若沿用 `la_icloud_qa` 沙盒名，`contains("icloud")` 路径子串判定同样命中 → 反例自身失效（`placeholders=1`）→ 反例根改用 `la_plainctl_qa`。
+- 门数 25 → **26**。
+
+### 修复
+- **★ 启动性能：iCloud 探测改懒构建**。`buildImportMenu()` 原在顶栏构造期**同步**调 `detectRoot()`，而 `detectRoot()` 会对候选目录做 `entryInfoList`（本机实测 iCloud 目录 **6778 个 `QFileInfo`**）—— 等于把这笔 IO 压进 UI 启动主线程。改法：构造期只建菜单骨架（**零 IO**，「导入 iCloud 相册」先置灰 + 状态行显示「正在检测…」），首次 `QMenu::aboutToShow`（用户已点开、正在等）时才探测并启用。
+- `isUnderICloudRoot()` 首轮用 `p` 与 `path` 自比（恒真）→ 改为纯「逐级上剥目录链比对候选根」。
+- `title` 未被 `QFutureWatcher::finished` lambda 捕获 → 编译错误 `'title' is not captured`，已加入捕获列表。
+
 ## [2.5.0] - 2026-10-02
 
 ### 工程（方向 E·发布 CI 强化：第二步 依赖与产物溯源 SBOM + 可复现性验证）

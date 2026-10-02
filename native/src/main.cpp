@@ -22,6 +22,7 @@
 #include "core/GeoIndex.h"
 #include "core/RtHistory.h"
 #include "core/Scanner.h"
+#include "core/ICloudSource.h"
 #include "ui/MainWindow.h"
 #include "ui/MapView.h"
 #include "ui/GalleryPage.h"
@@ -1230,6 +1231,175 @@ int runLumenSmoke()
     std::fflush(stderr);
     return pass ? 0 : 1;
 }
+
+// ============================================================================
+// 2.6.0 导入 iCloud 相册门禁（LA_ICLOUD_QA）
+//
+// 断言分两组：
+//   (A) ICloudSource 探测纯函数 —— 候选枚举 / 命中 / 空壳拒绝 / 路径归属。
+//   (B) 端到端 syncRoot —— 在**沙盒** iCloud 风格目录树上跑真实导入器，断言
+//       「照片入库 + 占位符跳过 + 非照片排除 + 幂等」。
+//
+// 为什么要沙盒而不是直接打真 iCloud 目录：真目录 6778 个文件、秒级耗时且
+// 会写用户的 library.db；沙盒能精确控制每个文件的角色（占位/RAW/噪声/正常），
+// 让每个断言都有确定期望值。
+//
+// 反例（counter-example，防断言空心）：同一沙盒再跑一遍「目录名改成
+// NOTICLOUD」，isIcloud 分支失效 → 9KB 的假 jpg 会被当正常照片入库，
+// placeholders 计数掉到 0。若正例与反例结果相同，说明断言根本没在断言。
+// ============================================================================
+static int runICloudQa()
+{
+    auto tmpRoot = QDir(QDir::tempPath()).filePath(QStringLiteral("la_icloud_qa"));
+    QDir(tmpRoot).removeRecursively();
+    auto pics = QDir(tmpRoot).filePath(QStringLiteral("Pictures"));
+    // 关键：沙盒根目录名必须含 "iCloud"，才能命中 Scanner 的 isIcloud 分支
+    auto cloudRoot = QDir(pics).filePath(QStringLiteral("iCloud Photos/Photos"));
+    QDir().mkpath(cloudRoot);
+    const auto dbPath  = QDir(tmpRoot).filePath(QStringLiteral("q.db"));
+    const auto thumbs  = QDir(tmpRoot).filePath(QStringLiteral("thumbs"));
+
+    // ---- 造沙盒文件（角色分明，期望值可手算）--------------------------------
+    // 3 张真图：1x1 PNG 合法字节（能被 QImageReader 解码 → 缩略图可生成）
+    const QByteArray png1px = QByteArrayLiteral(
+        "\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08"
+        "\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc``\x00\x00\x00"
+        "\x04\x00\x01\xf6\x178U\x00\x00\x00\x00IEND\xaeB`\x82");
+    auto writeFile = [](const QString& p, const QByteArray& d) {
+        QFile f(p);
+        if (f.open(QIODevice::WriteOnly)) f.write(d);
+    };
+    // 「已下载真图」必须 > 24KB：Scanner 的 iCloud 启发式是
+    //   isIcloud && size < 24*1024  → 占位跳过
+    // 1px PNG 只有 ~70 字节，若拿它当「正常照片」会把全部文件判成占位
+    // （实测踩过：placeholders=6 added=0）。iCloud 上已下载完的照片必然远超
+    // 24KB，所以这里在合法 PNG 尾部补 neutral 注释块把它撑到 ~30KB ——
+    // 仍是可解码的合法 PNG（JPEG 允许任意长度，PNG 允许尾随数据）。
+    const QByteArray bigPng = png1px + QByteArrayLiteral("\0\0\0\0IEND")
+                             + QByteArray(30 * 1024, '\0');
+    writeFile(QDir(cloudRoot).filePath(QStringLiteral("IMG_0001.PNG")), bigPng);
+    writeFile(QDir(cloudRoot).filePath(QStringLiteral("IMG_0002.png")), bigPng);
+    writeFile(QDir(cloudRoot).filePath(QStringLiteral("photo3.png")), bigPng);
+    // 占位 1：<24KB 的 jpg（iCloud 未下载完）→ 必须计入 placeholders，不得入库
+    writeFile(QDir(cloudRoot).filePath(QStringLiteral("PLACEHOLDER_A.jpg")),
+              QByteArrayLiteral("\xff\xd8\xff\xe0") + QByteArray(9 * 1024, '0'));
+    // 占位 2：**大于 24KB** 但带 .icloud sidecar 的图 → 靠 sidecar 判定，
+    // 证明占位识别不只靠尺寸（两条独立判据都被覆盖）
+    writeFile(QDir(cloudRoot).filePath(QStringLiteral("PLACEHOLDER_B.jpg")), bigPng);
+    writeFile(QDir(cloudRoot).filePath(QStringLiteral("PLACEHOLDER_B.jpg.icloud")),
+              QByteArray(10, '\0'));
+    // RAW：.DNG —— Qt 解不了码，但 kImgExt 不含它 → 应被完全忽略（total 不计）
+    writeFile(QDir(cloudRoot).filePath(QStringLiteral("IMG_RAW.DNG")),
+              QByteArray(4096, 'R'));
+    // 噪声：.AAE（Apple 视频编辑旁车）/ desktop.ini / 目录
+    writeFile(QDir(cloudRoot).filePath(QStringLiteral("movie.AAE")),
+              QByteArray(64, 'A'));
+    writeFile(QDir(cloudRoot).filePath(QStringLiteral("desktop.ini")),
+              QByteArrayLiteral("[.ShellClassInfo]"));
+    QDir().mkpath(QDir(cloudRoot).filePath(QStringLiteral("untitled.afcatalog")));
+    // 子目录里放**非照片**：验证 walk 会递归但白名单会过滤（isSkipDir 不含
+    // afcatalog，所以这层必须靠 isPhoto 挡掉；若放 png 就会多计入 total=1）
+    writeFile(QDir(cloudRoot).filePath(QStringLiteral("untitled.afcatalog/index.json")),
+              QByteArrayLiteral("{}"));
+
+    // ---- (A) ICloudSource 探测纯函数 -----------------------------------------
+    int fails = 0;
+    auto check = [&fails](bool ok, const QString& what) {
+        std::fprintf(stderr, "LA_ICLOUD_QA %s %s\n", ok ? "PASS" : "FAIL",
+                     qPrintable(what));
+        if (!ok) ++fails;
+    };
+
+    const QStringList cands = ICloudSource::candidateRoots(pics);
+    check(cands.size() == 3,
+          QStringLiteral("A1 candidates=%1 expect=3").arg(cands.size()));
+    check(!cands.isEmpty() && cands.first().endsWith(
+              QStringLiteral("iCloud Photos/Photos")),
+          QStringLiteral("A2 first=%1")
+              .arg(cands.isEmpty() ? QStringLiteral("<none>")
+                                   : QFileInfo(cands.first()).filePath()));
+    check(ICloudSource::candidateRoots(QString())
+              .isEmpty() == false, QStringLiteral("A3 defaultPicturesNonEmpty"));
+
+    int nFiles = -1;
+    const QString detected = ICloudSource::detectRoot(pics, &nFiles);
+    check(QDir::cleanPath(detected) == QDir::cleanPath(QDir(cloudRoot).absolutePath()),
+          QStringLiteral("A4 detected=%1").arg(QDir::toNativeSeparators(detected)));
+    check(nFiles == 9, QStringLiteral("A5 files=%1 expect=9 (3 png+2 占位 jpg+1 sidecar+RAW+AAE+ini+afcatalog/index.json)").arg(nFiles));
+
+    // 空壳拒绝：只有 desktop.ini 的目录不算命中（防止虚假「已找到 iCloud」）
+    auto hollow = QDir(pics).filePath(QStringLiteral("Hollow/iCloud Photos/Photos"));
+    QDir().mkpath(hollow);
+    writeFile(QDir(hollow).filePath(QStringLiteral("desktop.ini")),
+              QByteArrayLiteral("[.ShellClassInfo]"));
+    int hollowN = -1;
+    check(ICloudSource::detectRoot(QDir(pics).filePath(QStringLiteral("Hollow")),
+                                   &hollowN).isEmpty(),
+          QStringLiteral("A6 hollowRejected n=%1").arg(hollowN));
+
+    // 路径归属：根下文件 true / 无关目录 false
+    check(ICloudSource::isUnderICloudRoot(
+              QDir(cloudRoot).filePath(QStringLiteral("IMG_0001.PNG")), pics),
+          QStringLiteral("A7 underRoot=true"));
+    check(!ICloudSource::isUnderICloudRoot(
+              QDir(pics).filePath(QStringLiteral("Other/x.jpg")), pics),
+          QStringLiteral("A8 underRoot=false"));
+
+    // ---- (B) 端到端 syncRoot（走真实导入器，沙盒独立库）---------------------
+    const ScanResult r1 = Scanner::syncRoot(
+        cloudRoot, dbPath, thumbs);
+    // 期望：3 png 入库；2 占位跳过；DNG/AAE/ini/afcatalog 不在白名单 → 不计 total
+    check(r1.total == 5,
+          QStringLiteral("B1 total=%1 expect=5 (3 png + 2 占位)").arg(r1.total));
+    check(r1.added == 3,
+          QStringLiteral("B2 added=%1 expect=3 (仅 3 张 png)").arg(r1.added));
+    check(r1.placeholders == 2,
+          QStringLiteral("B3 placeholders=%1 expect=2 (小文件 + .icloud sidecar)").arg(r1.placeholders));
+    check(r1.errorCount == 0,
+          QStringLiteral("B4 errors=%1").arg(r1.errorCount));
+    // 幂等：同库重跑必须 added=0 / unchanged=3（增量铁律）
+    const ScanResult r2 = Scanner::syncRoot(cloudRoot, dbPath, thumbs);
+    check(r2.added == 0 && r2.unchanged == 3,
+          QStringLiteral("B5 idempotent added=%1 unchanged=%2 expect=0/3")
+              .arg(r2.added).arg(r2.unchanged));
+
+    // ---- (C) 反例：目录名不含 iCloud → isIcloud 分支失效 ---------------------
+    // 若断言空心，本反例会与正例同结果 → 证明 placeholders 断言真的在断言。
+    //
+    // ★ 反例根**必须放在不含 "icloud" 子串的独立临时目录**里。isIcloud 判定是
+    // 路径子串匹配（Scanner.cpp: rootNative.toLower().contains("icloud")），
+    // 若沿用 tmpRoot（名为 la_icloud_qa）反例会同样命中启发式 →
+    // 实测踩过：placeholders=1 而非预期的 0，反例自身失效。
+    auto ctlRoot = QDir(QDir::tempPath()).filePath(QStringLiteral("la_plainctl_qa"));
+    QDir(ctlRoot).removeRecursively();
+    auto plainRoot = QDir(ctlRoot).filePath(QStringLiteral("Photos"));
+    QDir().mkpath(plainRoot);
+    for (const QString& f : { QStringLiteral("IMG_0001.PNG"),
+                              QStringLiteral("IMG_0002.png"),
+                              QStringLiteral("photo3.png") })
+        writeFile(QDir(plainRoot).filePath(f), bigPng);
+    // 只搬那张「9KB 假 jpg」，不搬 .icloud sidecar —— 让 isIcloud 判定成为唯一变量
+    writeFile(QDir(plainRoot).filePath(QStringLiteral("PLACEHOLDER_A.jpg")),
+              QByteArrayLiteral("\xff\xd8\xff\xe0") + QByteArray(9 * 1024, '0'));
+    const ScanResult r3 = Scanner::syncRoot(
+        plainRoot, QDir(ctlRoot).filePath(QStringLiteral("plain.db")),
+        QDir(ctlRoot).filePath(QStringLiteral("thumbs2")));
+    // 反例期望：4 张全部入库（含那张 9KB 假 jpg），placeholders=0 —— 与正例不同即证明有效
+    check(r3.placeholders == 0 && r3.added == 4,
+          QStringLiteral("C1 counterExample placeholders=%1 added=%2 expect=0/4")
+              .arg(r3.placeholders).arg(r3.added));
+    // C2 自证差异：正例与反例**必须不同**。若两者相同，说明 isIcloud 分支
+    // 根本没起作用，B3 的 placeholders==2 就是空心断言（恒真）。
+    check(r1.placeholders != r3.placeholders || r1.added != r3.added,
+          QStringLiteral("C2 differs pos(ph=%1 add=%2) vs ctl(ph=%3 add=%4)")
+              .arg(r1.placeholders).arg(r1.added)
+              .arg(r3.placeholders).arg(r3.added));
+
+    std::fprintf(stderr, "LA_ICLOUD_QA %s fails=%d\n",
+                 fails == 0 ? "PASS" : "FAIL", fails);
+    std::fflush(stderr);
+    return fails == 0 ? 0 : 1;
+}
 } // namespace
 
 
@@ -1329,6 +1499,10 @@ int main(int argc, char *argv[])
     // 方向 D 第五步 b：图库多选 + 批量工具条门禁
     if (qEnvironmentVariableIsSet("LA_GALLERY_BATCH_QA"))
         return runGalleryBatchQa();
+
+    // 2.6.0 导入 iCloud 相册门禁（沙盒自建 iCloud 风格目录树，纯离屏自退）
+    if (qEnvironmentVariableIsSet("LA_ICLOUD_QA"))
+        return runICloudQa();
 
     // P8 原生导入器冒烟：扫描 LA_SCAN_ROOT 入库到 LA_SCAN_DB（独立于正式库），
     // 打印增量结果后退出；同一命令重跑应 added=0 / unchanged=N（增量幂等）。

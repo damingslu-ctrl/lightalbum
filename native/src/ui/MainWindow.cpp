@@ -8,6 +8,7 @@
 #include "CullPage.h"
 #include "RetouchPage.h"
 #include "../core/Scanner.h"
+#include "../core/ICloudSource.h"
 #include "../core/MotionPref.h"
 #include "../core/Vault.h"
 #include <QDialog>
@@ -29,6 +30,7 @@
 #include <QStackedWidget>
 #include <QCoreApplication>
 #include <QFileDialog>
+#include <QMenu>
 #include <QProcess>
 #include <QApplication>
 #include <QPointer>
@@ -479,12 +481,17 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
     });
     tl->addWidget(searchToggle_);
     // P8：原生导入器入口（补齐 P7 审计的唯一硬缺口）
-    auto* importBtn = new QPushButton(QStringLiteral("＋"), topbar);
-    importBtn->setToolTip(QString::fromUtf8("导入目录"));
+    // 2.6.0：改为下拉菜单 —— 「导入目录 / 导入 iCloud 相册」双入口。
+    // 为什么用 QToolButton+Menu 而不是两个并排按钮：顶栏右端只有 120px 预留
+    // 窗口控制簇宽度（P29），两个 32px 钮会挤进 winCtl_ 底下；下拉零新增宽度。
+    auto* importBtn = new QToolButton(topbar);
+    importBtn->setText(QStringLiteral("＋"));
+    importBtn->setToolTip(QString::fromUtf8("导入照片"));
     importBtn->setCursor(Qt::PointingHandCursor);
     importBtn->setFixedSize(32, 32);
     importBtn->setStyleSheet(Lumen::btnGold());
-    connect(importBtn, &QPushButton::clicked, this, &MainWindow::startImport);
+    importBtn->setPopupMode(QToolButton::InstantPopup);
+    importBtn->setMenu(buildImportMenu());
     tl->addWidget(importBtn);
     tl->addSpacing(120);   // P29 预留窗口控制簇宽度，避免导入钮被 winCtl_ 覆盖
     topbar->installEventFilter(this);            // P19：入栏渐显
@@ -543,6 +550,8 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
             [this](int row) { onNav(row); });
     connect(home_, &HomePage::photoActivated, this, &MainWindow::openLightbox);
     connect(home_, &HomePage::importRequested, this, &MainWindow::startImport);
+    // 2.6.0：空态 iCloud 入口 → 与顶栏菜单同一个 importICloud（唯一实现）
+    connect(home_, &HomePage::icloudImportRequested, this, &MainWindow::importICloud);
     stack_->addWidget(home_);
     map_ = new MapPage(&lib_->photos(), thumbsDir, stack_);
     stack_->addWidget(map_);
@@ -1075,13 +1084,97 @@ MapView* MainWindow::mapView() const
     return map_ ? map_->view() : nullptr;
 }
 
+// 2.6.0：导入下拉菜单。普通目录沿用 P8 原生导入器；iCloud 走自动探测。
+//
+// ★ 懒构建（性能）：`detectRoot()` 会对候选目录做 `entryInfoList`（本机实测
+// iCloud 目录 6778 个 QFileInfo）。若在顶栏构造期同步调用，等于把这笔 IO
+// 压进 UI 启动主线程 —— LA_SCALE_PERF 的 firstMs 会从 ~40 抬到 ~100+。
+// 故构造期只建骨架（零 IO），首次 `aboutToShow`（用户点开菜单、已在等）时才探测。
+QMenu* MainWindow::buildImportMenu()
+{
+    QMenu* m = new QMenu(this);
+    QAction* aDir = m->addAction(QStringLiteral("导入目录…"));
+    connect(aDir, &QAction::triggered, this, &MainWindow::startImport);
+
+    QAction* aCloud = m->addAction(QStringLiteral("导入 iCloud 相册"));
+    connect(aCloud, &QAction::triggered, this, &MainWindow::importICloud);
+
+    m->addSeparator();
+    // 状态行占位文案，aboutToShow 时被真实探测结果替换
+    QAction* aStatus = m->addAction(QStringLiteral("正在检测 iCloud…"));
+    aStatus->setEnabled(false);
+    aCloud->setEnabled(false);          // 探测前先禁用，命中后才开
+
+    connect(m, &QMenu::aboutToShow, this, [this, m, aCloud, aStatus]() {
+        int n = 0;
+        const QString root = ICloudSource::detectRoot(QString(), &n);
+        if (root.isEmpty()) {
+            // 探测不到就**禁用**并说明原因——绝不静默导入 0 张后报「完成」。
+            aCloud->setEnabled(false);
+            aStatus->setText(QStringLiteral("未检测到 iCloud 本地相册（%1 个文件待同步）")
+                                 .arg(n));
+        } else {
+            // 命中就报真实文件数，让用户点之前就知道规模。
+            aCloud->setEnabled(true);
+            aCloud->setToolTip(QStringLiteral("iCloud 本地目录\n%1\n共 %2 个文件")
+                                   .arg(root).arg(n));
+            aStatus->setText(QStringLiteral("已检测：%1 个文件").arg(n));
+        }
+    });
+    return m;
+}
+
+// 2.6.0：导入 iCloud 相册 —— 探测根目录 → 确认 → 复用 syncRoot 全量通道。
+// 写入路径**不新建**：与「导入目录」共用 runImportInto()，保证缩略图缓存键、
+// 增量规则（size+mtime 未变则跳过）、missing 标记语义完全一致。
+void MainWindow::importICloud()
+{
+    int n = 0;
+    const QString root = ICloudSource::detectRoot(QString(), &n);
+    if (root.isEmpty()) {
+        QMessageBox box(this);
+        box.setWindowTitle(QStringLiteral("导入 iCloud 相册"));
+        box.setText(QStringLiteral(
+            "未检测到 iCloud 本地相册目录。\n\n"
+            "请确认 iCloud for Windows 已安装并开启「照片」同步；"
+            "若相册存放在非默认位置，可改用「导入目录…」手动选择。"));
+        box.setIcon(QMessageBox::Information);
+        box.exec();
+        return;
+    }
+
+    QMessageBox box(this);
+    box.setWindowTitle(QStringLiteral("导入 iCloud 相册"));
+    box.setText(QStringLiteral(
+        "将导入 iCloud 本地相册：\n%1\n\n"
+        "共扫描到 %2 个文件。\n\n"
+        "云端未下载的占位文件会自动跳过；在 iCloud 里下载完成后重跑一次即可增量补齐。")
+        .arg(root).arg(n));
+    QPushButton* go = box.addButton(QStringLiteral("开始导入"), QMessageBox::AcceptRole);
+    QPushButton* pick = box.addButton(QStringLiteral("改用手动选择…"),
+                                      QMessageBox::ActionRole);
+    box.addButton(QStringLiteral("取消"), QMessageBox::RejectRole);
+    box.setDefaultButton(go);
+    box.exec();
+    if (box.clickedButton() == go) {
+        runImportInto(root, QStringLiteral("导入 iCloud 相册"));
+    } else if (box.clickedButton() == pick) {
+        startImport();          // 手动选目录：复用 P8 原生路径
+    }
+}
+
 void MainWindow::startImport()
 {
     const QString dir = QFileDialog::getExistingDirectory(
         this, QStringLiteral("选择要导入的照片目录"), QString(),
         QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
     if (dir.isEmpty()) return;
+    runImportInto(dir, QStringLiteral("导入照片"));
+}
 
+// 2.6.0：把 P8 的导入主体从 startImport 抽出，两个入口共用（唯一写入路径）。
+void MainWindow::runImportInto(const QString& dir, const QString& title)
+{
     const QString dbPath = !dbPath_.isEmpty()
         ? dbPath_ : QStringLiteral("D:/lightalbum/library.db");
 
@@ -1089,7 +1182,7 @@ void MainWindow::startImport()
                                     0, qMax(1, lib_->kpi().total), this);
     dlg->setWindowModality(Qt::WindowModal);
     dlg->setMinimumDuration(0);
-    dlg->setWindowTitle(QStringLiteral("导入照片"));
+    dlg->setWindowTitle(title);
 
     auto* cancelled = new std::atomic_bool(false);
     connect(dlg, &QProgressDialog::canceled, this,
@@ -1098,7 +1191,7 @@ void MainWindow::startImport()
     const QPointer<QProgressDialog> dlgGuard(dlg);
     auto* watcher = new QFutureWatcher<ScanResult>(this);
     connect(watcher, &QFutureWatcher<ScanResult>::finished, this,
-            [this, watcher, dlgGuard, cancelled]() {
+            [this, watcher, dlgGuard, cancelled, title]() {
                 const ScanResult r = watcher->result();
                 watcher->deleteLater();
                 delete cancelled;
@@ -1114,7 +1207,7 @@ void MainWindow::startImport()
                                .arg(r.errorCount)
                                .arg(r.errors.join(QLatin1Char('\n')));
                 QMessageBox box(this);
-                box.setWindowTitle(QStringLiteral("导入完成"));
+                box.setWindowTitle(title + QStringLiteral(" · 完成"));
                 box.setText(msg);
                 QPushButton* restart = box.addButton(QStringLiteral("重启载入"), QMessageBox::AcceptRole);
                 box.addButton(QStringLiteral("稍后"), QMessageBox::RejectRole);

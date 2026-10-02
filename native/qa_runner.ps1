@@ -34,6 +34,7 @@ $gates = @(
   @{n="LA_AGENT_SMOKE";    png=$false},
   @{n="LA_GEO_SMOKE";      png=$false},
   @{n="LA_SCAN_SMOKE";     png=$false; need=@("LA_SCAN_ROOT","LA_SCAN_DB")},
+  @{n="LA_ICLOUD_QA";      png=$false},  # 2.6.0: iCloud album import (sandbox tree, no real iCloud needed)
   @{n="LA_LOG_SMOKE";      png=$false},
   @{n="LA_HOME_SMOKE";     png=$false},
   @{n="LA_RW_SMOKE";       png=$false},

@@ -15,6 +15,7 @@ class QLabel;
 class QListWidget;
 class QListWidgetItem;
 class QWidget;
+class QMenu;
 class GalleryPage;
 class MapPage;
 class CullPage;
@@ -57,6 +58,11 @@ private:
     QWidget* makeAbout() const;
 
     void startImport();          // P8：选目录 → 后台扫描入库 → 汇总/重启
+    // 2.6.0 导入 iCloud 相册：顶栏导入钮改下拉菜单（目录 / iCloud 双入口）。
+    // 写入路径唯一：两个入口都收敛到 runImportInto()，缩略图缓存键与增量规则同源。
+    QMenu* buildImportMenu();                    // 导入下拉菜单（探测不到则禁用 iCloud 项）
+    void  importICloud();                        // 探测根 → 确认 → runImportInto
+    void  runImportInto(const QString& dir, const QString& title);  // 导入主体（原 startImport 抽出）
 
     // P16 隐私库：初始化密码 / 解锁 / 重新上锁（非破坏私密标记 + 密码门）
     void setupVaultUi();         // 顶栏锁按钮

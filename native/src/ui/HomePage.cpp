@@ -656,13 +656,23 @@ HomePage::HomePage(Library* lib, const QString& thumbsDir, QWidget* parent)
                            "（当前库中没有可定位的可见照片）"), empty);
         s->setStyleSheet(QStringLiteral("color:#8da396;"));
         s->setAlignment(Qt::AlignCenter);
+        ev->addWidget(t);
+        ev->addWidget(s);
+        // 2.6.0：空态是新用户第一次接触应用的入口，iCloud 相册占了 Windows 照片库
+        // 的大头，所以和「导入目录」并排给出（不是藏在顶栏下拉里）。
+        auto* row = new QHBoxLayout;
+        row->setSpacing(10);
         auto* imp = new QPushButton(QStringLiteral("导入目录"), empty);
         imp->setCursor(Qt::PointingHandCursor);
         imp->setStyleSheet(Lumen::btnGold());
         connect(imp, &QPushButton::clicked, this, &HomePage::importRequested);
-        ev->addWidget(t);
-        ev->addWidget(s);
-        ev->addWidget(imp, 0, Qt::AlignHCenter);
+        auto* impCloud = new QPushButton(QStringLiteral("导入 iCloud 相册"), empty);
+        impCloud->setCursor(Qt::PointingHandCursor);
+        impCloud->setStyleSheet(Lumen::btnGhost());
+        connect(impCloud, &QPushButton::clicked, this, &HomePage::icloudImportRequested);
+        row->addWidget(imp);
+        row->addWidget(impCloud);
+        ev->addLayout(row);
         root->addWidget(empty, 1);
         return;
     }
