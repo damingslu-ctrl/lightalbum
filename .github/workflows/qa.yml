@@ -62,15 +62,30 @@ jobs:
         run: cmake --build native/build --target LightAlbum -j 8
         shell: bash
 
-      - name: Run quality gates (iterate.ps1 -NoBuild)
-        # Both outputs are pinned into the workspace on purpose: their defaults
-        # are timestamped files under TEMP, which an artifact glob cannot name.
+      - name: Select gate-matrix tier
+        # 2.8.0. A pull_request gets the cheap 9-gate layer (~2s); every
+        # other trigger (push to any branch, tag) gets the full 30-gate layer
+        # (~74s). The split boundary is MEASURED, not guessed: each fast gate
+        # is a self-exiting pure gate measured under 350ms, and the matrix
+        # itself is guarded by LA_GATE_MATRIX_QA which lives IN the fast layer,
+        # itself is guarded by LA_GATE_MATRIX_QA which lives IN the fast layer,
+        # so the split can never rot unnoticed. Publishing the tier to
+        # $GITHUB_ENV makes it visible to every later step and to the log.
+        shell: pwsh
+        run: |
+          $t = if ("${{ github.event_name }}" -eq "pull_request") { "fast" } else { "full" }
+          "LA_TIER=$t" >> $env:GITHUB_ENV
+          Write-Host "gate matrix tier: $t"
+
+      - name: Run quality gates (tier ${{ env.LA_TIER }})
+        # Both outputs are pinned into the workspace on purpose: their
+        # defaults are timestamped files under TEMP, which an artifact glob
+        # cannot name. iterate.ps1 exits 1 on a red gate / failed build.
         run: >
           powershell -ExecutionPolicy Bypass -File native/iterate.ps1
-          -NoBuild -Timeout 25
+          -NoBuild -Timeout 25 -Tier ${{ env.LA_TIER }}
           -Report native/build/iteration-report.md
         shell: pwsh
-        # iterate.ps1 exits 1 on a red gate / failed build -> CI fails the job.
 
       - name: Collect machine-readable gate result
         # iterate.ps1 writes qa_result_<timestamp>.json into TEMP and never
@@ -90,7 +105,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: qa-report-${{ github.run_number }}
+          name: qa-report-${{ env.LA_TIER }}-${{ github.run_number }}
           path: |
             native/build/iteration-report.md
             native/build/qa_result.json

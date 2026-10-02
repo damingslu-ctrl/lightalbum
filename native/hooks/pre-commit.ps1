@@ -2,8 +2,9 @@
 # Installed via .git/hooks/pre-commit shim, or: git config core.hooksPath native/hooks
 # Blocks the commit when staged changes touch native SOURCE and any gate is RED.
 # Bypass in emergencies with: git commit --no-verify
-# NOTE: pure ASCII on purpose - PowerShell 5.1 parses a no-BOM UTF-8 .ps1 as GBK
-# and a CJK string would throw "字符串缺少终止符", breaking the hook entirely.
+# NOTE: this file is pure ASCII on purpose - PowerShell 5.1 parses a no-BOM UTF-8
+# .ps1 as GBK, so a CJK string anywhere here (even inside a comment) breaks the
+# hook with a "missing string terminator" parse error. Do not add one.
 $ErrorActionPreference = "Stop"
 
 $root = & git rev-parse --show-toplevel

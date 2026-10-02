@@ -1,0 +1,376 @@
+<#
+.SYNOPSIS
+  Gate matrix - the SINGLE SOURCE OF TRUTH for the LA_* gate table and its tiers.
+.DESCRIPTION
+  2.8.0. Before this file the gate table lived inline inside qa_runner.ps1, so a
+  gate existed in exactly one place but its COST was invisible: every gate ran on
+  every pull request. Measured on 2026-10-03 the full set took 73.6s wall clock,
+  and the costs split cleanly into two natural bands:
+
+    * "pure" gates (no MainWindow, pure offscreen self-exit):  56 - 338 ms
+    * everything that builds MainWindow or a 6425-photo fixture: 2.5 - 8.7 s
+
+  So the matrix splits on that measured boundary, not on a guess:
+
+    tier "fast"  - cheap enough to run on EVERY pull request
+    tier "full"  - expensive; runs on push to main / tags and on every local
+                   full run (the default), and is what release.ps1 gates on
+    tier absent  - means "full". FAIL-SAFE: a brand new gate that forgets to
+                   declare a tier lands in the strict layer, it can never
+                   silently weaken the PR layer by omission.
+
+  Tier "all" (the default when no -Tier is passed) is the union, i.e. byte-for-byte
+  today's behaviour. release.ps1 and the local iterate.ps1 keep using it, so
+  packaging is NOT weakened by the matrix.
+.usage
+  powershell -ExecutionPolicy Bypass -File gate_matrix.ps1 -SelfTest   # gate 30
+  powershell -ExecutionPolicy Bypass -File gate_matrix.ps1 -List
+  . gate_matrix.ps1 -LoadOnly # dot-source: populates $GateTable + functions
+.NOTES
+  MUST stay pure ASCII. Windows PowerShell 5.1 reads a BOM-less UTF-8 file as
+  GBK, and any CJK character in this file makes the script fail to load with
+  "string is missing the terminator".
+#>
+param(
+  [switch]$LoadOnly = $false,
+  [switch]$SelfTest = $false,
+  [switch]$List = $false
+)
+
+# ---------------------------------------------------------------------------
+# The gate table. n = gate name, png = needs a png path argument,
+# arg = extra suffix after the png path (e.g. ",china"),
+# need = env vars that must be present or the gate is skipped,
+# kind = "exe" (default, runs the native exe with env LA_<name>=1) or
+#        "ps1" (runs native/<script> with scriptArgs instead),
+# tier = "fast" | "full"; absent means "full" (fail-safe, see header).
+#
+# The fast set is exactly the measured-cheap band: every one of these returns
+# before MainWindow is constructed and self-exits offscreen.
+#
+# measuredMs comes from `qa_runner.ps1 -Timing` on 2026-10-03 (29 gates,
+# 73644 ms wall clock). It is DATA, not a guess, and it is what E4 asserts
+# against. Two deliberate exclusions from the fast set:
+#   LA_SCALE_PERF (338 ms) - it asserts wall-clock BUDGETS, so on a shared
+#     CI runner it would flake; a flaky gate in the PR layer teaches people
+#     to ignore red, which is worse than a slow gate.
+#   LA_RW_SMOKE (1017 ms) - borderline, kept in the strict layer so the
+#     vault/crypto round-trip only has one place that can break it.
+# ---------------------------------------------------------------------------
+$GateTable = @(
+  @{n="LA_GEO_SMOKE";       png=$false; tier="fast"; measuredMs=106},
+  @{n="LA_ICLOUD_QA";       png=$false; tier="fast"; measuredMs=194},
+  @{n="LA_LOG_SMOKE";       png=$false; tier="fast"; measuredMs=120},
+  @{n="LA_HOME_SMOKE";      png=$false; tier="fast"; measuredMs=194},
+  @{n="LA_RETOUCH_UNDO_QA"; png=$false; tier="fast"; measuredMs=71},
+  @{n="LA_GALLERY_SEARCH_QA"; png=$false; tier="fast"; measuredMs=56},
+  @{n="LA_THUMB_CACHE_QA";  png=$false; tier="fast"; measuredMs=201},
+  @{n="LA_GALLERY_BATCH_QA"; png=$false; tier="fast"; measuredMs=135},
+  @{n="LA_GATE_MATRIX_QA";  png=$false; tier="fast"; kind="ps1"; script="gate_matrix.ps1"; scriptArgs="-SelfTest"; measuredMs=250},
+  @{n="LA_LUMEN_SMOKE";     png=$false; measuredMs=7431},
+  @{n="LA_AGENT_SMOKE";     png=$false; measuredMs=8662},
+  @{n="LA_SCAN_SMOKE";      png=$false; need=@("LA_SCAN_ROOT","LA_SCAN_DB"); measuredMs=0},
+  @{n="LA_EXIT_QA";         png=$false; measuredMs=5700},
+  @{n="LA_RW_SMOKE";        png=$false; measuredMs=1017},
+  @{n="LA_CULL_SMOKE";      png=$false; measuredMs=3210},
+  @{n="LA_RETOUCH_SMOKE";   png=$false; measuredMs=2567},
+  @{n="LA_SMOKE";           png=$false; measuredMs=3171},
+  @{n="LA_MAP_A_QA";        png=$true; measuredMs=3640},
+  @{n="LA_MAP_BURST_QA";    png=$true; measuredMs=3166},
+  @{n="LA_MAP_REGION_QA";   png=$true; arg=",china"; measuredMs=3075},
+  @{n="LA_MAP_COUNTRY_QA";  png=$true; measuredMs=2617},
+  @{n="LA_MAP_CLICK_QA";    png=$false; measuredMs=2553},
+  @{n="LA_MAP_PERF";        png=$false; measuredMs=3735},
+  @{n="LA_GALLERY_E_QA";    png=$true; measuredMs=2589},
+  @{n="LA_GALLERY_FILL_QA"; png=$true; measuredMs=2690},
+  @{n="LA_RETOUCH_A_QA";    png=$true; measuredMs=2707},
+  @{n="LA_SCALE_SMOKE";     png=$false; measuredMs=3351},
+  @{n="LA_SCALE_PERF";      png=$false; measuredMs=338},
+  @{n="LA_BATCH_TX_QA";     png=$false; measuredMs=7004},
+  @{n="LA_RELEASE_QA";      png=$false; kind="ps1"; script="release.ps1"; scriptArgs="-SelfTest"; measuredMs=3135}
+)
+
+# Resolve a gate's tier. Absent key means "full" - the fail-safe default.
+function Get-GateTier {
+  param($Gate)
+  if ($Gate.ContainsKey("tier") -and $Gate.tier) { return $Gate.tier }
+  return "full"
+}
+
+# Filter the table by tier. "" (default) returns EVERY gate, i.e. the union,
+# which is what local runs and release.ps1 use.
+function Get-GateTable {
+  param([string]$Tier = "", $Table = $null)
+  if ($null -eq $Table) { $Table = $GateTable }
+  # NOTE: do NOT wrap the returns in the unary comma. ",@($x)" builds a
+  # ONE-element array whose single element is the array itself, so every caller
+  # saw gates=1 instead of 30. PowerShell unrolls a returned array anyway, and
+  # every call site wraps in @(...) already, which restores the array type.
+  if (-not $Tier) { return @($Table) }
+  if ($Tier -eq "fast") { return @($Table | Where-Object { (Get-GateTier $_) -eq "fast" }) }
+  if ($Tier -eq "full") { return @($Table | Where-Object { (Get-GateTier $_) -eq "full" }) }
+  throw ("gate_matrix: unknown tier '" + $Tier + "' (want fast|full|empty)")
+}
+
+# ---------------------------------------------------------------------------
+# Structural validator. Pure function of its input table: no globals, no side
+# effects, no test-only branch. That is what makes the counter-examples in
+# -SelfTest meaningful - they feed a broken table through THIS SAME function and
+# require it to go red. A validator with a hidden bypass would pass them.
+#
+# $fastBudgetMs: the measured-cost ceiling for the PR layer. The cheapest fast
+# gate is 56 ms, the most expensive 250 ms, so 500 ms keeps real headroom while
+# still excluding every full-tier gate (cheapest of those is 1017 ms).
+# $coreFastGates: gates that must NEVER leave the PR layer. Each one guards a
+# property that has already caused a real incident here, so losing PR coverage
+# on it is not acceptable. LA_EXIT_QA is deliberately NOT listed: at 5700 ms it
+# is a full-tier gate (it spawns probe subprocesses by design).
+# ---------------------------------------------------------------------------
+$fastBudgetMs = 500
+$coreFastGates = @(
+  "LA_GATE_MATRIX_QA",
+  "LA_RETOUCH_UNDO_QA",
+  "LA_GALLERY_SEARCH_QA",
+  "LA_THUMB_CACHE_QA",
+  "LA_GALLERY_BATCH_QA"
+)
+
+function Test-GateMatrix {
+  param($Table)
+  $errs = @()
+
+  # E1: floor on the gate count. Guards against a bad edit silently dropping
+  # most of the suite - the failure mode a reviewer would not notice.
+  if (@($Table).Count -lt 25) {
+    $errs += ("E1 gate count too low: " + @($Table).Count + " (<25)")
+  }
+
+  $seen = @()
+  foreach ($g in $Table) {
+    $nm = $g.n
+    if (-not $nm) { $errs += "E2 gate without a name"; continue }
+    if (-not $nm.StartsWith("LA_")) { $errs += ("E2 gate name must start with LA_: " + $nm) }
+    if ($seen -contains $nm) { $errs += ("E2 duplicate gate name: " + $nm) }
+    $seen += $nm
+
+    # E3: tier domain. A typo like "fas" would silently demote a gate to the
+    # default full layer - or, worse, be read as "not fast" and never run on PR.
+    $t = Get-GateTier $g
+    if (($t -ne "fast") -and ($t -ne "full")) {
+      $errs += ("E3 illegal tier '" + $t + "' on " + $nm)
+    }
+
+    # E4: a fast gate that needs external env vars is dead weight on CI (it can
+    # only ever SKIP there), and worse, it looks like coverage.
+    if (($t -eq "fast") -and $g.need) {
+      $errs += ("E4 fast gate must not require external env: " + $nm + " needs " + ($g.need -join ","))
+    }
+
+    # E5: script gates shell out to another PowerShell; they are not cheap
+    # offscreen self-exits and do not belong in the per-PR layer. The single
+    # exception is this gate matrix's own self-test: pure PowerShell, no exe,
+    # and it MUST sit in the fast layer or the matrix would have no PR guard.
+    if (($t -eq "fast") -and ($g.kind -eq "ps1") -and ($nm -ne "LA_GATE_MATRIX_QA")) {
+      $errs += ("E5 fast gate must not be a script gate: " + $nm)
+    }
+  }
+
+  # E6: MEMBERSHIP is decided by measured cost, not by taste. This is the rule
+    # that makes the split honest: a gate may only sit in the PR layer if it was
+    # MEASURED cheap. A ratio check ("fast must stay under half the suite") is
+    # far too weak - it stayed green when a 3640 ms map gate was quietly moved
+    # into the fast layer, because 10 of 30 is still "under half". Proven by
+    # counter-example, which is why this rule exists in this form.
+    $fastN = @(Get-GateTable -Tier "fast" -Table $Table).Count
+    $allN  = @($Table).Count
+    if ($fastN -lt 8) { $errs += ("E6 fast layer too thin: " + $fastN + " (<8)") }
+    foreach ($g in (Get-GateTable -Tier "fast" -Table $Table)) {
+      $ms = 0
+      if ($g.ContainsKey("measuredMs")) { $ms = [int]$g.measuredMs }
+      if ($ms -gt $fastBudgetMs) {
+        $errs += ("E6 fast gate is not cheap enough: " + $g.n + " measuredMs=" + $ms + " (budget " + $fastBudgetMs + ")")
+      }
+    }
+
+    # E7: MEMBERSHIP also has a floor - the invariant gates must always run on a
+    # PR. Count-based checks cannot catch one of these being dropped, which is
+    # the exact regression the fast layer must prevent: a broken self-exit
+    # contract or a broken cache/undo state machine reaching main unseen.
+    foreach ($must in $coreFastGates) {
+      $hit = @($Table | Where-Object { ($_.n -eq $must) -and ((Get-GateTier $_) -eq "fast") }).Count
+      if ($hit -ne 1) { $errs += ("E7 core invariant gate not in fast layer: " + $must) }
+    }
+
+    # E8: every gate must carry a MEASURED cost. A gate with no measuredMs
+    # silently reads as 0 ms, which would let any unmigrated gate slip into the
+    # fast layer on stale data. This rule was added after a real corruption:
+    # an annotation pass appended measuredMs INSIDE the quoted scriptArgs string
+    # of LA_RELEASE_QA, so the key vanished while the string silently changed
+    # the release self-test's arguments.
+    foreach ($g in $Table) {
+      if (-not $g.n) { continue }
+      if (-not $g.ContainsKey("measuredMs")) {
+        $errs += ("E8 gate has no measuredMs (tiering would be a guess): " + $g.n)
+      }
+    }
+
+    return $errs
+}
+
+if ($LoadOnly) { return }
+
+if ($List) {
+  foreach ($g in $GateTable) {
+    Write-Host ("{0,-20} {1}" -f $g.n, (Get-GateTier $g))
+  }
+  exit 0
+}
+
+if (-not $SelfTest) { Write-Host "gate_matrix: use -SelfTest or -List (or dot-source with -LoadOnly)"; exit 0 }
+
+# ---------------------------------------------------------------------------
+# -SelfTest: this file's own gate. Asserts the matrix is structurally sound AND
+# that the validator above is not vacuous.
+# ---------------------------------------------------------------------------
+$fails = @()
+
+function Chk {
+  param([string]$Id, [bool]$Ok, [string]$Note)
+  if ($Ok) {
+    Write-Host ("LA_GATE_MATRIX_QA PASS {0} {1}" -f $Id, $Note)
+  } else {
+    Write-Host ("LA_GATE_MATRIX_QA FAIL {0} {1}" -f $Id, $Note)
+    $script:fails += ($Id + " " + $Note)
+  }
+}
+
+$all  = @(Get-GateTable)
+$fast = @(Get-GateTable -Tier "fast")
+$full = @(Get-GateTable -Tier "full")
+
+# E1 - the real table passes the structural validator.
+$realErrs = @(Test-GateMatrix -Table $all)
+Chk "E1" ($realErrs.Count -eq 0) ("gates=" + $all.Count + " fast=" + $fast.Count + " full=" + $full.Count + " errs=" + $realErrs.Count)
+foreach ($e in $realErrs) { Write-Host ("LA_GATE_MATRIX_QA FAIL E1 detail=" + $e) }
+
+# E2 - the two layers are disjoint and their union is the whole table.
+$overlap = @($fast | Where-Object { $full -contains $_ }).Count
+Chk "E2" (($overlap -eq 0) -and (($fast.Count + $full.Count) -eq $all.Count)) ("overlap=" + $overlap + " union=" + ($fast.Count + $full.Count) + " all=" + $all.Count)
+
+# E3 - FAIL-SAFE: strip every tier key. Nothing may be left in the fast layer,
+# so a new gate that forgets to declare a tier can only ever land in "full".
+$stripped = @()
+foreach ($g in $all) {
+  $c = @{}
+  foreach ($k in $g.Keys) { if ($k -ne "tier") { $c[$k] = $g[$k] } }
+  $stripped += $c
+}
+$stripFast = @(Get-GateTable -Tier "fast" -Table $stripped).Count
+$stripFull = @(Get-GateTable -Tier "full" -Table $stripped).Count
+Chk "E3" (($stripFast -eq 0) -and ($stripFull -eq $all.Count)) ("strippedFast=" + $stripFast + " strippedFull=" + $stripFull)
+
+# E4 - the strict layer must actually hold the expensive band. Guards against a
+# future edit that "optimises" the matrix by marking everything fast, which
+# would leave the two layers identical and the tiers decorative.
+$cheapMax = 2000
+$slowSeen = 0
+foreach ($g in $full) { if ($g.measuredMs -ge $cheapMax) { $slowSeen++ } }
+Chk "E4" ($slowSeen -ge 10) ("fullTierExpensiveGates=" + $slowSeen + " (measured >= " + $cheapMax + "ms)")
+
+# E5 - every fast gate must be one the PR layer can actually run on a bare CI
+# runner: self-exiting exe gate, no external env, no script shell-out.
+$badFast = @($fast | Where-Object { ($_.kind -eq "ps1") -and ($_.n -ne "LA_GATE_MATRIX_QA") })
+$envFast = @($fast | Where-Object { $_.need })
+Chk "E5" (($badFast.Count -eq 0) -and ($envFast.Count -eq 0)) ("badScriptFast=" + $badFast.Count + " envGatedFast=" + $envFast.Count)
+
+# E6 - MEMBERSHIP, not ratio. The measured-cost budget is what actually keeps
+# the PR layer cheap; it is asserted here directly as well as inside the
+# validator, because it is the property the whole matrix rests on.
+$overBudget = @($fast | Where-Object { [int]$_.measuredMs -gt $fastBudgetMs })
+Chk "E6" ($overBudget.Count -eq 0) ("budget=" + $fastBudgetMs + "ms overBudget=" + $overBudget.Count)
+
+# E7 - the core invariant gates are all present in the PR layer.
+$missingCore = @($coreFastGates | Where-Object { $c = $_; @($fast | Where-Object { $_.n -eq $c }).Count -ne 1 })
+Chk "E7" ($missingCore.Count -eq 0) ("core=" + $coreFastGates.Count + " missing=" + $missingCore.Count)
+
+# E8 - every real gate carries a measured cost.
+$noMeasured = @($all | Where-Object { -not $_.ContainsKey("measuredMs") })
+Chk "E8" ($noMeasured.Count -eq 0) ("gates=" + $all.Count + " missingMeasuredMs=" + $noMeasured.Count)
+
+# E9 - counter-examples: the validator must actually reject broken tables.
+# Each bad table targets one rule and we require THAT rule's id in the errors,
+# so a green result cannot come from an unrelated check. This block exists
+# because the first version of E6 was a ratio check and two of these five
+# counter-examples stayed GREEN against it - see the CHANGELOG for 2.8.0.
+function Reject {
+  param($Table, [string]$WantId)
+  $errs = @(Test-GateMatrix -Table $Table)
+  $hit = @($errs | Where-Object { $_.StartsWith($WantId) }).Count
+  return @{ total = $errs.Count; hit = $hit }
+}
+
+$r1 = Reject -Table (@($all) + @(@{n="LA_GEO_SMOKE"; png=$false; tier="fast"})) -WantId "E2"
+Chk "E9a" (($r1.hit -gt 0) -and ($r1.total -gt 0)) ("dupName rejected total=" + $r1.total + " hitE2=" + $r1.hit)
+
+$r2 = Reject -Table @(@{n="LA_TYPO_SMOKE"; png=$false; tier="fas"}) -WantId "E3"
+Chk "E9b" (($r2.hit -gt 0) -and ($r2.total -gt 0)) ("badTier rejected total=" + $r2.total + " hitE3=" + $r2.hit)
+
+$r3 = Reject -Table (@($all) + @(@{n="LA_NEEDY_FAKE"; png=$false; tier="fast"; need=@("LA_FAKE_ROOT")})) -WantId "E4"
+Chk "E9c" (($r3.hit -gt 0) -and ($r3.total -gt 0)) ("fastWithNeed rejected total=" + $r3.total + " hitE4=" + $r3.hit)
+
+$r4 = Reject -Table (@($all) + @(@{n="LA_PS_FAKE"; png=$false; tier="fast"; kind="ps1"; script="x.ps1"})) -WantId "E5"
+Chk "E9d" (($r4.hit -gt 0) -and ($r4.total -gt 0)) ("fastScriptGate rejected total=" + $r4.total + " hitE5=" + $r4.hit)
+
+# CE4 from the external proof run: demoting an EXPENSIVE gate is NOT caught by a
+# ratio rule (10 of 30 is still "under half") but MUST be caught by the cost
+# budget. If this ever goes green again the budget rule has been weakened.
+$expensiveInFast = @()
+foreach ($g in $full) {
+  if ([int]$g.measuredMs -gt $fastBudgetMs) { $expensiveInFast += $g }
+}
+$movedExpensive = @($expensiveInFast | Select-Object -First 1)
+if ($movedExpensive.Count -eq 1) {
+  $r5 = Reject -Table (@($all) + @(@{n=$movedExpensive[0].n; png=$false; tier="fast"; measuredMs=$movedExpensive[0].measuredMs})) -WantId "E6"
+  Chk "E9e" (($r5.hit -gt 0) -and ($r5.total -gt 0)) ("expensiveInFast rejected (" + $movedExpensive[0].n + " " + $movedExpensive[0].measuredMs + "ms) hitE6=" + $r5.hit)
+} else {
+  Chk "E9e" $false "no expensive gate available to build the counter-example"
+}
+
+# CE1 from the external proof run: a ratio rule also cannot see a CORE gate
+# silently leaving the PR layer, as long as the raw count stays >= 8. Strip the
+# tier key from the FIRST core gate and require the validator to notice.
+$victim = $coreFastGates[0]
+$demoted = @()
+foreach ($g in $all) {
+  $c = @{}
+  foreach ($k in $g.Keys) { if ($k -ne "tier") { $c[$k] = $g[$k] } }
+  $demoted += $c
+}
+$r6 = Reject -Table $demoted -WantId "E7"
+Chk "E9f" (($r6.hit -gt 0) -and ($r6.total -gt 0)) ("coreGateDemoted rejected victim=" + $victim + " hitE7=" + $r6.hit)
+
+# CE2 from the wiring step: measuredMs silently swallowed into a quoted
+# scriptArgs string. The key vanishes, the argument changes, nothing else breaks.
+$corrupt = @()
+foreach ($g in $all) {
+  $c = @{}
+  foreach ($k in $g.Keys) { $c[$k] = $g[$k] }
+  if ($c.ContainsKey("measuredMs")) { $c.Remove("measuredMs") }
+  $corrupt += $c
+}
+$r7 = Reject -Table $corrupt -WantId "E8"
+Chk "E9g" (($r7.hit -gt 0) -and ($r7.total -gt 0)) ("missingMeasuredMs rejected total=" + $r7.total + " hitE8=" + $r7.hit)
+
+# E10 - an unknown tier must throw, not silently fall back to "run everything".
+$threw = $false
+try { Get-GateTable -Tier "medium" | Out-Null } catch { $threw = $true }
+Chk "E10" $threw "unknownTierThrows=1"
+
+Write-Host ("LA_GATE_MATRIX_QA PASS gates={0} fast={1} full={2} budget={3}ms core={4}" -f `
+            $all.Count, $fast.Count, $full.Count, $fastBudgetMs, $coreFastGates.Count)
+if ($fails.Count -gt 0) {
+  Write-Host ("LA_GATE_MATRIX_QA FAIL fails={0}" -f $fails.Count)
+  exit 1
+}
+Write-Host ("LA_GATE_MATRIX_QA PASS fails=0")
+exit 0

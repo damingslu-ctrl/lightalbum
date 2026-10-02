@@ -10,6 +10,7 @@
   powershell -ExecutionPolicy Bypass -File iterate.ps1            # build + gates + report
   powershell -ExecutionPolicy Bypass -File iterate.ps1 -NoBuild   # skip build, just gates
   powershell -ExecutionPolicy Bypass -File iterate.ps1 -Only LA_GEO_SMOKE
+  powershell -ExecutionPolicy Bypass -File iterate.ps1 -NoBuild -Tier fast
 #>
 param(
   [string]$Exe = "",
@@ -19,6 +20,9 @@ param(
   [switch]$Package = $false,
   [string]$Only = "",
   [int]$Timeout = 25,
+  # 2.8.0: pass through the gate-matrix tier. "" (default) = every gate,
+  # so a local iteration and release.ps1 keep their full coverage.
+  [string]$Tier = "",
   [string]$Report = ""
 )
 
@@ -67,6 +71,8 @@ if ($doBuild) {
 # powershell -File parser, which then never binds qa_runner.ps1's -Only param.
 $qaArgs = @("-ExecutionPolicy","Bypass","-File",$qaRunner,"-Exe",$Exe,"-Timeout",$Timeout,"-Result",$resultJson)
 if ($Only) { $qaArgs += "-Only"; $qaArgs += $Only }
+# -Tier and its value MUST also be two separate tokens (see note above).
+if ($Tier) { $qaArgs += "-Tier"; $qaArgs += $Tier }
 & powershell @qaArgs
 
 # Consume the JSON result (decoupled from PowerShell stream redirection).
@@ -79,9 +85,16 @@ if (-not $data) {
   exit 2
 }
 $gates = @()
-foreach ($g in $data.gates) { $gates += @{ name = $g.name; mark = $g.mark; detail = $g.detail } }
+foreach ($g in $data.gates) {
+  $gates += @{ name = $g.name; mark = $g.mark; detail = $g.detail; ms = $g.ms }
+}
 $sum = @{ pass = [int]$data.summary.pass; fail = [int]$data.summary.fail;
          check = [int]$data.summary.check; skip = [int]$data.summary.skip }
+# 2.8.0: which matrix layer actually ran, and how long it took. Without this
+# a reader cannot tell a fast PR run from a full one, and would read a 9-gate
+# report as if the whole 30-gate suite had passed.
+$tierRan = if ($data.tier) { [string]$data.tier } else { "all" }
+$totalMs = if ($data.summary.totalMs) { [int]$data.summary.totalMs } else { 0 }
 
 $verdict = if (-not $buildOk) { "NO-GO (build failed)" }
            elseif ($sum.fail -gt 0) { "NO-GO (gates red)" }
@@ -95,6 +108,8 @@ $md += ""
 $md += "- Generated: $ts"
 $md += "- Exe: $Exe"
 $md += "- Build: $buildNote"
+$md += "- Gate tier: **$tierRan** (gates in this layer: $($gates.Count))"
+$md += "- Wall clock: $([int][Math]::Round($totalMs / 1000.0, 1)) s"
 $md += "- Verdict: **$verdict**"
 $md += ""
 $md += "## Summary"
@@ -105,11 +120,12 @@ $md += ("| {0} | {1} | {2} | {3} |" -f $sum.pass, $sum.fail, $sum.check, $sum.sk
 $md += ""
 $md += "## Gates"
 $md += ""
-$md += "| Gate | Result | Detail |"
-$md += "|---|---|---|"
+$md += "| Gate | ms | Result | Detail |"
+$md += "|---|---|---|---|"
 foreach ($g in $gates) {
   $d = if ($g.detail) { $g.detail } else { "" }
-  $md += ("| {0} | {1} | {2} |" -f $g.name, $g.mark, $d)
+  $cell = if ($null -ne $g.ms) { [int]$g.ms } else { 0 }
+  $md += ("| {0} | {1} | {2} | {3} |" -f $g.name, $cell, $g.mark, $d)
 }
 $failRows = @($gates | Where-Object { $_.mark -eq "[FAIL]" })
 if ($failRows.Count -gt 0) {
@@ -124,7 +140,9 @@ $md | Set-Content -Path $Report -Encoding UTF8
 # Console summary
 Write-Host ""
 Write-Host "=== ITERATION VERDICT: $verdict ==="
-Write-Host ("Gates: PASS={0} FAIL={1} CHECK={2} SKIP={3}" -f $sum.pass, $sum.fail, $sum.check, $sum.skip)
+Write-Host ("Gates: PASS={0} FAIL={1} CHECK={2} SKIP={3} (tier={4}, {5}s)" -f `
+                   $sum.pass, $sum.fail, $sum.check, $sum.skip, $tierRan, `
+                   [int][Math]::Round($totalMs / 1000.0))
 Write-Host "Report: $Report"
 
 # Optional packaging after a green run

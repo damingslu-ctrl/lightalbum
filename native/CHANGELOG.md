@@ -3,6 +3,97 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.8.0] - 2026-10-03
+
+### 变更 - 门禁矩阵化（方向 E 第三步）
+
+**问题**：门表内联在 `qa_runner.ps1` 里，30 门在每个 PR 上全量跑。2026-10-03 实测
+基线：**全量 30 门 = 73.6s 墙钟**，而门耗时的分布是天然两极的：
+
+| 类别 | 门数 | 单门耗时 | 共因 |
+|---|---|---|---|
+| 纯逻辑门 | 9 | 56 - 250 ms | `main()` 早期 return，不构造 MainWindow |
+| 构造 / fixture 门 | 21 | 338 - 8662 ms | 构造 MainWindow 或载入 6425 张 fixture |
+
+也就是说 77% 的门只占 2% 的时间，而 68% 的 CI 时间花在少数几个必然要在 main 上
+跑的门上。PR 每次都付这 73.6s，而其中绝大部分与"这次改动有没有打破东西"无关。
+
+**方案**：新增 `native/gate_matrix.ps1`，作为**门表与分层的唯一真源**。
+`qa_runner.ps1` 改为 dot-source 消费它，不再内嵌门表（此前若要在两处分层，必然
+出现"门在一处、层在另一处"的漂移）。
+
+**分层语义（fail-safe）**：
+
+- `tier="fast"` —— 实测廉价，**每个 PR 都跑**；
+- `tier="full"` —— 昂贵，push 到 main / tag 时跑，本地全量跑与 `release.ps1` 也跑；
+- **tier 缺省 = full** —— 新门忘写 tier 只能落进最严的一层，绝不会因遗漏而
+  静悄悄削弱 PR 层。
+
+不传 `-Tier` 时是两层并集，与 2.7.0 行为逐字节一致 —— **打包门禁强度未被削弱**。
+
+**实测收益**：fast 层 **9 门 1.74s**，全量 30 门 73.4s（**42 倍**）。
+
+**两处刻意的排除**，都在 `gate_matrix.ps1` 头注释里写明理由：
+
+- `LA_SCALE_PERF`（338 ms）虽快，但断言的是**墙钟预算**，放共享 CI runner 上必
+  flaky。PR 层放一个会抖的门，等于教人无视红色 —— 比慢门更糟。
+- `LA_RW_SMOKE`（1017 ms）临界，留在严层，让 vault / 加密往返只有一处能坏。
+
+### 新增 - LA_GATE_MATRIX_QA（第 30 门，18 条断言）
+
+它**住在 fast 层**：矩阵的看门狗自己必须在 PR 层被看。
+
+1. E1 真表通过结构校验；E2 两层互斥且并集为全表；
+2. E3 **fail-safe 实测**：剥掉所有 tier 后 fast 层为 0、full 层为 30；
+3. E4 严层必须真的装着 ≥2000ms 的贵门（18 个）；
+4. E5 fast 层无脚本门（矩阵自身除外）、无外部 env 依赖门；
+5. E6 **成分而非比例**：fast 层每门 `measuredMs ≤ 500ms` 预算；
+6. E7 5 个核心不变量门**必须**留在 fast 层；
+7. E8 每门必须带 `measuredMs`（否则分层就成了猜）；
+8. E9a-g 七组同源反例；E10 未知 tier 必须抛异常而非静默全跑。
+
+### QA - 反例实测 6/6 变红（并因此改了两条断言）
+
+外部脚本 `_ce324.py` 逐个注入真实缺陷、走**真 runner**、断言判红：
+
+| 反例 | 注入 | 结果 |
+|---|---|---|
+| CE1 | 核心门 `LA_THUMB_CACHE_QA` 悄悄退出 PR 层 | RED |
+| CE2 | 重复门名 | RED |
+| CE3 | 外部 env 依赖门被拖进 fast 层 | RED |
+| CE4 | 昂贵门（7.4s）被降级进 PR 层 | RED |
+| CE5 | 混入未知 tier 值 `fas` | RED |
+| CE6 | `measuredMs` 被吞进带引号的 `scriptArgs` | RED |
+
+**首轮只有 3/5 变红，暴露了两条真盲区**：
+
+1. **原 E6 只卡"fast 占比不超过一半"的比例**。把 3640 ms 的地图门塞进 fast 层
+   后 fast=10/30，仍"不到一半" → 依然绿。**比例规则根本看不见成分退化**。已改为
+   成员资格规则（成本预算 E6 + 核心门 E7）。
+2. **CE1 最初写成"删掉一个 tier key 应当变红"，它保持绿色是正确的** —— 无 tier 的门
+   本就该落严层。真正暴露的问题是：**没有任何规则能察觉核心门离开了 PR 层**。
+   由此新增 E7 与其反例 E9f。
+
+**同轮修掉一个真实数据损坏**：给门表批量追加 `measuredMs` 时，字段被拼进了
+`LA_RELEASE_QA` 的**带引号 `scriptArgs` 字符串内部** ——
+`scriptArgs="-SelfTest; measuredMs=3135"`，键消失、参数被改。E8 就是为这类"静默
+吞字段"而设的。**教训：批量改结构化行必须逐行断言形状，不能只断言行首前缀。**
+
+### 修复
+
+- `qa_runner.ps1`：新增 `-Tier fast|full`、`-Timing`；门表改为消费 `gate_matrix.ps1`；
+  摘要与 JSON 增加 `tier` / `totalMs` / 每门 `ms`。
+- `iterate.ps1`：新增 `-Tier` 透传；Markdown 报告增加层级、墙钟、每门 ms 列。
+  没有这一层，读者会把 9 门的 fast 报告误读成全套通过。
+- `.github/workflows/qa.yml`：`pull_request` → fast 层，其余触发 → full 层，
+  选择步骤写入 `$GITHUB_ENV`，层级出现在 CI 日志与 artifact 名前缀里。
+
+### 门数
+
+29 → **30** 门。全量回归：`PASS=29 FAIL=0 CHECK=0 SKIP=1 KILL=0`，
+`tier=all gates=30`，墙钟 73379ms，`VERDICT: GO`。
+（`LA_SCAN_SMOKE` 仍因缺 `LA_SCAN_ROOT` / `LA_SCAN_DB` 自动 `[SKIP]`。）
+
 ## [2.7.0] - 2026-10-03
 
 ### 修复（门禁自退时序缺陷 —— 此前被误记为「环境噪声」的真缺陷）

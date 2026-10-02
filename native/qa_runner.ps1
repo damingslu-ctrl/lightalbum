@@ -5,15 +5,26 @@
   (exit 0 / 0 bytes false negative). ALL gates MUST run via PowerShell. Never run
   gates from Git Bash. See docs/client_iter_guide.md (section 2) for the full story.
 .USAGE
-  powershell -ExecutionPolicy Bypass -File qa_runner.ps1 [-Exe <path>] [-Only <gate>] [-Timeout 25]
+  powershell -ExecutionPolicy Bypass -File qa_runner.ps1 [-Exe <path>] [-Only <gate>]
+                                        [-Timeout 25] [-Tier fast|full] [-Timing]
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File qa_runner.ps1                 # run all gates
   powershell -ExecutionPolicy Bypass -File qa_runner.ps1 -Only LA_GEO_SMOKE
+  powershell -ExecutionPolicy Bypass -File qa_runner.ps1 -Timing          # per-gate wall clock
+  powershell -ExecutionPolicy Bypass -File qa_runner.ps1 -Tier fast      # PR layer only
 #>
 param(
   [string]$Exe = "",
   [string]$Only = "",
   [int]$Timeout = 25,
+  # 2.8.0: per-gate wall clock. Printed inline and written to the result
+  # JSON as ms, so gate tiering is decided from MEASURED cost, never a guess.
+  [switch]$Timing = $false,
+  # 2.8.0: which layer of the gate matrix to run. "" (default) = all gates,
+  # i.e. byte-for-byte the pre-2.8.0 behaviour, which is what release.ps1 and
+  # a local full run use. "fast" = the cheap PR layer, "full" = the strict
+  # layer (push to main / tags). The table lives in gate_matrix.ps1.
+  [string]$Tier = "",
   [string]$Result = (Join-Path $env:TEMP "qa_client\qa_result.json")
 )
 $ErrorActionPreference = "Stop"
@@ -22,44 +33,18 @@ $tmp = Join-Path $env:TEMP "qa_client"; New-Item -ItemType Directory -Force -Pat
 # Portable default: exe is <scriptDir>/build/LightAlbum.exe (scriptDir = native/).
 if (-not $Exe) { $Exe = Join-Path $PSScriptRoot "build/LightAlbum.exe" }
 
-# Gate definitions: n=gate name; png=needs a png path argument; arg=extra suffix after png (e.g. ",china")
-# need=env vars that must be present or the gate is skipped (e.g. scan needs its own root/db)
-# kind=exe (default) runs the native exe with env LA_<name>=1; kind=ps1 runs
-#   native/<script> with the given -ScriptArgs instead (used for the release
-#   contract self-test, which asserts on packaging logic, not on the app).
-# All gates here are real (verified in src/main.cpp). Hard self-exit logic gates return
-# before app.exec(); map/widget QA gates print *_DONE then return 0. None truly hang.
-$gates = @(
-  @{n="LA_LUMEN_SMOKE";    png=$false},
-  @{n="LA_AGENT_SMOKE";    png=$false},
-  @{n="LA_GEO_SMOKE";      png=$false},
-  @{n="LA_SCAN_SMOKE";     png=$false; need=@("LA_SCAN_ROOT","LA_SCAN_DB")},
-  @{n="LA_ICLOUD_QA";      png=$false},  # 2.6.0: iCloud album import (sandbox tree, no real iCloud needed)
-  @{n="LA_EXIT_QA";        png=$false},  # 2.7.0: gate self-exit contract (early/deferred/watchdog probes)
-  @{n="LA_LOG_SMOKE";      png=$false},
-  @{n="LA_HOME_SMOKE";     png=$false},
-  @{n="LA_RW_SMOKE";       png=$false},
-  @{n="LA_CULL_SMOKE";     png=$false},
-  @{n="LA_RETOUCH_SMOKE";  png=$false},
-  @{n="LA_SMOKE";          png=$false},
-  @{n="LA_MAP_A_QA";       png=$true},
-  @{n="LA_MAP_BURST_QA";   png=$true},
-  @{n="LA_MAP_REGION_QA";  png=$true; arg=",china"},
-  @{n="LA_MAP_COUNTRY_QA"; png=$true},
-  @{n="LA_MAP_CLICK_QA";   png=$false},
-  @{n="LA_MAP_PERF";       png=$false},
-  @{n="LA_GALLERY_E_QA";   png=$true},
-  @{n="LA_GALLERY_FILL_QA";png=$true},
-  @{n="LA_RETOUCH_A_QA";   png=$true},
-  @{n="LA_RETOUCH_UNDO_QA";png=$false}  # B: undo/redo pure state machine
-  @{n="LA_GALLERY_SEARCH_QA";png=$false}  # C: gallery search filter
-  @{n="LA_SCALE_SMOKE";    png=$false}  # D: real-library scale regression (6425 fixture)
-  @{n="LA_SCALE_PERF";     png=$false}  # D: scale performance baseline (6425 fixture)
-  @{n="LA_THUMB_CACHE_QA";png=$false}  # D4: two-level byte-budgeted thumb LRU
-  @{n="LA_BATCH_TX_QA";  png=$false}  # D5: atomic batch write-back (rollback)
-  @{n="LA_GALLERY_BATCH_QA"; png=$false}  # D5b: gallery multi-select + batch bar
-  @{n="LA_RELEASE_QA";    png=$false; kind="ps1"; script="release.ps1"; scriptArgs="-SelfTest"}  # E: release contracts C1-C7
-)
+# 2.8.0: the gate table is NOT defined here any more. gate_matrix.ps1 is the
+# single source of truth for both the gate list and its tiers, so a gate can
+# never exist in one file and be tiered in another. It is dot-sourced (not
+# shelled out) so Get-GateTable is available without paying a second
+# PowerShell startup on every run.
+# Per-gate fields: n / png / arg / need / kind / script / scriptArgs / tier / measuredMs.
+$matrix = Join-Path $PSScriptRoot "gate_matrix.ps1"
+if (-not (Test-Path $matrix)) { throw ("gate matrix missing: " + $matrix) }
+. $matrix -LoadOnly
+$gates = @(Get-GateTable -Tier $Tier)
+$tierTxt = if ($Tier) { $Tier } else { "all" }
+Write-Host ("Gate matrix: tier={0} gates={1}" -f $tierTxt, $gates.Count)
 
 function Eval($lines, $exitCode, $killed) {
   # A killed gate means the native exe did NOT self-exit within $Timeout: this
@@ -82,6 +67,7 @@ function Eval($lines, $exitCode, $killed) {
 
 $pass=0;$fail=0;$check=0;$skip=0;$kill=0
 $results = @()
+$swTotal = [System.Diagnostics.Stopwatch]::StartNew()
 $prevGate = ""
 foreach ($g in $gates) {
   if ($Only -and $g.n -ne $Only) { continue }
@@ -90,7 +76,7 @@ foreach ($g in $gates) {
     $missing = @($g.need | Where-Object { -not (Test-Path "Env:$_") })
     if ($missing.Count -gt 0) {
       Write-Host ("{0,-20} [SKIP] (needs {1})" -f $g.n, ($missing -join ","))
-      $results += @{ name = $g.n; mark = "[SKIP]"; detail = ("needs " + ($missing -join ",")) }
+      $results += @{ name = $g.n; mark = "[SKIP]"; detail = ("needs " + ($missing -join ",")); ms = 0 }
       $skip++
       continue
     }
@@ -108,6 +94,7 @@ foreach ($g in $gates) {
   # attribute a hang to a gate name instead of just saying "something hung".
   Set-Item -Path "Env:LA_GATE" -Value $g.n
 
+  $swGate = [System.Diagnostics.Stopwatch]::StartNew()
   # Launch via raw System.Diagnostics.Process. This avoids the Start-Process
   # 'Path'/'PATH' case-clash dictionary collision that breaks on this machine.
   $psi = New-Object System.Diagnostics.ProcessStartInfo
@@ -154,8 +141,12 @@ foreach ($g in $gates) {
   } elseif ($verdict -eq "CHECK") {
     $detail = (@($lines | Select-Object -First 1) -join " ").Trim()
   }
-  $results += @{ name = $g.n; mark = $mark; detail = $detail }
-  Write-Host ("{0,-20} {1}" -f $g.n, $mark)
+  $swGate.Stop()
+  $ms = [int]$swGate.ElapsedMilliseconds
+  $results += @{ name = $g.n; mark = $mark; detail = $detail; ms = $ms }
+  $markTxt = "{0,-20} {1}" -f $g.n, $mark
+  if ($Timing) { $markTxt = "{0,-20} {1} ({2}ms)" -f $g.n, $mark, $ms }
+  Write-Host $markTxt
   $lines | ForEach-Object { Write-Host ("    " + $_) }
   switch ($verdict) { "GREEN"{$pass++} "RED"{$fail++} "KILLED"{$fail++;$kill++} default{$check++} }
 }
@@ -168,8 +159,12 @@ Write-Host "SKIP  = required env vars absent (e.g. LA_SCAN_ROOT/LA_SCAN_DB); not
 # Machine-readable result for the orchestrator (iterate.ps1): decouples from
 # PowerShell stream redirection (Write-Host on info stream 6 is not capturable
 # from -File child processes in PS 5.1).
+$swTotal.Stop()
+$totalMs = [int]$swTotal.ElapsedMilliseconds
+Write-Host ("TOTAL wall clock: {0} ms (tier={1}, gates={2})" -f $totalMs, $tierTxt, $gates.Count)
 $obj = @{
-  summary = @{ pass = $pass; fail = $fail; check = $check; skip = $skip }
+  summary = @{ pass = $pass; fail = $fail; check = $check; skip = $skip; totalMs = $totalMs }
+  tier = $tierTxt
   gates   = $results
 }
 try { $obj | ConvertTo-Json -Compress | Set-Content -Path $Result -Encoding UTF8 } catch {}
