@@ -24,6 +24,9 @@ if (-not $Exe) { $Exe = Join-Path $PSScriptRoot "build/LightAlbum.exe" }
 
 # Gate definitions: n=gate name; png=needs a png path argument; arg=extra suffix after png (e.g. ",china")
 # need=env vars that must be present or the gate is skipped (e.g. scan needs its own root/db)
+# kind=exe (default) runs the native exe with env LA_<name>=1; kind=ps1 runs
+#   native/<script> with the given -ScriptArgs instead (used for the release
+#   contract self-test, which asserts on packaging logic, not on the app).
 # All gates here are real (verified in src/main.cpp). Hard self-exit logic gates return
 # before app.exec(); map/widget QA gates print *_DONE then return 0. None truly hang.
 $gates = @(
@@ -53,6 +56,7 @@ $gates = @(
   @{n="LA_THUMB_CACHE_QA";png=$false}  # D4: two-level byte-budgeted thumb LRU
   @{n="LA_BATCH_TX_QA";  png=$false}  # D5: atomic batch write-back (rollback)
   @{n="LA_GALLERY_BATCH_QA"; png=$false}  # D5b: gallery multi-select + batch bar
+  @{n="LA_RELEASE_QA";    png=$false; kind="ps1"; script="release.ps1"; scriptArgs="-SelfTest"}  # E: release contracts C1-C5
 )
 
 function Eval($lines, $exitCode, $killed) {
@@ -96,12 +100,26 @@ foreach ($g in $gates) {
   # Launch via raw System.Diagnostics.Process. This avoids the Start-Process
   # 'Path'/'PATH' case-clash dictionary collision that breaks on this machine.
   $psi = New-Object System.Diagnostics.ProcessStartInfo
-  $psi.FileName = $Exe
-  $psi.UseShellExecute = $false
-  $psi.RedirectStandardOutput = $true
-  $psi.RedirectStandardError = $true
-  $psi.RedirectStandardInput = $true
-  $psi.CreateNoWindow = $true
+  if ($g.kind -eq "ps1") {
+    # Script gate: assert on packaging/release logic instead of app behavior.
+    # It runs the SAME powershell host as this script, so quoting must stay
+    # PS 5.1-safe (no ternary, ASCII only).
+    $sp = Join-Path $PSScriptRoot $g.script
+    if (-not (Test-Path $sp)) { throw ("script gate target missing: " + $sp) }
+    $psi.FileName = "powershell.exe"
+    $psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$sp`" " + $g.scriptArgs
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.CreateNoWindow = $true
+  } else {
+    $psi.FileName = $Exe
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.RedirectStandardInput = $true
+    $psi.CreateNoWindow = $true
+  }
   $proc = New-Object System.Diagnostics.Process
   $proc.StartInfo = $psi
   $proc.Start() | Out-Null
@@ -115,7 +133,11 @@ foreach ($g in $gates) {
   $mark = switch ($verdict) { "GREEN"{"[OK]"} "RED"{"[FAIL]"} "KILLED"{"[KILL]"} "NO-OUTPUT"{"[NOOUT]"} default{"[??]"} }
   $detail = ""
   if ($verdict -eq "KILLED") {
-    $detail = ("TIMEOUT/KILLED: exe did not self-exit within " + $Timeout + "s (console/redirect or hung gate)")
+    if ($g.kind -eq "ps1") {
+      $detail = ("TIMEOUT/KILLED: script gate did not finish within " + $Timeout + "s")
+    } else {
+      $detail = ("TIMEOUT/KILLED: exe did not self-exit within " + $Timeout + "s (console/redirect or hung gate)")
+    }
   } elseif ($verdict -eq "RED") {
     $detail = (@($lines | Where-Object { $_ -match "FAIL" } | Select-Object -First 1) -join " ").Trim()
   } elseif ($verdict -eq "CHECK") {

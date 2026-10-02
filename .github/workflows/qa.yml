@@ -8,6 +8,10 @@
 # so `cmake --build` (MinGW Makefiles) finds mingw32-make.
 name: LightAlbum QA
 
+# Path filter: must include the gate infrastructure itself. A change to
+# qa_runner.ps1 / release.ps1 / iterate.ps1 that breaks or weakens a gate
+# used to trigger NOTHING here, so the gate harness could be broken (or
+# silently weakened) without CI ever noticing. Same for the workflow file.
 on:
   push:
     paths:
@@ -15,12 +19,18 @@ on:
       - 'native/CMakeLists.txt'
       - 'native/resources/**'
       - 'native/data/**'
+      - 'native/*.ps1'
+      - 'native/docs/**'
+      - '.github/workflows/qa.yml'
   pull_request:
     paths:
       - 'native/src/**'
       - 'native/CMakeLists.txt'
       - 'native/resources/**'
       - 'native/data/**'
+      - 'native/*.ps1'
+      - 'native/docs/**'
+      - '.github/workflows/qa.yml'
 
 jobs:
   qa:
@@ -53,6 +63,84 @@ jobs:
         shell: bash
 
       - name: Run quality gates (iterate.ps1 -NoBuild)
-        run: powershell -ExecutionPolicy Bypass -File native/iterate.ps1 -NoBuild -Timeout 25
+        # Both outputs are pinned into the workspace on purpose: their defaults
+        # are timestamped files under TEMP, which an artifact glob cannot name.
+        run: >
+          powershell -ExecutionPolicy Bypass -File native/iterate.ps1
+          -NoBuild -Timeout 25
+          -Report native/build/iteration-report.md
         shell: pwsh
         # iterate.ps1 exits 1 on a red gate / failed build -> CI fails the job.
+
+      - name: Collect machine-readable gate result
+        # iterate.ps1 writes qa_result_<timestamp>.json into TEMP and never
+        # exposes that path, so copy the newest one next to the report.
+        if: always()
+        shell: pwsh
+        run: |
+          $src = Get-ChildItem "$env:TEMP/qa_result_*.json" -ErrorAction SilentlyContinue |
+                 Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if ($src) { Copy-Item $src.FullName native/build/qa_result.json; Write-Host "collected $($src.Name)" }
+          else { Write-Host "WARN: no qa_result_*.json found under TEMP" }
+
+      - name: Upload gate report
+        # Gate verdicts used to exist only in the runner log: on a red gate the
+        # job output was the sole record, and iterate.ps1's Markdown report was
+        # written to a temp path nobody could open. Persist both as artifacts.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-report-${{ github.run_number }}
+          path: |
+            native/build/iteration-report.md
+            native/build/qa_result.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  package:
+    # Smoke-test the actual packaging path. release.ps1 carries the release
+    # contracts (CHANGELOG/version sync, manual + core artifacts, MANIFEST
+    # self-verify, zip integrity) and used to run ONLY on a human's machine, so
+    # a broken packager could not be caught until release day.
+    needs: qa
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Provision Qt 6.8.3 + MinGW (aqtinstall)
+        run: |
+          python -m pip install --upgrade pip aqtinstall
+          python -m aqt install-qt windows desktop 6.8.3 win64_mingw --outputdir C:/Qt
+          python -m aqt install-tool windows desktop tools_mingw qt.tools.win64_mingw1310 --outputdir C:/Qt
+        shell: bash
+
+      - name: Add MinGW toolchain to PATH
+        run: echo "C:/Qt/Tools/mingw1310_64/bin" | Out-File -Append -FilePath $env:GITHUB_PATH
+        shell: pwsh
+
+      - name: Configure
+        run: |
+          cmake -S native -B native/build -G "MinGW Makefiles" `
+            -DCMAKE_PREFIX_PATH="C:/Qt/6.8.3/mingw_64" `
+            -DCMAKE_BUILD_TYPE=Release
+        shell: pwsh
+
+      - name: Build
+        run: cmake --build native/build --target LightAlbum -j 8
+        shell: bash
+
+      - name: Package (release.ps1 -SkipGate, gates already ran in the qa job)
+        # -SkipGate: the qa job above already ran every gate and this job would
+        # only repeat it. The release contracts C1..C5 still run here for real.
+        run: powershell -ExecutionPolicy Bypass -File native/release.ps1 -SkipGate
+        shell: pwsh
+
+      - name: Upload dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lightalbum-dist-${{ github.run_number }}
+          path: |
+            native/LightAlbum-*-win64.zip
+            native/LightAlbum-*-win64/MANIFEST.txt
+          if-no-files-found: error
+          retention-days: 14

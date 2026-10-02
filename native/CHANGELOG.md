@@ -3,6 +3,31 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.4.0] - 2026-10-02
+
+### 工程（方向 E·发布 CI 强化：第一步 发布契约化 + CI 覆盖修复）
+- **取证：发布链路存在 6 个真实缺陷**（本步不新增用户可见功能，而是把「能打包」变成「打包可验证」）：
+  1. **`$ts` 作用域缺陷**：`release.ps1` 里 `$ts` 只在 `if (Test-Path $staging)` 分支内定义，而 `-TrimNetwork` 分支也用它给裁剪文件打时间戳 → **首次打包（staging 尚不存在）时 `$ts` 为 `$null`**，裁剪产物退化为 `Qt6Network.dll_`（无时间戳），下次 trim 静默覆盖。
+  2. **CHANGELOG 与版本零校验**：版本真源在 `CMakeLists.txt`，但 `release.ps1`/`iterate.ps1` 中 `CHANGELOG` 出现次数为 **0** —— 改了版本号却没写 CHANGELOG，照样产出「可发布」zip。
+  3. **手册 glob 硬编码** `LightAlbum-2.0.0-*.md`：当前版本已 2.3.0，仅因手册文件名恰好还是 2.0.0 才碰巧命中；一旦手册改名即静默不打进包。
+  4. **分发物无清单**：zip 打完只打印体积，无任何 manifest —— 分发完整性不可校验、两次构建不可比对。
+  5. **CI 覆盖漏洞**：`.github/workflows/qa.yml` 的 `paths` 只含 `src`/`resources`/`data` → **改动门禁运行器本身（`qa_runner.ps1`/`release.ps1`/`iterate.ps1`）完全不触发 CI**，门禁可被悄悄削弱而无人察觉。
+  6. **门禁判定无留痕**：结论只在 runner 日志里，`iterate.ps1` 的 Markdown 报告写在 `TEMP` 的时间戳文件中，无人可打开。
+- **5 条发布契约（C1-C5）抽为接受显式路径的独立函数**：C1 `Assert-VersionSync`（CHANGELOG 顶部 `## [x.y.z]` 必须 == CMakeLists `project(VERSION)` == 待打包版本）、C2 `Assert-ManualPresent`、C3 `Assert-CoreArtifacts`（`LightAlbum.exe` + `platforms/qoffscreen.dll` + `qwindows.dll` 非空）、C4 `Assert-ManifestConsistent`、C5 `Assert-ZipIntegrity`。**这些契约在真实打包路径里真的执行**（抛错即中止），同时被 `-SelfTest` 在一次性沙盒上驱动 —— **生产代码零 seam、无测试专用分支**。
+- **`MANIFEST.txt`**：staging 内生成 `sha256 <TAB> 字节数 <TAB> 相对路径`清单，**在 trim 之后生成**以描述真正出货的内容；随包分发。
+- **新增第 25 门 `LA_RELEASE_QA`（脚本门）**：`qa_runner.ps1` 新增 `kind="ps1"` 门类型（跑脚本而非 exe，KILLED 文案区分；**不依赖 exe 自退**，故不受「真实控制台」约束）。`-SelfTest` 在临时沙盒建假 CMakeLists/CHANGELOG/dist/zip，先确认干净基线 5 条全绿，再**逐个注入 5 类缺陷**并断言对应契约是唯一被抓到的那条。
+- **CI 加固**：`paths` 补 `native/*.ps1`、`native/docs/**` 及 workflow 自身；新增 `Collect machine-readable gate result`（把 `TEMP` 下时间戳 JSON 拷进工作区）+ `upload-artifact` 留痕；新增**串行 `package` job**（`needs: qa`）在每次 push 真跑 `release.ps1` —— 打包器从此不再只在人的机器上运行。
+- **脚本编码治理**：`release.ps1` 原含 452 个非 ASCII 字节且无 BOM → PS 5.1 按 GBK 解析，中文字符串必然乱码。**全脚本转纯 ASCII**（注释亦然），与 `qa_runner.ps1`/`iterate.ps1` 对齐。
+- **实测**：
+  - `LA_RELEASE_QA PASS contracts=5 injected=5 caught=5 baseline=5 zip=6`（EXIT=0，5 个注入缺陷全部被对应契约抓住）。
+  - **反例** `release.ps1 -SelfTest -NoInject` → `FAIL reason=NOINJECT contracts=5 injected=0 caught=0 -- contract assertions unproven`（EXIT=1）；经 `qa_runner` 判定为 `[FAIL]`（端到端非空心）。
+  - **真实 C1 反例**：把 CHANGELOG 顶部改为 `2.9.9` → `C1 version mismatch: CMakeLists=2.3.0 CHANGELOG=2.9.9`，打包**前**即中止（EXIT=1），文件已还原。
+  - **真实打包冒烟** `release.ps1 -SkipGate`：`C1 ok: CHANGELOG top entry matches CMakeLists (2.4.0)` / `C2/C3 ok` / `MANIFEST: MANIFEST.txt (28 files, self-verified)` / `C5 ok: ...LightAlbum-2.4.0-win64.zip (17.2 MB, 29 entries)` / `RELEASE OK`。
+  - **产物独立可跑**：在 dist 目录内 `QT_QPA_PLATFORM=offscreen LA_SMOKE=1 ./LightAlbum.exe` → `LA_P1_SMOKE_OK photos=6425 years=8 provs=11 span=2019-2026`（EXIT=0，脱离 `build/`）。
+  - `iterate.ps1 -NoBuild -Only LA_RELEASE_QA` → `ITERATION VERDICT: GO`；workflow YAML 校验通过（`qa` 8 步 → `package` 7 步 `needs: qa`）。
+  - 回归：`LA_GALLERY_BATCH_QA` / `LA_BATCH_TX_QA` / `LA_THUMB_CACHE_QA` / `LA_SMOKE` / `LA_SCALE_SMOKE` / `LA_SCALE_PERF` / `LA_GALLERY_E_QA` 全绿。
+- 版本 2.3.0→**2.4.0**；`qa_runner` 24 门 → **25 门**。
+
 ## [2.3.0] - 2026-10-02
 
 ### 功能（方向 D·规模化与流畅性：第五步 b 图库多选 + 批量工具条）
