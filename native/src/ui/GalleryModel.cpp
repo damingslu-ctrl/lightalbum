@@ -101,15 +101,15 @@ QVariant GalleryModel::data(const QModelIndex& index, int role) const
     }
 }
 
-QPixmap GalleryModel::pixmapAt(int row) const
+QPixmap GalleryModel::pixmapAt(int row, int level) const
 {
     if (!all_ || !cache_ || row < 0 || row >= idx_.size()) return QPixmap();
     const Photo& p = (*all_)[idx_[row]];
     if (p.thumbFile.isEmpty()) return QPixmap();
     // 未命中时触发后台加载；完成后 loaded → onThumbLoaded → dataChanged 刷新该行
     const_cast<GalleryModel*>(this)->cache_->request(
-        p.thumbFile, this, [](const QPixmap&){});
-    return cache_->cached(p.thumbFile);
+        p.thumbFile, this, [](const QPixmap&){}, level);
+    return cache_->cached(p.thumbFile, level);
 }
 
 void GalleryModel::onThumbLoaded(const QString& f)

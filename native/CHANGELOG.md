@@ -3,6 +3,19 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.2.8] - 2026-10-02
+
+### 功能（方向 D·规模化与流畅性：第四步缩略图多级缓存）
+- **`ThumbCache` 两级 +按字节预算 LRU（替代单级 360px / 按张数计费）**：
+  - **取证根因**：旧实现单一 360px 级 + `QCache::setMaxCost(4096)` 按**张数**计费，每张 360×360×4B ≈ 506KB → 上限 **4096×506KB ≈ 1.98 GiB**；且 216px 普通瓦片与 feature 大图（~468px）共用同一张 360px 图——大图不够大、小图白白占内存。
+  - 改为 **L1 `kTile` 256px**（普通瓦片）/ **L2 `kFeature` 512px**（feature 2×2）两级，**按字节预算**淘汰：默认 `LA_THUMB_BUDGET1`=64MiB + `LA_THUMB_BUDGET2`=48MiB，合计 ~112MiB（**远低于旧 1.98GiB**）。
+  - **单次解码一次派生两级**（`LoadTask` 复用同一份源像素，避免二次读盘/解码）。
+  - **刻意保留的旧行为**：① 负缓存（`negative_` 跨级共享，防重试风暴；旧实现用「空 QPixmap 存进 QCache」表达同语义）；② `pending_` 按文件名去重 + `finish()` 经 `QueuedConnection` 回主线程；③ `QPointer` 生命周期守卫；④ 某级因预算淘汰时 `cached()` **回落另一级**（宁可给大图也不给空图）且不重复触发后台加载。
+  - 实现要点：`ByteLru` = `QHash<QString,QPixmap>` + `mutable QList<QString> order_`（front=MRU，淘汰从尾取）；`cost(pm)=w*h*(depth/8)`（**`QPixmap` 无 `sizeInBytes()`，那是 `QImage` 的 API**）。
+- **接线（API 向后兼容）**：`GalleryModel::pixmapAt(row, level=kTile)` 增level 默认参数并透传；`GalleryTile::paintEvent` 按 `feature_` 选级、`prefetchVisible()` 按 row==0 选级。既有调用点零改动。
+- **新增第 22 门 `LA_THUMB_CACHE_QA`**（headless 无需 db，现场合成 8 张 512×512 样图）：断言①一次解码派生两级且两级像素不同 ② L1 字节 < L2 字节 ③ 同级重复 `request` 按文件名去重（任务数 == 文件数）④ 负缓存（缺文件重复 request 只触发一次后台任务、两回调皆空图）⑤ 字节预算生效（压小预算→该级张数受限且 `bytes<=budget`）⑥ 跨级回落（淘汰后 `cached()` 回落另一级、不重触发加载）。
+- **实测**：`LA_THUMB_CACHE_QA PASS files=8 px=256/512 l1=8 l2=8 bytes=2097152/8388608 derived=16 req=8 evictL1=2 evictL2=1`（EXIT=0）；8 图 L1 仅 2MiB、L2 8MiB。**反例** `LA_THUMB_TILE_PX=32`（预算放得下全部→不淘汰）正确 `FAIL reason=B_evict l1count=8`（EXIT=1，非空心）。回归：`LA_GALLERY_E_QA featureOK=1`、`LA_SCALE_SMOKE PASS photos=6425 galleryCtrls=51`、`LA_SCALE_PERF PASS firstMs=46 scrollMaxMs=14`、`LA_SMOKE LA_P1_SMOKE_OK`、`LA_MAP_A_QA jade=17`、`LA_GALLERY_SEARCH_QA PASS marks=7` 全绿。
+- 版本 2.2.7→2.2.8；`qa_runner` 21 门 → **22 门**。
 ## [2.2.7] - 2026-10-02
 
 ### 功能（方向 D·规模化与流畅性：第三步列表虚拟化）

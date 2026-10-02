@@ -39,7 +39,11 @@
 #include <QRegularExpression>
 #include <QScrollArea>
 #include <QScrollBar>
-
+#include <QPixmap>
+#include <QElapsedTimer>
+#include <QByteArray>
+#include <functional>
+#include "ui/ThumbCache.h"
 namespace {
 // P9 AI 修图智能体冒烟：合成「偏暗偏暖发灰」样张 → 测量 → 决策 → 执行。
 // 真实路径（默认 Ollama 127.0.0.1:11434，机器没装则自动落兜底）+ 强制兜底路径（端口 9）。
@@ -439,6 +443,170 @@ int runScalePerf()
     std::fflush(stderr);
     return ok ? 0 : 1;
 }
+
+// 方向 D 第四步：缩略图多级缓存门禁（headless，无需 db——现场合成 8 张 512x512 样图）。
+// 断言 ① 单文件一次解码派生两级、两级像素不同（pxFeat > pxTile）
+//      ② 同批图两级字节 L1 < L2（小图省内存）
+//      ③ 同级重复 request 按文件名去重（后台任务数 == 文件数）
+//      ④ 负缓存：缺文件重复 request 只触发一次后台任务，两个回调都得空图
+//      ⑤ 字节预算生效：超预算淘汰 → 该级张数受限且 bytes<=budget
+//      ⑥ 跨级回落：某级被淘汰后 cached() 回落另一级、且不重复触发加载
+// 预算/像素均经 env 可覆盖，便于本门自造反例（小预算即淘汰路径）。
+int runThumbCacheQa()
+{
+    const int kFiles = 8;
+    const QString dir = QDir::tempPath() + QStringLiteral("/la_thumb_qa");
+    QDir(dir).removeRecursively();
+    if (!QDir().mkpath(dir)) {
+        std::fprintf(stderr, "LA_THUMB_CACHE_QA FAIL mkpath=%s\n", qPrintable(dir));
+        std::fflush(stderr);
+        return 2;
+    }
+    QStringList files;
+    for (int i = 0; i < kFiles; ++i) {
+        QImage im(512, 512, QImage::Format_RGB32);
+        im.fill(qRgb(40 + i * 20, 90, 170 - i * 12));
+        const QString fn = QStringLiteral("qa_t%1.png").arg(i, 2, 10, QChar('0'));
+        im.save(QDir(dir).filePath(fn), "PNG");
+        files << fn;
+    }
+
+    // 完成信号经 QueuedConnection 回主线程 → 必须转事件循环等 finish 落地
+    const auto spin = [](const std::function<bool()>& pred, int ms) {
+        QElapsedTimer t; t.start();
+        while (!pred() && t.elapsed() < ms)
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        return pred();
+    };
+
+    QStringList fails;
+    const auto note = [&fails](bool ok, const QString& what) {
+        if (!ok) fails << what;
+    };
+    const auto num = [](qint64 v) { return QString::number(v); };
+
+    QObject ctx;
+    const int pxTile = qEnvironmentVariable("LA_THUMB_TILE_PX", QStringLiteral("256")).toInt();
+    const int pxFeat = qEnvironmentVariable("LA_THUMB_FEATURE_PX", QStringLiteral("512")).toInt();
+
+    // —— A：默认预算，一次解码派生两级 + 去重 + 负缓存 ——
+    int aL1 = 0, aL2 = 0, aDerived = 0, aReq = 0, aNegCb = 0;
+    qint64 aB1 = 0, aB2 = 0;
+    {
+        ThumbCache cache(dir);
+        for (int i = 0; i < files.size(); ++i) {
+            cache.request(files[i], &ctx, [](const QPixmap&) {}, ThumbCache::kTile);
+            cache.request(files[i], &ctx, [](const QPixmap&) {}, ThumbCache::kTile);
+        }
+        const bool done = spin([&cache] { return cache.cacheCount(ThumbCache::kFeature) >= kFiles; }, 20000);
+        note(done, QStringLiteral("A_load timeout"));
+        aL1 = cache.cacheCount(ThumbCache::kTile);
+        aL2 = cache.cacheCount(ThumbCache::kFeature);
+        aB1 = cache.cacheBytes(ThumbCache::kTile);
+        aB2 = cache.cacheBytes(ThumbCache::kFeature);
+        aDerived = cache.derivedCount();
+        aReq = cache.requestCount();
+        note(cache.levelPixels(ThumbCache::kTile) == pxTile,
+             QStringLiteral("A_pxTile got=%1 want=%2").arg(cache.levelPixels(ThumbCache::kTile)).arg(pxTile));
+        note(cache.levelPixels(ThumbCache::kFeature) == pxFeat,
+             QStringLiteral("A_pxFeat got=%1 want=%2").arg(cache.levelPixels(ThumbCache::kFeature)).arg(pxFeat));
+        note(aL1 == kFiles && aL2 == kFiles, QStringLiteral("A_count l1=%1 l2=%2").arg(aL1).arg(aL2));
+        note(aB1 > 0 && aB2 > aB1, QStringLiteral("A_bytes l1=%1 l2=%2").arg(num(aB1)).arg(num(aB2)));
+        note(aDerived == 2 * kFiles, QStringLiteral("A_derived=%1").arg(aDerived));
+        note(aReq == kFiles, QStringLiteral("A_dedup req=%1").arg(aReq));
+        const QPixmap p1 = cache.cached(files.first(), ThumbCache::kTile);
+        const QPixmap p2 = cache.cached(files.first(), ThumbCache::kFeature);
+        note(p1.width() == pxTile && p2.width() == pxFeat,
+             QStringLiteral("A_px w1=%1 w2=%2").arg(p1.width()).arg(p2.width()));
+
+        const QString miss = QStringLiteral("qa_missing.png");
+        const int before = cache.requestCount();
+        const auto negCb = [&note, &aNegCb](const QPixmap& pm) { ++aNegCb; note(pm.isNull(), QStringLiteral("A_negcb non-null")); };
+        cache.request(miss, &ctx, negCb, ThumbCache::kTile);
+        cache.request(miss, &ctx, negCb, ThumbCache::kFeature);
+        spin([&cache, &miss] { return cache.isNegative(miss); }, 10000);
+        note(cache.isNegative(miss), QStringLiteral("A_neg isNegative=false"));
+        note(cache.requestCount() == before + 1,
+             QStringLiteral("A_neg dedup fired=%1").arg(cache.requestCount() - before));
+        note(cache.cached(miss, ThumbCache::kTile).isNull(), QStringLiteral("A_neg cached non-null"));
+        note(aNegCb == 2, QStringLiteral("A_neg cb=%1").arg(aNegCb));
+    }
+
+    // —— B：压小 L1 预算（够放 ~2 张 L1）→ 淘汰 + 回落 L2 ——
+    const qint64 smallB1 = 600000;
+    int bEvict1 = -1;
+    {
+        qputenv("LA_THUMB_BUDGET1", QByteArray::number(smallB1));
+        ThumbCache cache(dir);
+        qunsetenv("LA_THUMB_BUDGET1");
+        for (int i = 0; i < files.size(); ++i)
+            cache.request(files[i], &ctx, [](const QPixmap&) {}, ThumbCache::kTile);
+        spin([&cache] { return cache.cacheCount(ThumbCache::kFeature) >= kFiles; }, 20000);
+        bEvict1 = cache.cacheCount(ThumbCache::kTile);
+        note(cache.cacheBytes(ThumbCache::kTile) <= smallB1,
+             QStringLiteral("B_budget bytes=%1>%2").arg(num(cache.cacheBytes(ThumbCache::kTile))).arg(num(smallB1)));
+        note(bEvict1 >= 1 && bEvict1 < kFiles, QStringLiteral("B_evict l1count=%1").arg(bEvict1));
+        note(cache.cacheCount(ThumbCache::kFeature) == kFiles,
+             QStringLiteral("B_l2count=%1").arg(cache.cacheCount(ThumbCache::kFeature)));
+        int fallbacks = 0;
+        for (int i = 0; i < files.size(); ++i) {
+            const QPixmap fb = cache.cached(files[i], ThumbCache::kTile);
+            if (!fb.isNull() && fb.width() == pxFeat) ++fallbacks;   // L1 淘汰 -> 回落 L2 大图
+            else if (fb.width() != pxTile) { note(false, QStringLiteral("B_fb w=%1").arg(fb.width())); break; }
+        }
+        note(fallbacks == kFiles - bEvict1, QStringLiteral("B_fbcount=%1").arg(fallbacks));
+        if (fallbacks > 0) {
+            const int before = cache.requestCount();
+            bool cbOk = false;
+            const QString victim = files.first();
+            cache.request(victim, &ctx, [&cbOk](const QPixmap& pm) { cbOk = !pm.isNull(); }, ThumbCache::kTile);
+            note(cbOk, QStringLiteral("B_fb cb null"));
+            note(cache.requestCount() == before, QStringLiteral("B_fb retrigger +%1").arg(cache.requestCount() - before));
+        }
+    }
+
+    // —— C：压小 L2 预算（够放 ~1 张 L2）→ 回落 L1 ——
+    const qint64 smallB2 = 1500000;
+    int cEvict2 = -1;
+    {
+        qputenv("LA_THUMB_BUDGET2", QByteArray::number(smallB2));
+        ThumbCache cache(dir);
+        qunsetenv("LA_THUMB_BUDGET2");
+        for (int i = 0; i < files.size(); ++i)
+            cache.request(files[i], &ctx, [](const QPixmap&) {}, ThumbCache::kTile);
+        spin([&cache] { return cache.cacheCount(ThumbCache::kFeature) >= 1; }, 20000);
+        spin([&cache] { return cache.cacheCount(ThumbCache::kTile) >= kFiles; }, 20000);
+        cEvict2 = cache.cacheCount(ThumbCache::kFeature);
+        note(cache.cacheBytes(ThumbCache::kFeature) <= smallB2,
+             QStringLiteral("C_budget bytes=%1").arg(num(cache.cacheBytes(ThumbCache::kFeature))));
+        note(cEvict2 >= 1 && cEvict2 < kFiles, QStringLiteral("C_evict l2count=%1").arg(cEvict2));
+        note(cache.cacheCount(ThumbCache::kTile) == kFiles,
+             QStringLiteral("C_l1count=%1").arg(cache.cacheCount(ThumbCache::kTile)));
+        int fallbacks = 0;
+        for (int i = 0; i < files.size(); ++i) {
+            const QPixmap fb = cache.cached(files[i], ThumbCache::kFeature);
+            if (!fb.isNull() && fb.width() == pxTile) ++fallbacks;   // L2 淘汰 -> 回落 L1 小图
+            else if (fb.width() != pxFeat) { note(false, QStringLiteral("C_fb w=%1").arg(fb.width())); break; }
+        }
+        note(fallbacks == kFiles - cEvict2, QStringLiteral("C_fbcount=%1").arg(fallbacks));
+    }
+
+    if (!qEnvironmentVariableIsSet("LA_THUMB_QA_KEEP"))
+        QDir(dir).removeRecursively();
+
+    const bool ok = fails.isEmpty();
+    if (ok) {
+        std::fprintf(stderr,
+            "LA_THUMB_CACHE_QA PASS files=%d px=%d/%d l1=%d l2=%d bytes=%lld/%lld "
+            "derived=%d req=%d evictL1=%d evictL2=%d\n",
+            kFiles, pxTile, pxFeat, aL1, aL2, aB1, aB2, aDerived, aReq, bEvict1, cEvict2);
+    } else {
+        std::fprintf(stderr, "LA_THUMB_CACHE_QA FAIL reason=%s\n", qPrintable(fails.join(QChar(';'))));
+    }
+    std::fflush(stderr);
+    return ok ? 0 : 1;
+}
+
 } // namespace（P10 geo 冒烟）
 
 namespace {
@@ -687,6 +855,10 @@ int main(int argc, char *argv[])
     if (qEnvironmentVariableIsSet("LA_SCALE_PERF"))
         return runScalePerf();
 
+    // 方向 D 第四步：缩略图多级缓存门禁（两级派生 / 字节预算 / 负缓存 / 跨级回落）
+    if (qEnvironmentVariableIsSet("LA_THUMB_CACHE_QA"))
+        return runThumbCacheQa();
+
     // P8 原生导入器冒烟：扫描 LA_SCAN_ROOT 入库到 LA_SCAN_DB（独立于正式库），
     // 打印增量结果后退出；同一命令重跑应 added=0 / unchanged=N（增量幂等）。
     if (qEnvironmentVariableIsSet("LA_SCAN_SMOKE")) {
@@ -852,6 +1024,7 @@ int main(int argc, char *argv[])
         && !qEnvironmentVariableIsSet("LA_CULL_DUEL_QA")
         && !qEnvironmentVariableIsSet("LA_GALLERY_FILL_QA")
         && !qEnvironmentVariableIsSet("LA_SCALE_PERF")
+        && !qEnvironmentVariableIsSet("LA_THUMB_CACHE_QA")
         ;
 
     QRect avail = QApplication::primaryScreen()->availableGeometry();

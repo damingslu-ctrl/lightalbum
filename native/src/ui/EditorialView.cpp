@@ -38,7 +38,9 @@ protected:
         const QString orient = model_->data(ix, GalleryModel::OrientRole).toString();
         const bool    miss   = model_->data(ix, GalleryModel::MissingRole).toBool();
         const int     rating = model_->data(ix, GalleryModel::RatingRole).toInt();
-        const QPixmap pm = model_->pixmapAt(row_);
+        // 方向 D 第四步：按瓦片角色选缓存级——feature 2×2 走 L2(512px)，普通瓦片走 L1(256px)
+        const QPixmap pm = model_->pixmapAt(row_, feature_ ? ThumbCache::kFeature
+                                                           : ThumbCache::kTile);
         Lumen::paintGalleryCard(&p, QRectF(rect()),
                                 title, sub, orient, miss, rating, pm, feature_, hov_, sel_);
     }
@@ -207,9 +209,11 @@ void EditorialView::prefetchVisible()
 {
     for (auto it = bound_.cbegin(); it != bound_.cend(); ++it) {
         const int row = it.key();
-        model_->pixmapAt(row);
-        if (row - 1 >= 0)     model_->pixmapAt(row - 1);
-        if (row + 1 < total_) model_->pixmapAt(row + 1);
+        // 方向 D 第四步：feature（row 0）走 L2，其余走 L1
+        const int lv = (row == 0) ? ThumbCache::kFeature : ThumbCache::kTile;
+        model_->pixmapAt(row, lv);
+        if (row - 1 >= 0)     model_->pixmapAt(row - 1, lv);
+        if (row + 1 < total_) model_->pixmapAt(row + 1, lv);
     }
 }
 

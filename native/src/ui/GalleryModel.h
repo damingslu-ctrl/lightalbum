@@ -5,8 +5,7 @@
 #include <QPixmap>
 #include <QHash>
 #include "../core/Library.h"
-
-class ThumbCache;
+#include "ThumbCache.h"   // 需要 ThumbCache::Level 作 pixmapAt 默认实参（非前向声明）
 
 class GalleryModel : public QAbstractListModel {
     Q_OBJECT
@@ -41,7 +40,7 @@ public:
 
     void rebuild();   // 文本 + 地理 + 分类/人物/隐私 联合过滤
 
-    QPixmap pixmapAt(int row) const;             // 委托绘制时调用（触发后台加载）
+    QPixmap pixmapAt(int row, int level = ThumbCache::kTile) const;  // 委托绘制时调用（level：kTile 普通瓦片 / kFeature 首图，触发后台加载）
 
 private slots:
     void onThumbLoaded(const QString& thumbFile);

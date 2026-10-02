@@ -50,6 +50,7 @@ $gates = @(
   @{n="LA_GALLERY_SEARCH_QA";png=$false}  # C: gallery search filter
   @{n="LA_SCALE_SMOKE";    png=$false}  # D: real-library scale regression (6425 fixture)
   @{n="LA_SCALE_PERF";     png=$false}  # D: scale performance baseline (6425 fixture)
+  @{n="LA_THUMB_CACHE_QA";png=$false}  # D4: two-level byte-budgeted thumb LRU
 )
 
 function Eval($lines, $exitCode, $killed) {
