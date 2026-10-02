@@ -106,14 +106,24 @@ int runGeoSmoke()
     GeoIndex& gi = GeoIndex::instance();
     const bool loaded = gi.ensureLoaded();
     int pass = loaded ? 1 : 0;
+    // 数据完整性自检：中国城市省名不得残留英文（P-geo-prov-cn 债务清偿验证）
+    {
+        const QVector<QString> bad = gi.verifyChinaProvinces();
+        for (const QString& b : bad)
+            std::fprintf(stderr, "GEO badprov %s\n", qPrintable(b));
+        if (!bad.isEmpty()) pass = 0;
+    }
     struct P { double lat, lon; const char* r; const char* pv; const char* ct; };
     static const P pts[] = {
         {64.15, -21.94,  "iceland", "Capital Region",   "雷克雅未克"},
-        // 注：DataV 34 省切换后，多边形主路径返回中文省名（北京市/广东省/辽宁省），
-        // kCities 英文兜底为残留债务（见迭代指导书台账）；以下期望对齐设计内中文真值。
+        // DataV 34 省切换后，多边形主路径返回中文省名（北京市/广东省/辽宁省）。
+        // kCities 英文兜底债务已清偿（本迭代）：所有 china 城市 prov 改为精确中文省名，
+        // 并由 verifyChinaProvinces() 在门禁内逐条校验（含"无 ASCII 字母 + 在 34 省白名单"）。
+        // 以下期望对齐设计内中文真值（主路径命中多边形）。
         {39.90, 116.41,  "china",   "北京市", "北京"},
         {23.13, 113.26,  "china",   "广东省", "广州"},
         {38.91, 121.61,  "china",   "辽宁省", "大连"},   // 主路径命中辽宁省多边形
+        {30.57, 104.07,  "china",   "四川省", "成都"},   // 主路径命中四川省多边形
         {15.46, 111.13,  "",        "",                 ""},       // 南海海域 → 诚实空
     };
     for (const P& p : pts) {

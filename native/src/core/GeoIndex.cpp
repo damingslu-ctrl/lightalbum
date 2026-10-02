@@ -1,6 +1,7 @@
 // P10 离线逆地理编码实现 —— 数据：exe 内嵌 :/data/mapdata.json（P2 同源）
 #include "GeoIndex.h"
 #include <QFile>
+#include <QSet>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -76,42 +77,44 @@ bool GeoIndex::ensureLoaded()
         }
     }
     // 城市表（_gen_geo_cities.py 对齐数据集生成；手工覆盖含沿海城市）
+    // 中国城市 prov 用 DataV 34 省精确中文省名（与 :/data/mapdata.json provinces.china 对齐），
+    // 与多边形主路径返回的中文省名一致；外国城市保留其本地英文名（本就非中文债务）。
     static const struct { const char* name; const char* region; const char* prov;
                           double lon, lat; } kCities[] = {
 // 由 _gen_geo_cities.py 生成：城市 → region/省键/经纬度（数据集 mapdata.json 对齐）
-    {"北京", "china", "Beijing Municipality", 116.41, 39.90},
-    {"上海", "china", "Shanghai Municipality", 121.47, 31.23},
-    {"广州", "china", "Guangzhou Province", 113.26, 23.13},
-    {"深圳", "china", "Guangdong Province", 114.06, 22.55},
-    {"成都", "china", "Sichuan Province", 104.07, 30.57},
-    {"昆明", "china", "Yunnan Province", 102.83, 24.88},
-    {"杭州", "china", "Zhejiang Province", 120.15, 30.27},
-    {"西安", "china", "Shaanxi Province", 108.94, 34.34},
-    {"武汉", "china", "Hubei Province", 114.31, 30.59},
-    {"长沙", "china", "Hunan Province", 112.94, 28.23},
-    {"乌鲁木齐", "china", "Xinjiang Uyghur Autonomous Region", 87.62, 43.83},
-    {"拉萨", "china", "Tibet Autonomous Region", 91.11, 29.66},
-    {"哈尔滨", "china", "Heilongjiang Province", 126.53, 45.80},
-    {"大连", "china", "Liaoning Province", 121.61, 38.91},
-    {"厦门", "china", "Fujian Province", 118.09, 24.48},
-    {"桂林", "china", "Guangxi Zhuang Autonomous Region", 110.29, 25.27},
-    {"张家界", "china", "Hunan Province", 110.48, 29.13},
-    {"西宁", "china", "Qinghai Province", 101.78, 36.62},
-    {"兰州", "china", "Gansu Province", 103.83, 36.06},
-    {"贵阳", "china", "Guizhou Province", 106.63, 26.65},
-    {"南京", "china", "Jiangsu Province", 118.80, 32.06},
-    {"青岛", "china", "Shandong Province", 120.38, 36.07},
-    {"沈阳", "china", "Liaoning Province", 123.43, 41.80},
-    {"长春", "china", "Jilin Province", 125.32, 43.90},
-    {"呼和浩特", "china", "Inner Mongolia Autonomous Region", 111.75, 40.84},
-    {"南宁", "china", "Guangxi Zhuang Autonomous Region", 108.37, 22.82},
-    {"海口", "china", "Hainan Province", 110.20, 20.04},
-    {"台北", "china", "Taiwan Province", 121.56, 25.03},
-    {"香港", "china", "Hong Kong Special Administrative Region", 114.17, 22.32},
-    {"澳门", "china", "Macau Special Administrative Region", 113.55, 22.19},
-    {"大理", "china", "Yunnan Province", 100.27, 25.61},
-    {"丽江", "china", "Yunnan Province", 100.23, 26.86},
-    {"遵义", "china", "Guizhou Province", 106.93, 27.73},
+    {"北京", "china", "北京市", 116.41, 39.90},
+    {"上海", "china", "上海市", 121.47, 31.23},
+    {"广州", "china", "广东省", 113.26, 23.13},
+    {"深圳", "china", "广东省", 114.06, 22.55},
+    {"成都", "china", "四川省", 104.07, 30.57},
+    {"昆明", "china", "云南省", 102.83, 24.88},
+    {"杭州", "china", "浙江省", 120.15, 30.27},
+    {"西安", "china", "陕西省", 108.94, 34.34},
+    {"武汉", "china", "湖北省", 114.31, 30.59},
+    {"长沙", "china", "湖南省", 112.94, 28.23},
+    {"乌鲁木齐", "china", "新疆维吾尔自治区", 87.62, 43.83},
+    {"拉萨", "china", "西藏自治区", 91.11, 29.66},
+    {"哈尔滨", "china", "黑龙江省", 126.53, 45.80},
+    {"大连", "china", "辽宁省", 121.61, 38.91},
+    {"厦门", "china", "福建省", 118.09, 24.48},
+    {"桂林", "china", "广西壮族自治区", 110.29, 25.27},
+    {"张家界", "china", "湖南省", 110.48, 29.13},
+    {"西宁", "china", "青海省", 101.78, 36.62},
+    {"兰州", "china", "甘肃省", 103.83, 36.06},
+    {"贵阳", "china", "贵州省", 106.63, 26.65},
+    {"南京", "china", "江苏省", 118.80, 32.06},
+    {"青岛", "china", "山东省", 120.38, 36.07},
+    {"沈阳", "china", "辽宁省", 123.43, 41.80},
+    {"长春", "china", "吉林省", 125.32, 43.90},
+    {"呼和浩特", "china", "内蒙古自治区", 111.75, 40.84},
+    {"南宁", "china", "广西壮族自治区", 108.37, 22.82},
+    {"海口", "china", "海南省", 110.20, 20.04},
+    {"台北", "china", "台湾省", 121.56, 25.03},
+    {"香港", "china", "香港特别行政区", 114.17, 22.32},
+    {"澳门", "china", "澳门特别行政区", 113.55, 22.19},
+    {"大理", "china", "云南省", 100.27, 25.61},
+    {"丽江", "china", "云南省", 100.23, 26.86},
+    {"遵义", "china", "贵州省", 106.93, 27.73},
     {"纽约", "usa", "New York", -74.01, 40.71},
     {"洛杉矶", "usa", "California", -118.24, 34.05},
     {"旧金山", "usa", "California", -122.42, 37.77},
@@ -208,4 +211,30 @@ GeoResult GeoIndex::resolve(double lat, double lon) const
         out.prov = cityPv;
     }
     return out;
+}
+
+QVector<QString> GeoIndex::verifyChinaProvinces() const
+{
+    // 已知 DataV 34 省精确省名（与 :/data/mapdata.json provinces.china 逐字对齐）
+    static const char* const kKnown[] = {
+        "上海市","云南省","内蒙古自治区","北京市","台湾省","吉林省","四川省",
+        "天津市","宁夏回族自治区","安徽省","山东省","山西省","广东省",
+        "广西壮族自治区","新疆维吾尔自治区","江苏省","江西省","河北省","河南省",
+        "浙江省","海南省","湖北省","湖南省","澳门特别行政区","甘肃省","福建省",
+        "西藏自治区","贵州省","辽宁省","重庆市","陕西省","青海省",
+        "香港特别行政区","黑龙江省"
+    };
+    QSet<QString> known;
+    for (const char* s : kKnown) known.insert(QString::fromUtf8(s));
+    QVector<QString> bad;
+    for (const City& c : cities_) {
+        if (c.region != QStringLiteral("china")) continue;
+        bool hasAscii = false;
+        for (const QChar ch : c.prov)
+            if (ch.unicode() < 0x80 && ch.isLetter()) { hasAscii = true; break; }
+        const bool knownOk = known.contains(c.prov);
+        if (hasAscii || !knownOk)
+            bad.append(c.name + QStringLiteral(":") + c.prov);
+    }
+    return bad;
 }

@@ -23,6 +23,10 @@ public:
 
     GeoResult resolve(double lat, double lon) const;
 
+    // 自检：中国城市省名不得为英文/拉丁（DataV 34 省切换后的残留债务校验）。
+    // 返回违规项（"城市:省名"）；空表 = 全部合规。
+    QVector<QString> verifyChinaProvinces() const;
+
 private:
     GeoIndex() = default;
     struct Ring {

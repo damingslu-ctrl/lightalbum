@@ -3,6 +3,35 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.2.2] - 2026-10-02
+
+### 功能（方向 A·地图：清偿 GeoIndex 中文省名债务）
+- **`kCities` 中国条目省名由英文改为精确中文省名**（逐字对齐 `:/data/mapdata.json`
+  `provinces.china` 的 DataV 34 省）：北京→北京市、上海→上海市、广州/深圳→广东省、
+  成都→四川省、昆明/大理/丽江→云南省、杭州→浙江省、西安→陕西省、武汉→湖北省、
+  长沙/张家界→湖南省、乌鲁木齐→新疆维吾尔自治区、拉萨→西藏自治区、哈尔滨→黑龙江省、
+  大连/沈阳→辽宁省、厦门→福建省、桂林/南宁→广西壮族自治区、西宁→青海省、兰州→甘肃省、
+  贵阳/遵义→贵州省、南京→江苏省、青岛→山东省、长春→吉林省、呼和浩特→内蒙古自治区、
+  海口→海南省、台北→台湾省、香港→香港特别行政区、澳门→澳门特别行政区。
+  多边形主路径本就返回中文省名，此修使**兜底（最近城市）路径与之完全一致**，
+  彻底消除中英文混用（同一城市：多边形命中显示"辽宁省"、走城市兜底却显示
+  "Liaoning Province" 的残留不一致）。
+- **新增 `GeoIndex::verifyChinaProvinces()` 数据完整性自检**：遍历城市表，凡
+  `region=="china"` 的条目，`prov` 须无 ASCII 字母且落在已知 34 省白名单内，否则返回
+  违规项；`runGeoSmoke`（`LA_GEO_SMOKE`）在门禁内调用并据其 FAIL，使该债务**门禁可断言、
+  不可回退**。
+- `runGeoSmoke` 新增 成都 已知点（30.57,104.07 → 四川省/成都，主路径命中多边形），
+  已知点断言扩至 6。
+
+### 实测
+- `LA_GEO_SMOKE PASS loaded=1`：6 已知点全 `ok`（雷克雅未克 / 北京 / 广州 / 大连 /
+  成都 / 南海诚实空），无 `GEO badprov` 违规行 → `verifyChinaProvinces()` 零命中。
+- 增量构建通过（`main.cpp` + `GeoIndex.cpp` 编译 + 链接，`LightAlbum.exe` 100% Built）。
+- 注：本机 git-bash/headless 上下文下 `qa_runner.ps1` 因安全策略禁用
+  `.NET Process.Start` 且缺真实控制台无法自退，故全 19 门自动执行交由 CI
+  (`qa.yml` 真实 Windows runner + 控制台) 与 `release.ps1` 卡点负责；本轮门禁以
+  Git-Bash 文件重定向直跑 `LA_GEO_SMOKE` 实测通过。
+
 ## [2.2.1] - 2026-10-02
 
 ### 修复（QA 门修正，无用户态行为变化）
@@ -17,9 +46,10 @@
 - **关键运维发现写入 SOP**：原生 Windows Qt exe 在 Git Bash(MSYS) 下输出被吞、
   表现为「门禁无输出/秒退」假阴性；跑全部门禁**必须用 PowerShell**（`& $exe 2>&1`）。
 
-### 已知债务
-- `src/core/GeoIndex.cpp` 的 `kCities` 中国条目省名仍为英文（兜底路径），与多边形
-  中文不一致；需从 `mapdata.json` 取精确中文省名逐条映射，留待专门迭代。
+### 已知债务（已于 2.2.2 清偿）
+- `src/core/GeoIndex.cpp` 的 `kCities` 中国条目省名原为英文（兜底路径），与多边形
+  中文不一致；**已在 2.2.2 逐条改为 DataV 34 省精确中文名**，并由
+  `verifyChinaProvinces()` 在 `LA_GEO_SMOKE` 门禁内断言、不可回退。
 
 ### 实测
 - `LA_GEO_SMOKE PASS loaded=1`（5 已知点全 ok：雷克雅未克 / 北京 / 广州 / 大连 / 南海诚实空）
