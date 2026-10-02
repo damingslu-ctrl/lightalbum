@@ -1,0 +1,7 @@
+#!/bin/sh
+# LightAlbum pre-commit quality gate shim (tracked copy; install target).
+# Git does NOT track .git/hooks, so this tracked copy is the reinstallable source.
+# Active install (one of):
+#   cp native/hooks/pre-commit .git/hooks/pre-commit
+#   git config core.hooksPath native/hooks
+exec powershell -ExecutionPolicy Bypass -File "$(git rev-parse --show-toplevel)/native/hooks/pre-commit.ps1"

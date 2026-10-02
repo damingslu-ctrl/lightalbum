@@ -118,8 +118,8 @@ if ($Package) {
   } elseif (-not (Test-Path $release)) {
     Write-Host "PACKAGE SKIPPED: $release not found."
   } else {
-    Write-Host "==> Packaging (release.ps1) ..."
-    & powershell -ExecutionPolicy Bypass -File $release 2>&1 | ForEach-Object { Write-Host ("    " + $_) }
+    Write-Host "==> Packaging (release.ps1, -SkipGate: iterate already verified GO) ..."
+    & powershell -ExecutionPolicy Bypass -File $release -SkipGate 2>&1 | ForEach-Object { Write-Host ("    " + $_) }
   }
 }
 

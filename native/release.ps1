@@ -7,7 +7,8 @@
 # Move-Item to relocate trimmed files and any prior zip/staging.
 param(
   [string]$Version = "",
-  [switch]$TrimNetwork
+  [switch]$TrimNetwork,
+  [switch]$SkipGate
 )
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Definition
@@ -24,6 +25,43 @@ Write-Host "Version: $Version (from CMakeLists.txt)"
 $build = Join-Path $root "build"
 $exeSrc = Join-Path $build "LightAlbum.exe"
 if (-not (Test-Path $exeSrc)) { throw "build/LightAlbum.exe not found; run cmake + mingw32-make first" }
+
+# === Hard pre-package quality gate (P-release-gate) ===
+# Shipping a red exe is made structurally impossible: every release runs the
+# full gate set and ABORTS if any gate is red, independent of whether the dev
+# ran iterate.ps1. iterate.ps1 -Package already verified GO, so it passes
+# -SkipGate to avoid re-running the (slow) gate set a second time.
+# Bypass manually only in emergencies with: powershell -File release.ps1 -SkipGate
+if ($SkipGate) {
+  Write-Host "Pre-package gate: SKIPPED (-SkipGate)"
+} else {
+  # The gate runner needs a real console for the native exe to self-exit;
+  # under a redirected stdout (e.g. `release.ps1 > log`) it would hang for
+  # minutes. Skip the gate with a warning in that case (run in a console instead).
+  if ([Console]::IsOutputRedirected) {
+    Write-Host "Pre-package gate: SKIPPED - stdout is redirected; qa_runner needs a console."
+    Write-Host "  Run release.ps1 in an interactive console, or pass -SkipGate if you are certain."
+  } else {
+    $qaRunner = Join-Path $root "qa_runner.ps1"
+    if (-not (Test-Path $qaRunner)) { throw "qa_runner.ps1 not found next to release.ps1; cannot run pre-package gate" }
+    $gateJson = Join-Path $env:TEMP ("release_gate_" + (Get-Date -Format "yyyyMMdd_HHmmss") + ".json")
+    Write-Host "==> Pre-package gate: running all quality gates (qa_runner.ps1) ..."
+    & powershell -ExecutionPolicy Bypass -File $qaRunner -Exe $exeSrc -Result $gateJson
+    $gateRc = $LASTEXITCODE
+    if (Test-Path $gateJson) {
+      try {
+        $gj = Get-Content $gateJson -Raw | ConvertFrom-Json
+        Write-Host ("    gates: PASS={0} FAIL={1} CHECK={2} SKIP={3}" -f $gj.summary.pass, $gj.summary.fail, $gj.summary.check, $gj.summary.skip)
+        foreach ($r in $gj.gates) { if ($r.mark -eq "[FAIL]") { Write-Host ("    RED: {0} -- {1}" -f $r.name, $r.detail) } }
+      } catch {}
+    }
+    if ($gateRc -ne 0) {
+      Write-Host "RELEASE BLOCKED: quality gates are RED (qa_runner rc=$gateRc). Fix the red gate(s) before packaging."
+      throw "Aborting release: gates not green."
+    }
+    Write-Host "Pre-package gate: GREEN, proceeding to package."
+  }
+}
 
 $stagingName = "LightAlbum-$Version-win64"
 $stagingBase = Join-Path $root $stagingName

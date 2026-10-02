@@ -1,0 +1,51 @@
+# LightAlbum native CI - quality gate on every push/PR that touches native source.
+#
+# TEMPLATE - requires the Windows runner to be provisioned with a toolchain that
+# matches the LOCAL one (Qt 6.8.3 + MinGW-w64). The aqtinstall step below pulls
+# Qt's bundled MinGW (gcc 13.1); if you build locally with a different MinGW
+# (e.g. winlibs GCC 16.2.0), either install that toolchain here or accept the
+# ABI-matched Qt MinGW. Adjust CMAKE_PREFIX_PATH / Qt version to your setup.
+name: LightAlbum QA
+
+on:
+  push:
+    paths:
+      - 'native/src/**'
+      - 'native/CMakeLists.txt'
+      - 'native/resources/**'
+      - 'native/data/**'
+  pull_request:
+    paths:
+      - 'native/src/**'
+      - 'native/CMakeLists.txt'
+      - 'native/resources/**'
+      - 'native/data/**'
+
+jobs:
+  qa:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Provision Qt 6.8.3 + MinGW (aqtinstall)
+        run: |
+          python -m pip install --upgrade pip aqtinstall
+          python -m aqt install-qt windows desktop 6.8.3 win64_mingw --outputdir C:/Qt
+          python -m aqt install-tool windows desktop tools_mingw qt.tools.win64_mingw1310 --outputdir C:/Qt
+        shell: bash
+
+      - name: Configure
+        run: |
+          cmake -S native -B native/build -G "MinGW Makefiles" `
+            -DCMAKE_PREFIX_PATH="C:/Qt/6.8.3/mingw_64" `
+            -DCMAKE_BUILD_TYPE=Release
+        shell: pwsh
+
+      - name: Build
+        run: cmake --build native/build --target LightAlbum -j 8
+        shell: bash
+
+      - name: Run quality gates (iterate.ps1 -NoBuild)
+        run: powershell -ExecutionPolicy Bypass -File native/iterate.ps1 -NoBuild -Timeout 25
+        shell: pwsh
+        # iterate.ps1 exits 1 on a red gate / failed build -> CI fails the job.

@@ -86,6 +86,7 @@ foreach ($g in $gates) {
   $psi.UseShellExecute = $false
   $psi.RedirectStandardOutput = $true
   $psi.RedirectStandardError = $true
+  $psi.RedirectStandardInput = $true
   $psi.CreateNoWindow = $true
   $proc = New-Object System.Diagnostics.Process
   $proc.StartInfo = $psi
