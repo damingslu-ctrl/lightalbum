@@ -11,6 +11,7 @@
 #include "../core/Library.h"
 #include "../core/RetouchEngine.h"
 #include "../core/LumenAgent.h"
+#include "../core/RtHistory.h"
 
 class QComboBox;
 class QLabel;
@@ -91,6 +92,10 @@ private slots:
     void onEraseClicked();
     void onEraseTaskUpdated(int id);
 
+    // 方向 B：非破坏式撤销/重做栈
+    void onUndo();
+    void onRedo();
+
 private:
     void buildSlider(const RtSlider& def, class QGridLayout* gl);
     void setParams(const RetouchParams& p);   // 同步滑杆 + 数值
@@ -100,6 +105,12 @@ private:
     void updateBadge();
     void rebuildGeo();                        // geoSrc_ → geoImg_（几何重算）+ before 刷新
     void clearCardSel();                      // 清除右侧预设卡片高亮
+    // 方向 B：撤销/重做栈（RtHistory 状态机驱动，与 UI 无关）
+    void commitEdit();                        // doApply 末尾提交当前快照（restoring_ 防重入）
+    void resetHistory();                      // loadPhoto 建立基线
+    RtEditState captureState() const;         // 抓取当前全部编辑状态
+    void applyState(const RtEditState& s);    // 套用快照（undo/redo 路径）
+    void updateUndoRedoButtons();             // 同步按钮可用态
 
     const QVector<Photo>* photos_ = nullptr;
     QString thumbsDir_;
@@ -183,4 +194,10 @@ private:
     QVector<QPushButton*> modeBtns_;
     QString         railCss_;
     QString         railOnCss_;
+
+    // 方向 B：撤销/重做栈
+    RtHistory   hist_;
+    bool        restoring_ = false;
+    QPushButton* undoBtn_ = nullptr;
+    QPushButton* redoBtn_ = nullptr;
 };

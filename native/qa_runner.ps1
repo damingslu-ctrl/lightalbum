@@ -45,7 +45,8 @@ $gates = @(
   @{n="LA_MAP_PERF";       png=$false},
   @{n="LA_GALLERY_E_QA";   png=$true},
   @{n="LA_GALLERY_FILL_QA";png=$true},
-  @{n="LA_RETOUCH_A_QA";   png=$true}
+  @{n="LA_RETOUCH_A_QA";   png=$true},
+  @{n="LA_RETOUCH_UNDO_QA";png=$false}  # B: undo/redo pure state machine
 )
 
 function Eval($lines, $exitCode, $killed) {

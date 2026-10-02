@@ -34,6 +34,7 @@
 #include <cstdio>
 #include <QtConcurrent/QtConcurrentRun>
 #include <QFutureWatcher>
+#include <QShortcut>
 
 namespace {
 constexpr int kPreviewW = 400, kPreviewH = 470, kMaxSrc = 1024, kMaxExport = 2400;
@@ -303,10 +304,14 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
     autoBtn_   = mkAct(QStringLiteral("智能增强"), emCss);
     agentBtn_  = mkAct(QStringLiteral("AI 智能体"), viCss);
     resetBtn_  = mkAct(QStringLiteral("重置"), resetCss);
+    undoBtn_   = mkAct(QStringLiteral("↶ 撤销"), resetCss);
+    redoBtn_   = mkAct(QStringLiteral("↷ 重做"), resetCss);
     exportBtn_ = mkAct(QStringLiteral("导出副本"), goldCss);
     abl->addWidget(autoBtn_);
     abl->addWidget(agentBtn_);
     abl->addWidget(resetBtn_);
+    abl->addWidget(undoBtn_);
+    abl->addWidget(redoBtn_);
     abl->addStretch(1);
     abl->addWidget(exportBtn_);
     root->addWidget(actbar);
@@ -500,6 +505,8 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
     connect(agentBtn_, &QPushButton::clicked, this, &RetouchPage::onAgentRun);
     connect(resetBtn_, &QPushButton::clicked, this, &RetouchPage::onReset);
     connect(exportBtn_, &QPushButton::clicked, this, &RetouchPage::onExport);
+    connect(undoBtn_, &QPushButton::clicked, this, &RetouchPage::onUndo);
+    connect(redoBtn_, &QPushButton::clicked, this, &RetouchPage::onRedo);
     connect(geoRotLBtn_, &QPushButton::clicked, this, [this]{ onGeoRotate(true); });
     connect(geoRotRBtn_, &QPushButton::clicked, this, [this]{ onGeoRotate(false); });
     connect(geoFlipHBtn_, &QPushButton::clicked, this, [this]{ onGeoFlip(true); });
@@ -519,9 +526,17 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
     applyTimer_->setSingleShot(true);
     connect(applyTimer_, &QTimer::timeout, this, &RetouchPage::doApply);
 
+    // 撤销/重做快捷键：Ctrl+Z = 撤销；Ctrl+Shift+Z / Ctrl+Y = 重做
+    auto* scUndo = new QShortcut(QKeySequence::Undo, this);
+    connect(scUndo, &QShortcut::activated, this, &RetouchPage::onUndo);
+    auto* scRedo = new QShortcut(QKeySequence::Redo, this);
+    connect(scRedo, &QShortcut::activated, this, &RetouchPage::onRedo);
+
     if (!usableIdx_.isEmpty()) {
         loadPhoto(0);
         refreshChips();
+    } else {
+        updateUndoRedoButtons();   // 无可用照片时基线：无可撤销/重做
     }
     setMode(1);   // 默认 调整 页（分组滑杆）
 
@@ -1061,13 +1076,86 @@ void RetouchPage::loadPhoto(int idx)
     if (img.isNull()) {
         geoSrc_ = QImage(); geoImg_ = QImage();
         beforeLbl_->setText(QStringLiteral("无缩略图"));
+        resetHistory();              // 空基线：无可撤销
+        updateUndoRedoButtons();
         return;
     }
     if (img.width() > kMaxSrc || img.height() > kMaxSrc)
         img = img.scaled(kMaxSrc, kMaxSrc, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    restoring_ = true;               // 载入重建不计入历史
     geoSrc_ = img;
     rebuildGeo();
     refreshGallery();
+    restoring_ = false;
+    resetHistory();                  // 以载入后状态为基线
+    updateUndoRedoButtons();
+}
+
+// ----------------------------------------------------------------- 方向 B：撤销/重做栈
+void RetouchPage::commitEdit()
+{
+    hist_.push(captureState());
+    updateUndoRedoButtons();
+}
+
+void RetouchPage::resetHistory()
+{
+    hist_.clear(captureState());
+    updateUndoRedoButtons();
+}
+
+RtEditState RetouchPage::captureState() const
+{
+    RtEditState s;
+    s.cur = cur_;
+    s.agentPlan = agentPlan_;
+    s.agentMode = agentMode_;
+    s.rot = rot_; s.flipH = flipH_; s.flipV = flipV_;
+    s.angle = angle_; s.aspect = aspect_; s.cropNorm = cropNorm_;
+    return s;
+}
+
+void RetouchPage::applyState(const RtEditState& s)
+{
+    cur_ = s.cur;
+    agentPlan_ = s.agentPlan;
+    agentMode_ = s.agentMode;
+    rot_ = s.rot; flipH_ = s.flipH; flipV_ = s.flipV;
+    angle_ = s.angle; aspect_ = s.aspect; cropNorm_ = s.cropNorm;
+    syncSlidersFromCur();                       // 滑杆显示同步
+    if (straighten_) {
+        straighten_->blockSignals(true);
+        straighten_->setValue(int(std::round(angle_ * 10)));
+        straighten_->blockSignals(false);
+    }
+    if (aspectCombo_) {
+        const int ai = aspectCombo_->findData(s.aspect);
+        if (ai >= 0) aspectCombo_->setCurrentIndex(ai);
+    }
+    rebuildGeo();                               // 重算几何 + 修调（restoring_=true 已设，不重入 commit）
+    updateUndoRedoButtons();
+}
+
+void RetouchPage::onUndo()
+{
+    if (!hist_.canUndo()) return;
+    restoring_ = true;
+    applyState(hist_.undo());
+    restoring_ = false;
+}
+
+void RetouchPage::onRedo()
+{
+    if (!hist_.canRedo()) return;
+    restoring_ = true;
+    applyState(hist_.redo());
+    restoring_ = false;
+}
+
+void RetouchPage::updateUndoRedoButtons()
+{
+    if (undoBtn_) undoBtn_->setEnabled(hist_.canUndo());
+    if (redoBtn_) redoBtn_->setEnabled(hist_.canRedo());
 }
 
 void RetouchPage::openPhoto(const QString& path)
@@ -1097,6 +1185,7 @@ void RetouchPage::doApply()
     if (compareMode_) compareW_->setImages(geoImg_, afterImg_);
     updateBadge();
     prog_->setValue(0);  // P12: 完成即回零，进度条只在 AI 决策期间可见
+    if (!restoring_) commitEdit();   // 每次实际出图后提交快照（驱动撤销/重做栈）
 }
 
 void RetouchPage::updateBadge()

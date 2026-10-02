@@ -3,6 +3,22 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.2.3] - 2026-10-02
+
+### 功能（方向 B·修图：非破坏式撤销/重做栈）
+- **新增与 UI 无关的纯状态机 `RtHistory`（`src/core/RtHistory.h`）**：`RtEditState`
+  聚合全部编辑状态（修调 `cur_`、AI 计划 `agentPlan_`/`agentMode_`、几何
+  `rot_/flipH_/flipV_/angle_/aspect_/cropNorm_`）；`RtHistory` 提供
+  `clear/push/canUndo/canRedo/undo/redo/current/size/pos`，`push` 截断 redo 尾且跳过无变化提交。
+  原图 `geoSrc_` 只读、永不被改，撤销/重做 = 快照重套原图重算出图，**天然非破坏**。
+- **`RetouchPage` 接入撤销/重做**：`doApply()` 末尾（非 `restoring_` 态）提交快照；
+  `loadPhoto()` 建立基线并 `resetHistory()`；`onUndo/onRedo` 经 `restoring_` 标志防重入 push，
+  `applyState()` 回写状态并 `rebuildGeo()` 重算；`updateUndoRedoButtons()` 同步按钮可用态。
+  动作条新增 `↶ 撤销`/`↷ 重做` 按钮；`Ctrl+Z` 撤销、`Ctrl+Shift+Z`/`Ctrl+Y` 重做（`QShortcut`）。
+- **新增门禁 `LA_RETOUCH_UNDO_QA`**：直接驱动 `RtHistory` 断言基线/推入/双级 undo/redo/
+  push 截断 redo 尾/无变化不记，纯状态机无需 UI。**实测 `LA_RETOUCH_UNDO_QA PASS marks=9 checks=9`**；
+  回归 `LA_RETOUCH_A_QA ok=1`（构造 RetouchPage 不崩）。版本 2.2.2→2.2.3。
+
 ## [2.2.2] - 2026-10-02
 
 ### 功能（方向 A·地图：清偿 GeoIndex 中文省名债务）

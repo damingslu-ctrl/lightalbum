@@ -18,6 +18,7 @@
 #include "core/LumenEngine.h"
 #include "core/LumenAgent.h"
 #include "core/GeoIndex.h"
+#include "core/RtHistory.h"
 #include "core/Scanner.h"
 #include "ui/MainWindow.h"
 #include "ui/MapView.h"
@@ -156,6 +157,43 @@ int runGeoSmoke()
                  total, enriched, provCount);
     if (total > 0 && (enriched * 100 / total) < 40) pass = 0;   // 真库点亮 ≥40%
     std::fprintf(stderr, "LA_GEO_SMOKE %s loaded=%d\n", pass ? "PASS" : "FAIL", loaded ? 1 : 0);
+    std::fflush(stderr);
+    return pass ? 0 : 1;
+}
+
+// 方向 B：撤销/重做栈纯状态机断言（直接驱动 RtHistory，无需 UI / 库）。
+int runRetouchUndoQa()
+{
+    RtHistory h;
+    RtEditState a, b, c, d;
+    a.cur[QStringLiteral("brightness")] = 0.0; a.rot = 0; a.angle = 0.0;
+    b.cur[QStringLiteral("brightness")] = 0.3; b.rot = 0; b.angle = 0.0;
+    c.cur[QStringLiteral("brightness")] = 0.3; c.rot = 1; c.angle = 5.0;
+    c.cropNorm = QRectF(0.1, 0.1, 0.5, 0.5);
+    d.cur[QStringLiteral("brightness")] = 0.5; d.rot = 2; d.angle = 0.0;
+
+    h.clear(a);
+    int marks = 0, checks = 0;
+    auto chk = [&](bool ok){ ++checks; if (ok) ++marks; };
+
+    chk(!h.canUndo() && !h.canRedo());                  // 基线：无撤销/重做
+    h.push(b);
+    chk(h.canUndo() && !h.canRedo());                  // 一次编辑后可撤不可重
+    h.push(c);
+    chk(h.canUndo() && h.pos() == 2 && h.size() == 3); // 两步后位于栈顶
+    chk(h.undo() == b && h.pos() == 1 && h.canRedo()); // undo -> b
+    chk(h.undo() == a && h.pos() == 0 && !h.canUndo());// undo -> a（栈底）
+    chk(h.redo() == b && h.pos() == 1);                // redo -> b
+    h.push(d);                                          // 在 b 之后 push -> 截断 c
+    chk(!h.canRedo() && h.size() == 3 && h.pos() == 2);// push 截断 redo 尾
+    const int before = h.size();
+    h.push(d);                                          // 无变化不记
+    chk(h.size() == before);
+    chk(h.current() == d && h.current().rot == 2);      // 当前态等于 d
+
+    const bool pass = (checks > 0) && (marks == checks);
+    std::fprintf(stderr, "LA_RETOUCH_UNDO_QA %s marks=%d checks=%d\n",
+                 pass ? "PASS" : "FAIL", marks, checks);
     std::fflush(stderr);
     return pass ? 0 : 1;
 }
@@ -390,6 +428,10 @@ int main(int argc, char *argv[])
     // P10 离线逆地理冒烟（已知点 + 真库回填统计）
     if (qEnvironmentVariableIsSet("LA_GEO_SMOKE"))
         return runGeoSmoke();
+
+    // 方向 B：撤销/重做栈纯状态机断言（RtHistory 直接驱动）
+    if (qEnvironmentVariableIsSet("LA_RETOUCH_UNDO_QA"))
+        return runRetouchUndoQa();
 
     // P8 原生导入器冒烟：扫描 LA_SCAN_ROOT 入库到 LA_SCAN_DB（独立于正式库），
     // 打印增量结果后退出；同一命令重跑应 added=0 / unchanged=N（增量幂等）。
