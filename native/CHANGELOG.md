@@ -3,6 +3,24 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.2.4] - 2026-10-02
+
+### 功能（方向 C·相册管理与智能检索：第一步相册内搜索）
+- **相册页新增搜索框（`GalleryPage.cpp`）**：构造函数 `personBar_` 之后插入
+  `QLineEdit` 搜索栏（`searchLe`，圆角深色、聚焦描边 `#4fc08a`、带清除按钮），
+  `textChanged` 信号 `connect` 到既有 `applyFilter()`（设 `searchText_` →
+  `model_.setFilter(q)` + `updateCount()`）。
+- **`GalleryModel::rebuild()` 搜索 haystack 由 title/rel/cam 扩展为全字段**：
+  现含 `title / rel / cam / region / prov / city / date / rating`，覆盖
+  地点（省/市/国家）/ 时间（年月）/ 评分 / 关键词，子串 `CaseInsensitive` 匹配。
+- **新增门禁 `LA_GALLERY_SEARCH_QA`**：直接驱动 `GalleryModel` 断言 7 类过滤
+  （北京市/北京=1、`china`=2、`2023`=1、裸`5`=2、`Canon`=1、`夜景`=1、清空=4），
+  纯数据无需 UI。**实测 `LA_GALLERY_SEARCH_QA PASS marks=7 checks=7`**，退出码 0。
+- **事故修复（同迭代）**：`runGallerySearchQa()` 初版在 `main()` 已构造 `QApplication`
+  之后又建 `QCoreApplication` → 双实例退场 `SIGSEGV`（实测 `EXIT=139` 且 `marks=6`）。
+  删除第二个实例，复用既有 `QApplication`；同步把测试数据中 `家猫` 日期
+  `2024-01-15`→`2024-01-12`，消除裸串 `5` 误命中日期尾号（2→3）的噪声。版本 2.2.3→2.2.4。
+
 ## [2.2.3] - 2026-10-02
 
 ### 功能（方向 B·修图：非破坏式撤销/重做栈）

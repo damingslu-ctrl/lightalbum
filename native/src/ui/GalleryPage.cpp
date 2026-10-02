@@ -11,6 +11,7 @@
 #include <QStyledItemDelegate>
 #include <QCoreApplication>
 #include <QImage>
+#include <QLineEdit>
 
 // P16 分类固定次序（与 classifier_server.py LABELS 单一事实源一致；空分类不展示）
 static QStringList catOrder()
@@ -71,6 +72,24 @@ GalleryPage::GalleryPage(const QVector<Photo>* photos, const QString& thumbsDir,
     personLay->setContentsMargins(20, 8, 20, 0);
     personLay->setSpacing(8);
     lay->addWidget(personBar_);
+
+    // 方向 C 第一步：搜索框（地点/时间/评分/关键词过滤，经 applyFilter → GalleryModel::setFilter）
+    auto* searchBar = new QWidget(this);
+    searchBar->setStyleSheet(QStringLiteral("background:#060806;"));
+    auto* searchLay = new QHBoxLayout(searchBar);
+    searchLay->setContentsMargins(20, 8, 20, 8);
+    searchLay->setSpacing(8);
+    auto* searchLe = new QLineEdit(searchBar);
+    searchLe->setPlaceholderText(QStringLiteral("搜索 地点 / 时间 / 评分 / 关键词…"));
+    searchLe->setClearButtonEnabled(true);
+    searchLe->setStyleSheet(QStringLiteral(
+        "QLineEdit{background:#0e1410;border:1px solid #26312a;border-radius:9px;"
+        "padding:7px 12px;color:#f4f7f4;font-size:13px;}"
+        "QLineEdit:focus{border-color:#4fc08a;}"));
+    searchLay->addWidget(searchLe);
+    searchLay->addStretch(1);
+    lay->addWidget(searchBar);
+    connect(searchLe, &QLineEdit::textChanged, this, &GalleryPage::applyFilter);
 
     count_ = new QLabel(this);
     count_->setStyleSheet(QString::fromUtf8("color:#8da396;padding:12px 20px 8px;"));

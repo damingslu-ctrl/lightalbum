@@ -47,6 +47,7 @@ $gates = @(
   @{n="LA_GALLERY_FILL_QA";png=$true},
   @{n="LA_RETOUCH_A_QA";   png=$true},
   @{n="LA_RETOUCH_UNDO_QA";png=$false}  # B: undo/redo pure state machine
+  @{n="LA_GALLERY_SEARCH_QA";png=$false}  # C: gallery search filter
 )
 
 function Eval($lines, $exitCode, $killed) {

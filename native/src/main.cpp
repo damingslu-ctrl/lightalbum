@@ -3,6 +3,7 @@
 // 分期计划：docs/REWRITE-PLAN.md
 // 冒烟：LA_SMOKE=1 + QT_QPA_PLATFORM=offscreen → 载入真库后自动退出并打 LA_P1_SMOKE_OK
 #include <QApplication>
+#include <QCoreApplication>
 #include <QScreen>
 #include <QTimer>
 #include <QDir>
@@ -23,6 +24,7 @@
 #include "ui/MainWindow.h"
 #include "ui/MapView.h"
 #include "ui/GalleryPage.h"
+#include "ui/GalleryModel.h"
 #include "ui/GalleryCardPainter.h"
 #include "ui/RetouchPage.h"
 #include "ui/HomePage.h"
@@ -193,6 +195,56 @@ int runRetouchUndoQa()
 
     const bool pass = (checks > 0) && (marks == checks);
     std::fprintf(stderr, "LA_RETOUCH_UNDO_QA %s marks=%d checks=%d\n",
+                 pass ? "PASS" : "FAIL", marks, checks);
+    std::fflush(stderr);
+    return pass ? 0 : 1;
+}
+
+// 方向 C 第一步：相册内搜索过滤断言（直接驱动 GalleryModel，无需 UI / 库）。
+int runGallerySearchQa()
+{
+    // 重要：main() 入口已构造 QApplication（line ~417），QA 派发在其后。
+    // 此处**禁止**再建 QCoreApplication —— 双 QApplication 退场会 SIGSEGV（实测 EXIT=139）。
+    // GalleryModel 仅做同步数据运算（setSource/setFilter/rebuild/rowCount），复用既有的 QApplication 即可。
+
+    auto mk = [](const QString& title, const QString& cam, const QString& region,
+                 const QString& prov, const QString& city, const QString& date, int rating) {
+        Photo p;
+        p.title = title; p.cam = cam; p.region = region; p.prov = prov;
+        p.city = city; p.date = date; p.rating = rating; p.thumbFile = QStringLiteral("t");
+        return p;
+    };
+    QVector<Photo> phs;
+    phs.append(mk(QStringLiteral("黄山日出"), QStringLiteral("Canon EOS R5"),
+                  QStringLiteral("china"), QStringLiteral("安徽省"), QStringLiteral("黄山市"),
+                  QStringLiteral("2023-05-01"), 5));
+    phs.append(mk(QStringLiteral("东京夜景"), QStringLiteral("Sony A7"),
+                  QStringLiteral("japan"), QStringLiteral("Tokyo"), QStringLiteral("东京"),
+                  QStringLiteral("2022-11-20"), 4));
+    phs.append(mk(QStringLiteral("家猫"), QStringLiteral("iPhone"),
+                  QStringLiteral("china"), QStringLiteral("北京市"), QStringLiteral("北京"),
+                  QStringLiteral("2024-01-12"), 3));
+    phs.append(mk(QStringLiteral("冰岛风光"), QStringLiteral("Nikon"),
+                  QStringLiteral("iceland"), QStringLiteral("Capital Region"), QStringLiteral("雷克雅未克"),
+                  QStringLiteral("2021-07-10"), 5));
+
+    GalleryModel m;
+    m.setSource(&phs);
+
+    int marks = 0, checks = 0;
+    auto chk = [&](bool ok){ ++checks; if (ok) ++marks; };
+    auto cnt = [&](){ return m.rowCount(); };
+
+    m.setFilter(QStringLiteral("北京"));   chk(cnt() == 1);   // 北京市/北京 命中 1
+    m.setFilter(QStringLiteral("china"));  chk(cnt() == 2);   // region 命中 2
+    m.setFilter(QStringLiteral("2023"));    chk(cnt() == 1);   // 年份 1
+    m.setFilter(QStringLiteral("5"));       chk(cnt() == 2);   // 裸串"5"命中 2 张（黄山/冰岛均含 5；其余日期/器材不含裸 5）
+    m.setFilter(QStringLiteral("Canon"));   chk(cnt() == 1);   // 器材 1
+    m.setFilter(QStringLiteral("夜景"));    chk(cnt() == 1);   // 标题关键词 1
+    m.setFilter(QString());                 chk(cnt() == 4);   // 清空恢复全部
+
+    const bool pass = (checks > 0) && (marks == checks);
+    std::fprintf(stderr, "LA_GALLERY_SEARCH_QA %s marks=%d checks=%d\n",
                  pass ? "PASS" : "FAIL", marks, checks);
     std::fflush(stderr);
     return pass ? 0 : 1;
@@ -432,6 +484,10 @@ int main(int argc, char *argv[])
     // 方向 B：撤销/重做栈纯状态机断言（RtHistory 直接驱动）
     if (qEnvironmentVariableIsSet("LA_RETOUCH_UNDO_QA"))
         return runRetouchUndoQa();
+
+    // 方向 C 第一步：相册内搜索过滤断言（GalleryModel 直接驱动）
+    if (qEnvironmentVariableIsSet("LA_GALLERY_SEARCH_QA"))
+        return runGallerySearchQa();
 
     // P8 原生导入器冒烟：扫描 LA_SCAN_ROOT 入库到 LA_SCAN_DB（独立于正式库），
     // 打印增量结果后退出；同一命令重跑应 added=0 / unchanged=N（增量幂等）。

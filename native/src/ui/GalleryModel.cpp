@@ -49,10 +49,14 @@ void GalleryModel::rebuild()
             if (hasPerson && !p.person.split(',', Qt::SkipEmptyParts)
                                  .contains(personFilter_))      // P16 人物
                 continue;
-            if (!needle.isEmpty()
-                && !p.title.contains(needle, Qt::CaseInsensitive)
-                && !p.rel.contains(needle, Qt::CaseInsensitive)
-                && !p.cam.contains(needle, Qt::CaseInsensitive)) continue;
+            if (!needle.isEmpty()) {
+                // 方向 C 第一步：扩展搜索 haystack（关键词/地点/时间/评分）
+                const QString hay = p.title + QChar(' ') + p.rel + QChar(' ')
+                    + p.cam + QChar(' ') + p.region + QChar(' ') + p.prov
+                    + QChar(' ') + p.city + QChar(' ') + p.date
+                    + QChar(' ') + QString::number(p.rating);
+                if (!hay.contains(needle, Qt::CaseInsensitive)) continue;
+            }
             idx_.push_back(i);
             if (!rowByThumb_.contains(p.thumbFile))
                 rowByThumb_.insert(p.thumbFile, int(idx_.size()) - 1);
