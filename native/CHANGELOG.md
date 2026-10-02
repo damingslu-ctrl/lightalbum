@@ -3,6 +3,24 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.2.5] - 2026-10-02
+
+### 功能（方向 D·规模化与流畅性：第一步真实库回归门禁）
+- **新增门禁 `LA_SCALE_SMOKE`（真实库规模化回归）**：加载真实库（env
+  `LA_SCALE_DB` 优先 → `LA_DB` → 从 exe 目录向上搜索提交于仓库根的
+  `_scale_fixture.db`，合成 6425 张镜像真库规模），断言 `open` 成功、照片数
+  `≥ LA_SCALE_MIN`（默认 1000）、`kpi` 已填充（`kpi.total==n` / `yearCount≥1` /
+  `provCount≥1`）；构造 `GalleryPage`（真实图库网格）+ `MapView`（真实 GPS 足迹）
+  offscreen 不崩、首屏渲染不超时（`mapMs ≤ LA_SCALE_MAP_MS` 默认 15000）。
+- **合成 scale fixture `_scale_fixture.db`（6425 张，3.18MB）**：`_gen_scale_fixture.py`
+  生成，覆盖 18 年份 / 15 省份 / ~80% GPS / 8 分类 / 人物；缩略图故意指向不存在文件
+  （验证 `ThumbCache` 负缓存兜底缺失缩略图不崩）。`LA_SCALE_DB` 可指向用户真库覆盖。
+- **双 QApplication 铁律再守**：`runScaleSmoke()` 复用 `main()` 既有 `QApplication`，
+  仅自建 `Library` 打开真实库，不新建 `QCoreApplication`（避免退场 `SIGSEGV`）。
+- **实测**：`LA_SCALE_SMOKE PASS photos=6425 years=18 provs=15 span=2008-2025 gps=5140`
+  `galleryCtrls=6470 mapMs=4`，退出码 0；`LA_SCALE_MIN=10000` 时正确 `FAIL`（阈值断言生效，
+  非空心 PASS）。版本 2.2.4→2.2.5。
+
 ## [2.2.4] - 2026-10-02
 
 ### 功能（方向 C·相册管理与智能检索：第一步相册内搜索）

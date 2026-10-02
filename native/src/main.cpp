@@ -6,6 +6,7 @@
 #include <QCoreApplication>
 #include <QScreen>
 #include <QTimer>
+#include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
 #include <QFontDatabase>
@@ -249,6 +250,105 @@ int runGallerySearchQa()
     std::fflush(stderr);
     return pass ? 0 : 1;
 }
+
+// 方向 D 第一步：真实库回归门禁（规模化与流畅性）。
+// 加载真实库（env LA_SCALE_DB 优先 → LA_DB → 从 exe 目录向上搜索 _scale_fixture.db），
+// 断言 open 成功、照片数 ≥ LA_SCALE_MIN（默认 1000，镜像真库规模）、kpi 已填充；
+// 构造 GalleryPage（真实图库网格）+ MapView（真实 GPS 足迹）offscreen 不崩、首屏渲染不超时。
+// 重要：main() 已建 QApplication（line ~417），此处严禁再建 QApplication —— 双实例退场 SIGSEGV。
+//       本函数复用既有 QApplication，自建 Library 打开真实库（Library 仅为 QSqlDatabase 包装，
+//       不依赖 main 的 lib）；构造页面仅需 QApplication 已存在即可。
+int runScaleSmoke()
+{
+    QString db = qEnvironmentVariable("LA_SCALE_DB");
+    if (db.isEmpty()) db = qEnvironmentVariable("LA_DB");
+    if (db.isEmpty()) {
+        // 默认：从可执行文件目录向上搜索合成 scale fixture（提交于仓库根，镜像真库 6425 规模）
+        QString dir = QCoreApplication::applicationDirPath();
+        for (int i = 0; i < 6; ++i) {
+            const QString cand = dir + QStringLiteral("/_scale_fixture.db");
+            if (QFileInfo::exists(cand)) { db = cand; break; }
+            const QString up = QDir(dir).filePath(QStringLiteral(".."));
+            if (up == dir) break;
+            dir = QDir::cleanPath(up);
+        }
+    }
+    const int minCount = qEnvironmentVariable("LA_SCALE_MIN", QStringLiteral("1000")).toInt();
+    const qint64 mapBudgetMs = qEnvironmentVariable("LA_SCALE_MAP_MS", QStringLiteral("15000")).toLongLong();
+
+    QString err;
+    Library lib;
+    if (!lib.open(db, &err)) {
+        std::fprintf(stderr, "LA_SCALE_SMOKE FAIL open=%s (%s)\n",
+                     qPrintable(db), qPrintable(err));
+        std::fflush(stderr);
+        return 2;
+    }
+    const auto& phs = lib.photos();
+    const Kpi& k = lib.kpi();
+    const int n = int(phs.size());
+
+    bool ok = true;
+    QStringList fails;
+    if (k.total != n) { ok = false; fails << "kpi.total!=n"; }
+    if (n < minCount) { ok = false; fails << QStringLiteral("photos=%1<min=%2").arg(n).arg(minCount); }
+    if (k.yearCount < 1) { ok = false; fails << "yearCount<1"; }
+    if (k.provCount < 1) { ok = false; fails << "provCount<1"; }
+
+    // 关键页面 1：真实图库网格（EditorialView 窗口化，仅可见行出绘制，构造/首屏不崩）
+    int galleryCtrls = -1;
+    {
+        GalleryPage page(&phs, QString(), nullptr);
+        page.setHidePrivate(false);
+        page.resize(1200, 800);
+        page.show();
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 400);
+        galleryCtrls = page.findChildren<QWidget*>().size();
+    }
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+
+    // 关键页面 2：足迹地图（注入真实 GPS 预投影点）。测量单次首屏 paint 周期。
+    int gpsCount = 0;
+    qint64 paintMs = -1;
+    {
+        MapView view(nullptr);
+        QVector<QPointF> pts;
+        pts.reserve(n);
+        for (const Photo& p : phs) {
+            if (!p.hasGps) continue;
+            const double x = (p.lo + 180.0) / 360.0 * MapView::MAP_W;
+            const double y = (90.0 - p.la) / 180.0 * MapView::MAP_H;
+            pts.append(QPointF(x, y));
+        }
+        gpsCount = pts.size();
+        view.setGpsPoints(pts);
+        view.setGpsCount(gpsCount);
+        view.resize(1200, 800);
+        view.show();
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 100); // 初始 show
+        const qint64 t0 = QDateTime::currentMSecsSinceEpoch();
+        view.update();
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 2000); // 单次 paint 周期
+        paintMs = QDateTime::currentMSecsSinceEpoch() - t0;
+        std::fprintf(stderr, "LA_SCALE_MAP mapMs=%lld gps=%d\n", paintMs, gpsCount);
+        std::fflush(stderr);
+    }
+
+    if (galleryCtrls < 0) { ok = false; fails << "gallery_construct"; }
+    if (paintMs < 0 || paintMs > mapBudgetMs) { ok = false; fails << QStringLiteral("mapPaint=%1>budget=%2").arg(paintMs).arg(mapBudgetMs); }
+
+    if (ok) {
+        std::fprintf(stderr,
+            "LA_SCALE_SMOKE PASS photos=%d years=%d provs=%d span=%d-%d gps=%d galleryCtrls=%d mapMs=%lld db=%s\n",
+            n, k.yearCount, k.provCount, k.minYear, k.maxYear, gpsCount, galleryCtrls, paintMs,
+            qPrintable(QFileInfo(db).fileName()));
+    } else {
+        std::fprintf(stderr, "LA_SCALE_SMOKE FAIL reason=%s photos=%d gps=%d mapMs=%lld\n",
+                     qPrintable(fails.join(QChar(';'))), n, gpsCount, paintMs);
+    }
+    std::fflush(stderr);
+    return ok ? 0 : 1;
+}
 } // namespace（P10 geo 冒烟）
 
 namespace {
@@ -488,6 +588,10 @@ int main(int argc, char *argv[])
     // 方向 C 第一步：相册内搜索过滤断言（GalleryModel 直接驱动）
     if (qEnvironmentVariableIsSet("LA_GALLERY_SEARCH_QA"))
         return runGallerySearchQa();
+
+    // 方向 D 第一步：真实库回归门禁（规模化与流畅性，默认可跑 6425 张合成 fixture）
+    if (qEnvironmentVariableIsSet("LA_SCALE_SMOKE"))
+        return runScaleSmoke();
 
     // P8 原生导入器冒烟：扫描 LA_SCAN_ROOT 入库到 LA_SCAN_DB（独立于正式库），
     // 打印增量结果后退出；同一命令重跑应 added=0 / unchanged=N（增量幂等）。
