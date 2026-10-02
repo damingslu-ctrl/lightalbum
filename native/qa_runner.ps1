@@ -49,15 +49,19 @@ $gates = @(
 )
 
 function Eval($lines, $exitCode, $killed) {
+  # A killed gate means the native exe did NOT self-exit within $Timeout: this
+  # is an INFRA failure (console/redirect issue or a hung gate), never a healthy
+  # result. On CI it MUST FAIL the job loudly, not silently pass as CHECK.
+  if ($killed) { return "KILLED" }
   if (@($lines -match "FAIL").Count -gt 0) { return "RED" }
-  if (-not $killed -and $exitCode -ne 0) { return "RED" }
+  if ($exitCode -ne 0) { return "RED" }
   $greenPat = "PASS|OK|DONE|done|rings=|Loaded|loaded="
   if (@($lines -match $greenPat).Count -gt 0) { return "GREEN" }
   if ($lines.Count -eq 0) { return "NO-OUTPUT" }
   return "CHECK"
 }
 
-$pass=0;$fail=0;$check=0;$skip=0
+$pass=0;$fail=0;$check=0;$skip=0;$kill=0
 $results = @()
 $prevGate = ""
 foreach ($g in $gates) {
@@ -101,9 +105,11 @@ foreach ($g in $gates) {
   try { $raw = $proc.StandardOutput.ReadToEnd() + $proc.StandardError.ReadToEnd() } catch {}
   $lines = @($raw -split "`r?`n" | Where-Object { $_ -match 'LA_|^GEO' } | Where-Object { $_.Trim() -ne "" })
   $verdict = Eval $lines $proc.ExitCode $killed
-  $mark = switch ($verdict) { "GREEN"{"[OK]"} "RED"{"[FAIL]"} "NO-OUTPUT"{"[NOOUT]"} default{"[??]"} }
+  $mark = switch ($verdict) { "GREEN"{"[OK]"} "RED"{"[FAIL]"} "KILLED"{"[KILL]"} "NO-OUTPUT"{"[NOOUT]"} default{"[??]"} }
   $detail = ""
-  if ($verdict -eq "RED") {
+  if ($verdict -eq "KILLED") {
+    $detail = ("TIMEOUT/KILLED: exe did not self-exit within " + $Timeout + "s (console/redirect or hung gate)")
+  } elseif ($verdict -eq "RED") {
     $detail = (@($lines | Where-Object { $_ -match "FAIL" } | Select-Object -First 1) -join " ").Trim()
   } elseif ($verdict -eq "CHECK") {
     $detail = (@($lines | Select-Object -First 1) -join " ").Trim()
@@ -111,11 +117,12 @@ foreach ($g in $gates) {
   $results += @{ name = $g.n; mark = $mark; detail = $detail }
   Write-Host ("{0,-20} {1}" -f $g.n, $mark)
   $lines | ForEach-Object { Write-Host ("    " + $_) }
-  switch ($verdict) { "GREEN"{$pass++} "RED"{$fail++} default{$check++} }
+  switch ($verdict) { "GREEN"{$pass++} "RED"{$fail++} "KILLED"{$fail++;$kill++} default{$check++} }
 }
 if ($prevGate) { Remove-Item -Path "Env:$prevGate" -ErrorAction SilentlyContinue }
-Write-Host ("`n=== SUMMARY: PASS={0} FAIL={1} CHECK={2} SKIP={3} ===" -f $pass,$fail,$check,$skip)
+Write-Host ("`n=== SUMMARY: PASS={0} FAIL={1} CHECK={2} SKIP={3} KILL={4} ===" -f $pass,$fail,$check,$skip,$kill)
 Write-Host "CHECK = has output but no explicit green marker; verify per docs/client_iter_guide.md section 3."
+Write-Host "KILL  = exe did not self-exit within timeout (INFRA failure); counts as RED, blocks CI."
 Write-Host "SKIP  = required env vars absent (e.g. LA_SCAN_ROOT/LA_SCAN_DB); not a regression."
 
 # Machine-readable result for the orchestrator (iterate.ps1): decouples from
