@@ -580,6 +580,32 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
     connect(search_, &QLineEdit::textChanged, gallery_, &GalleryPage::applyFilter);
     // P15：图库卡片点击 → 沉浸式灯箱（无边框）→（可选）跳转修图台
     thumbsDir_ = thumbsDir;
+    // D5b：批量写回接线 —— 视图只发 signal，库写入在此（MainWindow 持 lib_）统一执行，
+    // 复用 Library::setRatings/setPrivates 的单事务原子语义（2.2.9）。
+    connect(gallery_, &GalleryPage::batchRatingRequested, this,
+            [this](const QStringList& paths, int rating) {
+                if (!lib_ || paths.isEmpty()) return;
+                const BatchResult r = lib_->setRatings(paths, rating);
+                gallery_->refresh();
+                QMessageBox::information(this, QStringLiteral("批量评分"),
+                    QStringLiteral("请求 %1 张，成功 %2 张。%3")
+                        .arg(r.total).arg(r.done)
+                        .arg(r.ok ? QStringLiteral("已原子提交。")
+                                  : QStringLiteral("失败并已整体回滚：%1").arg(r.error)));
+            });
+    connect(gallery_, &GalleryPage::batchPrivateRequested, this,
+            [this](const QStringList& paths, bool priv) {
+                if (!lib_ || paths.isEmpty()) return;
+                const BatchResult r = lib_->setPrivates(paths, priv);
+                gallery_->setHidePrivate(gallery_->hidePrivate()); // 私密标记影响可见性 → 重跑过滤
+                gallery_->refresh();
+                QMessageBox::information(this, QStringLiteral("批量私密"),
+                    QStringLiteral("请求 %1 张，成功 %2 张。%3")
+                        .arg(r.total).arg(r.done)
+                        .arg(r.ok ? QStringLiteral("已原子提交。")
+                                  : QStringLiteral("失败并已整体回滚：%1").arg(r.error)));
+            });
+
     connect(gallery_, &GalleryPage::photoActivated, this,
             [this](const QString& path) { openLightbox(path); });
     // P15：地图「在图库查看」→ 按区域筛选并切到图库

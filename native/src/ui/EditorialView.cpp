@@ -26,7 +26,7 @@ public:
     void setSelected(bool s) { sel_ = s; update(); }
 
 signals:
-    void activated(int row);
+    void activated(int row, Qt::KeyboardModifiers mods);   // D5b：带修饰键供多选判定
     void hovered(int row, bool on);
 
 protected:
@@ -45,7 +45,7 @@ protected:
                                 title, sub, orient, miss, rating, pm, feature_, hov_, sel_);
     }
     void mousePressEvent(QMouseEvent* e) override {
-        if (e->button() == Qt::LeftButton) emit activated(row_);
+        if (e->button() == Qt::LeftButton) emit activated(row_, e->modifiers());
     }
     void enterEvent(QEnterEvent*) override { hov_ = true; emit hovered(row_, true); update(); }
     void leaveEvent(QEvent*) override      { hov_ = false; emit hovered(row_, false); update(); }
@@ -130,13 +130,8 @@ GalleryTile* EditorialView::acquire()
 {
     if (!free_.isEmpty()) return free_.takeLast();
     auto* t = new GalleryTile(model_, 0, false, content_);
-    connect(t, &GalleryTile::activated, this, [this](int row) {
-        selectedRow_ = row;
-        for (auto it = bound_.cbegin(); it != bound_.cend(); ++it)
-            it.value()->setSelected(it.key() == row);
-        const Photo* ph = model_->photoAt(row);
-        emit photoActivated(ph ? ph->path : QString());
-    });
+    connect(t, &GalleryTile::activated, this,
+            [this](int row, Qt::KeyboardModifiers mods) { clickRow(row, mods); });
     pool_.append(t);
     return t;
 }
@@ -171,7 +166,7 @@ void EditorialView::updateWindow()
         if (bound_.contains(row)) continue;
         GalleryTile* t = acquire();
         t->setRow(row, row == 0);
-        t->setSelected(row == selectedRow_);
+        t->setSelected(selRows_.contains(row));
         t->setGeometry(row == 0 ? featureRect() : cellRect(row));
         t->show();
         bound_.insert(row, t);
@@ -215,6 +210,77 @@ void EditorialView::prefetchVisible()
         if (row - 1 >= 0)     model_->pixmapAt(row - 1, lv);
         if (row + 1 < total_) model_->pixmapAt(row + 1, lv);
     }
+}
+
+// ---- D5b：多选状态机 ----
+// 语义（与主流图库一致，且**不破坏**既有单击开灯箱行为）：
+//   无修饰    → 单选（清空多选集）+ 打开灯箱
+//   Ctrl      → 切换该行选中，不打开灯箱
+//   Shift     → 以 selectedRow_ 为锚点做范围选择，不打开灯箱
+void EditorialView::clickRow(int row, Qt::KeyboardModifiers mods)
+{
+    if (row < 0 || row >= total_) return;
+    const bool toggle = mods.testFlag(Qt::ControlModifier);
+    const bool range  = mods.testFlag(Qt::ShiftModifier);
+    if (toggle) {
+        if (selRows_.contains(row)) selRows_.remove(row);
+        else selRows_.insert(row);
+        selectedRow_ = row;
+    } else if (range && selectedRow_ >= 0) {
+        const int a = qMin(selectedRow_, row), b = qMax(selectedRow_, row);
+        selRows_.clear();
+        for (int r = a; r <= b; ++r) selRows_.insert(r);
+    } else {
+        selRows_.clear();
+        selRows_.insert(row);
+        selectedRow_ = row;
+    }
+    refreshSelectionVisual();
+    emit selectionChanged(selRows_.size());
+    // 仅无修饰点击才打开灯箱（多选手势不应弹窗）
+    if (!toggle && !range) {
+        const Photo* ph = model_->photoAt(row);
+        emit photoActivated(ph ? ph->path : QString());
+    }
+}
+
+QStringList EditorialView::selectedPaths() const
+{
+    QStringList out;
+    out.reserve(selRows_.size());
+    for (int r : selRows_) {
+        const Photo* ph = model_->photoAt(r);
+        if (ph) out << ph->path;
+    }
+    return out;
+}
+
+void EditorialView::selectAll()
+{
+    selRows_.clear();
+    for (int r = 0; r < total_; ++r) selRows_.insert(r);
+    refreshSelectionVisual();
+    emit selectionChanged(selRows_.size());
+}
+
+void EditorialView::clearSelection()
+{
+    if (selRows_.isEmpty() && selectedRow_ < 0) return;
+    selRows_.clear();
+    selectedRow_ = -1;
+    refreshSelectionVisual();
+    emit selectionChanged(0);
+}
+
+void EditorialView::toggleRow(int row)
+{
+    clickRow(row, Qt::ControlModifier);
+}
+
+void EditorialView::refreshSelectionVisual()
+{
+    for (auto it = bound_.cbegin(); it != bound_.cend(); ++it)
+        it.value()->setSelected(selRows_.contains(it.key()));
 }
 
 QRect EditorialView::featureGeometry() const { return featureRect(); }

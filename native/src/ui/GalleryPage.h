@@ -4,6 +4,7 @@
 #include <QWidget>
 #include "EditorialView.h"  // P23 E 杂志拼贴视图
 #include <QLabel>
+#include <QStringList>
 #include <QTimer>
 #include "GalleryModel.h"
 #include "ThumbCache.h"
@@ -22,9 +23,25 @@ public:
     void refresh();                                                      // 灯箱改评分/私密后刷新
     void qaShootE(const QString& png);                                   // P23 E 像素/几何自测（offscreen）
     QScrollBar* qaScrollBar() const;   // 方向 D2：offscreen 性能门访问 EditorialView 滚动条
+    bool hidePrivate() const { return hidePrivate_; }   // D5b：批量私密后据此重跑隐私过滤
+    // ---- D5b QA 入口（批量多选门用；等价于用户 Ctrl/Shift 点击）----
+    QStringList qaSelectedPaths() const;
+    int  qaSelectCount() const;
+    void qaToggleRow(int row);
+    void qaClearSelection();
+    void qaSelectAll();
+    bool qaBatchBarVisible() const;
+    int  qaBatchBarStarCount() const;
+    void qaClickRow(int row, bool ctrl, bool shift);
+    // QA：直接触发批量动作（等价点★/🔒），供端到端断言 signal 载荷
+    void qaFireBatchRating(int rating);
+    void qaFireBatchPrivate(bool priv);
 
 signals:
     void photoActivated(const QString& path);   // 点击卡片 → 沉浸式灯箱
+    // ---- D5b：批量动作上报（视图层不持有写能力，一律 signal 交给 MainWindow 执行）----
+    void batchRatingRequested(const QStringList& paths, int rating);
+    void batchPrivateRequested(const QStringList& paths, bool priv);
 
 private:
     void buildChips();          // P16：按当前数据 + 隐私门状态重建分类/人物 chips
@@ -45,6 +62,16 @@ private:
     QString      activePerson_;
     QString      searchText_;                 // 搜索框状态（计数注记用）
     bool         hidePrivate_ = true;
+    // ---- D5b：批量工具条（选中非空才显示；★1-5 / 🔒私密 / 取消选择）----
+    QWidget*     batchBar_ = nullptr;
+    QLabel*      batchInfo_ = nullptr;
+    QVector<QPushButton*> starBtns_;
+    QPushButton* privBtn_ = nullptr;
+    int          selCount_ = 0;
+    void buildBatchBar();
+    void onSelectionChanged(int count);
+    void emitBatchRating(int rating);
+    void emitBatchPrivate(bool priv);
 private slots:
     void prefetch();
 };

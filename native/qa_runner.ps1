@@ -52,6 +52,7 @@ $gates = @(
   @{n="LA_SCALE_PERF";     png=$false}  # D: scale performance baseline (6425 fixture)
   @{n="LA_THUMB_CACHE_QA";png=$false}  # D4: two-level byte-budgeted thumb LRU
   @{n="LA_BATCH_TX_QA";  png=$false}  # D5: atomic batch write-back (rollback)
+  @{n="LA_GALLERY_BATCH_QA"; png=$false}  # D5b: gallery multi-select + batch bar
 )
 
 function Eval($lines, $exitCode, $killed) {

@@ -3,6 +3,23 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.3.0] - 2026-10-02
+
+### 功能（方向 D·规模化与流畅性：第五步 b 图库多选 + 批量工具条）
+- **交付「批量操作」的用户可见入口**（2.2.9 只建了原子批量写层，本步接线到 UI，方向 D至此完整闭环）。
+- **`EditorialView` 多选状态机**（沿用主流图库语义，**不破坏**既有单击开灯箱）：
+  - 无修饰 → 单选（清多选集）+ 打开灯箱；**Ctrl** → 切换该行选中；**Shift** → 以焦点行为锚点做范围选择。
+  - `GalleryTile::activated` 改为携带 `Qt::KeyboardModifiers`，点击统一走`clickRow(row, mods)`；多选手势**不触发灯箱**。
+  - 选中态改由 `selRows_`（`QSet<int>` 模型行号）驱动，池化瓦片重绑（`updateWindow`）与 `refreshSelectionVisual()` 共用同一判定——虚拟化下滚出再滚回选中态不丢。
+  - 新增 API：`selectedRows`/`selectedPaths`/`selectAll`/`clearSelection`/`toggleRow`/`clickRow`；新增信号 `selectionChanged(count)`。
+- **`GalleryPage` 批量工具条**：位于计数与视图之间，**选中为空时整条隐藏**（不占视觉空间）；含 `已选 N 张` + `★1..★5` + `🔒 私密` + `取消选择`。计数文案追加「已选 N」注记。
+- **架构铁律：视图层不持有写能力**——`GalleryPage` 只有 `const QVector<Photo>*`（只读借用），按钮只发 `batchRatingRequested` / `batchPrivateRequested` 信号，**库写入一律在 `MainWindow`（持 `lib_`）执行**，复用 `Library::setRatings`/`setPrivates` 的单事务原子语义；结果以 `QMessageBox` 反馈「请求 N 张 / 成功 M 张 / 已原子提交 或 已整体回滚: 原因」。批量私密后额外 `setHidePrivate(hidePrivate())` 重跑隐私过滤。
+- **新增第 24 门 `LA_GALLERY_BATCH_QA`**（headless 自建临时库，不碰真实 db）：断言 ① 工具条初始隐藏/有选中显示/取消回隐 + 5 个星级按钮 ② Ctrl 累加与再点取消，**且不触发灯箱** ③ Shift 范围（2→5 得 4 张、反向 2→1 得 2 张）④ 无修饰点击必触发灯箱（既有行为守护）⑤ 越界 row 不改变选中 / 全选 / 取消边界 ⑥ 批量 signal 载荷（paths 数与评分值正确、触发后自动清选中）⑦ **端到端**：signal → `Library::setRatings` → DB 与内存副本一致（各 3 张 rating=4）。
+- **实测**：
+  - `LA_GALLERY_BATCH_QA PASS rows=8 ctrl=3 range=4 lamp=1 selectAll=8 stars=5 ratingSig=1 privSig=1 e2e=3 bar=1`（EXIT=0）。
+  - **反例** `LA_BATCH_QA_LAMPASS=1`（强制多选手势也开灯箱）正确 `FAIL reason=LAMPASS: ctrl click must NOT open lightbox, but gate forced it open`（EXIT=1，非空心）。
+  - 回归全绿：`LA_GALLERY_E_QA featureOK=1` / `LA_SCALE_SMOKE PASS photos=6425 galleryCtrls=60`（51→60 为批量条 8 子控件 +1 bar）/ `LA_SCALE_PERF PASS firstMs=40 scrollMaxMs=18` / `LA_BATCH_TX_QA PASS` / `LA_THUMB_CACHE_QA PASS` / `LA_GALLERY_SEARCH_QA marks=7` / `LA_P1_SMOKE_OK` / `LA_MAP_CLICK_QA all=OK(10/10)`。
+- **版本 2.2.9→2.3.0（MINOR：新用户可见功能）**；`qa_runner` 23 门 → **24 门**。至此方向 D（规模化与流畅性）六向全部落地。
 ## [2.2.9] - 2026-10-02
 
 ### 功能（方向 D·规模化与流畅性：第五步批量写回事务化·第一阶段数据层）

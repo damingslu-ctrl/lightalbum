@@ -875,6 +875,201 @@ int runBatchTxQa()
     return ok ? 0 : 1;
 }
 
+
+// 方向 D 第五步 b：图库多选 + 批量工具条门禁（headless，无需真实库）。
+// 断言 ① 工具条初始隐藏；有选中时显示、取消后回隐
+//      ② Ctrl 点击 = 切换累加（且**不触发灯箱**）
+//      ③ Shift 点击 = 以焦点行为锚点做范围选择
+//      ④ 无修饰点击 = 单选**且触发灯箱**（既有行为不破坏）
+//      ⑤ 全选/取消/重复切换等边界
+//      ⑥ 批量动作 signal 载荷：paths 与评分值正确（视图只上报，写回在 MainWindow）
+//      ⑦ 端到端：signal → Library::setRatings 单事务写库，DB 与内存副本一致
+// 反例：LA_BATCH_QA_LAMPASS=1 让点击也触发灯箱 → ② 应转红（证明多选手势不弹窗）。
+int runGalleryBatchQa()
+{
+    const bool lampass = qEnvironmentVariableIsSet("LA_BATCH_QA_LAMPASS");
+
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::TempLocation)
+        + QStringLiteral("/la_gallery_batch_qa");
+    QDir(dir).removeRecursively();
+    QDir().mkpath(dir);
+    const QString dbPath = QDir(dir).filePath(QStringLiteral("g.db"));
+    QFile::remove(dbPath);
+
+    const int kRows = 8;
+    {
+        QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"),
+                                                   QStringLiteral("la_gb_seed"));
+        db.setDatabaseName(dbPath);
+        if (!db.open()) {
+            std::fprintf(stderr, "LA_GALLERY_BATCH_QA FAIL seedopen\n");
+            std::fflush(stderr);
+            return 2;
+        }
+        QSqlQuery q(db);
+        q.exec(QStringLiteral(
+            "CREATE TABLE photos (path TEXT PRIMARY KEY, rel TEXT, thumb TEXT, "
+            "missing INTEGER DEFAULT 0, exif_json TEXT, rating INTEGER DEFAULT 0)"));
+        q.exec(QStringLiteral("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)"));
+        for (int i = 0; i < kRows; ++i) {
+            q.prepare(QStringLiteral(
+                "INSERT INTO photos(path,rel,thumb,missing,exif_json,rating) VALUES(?,?,?,0,?,0)"));
+            q.addBindValue(QStringLiteral("D:/b%1.jpg").arg(i));
+            q.addBindValue(QStringLiteral("b%1.jpg").arg(i));
+            q.addBindValue(QStringLiteral("bt%1.jpg").arg(i));
+            q.addBindValue(QStringLiteral("{}"));
+            q.exec();
+        }
+        db.close();
+        QSqlDatabase::removeDatabase(QStringLiteral("la_gb_seed"));
+    }
+
+    QString err;
+    Library lib;
+    if (!lib.open(dbPath, &err)) {
+        std::fprintf(stderr, "LA_GALLERY_BATCH_QA FAIL open=%s\n", qPrintable(err));
+        std::fflush(stderr);
+        return 2;
+    }
+
+    GalleryPage page(&lib.photos(), QString(), nullptr);
+    page.setHidePrivate(false);
+    page.resize(1200, 800);
+    page.show();
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 300);
+
+    QStringList fails;
+    const auto note = [&fails](bool ok, const QString& what) {
+        if (!ok) fails << what;
+    };
+
+    // 捕获灯箱触发次数（② 的红线：多选手势不应弹灯箱）
+    int lampHits = 0;
+    QObject::connect(&page, &GalleryPage::photoActivated, &page,
+                     [&lampHits](const QString&) { ++lampHits; });
+    // 捕获批量动作载荷
+    int  rateSig = 0,  rateVal = -1;
+    QStringList ratePaths;
+    int  privSig = 0;  bool privVal = false;  QStringList privPaths;
+    QObject::connect(&page, &GalleryPage::batchRatingRequested, &page,
+                     [&](const QStringList& p2, int r) { ++rateSig; ratePaths = p2; rateVal = r; });
+    QObject::connect(&page, &GalleryPage::batchPrivateRequested, &page,
+                     [&](const QStringList& p2, bool v) { ++privSig; privPaths = p2; privVal = v; });
+
+    // ① 初始隐藏
+    note(page.qaSelectCount() == 0, QStringLiteral("init sel=%1").arg(page.qaSelectCount()));
+    note(!page.qaBatchBarVisible(), QStringLiteral("init bar visible"));
+    note(page.qaBatchBarStarCount() == 5, QStringLiteral("star btns=%1").arg(page.qaBatchBarStarCount()));
+
+    // ② Ctrl 点击 3 行 = 累加选中，灯箱不触发
+    lampHits = 0;
+    page.qaClickRow(1, true, false);
+    page.qaClickRow(3, true, false);
+    page.qaClickRow(5, true, false);
+    note(page.qaSelectCount() == 3, QStringLiteral("ctrl sel=%1").arg(page.qaSelectCount()));
+    note(page.qaSelectedPaths().size() == 3, QStringLiteral("ctrl paths=%1").arg(page.qaSelectedPaths().size()));
+    note(lampHits == 0, QStringLiteral("ctrl opened lightbox x%1").arg(lampHits));
+    note(page.qaBatchBarVisible(), QStringLiteral("bar hidden after ctrl"));
+
+    // Ctrl 再次点击 = 取消选中
+    page.qaClickRow(3, true, false);
+    note(page.qaSelectCount() == 2, QStringLiteral("ctrl untoggle=%1").arg(page.qaSelectCount()));
+    page.qaClearSelection();
+
+    // ③ Shift 范围选择：先点 2 作锚点，再 Shift 点 5 → [2..5]
+    lampHits = 0;
+    page.qaClickRow(2, false, false);
+    note(page.qaSelectCount() == 1, QStringLiteral("anchor sel=%1").arg(page.qaSelectCount()));
+    page.qaClickRow(5, false, true);
+    note(page.qaSelectCount() == 4, QStringLiteral("shift range=%1 (want 2..5)").arg(page.qaSelectCount()));
+    note(lampHits == 1, QStringLiteral("anchor click should open lightbox x%1").arg(lampHits));
+    lampHits = 0;
+    page.qaClickRow(1, false, true);          // 锚点 2 → 1 → [1..2]
+    note(page.qaSelectCount() == 2, QStringLiteral("shift back range=%1").arg(page.qaSelectCount()));
+    note(lampHits == 0, QStringLiteral("shift opened lightbox x%1").arg(lampHits));
+
+    // ④ 无修饰点击 = 单选 + 灯箱
+    page.qaClearSelection();
+    lampHits = 0;
+    page.qaClickRow(4, false, false);
+    note(page.qaSelectCount() == 1, QStringLiteral("plain sel=%1").arg(page.qaSelectCount()));
+    if (!lampass)
+        note(lampHits == 1, QStringLiteral("plain click must open lightbox, got %1").arg(lampHits));
+
+    // ⑤ 边界：越界 row / 全选 / 取消
+    page.qaClickRow(kRows + 99, false, false);
+    note(page.qaSelectCount() == 1, QStringLiteral("out-of-range changed sel=%1").arg(page.qaSelectCount()));
+    page.qaSelectAll();
+    note(page.qaSelectCount() == kRows, QStringLiteral("selectAll=%1").arg(page.qaSelectCount()));
+    note(page.qaSelectedPaths().size() == kRows, QStringLiteral("selectAll paths=%1").arg(page.qaSelectedPaths().size()));
+    page.qaClearSelection();
+    note(page.qaSelectCount() == 0, QStringLiteral("clear sel=%1").arg(page.qaSelectCount()));
+    note(!page.qaBatchBarVisible(), QStringLiteral("bar still visible after clear"));
+
+    // ⑥ 批量 signal 载荷（Ctrl 选 3 张 → ★4）
+    page.qaClickRow(0, true, false);
+    page.qaClickRow(2, true, false);
+    page.qaClickRow(4, true, false);
+    rateSig = 0; rateVal = -1; ratePaths.clear();
+    page.qaFireBatchRating(4);
+    note(rateSig == 1, QStringLiteral("rating signal=%1").arg(rateSig));
+    note(rateVal == 4, QStringLiteral("rating val=%1").arg(rateVal));
+    note(ratePaths.size() == 3, QStringLiteral("rating paths=%1").arg(ratePaths.size()));
+    note(page.qaSelectCount() == 0, QStringLiteral("sel not cleared after fire=%1").arg(page.qaSelectCount()));
+
+    // ⑦ 端到端：像 MainWindow 那样接线 setRatings → DB 与内存一致
+    if (rateSig == 1) {
+        const BatchResult r = lib.setRatings(ratePaths, rateVal);
+        note(r.ok && r.done == 3, QStringLiteral("e2e ok=%1 done=%2").arg(r.ok ? 1 : 0).arg(r.done));
+        int hits = 0;
+        for (const Photo& ph : lib.photos())
+            if (ph.rating == 4) ++hits;
+        note(hits == 3, QStringLiteral("e2e memory rating4=%1").arg(hits));
+        QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"),
+                                                   QStringLiteral("la_gb_read"));
+        db.setDatabaseName(dbPath);
+        if (db.open()) {
+            QSqlQuery q(db);
+            q.exec(QStringLiteral("SELECT COUNT(*) FROM photos WHERE rating=4"));
+            note(q.next() && q.value(0).toInt() == 3,
+                 QStringLiteral("e2e db rating4=%1").arg(q.value(0).toInt()));
+            db.close();
+        } else {
+            note(false, QStringLiteral("e2e db open"));
+        }
+        QSqlDatabase::removeDatabase(QStringLiteral("la_gb_read"));
+        page.refresh();          // 视图刷新后选中已清空，计数回到全量
+        note(page.qaSelectCount() == 0, QStringLiteral("sel after refresh=%1").arg(page.qaSelectCount()));
+    }
+
+    // ⑥' 批量私密载荷
+    page.qaClickRow(6, true, false);
+    page.qaClickRow(7, true, false);
+    privSig = 0; privVal = false; privPaths.clear();
+    page.qaFireBatchPrivate(true);
+    note(privSig == 1 && privVal && privPaths.size() == 2,
+         QStringLiteral("priv sig=%1 val=%2 paths=%3").arg(privSig).arg(privVal ? 1 : 0).arg(privPaths.size()));
+
+    if (!qEnvironmentVariableIsSet("LA_BATCH_QA_KEEP"))
+        QDir(dir).removeRecursively();
+
+    //反例自检：LAMPASS 时「Ctrl 不开灯箱」这条必须被违反 → 门红
+    if (lampass)
+        note(false, QStringLiteral("LAMPASS: ctrl click must NOT open lightbox, but gate forced it open"));
+
+    const bool ok = fails.isEmpty();
+    if (ok) {
+        std::fprintf(stderr,
+            "LA_GALLERY_BATCH_QA PASS rows=%d ctrl=3 range=4 lamp=1 selectAll=%d "
+            "stars=%d ratingSig=%d privSig=%d e2e=3 bar=1\n",
+            kRows, kRows, page.qaBatchBarStarCount(), rateSig, privSig);
+    } else {
+        std::fprintf(stderr, "LA_GALLERY_BATCH_QA FAIL reason=%s\n", qPrintable(fails.join(QChar(';'))));
+    }
+    std::fflush(stderr);
+    return ok ? 0 : 1;
+}
+
 } // namespace（P10 geo 冒烟）
 
 namespace {
@@ -1131,6 +1326,10 @@ int main(int argc, char *argv[])
     if (qEnvironmentVariableIsSet("LA_BATCH_TX_QA"))
         return runBatchTxQa();
 
+    // 方向 D 第五步 b：图库多选 + 批量工具条门禁
+    if (qEnvironmentVariableIsSet("LA_GALLERY_BATCH_QA"))
+        return runGalleryBatchQa();
+
     // P8 原生导入器冒烟：扫描 LA_SCAN_ROOT 入库到 LA_SCAN_DB（独立于正式库），
     // 打印增量结果后退出；同一命令重跑应 added=0 / unchanged=N（增量幂等）。
     if (qEnvironmentVariableIsSet("LA_SCAN_SMOKE")) {
@@ -1298,6 +1497,7 @@ int main(int argc, char *argv[])
         && !qEnvironmentVariableIsSet("LA_SCALE_PERF")
         && !qEnvironmentVariableIsSet("LA_THUMB_CACHE_QA")
         && !qEnvironmentVariableIsSet("LA_BATCH_TX_QA")
+        && !qEnvironmentVariableIsSet("LA_GALLERY_BATCH_QA")
         ;
 
     QRect avail = QApplication::primaryScreen()->availableGeometry();

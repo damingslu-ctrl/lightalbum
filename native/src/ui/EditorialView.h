@@ -10,6 +10,8 @@
 #include <QVector>
 #include <QHash>
 #include <QSet>
+#include <QStringList>
+#include <QSet>
 #include <QPoint>
 
 class GalleryModel;
@@ -25,6 +27,8 @@ public:
 
 signals:
     void photoActivated(const QString& path);   // 点击卡片 → 沉浸式灯箱
+    // D5b：选中集变化（供 GalleryPage 显隐批量工具条 + 更新计数文案）
+    void selectionChanged(int count);
 
 public slots:
     void rebuild();                              // modelReset → 重建全部瓦片池
@@ -35,6 +39,17 @@ public:
     int  columnCount() const { return cols_; }
     QRect featureGeometry() const;          // 首图（row0）几何
     QRect tileGeometry(int i) const;        // 第 i 张瓦片几何
+
+    // ---- D5b：多选（无修饰=单选并打开灯箱；Ctrl=切换；Shift=范围）----
+    const QSet<int>& selectedRows() const { return selRows_; }
+    QStringList selectedPaths() const;              // 选中行 -> Photo::path 列表
+    void selectAll();                // 全选（当前过滤后的全部行）
+    void clearSelection();
+    void toggleRow(int row);                        // Ctrl 语义（QA 入口复用）
+    // 点击一行：mods 决定单选/多选/范围；**未按 Ctrl/Shift 时才发 photoActivated**
+    void clickRow(int row, Qt::KeyboardModifiers mods);
+    // 选中集变化后统一把选中态刷到瓦片
+    void refreshSelectionVisual();
 
 private slots:
     void onDataChanged(const QModelIndex& top, const QModelIndex& bottom,
@@ -64,6 +79,7 @@ private:
     int  margin_  = 10;
     int  spacing_ = 6;
     QVector<QPoint> avail_;                     // 流式单元 (row,col)，索引 i-1 → 第 i 张（i>=1）
-    int  selectedRow_ = -1;
+    int  selectedRow_ = -1;      // 键盘焦点行（Shift 范围锚点）
+    QSet<int> selRows_;          // D5b：多选集（模型行号）
     bool relayoutPending_ = false;
 };

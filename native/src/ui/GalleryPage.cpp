@@ -109,12 +109,107 @@ GalleryPage::GalleryPage(const QVector<Photo>* photos, const QString& thumbsDir,
             prefetchTimer_, qOverload<>(&QTimer::start));
     connect(prefetchTimer_, &QTimer::timeout, this, &GalleryPage::prefetch);
 
+    // D5b：批量工具条（位于计数之下、视图之上；选中为空时整条隐藏，不占视觉空间）
+    buildBatchBar();
+    lay->addWidget(batchBar_);
+    connect(view_, &EditorialView::selectionChanged, this, &GalleryPage::onSelectionChanged);
+
     // P15：点击卡片 → 弹出灯箱并跳转修图（零云端；path 由 MainWindow 定位 Photo）。
     connect(view_, &EditorialView::photoActivated, this, &GalleryPage::photoActivated);
 
     applyFilter(QString());
     buildChips();
 }
+
+// ---- D5b：批量工具条 ----
+// 铁律：GalleryPage 只有 const QVector<Photo>*（只读借用），**不持有写能力** ——
+// 按钮只发 signal，真正的库写入由 MainWindow（持 lib_）执行，保证写回唯一入口。
+void GalleryPage::buildBatchBar()
+{
+    batchBar_ = new QWidget(this);
+    batchBar_->setObjectName(QStringLiteral("gpBatchBar"));
+    batchBar_->setStyleSheet(QStringLiteral("#gpBatchBar{background:#0b120d;"
+                                            "border-top:1px solid #1e2a22;}"));
+    auto* bl = new QHBoxLayout(batchBar_);
+    bl->setContentsMargins(20, 6, 20, 6);
+    bl->setSpacing(6);
+
+    batchInfo_ = new QLabel(batchBar_);
+    batchInfo_->setStyleSheet(QStringLiteral("color:#d9a94e;font-size:12px;font-weight:bold;"));
+    bl->addWidget(batchInfo_);
+
+    const QString btnCss = QStringLiteral(
+        "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:9px;"
+        "padding:4px 10px;color:#8da996;font-size:12px;}"
+        "QPushButton:hover{border-color:#4fc08a;color:#f4f7f4;}");
+    starBtns_.clear();
+    for (int i = 1; i <= 5; ++i) {
+        auto* b = new QPushButton(QStringLiteral("★%1").arg(i), batchBar_);
+        b->setCursor(Qt::PointingHandCursor);
+        b->setStyleSheet(btnCss);
+        connect(b, &QPushButton::clicked, this, [this, i] { emitBatchRating(i); });
+        bl->addWidget(b);
+        starBtns_.append(b);
+    }
+    privBtn_ = new QPushButton(QStringLiteral("🔒 私密"), batchBar_);
+    privBtn_->setCursor(Qt::PointingHandCursor);
+    privBtn_->setStyleSheet(btnCss);
+    connect(privBtn_, &QPushButton::clicked, this, [this] { emitBatchPrivate(true); });
+    bl->addWidget(privBtn_);
+
+    auto* clearBtn = new QPushButton(QStringLiteral("取消选择"), batchBar_);
+    clearBtn->setCursor(Qt::PointingHandCursor);
+    clearBtn->setStyleSheet(btnCss);
+    connect(clearBtn, &QPushButton::clicked, this, [this] { view_->clearSelection(); });
+    bl->addWidget(clearBtn);
+
+    bl->addStretch(1);
+    batchBar_->setVisible(false);            // 选中为空 → 隐藏
+}
+
+void GalleryPage::onSelectionChanged(int count)
+{
+    selCount_ = count;
+    batchBar_->setVisible(count > 0);
+    if (count > 0) {
+        batchInfo_->setText(QStringLiteral("已选 %1 张").arg(count));
+        for (int i = 0; i < starBtns_.size(); ++i)
+            starBtns_[i]->setToolTip(QStringLiteral("将选中的 %1 张设为 %2 星").arg(count).arg(i + 1));
+    }
+    updateCount();                            // 计数文案追加「已选 N」注记
+}
+
+void GalleryPage::emitBatchRating(int rating)
+{
+    if (!view_ || view_->selectedRows().isEmpty()) return;
+    emit batchRatingRequested(view_->selectedPaths(), rating);
+    view_->clearSelection();
+}
+
+void GalleryPage::emitBatchPrivate(bool priv)
+{
+    if (!view_ || view_->selectedRows().isEmpty()) return;
+    emit batchPrivateRequested(view_->selectedPaths(), priv);
+    view_->clearSelection();
+}
+
+// ---- D5b QA 入口 ----
+QStringList GalleryPage::qaSelectedPaths() const { return view_ ? view_->selectedPaths() : QStringList(); }
+int  GalleryPage::qaSelectCount() const { return view_ ? int(view_->selectedRows().size()) : 0; }
+void GalleryPage::qaToggleRow(int row) { if (view_) view_->toggleRow(row); }
+void GalleryPage::qaClearSelection() { if (view_) view_->clearSelection(); }
+void GalleryPage::qaSelectAll() { if (view_) view_->selectAll(); }
+bool GalleryPage::qaBatchBarVisible() const { return batchBar_ && batchBar_->isVisible(); }
+int  GalleryPage::qaBatchBarStarCount() const { return int(starBtns_.size()); }
+void GalleryPage::qaClickRow(int row, bool ctrl, bool shift) {
+    if (!view_) return;
+    Qt::KeyboardModifiers m = Qt::NoModifier;
+    if (ctrl)  m |= Qt::ControlModifier;
+    if (shift) m |= Qt::ShiftModifier;
+    view_->clickRow(row, m);
+}
+void GalleryPage::qaFireBatchRating(int rating) { emitBatchRating(rating); }
+void GalleryPage::qaFireBatchPrivate(bool priv) { emitBatchPrivate(priv); }
 
 // ---- P16 chips：按数据 + 隐私门状态重建（空分类不展示，全空隐藏整条）----
 void GalleryPage::buildChips()
@@ -290,6 +385,7 @@ void GalleryPage::updateCount()
                       ? QStringLiteral("未分类")
                       : QStringLiteral("分类：%1").arg(activeCat_));
     if (!activePerson_.isEmpty()) notes << QStringLiteral("人物：%1").arg(activePerson_);
+    if (selCount_ > 0) notes << QStringLiteral("已选 %1").arg(selCount_);
     const QString suffix = notes.isEmpty()
         ? QString() : QStringLiteral("（%1）").arg(notes.join(QStringLiteral(" · ")));
     count_->setText(n == total && notes.isEmpty()
