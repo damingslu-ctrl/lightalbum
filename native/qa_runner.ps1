@@ -51,6 +51,7 @@ $gates = @(
   @{n="LA_SCALE_SMOKE";    png=$false}  # D: real-library scale regression (6425 fixture)
   @{n="LA_SCALE_PERF";     png=$false}  # D: scale performance baseline (6425 fixture)
   @{n="LA_THUMB_CACHE_QA";png=$false}  # D4: two-level byte-budgeted thumb LRU
+  @{n="LA_BATCH_TX_QA";  png=$false}  # D5: atomic batch write-back (rollback)
 )
 
 function Eval($lines, $exitCode, $killed) {

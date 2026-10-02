@@ -44,6 +44,10 @@
 #include <QByteArray>
 #include <functional>
 #include "ui/ThumbCache.h"
+#include <QSqlQuery>
+#include <QSqlError>
+#include <QSqlDatabase>
+#include <QStandardPaths>
 namespace {
 // P9 AI 修图智能体冒烟：合成「偏暗偏暖发灰」样张 → 测量 → 决策 → 执行。
 // 真实路径（默认 Ollama 127.0.0.1:11434，机器没装则自动落兜底）+ 强制兜底路径（端口 9）。
@@ -607,6 +611,270 @@ int runThumbCacheQa()
     return ok ? 0 : 1;
 }
 
+
+// 方向 D 第五步：批量写回事务门禁（headless，自建临时库，无需真实库）。
+// 断言 ① path 索引与 photos_ 双向一致（verifyPathIndex）
+//      ② 空批 = 成功空操作（total=0 ok=true done=0，非错误）
+//      ③ 批量打星原子成功：ok=true done=N，DB 与内存副本同步
+//      ④ 不存在的路径 → 命中 0 行但仍算成功（不是错误）
+//      ⑤ **失败整体回滚**：中途失败 ok=false + failedIndex 定位 + done 归零
+//         且 DB 与内存副本**都保持原值**（无撕裂）——这是本门核心红线
+//      ⑥ rating 越界自动 qBound 收敛（9→5, -3→0）
+//      ⑦ 批量隐私标记同事务语义
+// 反例：LA_BATCH_TX_QA_FAIL_AT=<n> 强制在第 n 条失败（正常路径永不失败），
+//       用它证明 ⑤ 的回滚断言不是空转。
+int runBatchTxQa()
+{
+    const int failAt = qEnvironmentVariable("LA_BATCH_TX_QA_FAIL_AT", QStringLiteral("-1")).toInt();
+
+    // 临时库：QStandardPaths 临时目录，绝不碰真实library.db
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::TempLocation)
+        + QStringLiteral("/la_batch_tx_qa");
+    QDir(dir).removeRecursively();
+    QDir().mkpath(dir);
+    const QString dbPath = QDir(dir).filePath(QStringLiteral("batch.db"));
+    QFile::remove(dbPath);
+
+    // ---- 造库：6 行 photos（path唯一），字段对齐 Library::open 的 SELECT ----
+    const int kRows = 6;
+    {
+        QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"),
+                                                   QStringLiteral("la_qa_seed"));
+        db.setDatabaseName(dbPath);
+        if (!db.open()) {
+            std::fprintf(stderr, "LA_BATCH_TX_QA FAIL seedopen\n");
+            std::fflush(stderr);
+            return 2;
+        }
+        QSqlQuery q(db);
+        q.exec(QStringLiteral(
+            "CREATE TABLE photos (path TEXT PRIMARY KEY, rel TEXT, thumb TEXT, "
+            "missing INTEGER DEFAULT 0, exif_json TEXT, rating INTEGER DEFAULT 0)"));
+        q.exec(QStringLiteral("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)"));
+        for (int i = 0; i < kRows; ++i) {
+            q.prepare(QStringLiteral(
+                "INSERT INTO photos(path,rel,thumb,missing,exif_json,rating) VALUES(?,?,?,0,?,0)"));
+            q.addBindValue(QStringLiteral("D:/p%1.jpg").arg(i));
+            q.addBindValue(QStringLiteral("p%1.jpg").arg(i));
+            q.addBindValue(QStringLiteral("t%1.jpg").arg(i));
+            q.addBindValue(QStringLiteral("{}"));
+            q.exec();
+        }
+        db.close();
+        QSqlDatabase::removeDatabase(QStringLiteral("la_qa_seed"));
+    }
+
+    QString err;
+    Library lib;
+    if (!lib.open(dbPath, &err)) {
+        std::fprintf(stderr, "LA_BATCH_TX_QA FAIL open=%s\n", qPrintable(err));
+        std::fflush(stderr);
+        return 2;
+    }
+
+    QStringList fails;
+    const auto note = [&fails](bool ok, const QString& what) {
+        if (!ok) fails << what;
+    };
+    QStringList paths;
+    for (int i = 0; i < kRows; ++i) paths << QStringLiteral("D:/p%1.jpg").arg(i);
+    // 直接查库某path 的 rating（独立连接，读真实落盘值，不看内存副本）
+    const auto dbRating = [&dbPath](const QString& p, int* out) {
+        QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"),
+                                                   QStringLiteral("la_qa_read"));
+        db.setDatabaseName(dbPath);
+        bool ok = false;
+        if (db.open()) {
+            QSqlQuery q(db);
+            q.prepare(QStringLiteral("SELECT rating FROM photos WHERE path=?"));
+            q.addBindValue(p);
+            ok = q.exec() && q.next();
+            if (ok) *out = q.value(0).toInt();
+            db.close();
+        }
+        QSqlDatabase::removeDatabase(QStringLiteral("la_qa_read"));
+        return ok;
+    };
+    const auto memRating = [&lib](const QString& p) {
+        for (const Photo& ph : lib.photos())
+            if (ph.path == p) return ph.rating;
+        return -1;
+    };
+
+    //① 索引自检
+    note(lib.verifyPathIndex(), QStringLiteral("verifyPathIndex false"));
+
+    // ② 空批 = 成功空操作
+    {
+        const BatchResult r = lib.setRatings(QStringList(), 3);
+        note(r.ok && r.total == 0 && r.done == 0 && r.failedIndex == -1,
+             QStringLiteral("empty total=%1 done=%2 ok=%3").arg(r.total).arg(r.done).arg(r.ok ? 1 : 0));
+    }
+
+    // ③ 批量打星原子成功
+    {
+        const BatchResult r = lib.setRatings(paths, 4);
+        note(r.ok && r.total == kRows && r.done == kRows && r.failedIndex == -1,
+             QStringLiteral("ok-batch ok=%1 done=%2/%3 failed=%4").arg(r.ok ? 1 : 0).arg(r.done).arg(kRows).arg(r.failedIndex));
+        int dbv = -1;
+        for (int i = 0; i < kRows; ++i) {
+            dbRating(paths[i], &dbv);
+            note(dbv == 4, QStringLiteral("db p%1=%2").arg(i).arg(dbv));
+            note(memRating(paths[i]) == 4, QStringLiteral("mem p%1=%2").arg(i).arg(memRating(paths[i])));
+        }
+    }
+
+    // ④ 不存在的路径 → done 少但仍成功
+    {
+        QStringList mixed = paths;
+        mixed << QStringLiteral("D:/__nope__.jpg");
+        const BatchResult r = lib.setRatings(mixed, 2);
+        note(r.ok && r.total == kRows + 1 && r.done == kRows,
+             QStringLiteral("miss-path ok=%1 done=%2/%3").arg(r.ok ? 1 : 0).arg(r.done).arg(kRows + 1));
+        note(memRating(QStringLiteral("D:/__nope__.jpg")) == -1,
+             QStringLiteral("miss-path entered memory"));
+    }
+
+    // ⑥ rating 越界收敛
+    {
+        const BatchResult r = lib.setRatings(paths, 9);
+        note(r.ok, QStringLiteral("clamp-high ok=%1").arg(r.ok ? 1 : 0));
+        int dbv = -1;
+        dbRating(paths[0], &dbv);
+        note(dbv == 5 && memRating(paths[0]) == 5,
+             QStringLiteral("clamp-high db=%1 mem=%2").arg(dbv).arg(memRating(paths[0])));
+        lib.setRatings(paths, -3);
+        dbRating(paths[0], &dbv);
+        note(dbv == 0 && memRating(paths[0]) == 0,
+             QStringLiteral("clamp-low db=%1 mem=%2").arg(dbv).arg(memRating(paths[0])));
+    }
+
+    // ⑤ 失败整体回滚（failAt<0 时用只读连接制造真实失败）
+    {
+        // 先铺一个已知基线
+        lib.setRatings(paths, 3);
+        int before0 = -1, beforeN = -1;
+        dbRating(paths[0], &before0);
+        dbRating(paths[kRows - 1], &beforeN);
+        const int memBefore0 = memRating(paths[0]);
+        const int memBeforeN = memRating(paths[kRows - 1]);
+
+        // 失败源（两条路径，生产代码零seam）：
+        //  A) 默认：BEGIN EXCLUSIVE 独占写锁 → rw 连接的 UPDATE 必然 SQLITE_BUSY
+        //  B) failAt>=0：QA 自建 BEFORE UPDATE 触发器 RAISE(ABORT) → 在第 failAt 条精确失败，
+        //     用于断言 failedIndex 的定位精度
+        // NOLOCK=1 则**不制造失败**（批量会成功）→ ⑤ 的「必须失败」断言应转红 =非空心反例。
+        const bool noLock = qEnvironmentVariableIsSet("LA_BATCH_TX_QA_NOLOCK");
+        BatchResult r;
+        if (noLock) {
+            r = lib.setRatings(paths, 4);                 // 无失败源 → 应成功（反例）
+        } else {
+            QSqlDatabase blocker = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"),
+                                                             QStringLiteral("la_qa_block"));
+            blocker.setDatabaseName(dbPath);
+            if (blocker.open()) {
+                blocker.exec(QStringLiteral("BEGIN EXCLUSIVE"));   // 持写锁
+                r = lib.setRatings(paths, 4);                      // 应失败
+                blocker.exec(QStringLiteral("ROLLBACK"));
+                blocker.close();
+            } else {
+                r = BatchResult();
+                note(false, QStringLiteral("blocker open failed"));
+            }
+            QSqlDatabase::removeDatabase(QStringLiteral("la_qa_block"));
+        }
+
+        if (noLock) {
+            // 反例：没有失败源就不该走回滚分支——门必须因此变红（证明断言非恒真）
+            note(!r.ok, QStringLiteral("NOLOCK: expected FAIL but batch succeeded (assertion is vacuous)"));
+        } else {
+            note(!r.ok, QStringLiteral("locked-batch unexpectedly ok"));
+            note(r.done == 0, QStringLiteral("locked-batch done=%1 (must 0)").arg(r.done));
+            note(!r.error.isEmpty(), QStringLiteral("locked-batch error empty"));
+            note(r.failedIndex >= 0, QStringLiteral("locked-batch failedIndex=%1 (must locate)").arg(r.failedIndex));
+            int after0 = -1, afterN = -1;
+            dbRating(paths[0], &after0);
+            dbRating(paths[kRows - 1], &afterN);
+            note(after0 == before0, QStringLiteral("rollback db0 %1->%2").arg(before0).arg(after0));
+            note(afterN == beforeN, QStringLiteral("rollback dbN %1->%2").arg(beforeN).arg(afterN));
+            note(memRating(paths[0]) == memBefore0 && memRating(paths[kRows - 1]) == memBeforeN,
+                 QStringLiteral("rollback memory torn mem0=%1(=%2) memN=%3(=%4)")
+                     .arg(memRating(paths[0])).arg(memBefore0)
+                     .arg(memRating(paths[kRows - 1])).arg(memBeforeN));
+        }
+    }
+
+    // ⑤b 触发器注入：失败定位精度（failedIndex 必须等于注入下标，且整体回滚）
+    if (failAt >= 0 && failAt < kRows && !qEnvironmentVariableIsSet("LA_BATCH_TX_QA_NOLOCK")) {
+        const QString victim = paths[failAt];
+        lib.setRatings(paths, 1);                        // 基线
+        int b0 = -1, bN = -1;
+        dbRating(paths[0], &b0);
+        dbRating(paths[kRows - 1], &bN);
+
+        QSqlDatabase inj = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"),
+                                                    QStringLiteral("la_qa_inject"));
+        inj.setDatabaseName(dbPath);
+        if (inj.open()) {
+            inj.exec(QStringLiteral(
+                "CREATE TRIGGER qa_inject BEFORE UPDATE ON photos WHEN NEW.path='%1' "
+                "BEGIN SELECT RAISE(ABORT, 'qa injected failure'); END").arg(victim));
+            inj.close();
+        }
+        const BatchResult r = lib.setRatings(paths, 5);
+        {
+            QSqlDatabase inj2 = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"),
+                                                         QStringLiteral("la_qa_drop"));
+            inj2.setDatabaseName(dbPath);
+            if (inj2.open()) {
+                inj2.exec(QStringLiteral("DROP TRIGGER IF EXISTS qa_inject"));
+                inj2.close();
+            }
+            QSqlDatabase::removeDatabase(QStringLiteral("la_qa_drop"));
+        }
+        QSqlDatabase::removeDatabase(QStringLiteral("la_qa_inject"));
+
+        note(!r.ok, QStringLiteral("inject ok=%1").arg(r.ok ? 1 : 0));
+        note(r.failedIndex == failAt,
+             QStringLiteral("inject failedIndex=%1 want=%2").arg(r.failedIndex).arg(failAt));
+        note(r.done == 0, QStringLiteral("inject done=%1 (must 0)").arg(r.done));
+        int a0 = -1, aN = -1;
+        dbRating(paths[0], &a0);
+        dbRating(paths[kRows - 1], &aN);
+        note(a0 == b0 && aN == bN,
+             QStringLiteral("inject rollback db %1/%2 -> %3/%4").arg(b0).arg(bN).arg(a0).arg(aN));
+        note(memRating(victim) == 1,
+             QStringLiteral("inject victim mem=%1 (must 1)").arg(memRating(victim)));
+    }
+
+    // ⑦ 批量隐私标记
+    {
+        const BatchResult r = lib.setPrivates(paths, true);
+        note(r.ok && r.done == kRows, QStringLiteral("priv ok=%1 done=%2").arg(r.ok ? 1 : 0).arg(r.done));
+        int n = 0;
+        for (const Photo& ph : lib.photos()) if (ph.priv) ++n;
+        note(n == kRows, QStringLiteral("priv memory count=%1").arg(n));
+        lib.setPrivates(QStringList{QStringLiteral("D:/p0.jpg")}, false);
+        n = 0;
+        for (const Photo& ph : lib.photos()) if (ph.priv) ++n;
+        note(n == kRows - 1, QStringLiteral("priv unmark count=%1").arg(n));
+    }
+
+    if (!qEnvironmentVariableIsSet("LA_BATCH_QA_KEEP"))
+        QDir(dir).removeRecursively();
+
+    const bool ok = fails.isEmpty();
+    if (ok) {
+        std::fprintf(stderr,
+            "LA_BATCH_TX_QA PASS rows=%d failAt=%d idx=1 empty=1 atomic=1 rollback=1 clamp=1 priv=1\n",
+            kRows, failAt);
+    } else {
+        std::fprintf(stderr, "LA_BATCH_TX_QA FAIL reason=%s\n", qPrintable(fails.join(QChar(';'))));
+    }
+    std::fflush(stderr);
+    return ok ? 0 : 1;
+}
+
 } // namespace（P10 geo 冒烟）
 
 namespace {
@@ -859,6 +1127,10 @@ int main(int argc, char *argv[])
     if (qEnvironmentVariableIsSet("LA_THUMB_CACHE_QA"))
         return runThumbCacheQa();
 
+    // 方向 D 第五步：批量写回事务门禁（原子性 / 回滚 / 索引）
+    if (qEnvironmentVariableIsSet("LA_BATCH_TX_QA"))
+        return runBatchTxQa();
+
     // P8 原生导入器冒烟：扫描 LA_SCAN_ROOT 入库到 LA_SCAN_DB（独立于正式库），
     // 打印增量结果后退出；同一命令重跑应 added=0 / unchanged=N（增量幂等）。
     if (qEnvironmentVariableIsSet("LA_SCAN_SMOKE")) {
@@ -1025,6 +1297,7 @@ int main(int argc, char *argv[])
         && !qEnvironmentVariableIsSet("LA_GALLERY_FILL_QA")
         && !qEnvironmentVariableIsSet("LA_SCALE_PERF")
         && !qEnvironmentVariableIsSet("LA_THUMB_CACHE_QA")
+        && !qEnvironmentVariableIsSet("LA_BATCH_TX_QA")
         ;
 
     QRect avail = QApplication::primaryScreen()->availableGeometry();

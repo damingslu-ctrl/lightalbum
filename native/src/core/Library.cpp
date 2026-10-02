@@ -112,6 +112,9 @@ bool Library::open(const QString& dbPath, QString* err)
         return a.date > b.date;
     });
 
+    // D5：排序完成后再建path 索引（下标必须与最终顺序一致）
+    rebuildPathIndex();
+
     kpi_.total = int(photos_.size());
     kpi_.yearCount = years.size();
     kpi_.provCount = provs.size();
@@ -134,33 +137,111 @@ QSqlDatabase Library::rw()
     return QSqlDatabase::database(QStringLiteral("la_rw"));
 }
 
-Photo* findMutable(QVector<Photo>& v, const QString& path)
+// ---- D5：批量写回单事务实现（原子；失败整体回滚，内存副本同步不动）----
+//设计要点：
+//  ① prepared statement 只prepare 一次、循环 addBindValue + exec → 6425 条也只解析一次 SQL；
+//  ② 内存副本**仅在 commit 成功后**同步 —— 否则中途失败会出现「DB 已回滚、内存已改」的撕裂；
+//  ③ qnumRowsAffected 累计成 done（路径不存在 → 命中 0 行，仍算成功，不是错误）。
+BatchResult Library::applyBatch(BatchField field, const QStringList& paths, const QVariant& value)
 {
-    for (Photo& p : v)
-        if (p.path == path) return &p;
-    return nullptr;
+    BatchResult r;
+    r.total = paths.size();
+    if (paths.isEmpty()) { r.ok = true; return r; }      // 空批=成功空操作（非错误）
+
+    QSqlDatabase db = rw();
+    const QString sql = (field == BatchField::Rating)
+        ? QStringLiteral("UPDATE photos SET rating=? WHERE path=?")
+        : QStringLiteral("UPDATE photos SET private=? WHERE path=?");
+
+    if (!db.transaction()) {
+        r.error = db.lastError().text();
+        return r;
+    }
+    QSqlQuery q(db);
+    if (!q.prepare(sql)) {
+        r.error = q.lastError().text();
+        db.rollback();
+        return r;
+    }
+    int done = 0;
+    for (int i = 0; i < paths.size(); ++i) {
+        q.addBindValue(value);
+        q.addBindValue(paths[i]);
+        if (!q.exec()) {                                  // 任一条失败 → 整体回滚
+            r.error = q.lastError().text();
+            r.failedIndex = i;
+            r.done = 0;
+            db.rollback();
+            return r;
+        }
+        done += q.numRowsAffected();
+    }
+    if (!db.commit()) {
+        r.error = db.lastError().text();
+        r.failedIndex = paths.size() - 1;
+        r.done = 0;
+        db.rollback();
+        return r;
+    }
+    r.ok = true;
+    r.done = done;
+
+    // 提交成功后才同步内存副本（保持 DB ↔ 内存一致）
+    if (field == BatchField::Rating) {
+        const int rr = value.toInt();
+        for (const QString& p : paths)
+            if (Photo* ph = findMutable(p)) ph->rating = rr;
+    } else {
+        const bool pv = value.toBool();
+        for (const QString& p : paths)
+            if (Photo* ph = findMutable(p)) ph->priv = pv;
+    }
+    return r;
+}
+
+BatchResult Library::setRatings(const QStringList& paths, int rating)
+{
+    return applyBatch(BatchField::Rating, paths, qBound(0, rating, 5));
+}
+
+BatchResult Library::setPrivates(const QStringList& paths, bool priv)
+{
+    return applyBatch(BatchField::Private, paths, priv ? 1 : 0);
 }
 
 bool Library::setRating(const QString& path, int rating)
 {
-    const int r = qBound(0, rating, 5);
-    QSqlQuery q(rw());
-    q.prepare(QStringLiteral("UPDATE photos SET rating=? WHERE path=?"));
-    q.addBindValue(r);
-    q.addBindValue(path);
-    if (!q.exec()) return false;
-    if (Photo* p = findMutable(photos_, path)) p->rating = r;
-    return true;
+    return setRatings(QStringList{path}, rating).ok;
 }
 
 bool Library::setPrivate(const QString& path, bool priv)
 {
-    QSqlQuery q(rw());
-    q.prepare(QStringLiteral("UPDATE photos SET private=? WHERE path=?"));
-    q.addBindValue(priv ? 1 : 0);
-    q.addBindValue(path);
-    if (!q.exec()) return false;
-    if (Photo* p = findMutable(photos_, path)) p->priv = priv;
+    return setPrivates(QStringList{path}, priv).ok;
+}
+
+// ---- D5：path ->下标索引（批量写回去 O(N²)）----
+void Library::rebuildPathIndex()
+{
+    pathIx_.clear();
+    pathIx_.reserve(photos_.size());
+    for (int i = 0; i < photos_.size(); ++i)
+        pathIx_.insert(photos_[i].path, i);
+}
+
+Photo* Library::findMutable(const QString& path)
+{
+    const auto it = pathIx_.constFind(path);
+    if (it == pathIx_.constEnd()) return nullptr;
+    return &photos_[it.value()];
+}
+
+bool Library::verifyPathIndex() const
+{
+    if (pathIx_.size() != photos_.size()) return false;
+    for (int i = 0; i < photos_.size(); ++i) {
+        const auto it = pathIx_.constFind(photos_[i].path);
+        if (it == pathIx_.constEnd() || it.value() != i) return false;
+    }
     return true;
 }
 

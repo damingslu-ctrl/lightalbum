@@ -3,6 +3,24 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.2.9] - 2026-10-02
+
+### 功能（方向 D·规模化与流畅性：第五步批量写回事务化·第一阶段数据层）
+- **取证：native 侧写回面根本没有批量入口**——`Library` 只有单条 `setRating`/`setPrivate`，唯一调用方是灯箱点星（`MainWindow.cpp:208`）。所谓「批量操作」零实现，故本步先补**原子批量写层 + 首个可用批量 API**。同时定位一个隐性复杂度问题：`findMutable` 原为**线性扫描 6425 项**，批量场景会退化成 O(N²)（6425 条 × 6425 次比较 ≈ 4×10⁷）。
+- **`BatchResult` + 原子批量 API**：`setRatings(paths, rating)` / `setPrivates(paths, priv)`，单条 API 改为其特例（长度为 1 的批量）——**统一唯一事务入口，禁旁路直写**。
+  - **单事务原子**：任一条 `exec` 失败或 `commit` 失败 → 整体 `rollback()`，`done` 归零并给出 `failedIndex`（首个失败下标）+ `error`（SQL 原文）。
+  - **prepared statement 只prepare 一次**，循环 `addBindValue`+`exec` → 6425 条也只解析一次 SQL。
+  - **内存副本仅在 commit 成功后同步**——否则中途失败会出现「DB 已回滚、内存已改」的撕裂（本步刻意防御点）。
+  - 路径不存在 → `numRowsAffected()==0`，`done` 少但 `ok=true`（**不是错误**）；空批 → 成功空操作。
+- **O(1) path 索引**：`pathIx_`（`QHash<QString,int>`）+ `rebuildPathIndex()`（`photos_` 排序完成后建，保证下标与最终顺序一致）+ `verifyPathIndex()`（QA 自检双向一致）；`findMutable` 改走索引，**禁线性扫描**。
+- **新增第 23 门 `LA_BATCH_TX_QA`**（headless 自建临时库，**不碰真实 library.db**）：断言 ① 索引双向一致 ② 空批=成功空操作 ③ 批量打星原子成功且 DB↔内存同步 ④ 不存在路径→`done` 少但仍成功 ⑤ **失败整体回滚**（DB 与内存都保持原值、**无撕裂**——核心红线）⑥ rating 越界 `qBound` 收敛（9→5, -3→0）⑦ 批量隐私标记同语义 ⑧ 触发器注入下 `failedIndex` 定位精度。
+  - 失败源用**生产代码零 seam** 的两种真实手段：默认 `BEGIN EXCLUSIVE` 独占写锁（UPDATE 必SQLITE_BUSY）；`LA_BATCH_TX_QA_FAIL_AT=<n>` 用 QA 自建 `BEFORE UPDATE ... RAISE(ABORT)` 触发器在第 n 条精确失败。
+- **实测**：
+  - `LA_BATCH_TX_QA PASS rows=6 failAt=-1 idx=1 empty=1 atomic=1 rollback=1 clamp=1 priv=1`（EXIT=0）。
+  - `LA_BATCH_TX_QA_FAIL_AT=3` 触发器精确注入 → `PASS ... failAt=3`（EXIT=0，断言`failedIndex==3` 且整体回滚）。
+  - **反例** `LA_BATCH_TX_QA_NOLOCK=1`（不制造失败源）正确 `FAIL reason=NOLOCK: expected FAIL but batch succeeded (assertion is vacuous)`（EXIT=1）——**证明回滚断言非恒真**。
+  - 回归全绿：`LA_THUMB_CACHE_QA PASS` / `LA_SCALE_SMOKE PASS photos=6425 galleryCtrls=51` / `LA_SCALE_PERF PASS firstMs=42 scrollMaxMs=19` / `LA_P1_SMOKE_OK` / `LA_GALLERY_SEARCH_QA PASS marks=7`。
+- 版本 2.2.8→2.2.9；`qa_runner` 22 门 → **23 门**。
 ## [2.2.8] - 2026-10-02
 
 ### 功能（方向 D·规模化与流畅性：第四步缩略图多级缓存）
