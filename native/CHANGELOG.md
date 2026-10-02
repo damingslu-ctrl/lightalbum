@@ -3,6 +3,36 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.5.0] - 2026-10-02
+
+### 工程（方向 E·发布 CI 强化：第二步 依赖与产物溯源 SBOM + 可复现性验证）
+- **取证：发布链路存在 3 个真实缺陷**（本步把「能打包」推进到「产物可溯源、构建可复现」）：
+  1. **许可证合规缺口（真实缺陷）**：`docs/THIRD_PARTY_NOTICE.md` 只声明了 Python 侧（历史资产）的来源，而当前优化重心 `native/src/core/CullEngine.cpp/.h` 是从 `ai-photo-manager`（MIT）派生的 pHash / DCT-II / Hamming 近邻去重实现 —— `grep -rn "MIT License|Copyright (c)|SPDX|third-party" native/src/` 命中 **0 行**，两个源文件零版权声明；更严重的是 **dist 内完全没有 license/notice 文件**，MIT 要求的版权声明随二进制分发根本没被满足。NOTICE 文件写着「已归属」，代码里却可能随时被摘掉声明且无人察觉。
+  2. **产物不可溯源（SBOM缺失）**：zip 里只有 exe + Qt 运行库 + 手册 + MANIFEST，**无法回答「这个包是哪次提交、哪个 Qt、哪个 GCC 编出来的」**。版本号只出现在文件名里，包内无任何构建元数据。
+  3. **★「可复现」声明是假的（locale-dependent 排序）**：`New-ReleaseManifest` 原用 `Sort-Object FullName`，而 PowerShell `Sort-Object` 默认是**区域文化序（culture-sensitive, locale-dependent）**而非序数序。实测证据：同一批文件 `Sort-Object` 排成 `a_b.txt | ab.txt | a-b.txt | zz.txt | Zz.txt`（`zz` 在 `Zz` 前），而 `StringComparer::Ordinal` 排成 `Zz.txt | a-b.txt | a_b.txt | ab.txt | zz.txt`。后果：同一棵文件树在 zh-CN / en-US Windows 上 MANIFEST 顺序不同 → 跨机器 diff 全是噪声，两次构建「不一致」其实是 locale 差异而非产物差异。
+- **修复 3（序数排序）**：`New-ReleaseManifest` 改用 `[Array]::Sort($paths, [System.Comparison[System.Object]] { param($a,$b) [System.StringComparer]::Ordinal.Compare($a.rel, $b.rel) })`，并在沙盒里放入 `Zz.txt` + `zz.txt` 作为**文化序与序数序结果相反的判别对** —— 只有真正按序数排，改回 `Sort-Object` 才会转红。
+- **新增 C6 `Assert-LicenseCompliance($staging, $noticeName, $srcRoot, $derivedRel)`（许可证合规）**，两半：① dist 内 `THIRD_PARTY-NOTICE.md` 存在且非空；② 声明的每个派生源文件**前 12 行内**必须有 `// SPDX-License-Identifier:` 头 —— 防 NOTICE 文件继续声称「已归属」而代码里的声明被悄悄摘掉。
+- **新增 `BUILDINFO.txt`（SBOM / 构建溯源）**：由 `New-BuildInfo($staging, $name, $version, $srcRoot)` 生成，**纯 ASCII**，写入 `version / git_commit / build_type / qt_version / qt_dir / compiler / compiler_version / packaged_at / packaged_by / packaged_on_host / file_count / total_bytes / note`。**全部字段从既有文件读出，无任何手工同步项**：`build/CMakeCache.txt`（`CMAKE_BUILD_TYPE` / `CMAKE_CXX_COMPILER` / `Qt6_DIR`）、`git rev-parse --short HEAD`、`g++ --version`。生成顺序为 **trim 之后、MANIFEST 之前**（trim 改变文件集，MANIFEST 必须覆盖 BUILDINFO）。
+- **BUILDINFO 被纳入 C3 断言**：`$need` 增至 `@("LightAlbum.exe", "platforms/qoffscreen.dll", "platforms/qwindows.dll", $BUILDINFO_NAME)` —— **不可追溯的 zip 不是可出货产物**。由此真实路径顺序调整为：C2/C6 在 3.7 步跑，BUILDINFO 生成后（4.5）才跑 C3（4.7）。
+- **新增 C7 `Assert-ManifestReproducible($staging, $name)`（可复现性）**，两半：
+  - 半 (a) **先读磁盘上现有 MANIFEST**，校验条目按 `StringComparer::Ordinal` 严格升序且 path 无重复。**顺序至关重要**：若先重生成再校验，会把被篡改/乱序的 manifest「修好」，注入的缺陷永远抓不到（这是本轮实测踩到并修复的**设计缺陷**：C7 初版自证清白，10 个注入里唯独 C7 的两条 100% 漏抓）。
+  - 半 (b) 连续两次 `New-ReleaseManifest` 逐字节比对（`h2 -eq h3`），并与 on-disk `h1` 一致。
+- **C7 的反例设计方法论**：「两次生成是否字节一致」无法被确定性注入（同树枚举两次必然相同），故额外引入**产物级不变量**「序数严格升序 + 无重复」作为可确定性注入的失败源：注入 ① `[array]::Reverse($ent)` 制造乱序；② 重复首条 entry。
+- **SPDX 头落地**：`native/src/core/CullEngine.cpp`（+19 行）/`.h`（+3 行）加**纯 ASCII 英文** SPDX 块，含上游 URL、MIT 归属、派生点说明（pHash / DCT-II / Hamming 去重）、指向 `THIRD_PARTY-NOTICE.md`，并写明「删除此头会违反 C6 并使 `LA_RELEASE_QA` 失败」。`docs/THIRD_PARTY_NOTICE.md` 补全 C++/Qt 原生侧（能力表逐行补 `CullEngine::` 对应符号、新增第 5 条改造说明、新增「随包分发」章节）。
+- **契约自检从 5 条扩到 7 条，注入从 5 条扩到 10 条**：C1×1、C2×1、C3×2（含删 BUILDINFO）、C4×1、C5×1、C6×2（含删 NOTICE / 剥 SPDX 头）、C7×2（含乱序 / 重复 entry）。**沙盒增强**：写 `THIRD_PARTY-NOTICE.md`、造假带 SPDX 头的 `src/core/CullEngine.cpp/.h`、调 `New-BuildInfo` 生成沙盒 BUILDINFO、放入 `Zz.txt` + `zz.txt` 判别对。
+- **实测**：
+  - `LA_RELEASE_QA PASS contracts=7 injected=10 caught=10 baseline=7 zip=9`（EXIT=0，10 个注入缺陷全部被对应契约抓住）。
+  - **反例 A（断言非空心）** `release.ps1 -SelfTest -NoInject` → `FAIL reason=NOINJECT contracts=7 ... -- contract assertions unproven`（EXIT=1）。
+  - **反例 B（真实 C6）**：用 Python 字节级精确删除 `CullEngine.cpp` 的 SPDX 行（`removed 1 line(s)`，`grep -c` = 0）后跑真实打包 → `throw C6 no SPDX-License-Identifier header in derived source: src/core/CullEngine.cpp`，**打包在 C6 被阻断**（EXIT=1）；已还原并核验（391 行 CRLF、SPDX 计数 1、无残留 .bak）。
+  - **反例 C（真实排序缺陷）**：把序数排序改回 `Sort-Object` → `baseline:C7 did not pass on a clean sandbox`（EXIT=1）；还原后 EXIT=0 —— **证明 C7 真能抓住 locale 缺陷**。
+  - **真实打包冒烟** `release.ps1 -SkipGate`：`C1 ok (2.5.0)` / `C2/C6 ok: manual present, license attribution shipped` / `SBOM: BUILDINFO.txt (14 lines)` / `C3 ok: exe + qoffscreen + qwindows + BUILDINFO all present and non-empty` / `MANIFEST: 30 files, self-verified, reproducible=E26AA669099B` / `C5 ok 17.2 MB, 31 entries` / `RELEASE OK`。（`dxcompiler.dll` 缺失 warning 属既有无害告警。）
+  - **BUILDINFO 真实取值核验**：`version 2.5.0` / `git_commit e581d87` / `build_type Release` / `qt_version 6.8.3` / `qt_dir D:/qt/6.8.3/mingw_64/lib/cmake/Qt6` / `compiler D:/qt/Tools/mingw1310_64/bin/g++.exe` / `compiler_version ... 13.1.0` / `packaged_at 2026-10-02T23:20:54` / `packaged_by damin` / `packaged_on_host LUC` / `file_count 29` / `total_bytes 42219170`。（首轮 `qt_version : unknown` 系 `Get-QtVersionFromCache` 误用 `Select-String -Path $qt6Dir`（该参数是文件路径而 Qt6_DIR 是目录值）→ 静默返回空，已改用 `[regex]::Match` 修好。）
+  - **MANIFEST 真实内容核验**：可解析条目 `grep -c "^[0-9a-f]{64}"` = 30；含 `BUILDINFO.txt`(525 B) 与 `THIRD_PARTY-NOTICE.md`(4869 B) 两条；首行序数为 `BUILDINFO.txt` 在 `D3Dcompiler_47.dll` 之前。
+  - **产物独立可跑**：`cd native/LightAlbum-*-win64 && export QT_QPA_PLATFORM=offscreen LA_SMOKE=1 && ./LightAlbum.exe > f 2>&1` → `EXIT=0`、`174` 字节、`LA_P1_SMOKE_OK photos=6425 years=8 provs=11 span=2019-2026`（脱离 `build/` 目录）。
+  - **Runner 端到端**：`qa_runner.ps1 -Only LA_RELEASE_QA` → `LA_RELEASE_QA [OK]`、`RUNNER_EXIT=0`、JSON `{"summary":{"skip":0,"pass":1,"fail":0,"check":0},"gates":[{"detail":"","mark":"[OK]","name":"LA_RELEASE_QA"}]}`。
+- **纯 ASCII 铁律自纠**：`Get-QtVersionFromCache` 注释里的中文省略号 `…`（`e2 80 a6`）破坏纯 ASCII 约束 → 改`...`，复核 `nonascii 0`。
+- 版本 2.4.0→**2.5.0**；门数仍 25（`LA_RELEASE_QA` 由 5 契约升级为 7 契约，非新增门）。
+
 ## [2.4.0] - 2026-10-02
 
 ### 工程（方向 E·发布 CI 强化：第一步 发布契约化 + CI 覆盖修复）

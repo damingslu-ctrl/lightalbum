@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: 2026 LightAlbum Contributors
+// Derived from ai-photo-manager (MIT). See THIRD_PARTY-NOTICE.md in the dist.
 #pragma once
 // P3 智能选片引擎（C++/Qt 原生移植，对应 client/lightalbum/core/culling.py）
 // 设计铁律（平移自 Python 版 + 原生约束）：

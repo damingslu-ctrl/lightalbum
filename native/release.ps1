@@ -5,6 +5,16 @@
 #   powershell -File release.ps1 -TrimNetwork    # also drop Qt6Network+tls+networkinformation+generic
 #   powershell -File release.ps1 -SelfTest      # contract self-test (QA gate LA_RELEASE_QA)
 #
+# Contracts C1..C7, all enforced inline below AND driven by -SelfTest:
+#   C1 version sync (CHANGELOG <-> CMakeLists <-> requested)
+#   C2 user manual in the dist
+#   C3 core artifacts present and non-empty
+#   C4 MANIFEST matches reality (sha256 + bytes per file)
+#   C5 zip opens and holds the exe
+#   C6 license: THIRD_PARTY-NOTICE.md ships + derived sources keep SPDX
+#   C7 MANIFEST is reproducible (twice == same bytes) and totally ordered
+# Plus BUILDINFO.txt (SBOM: commit, build type, Qt/compiler versions).
+#
 # Clean approach: copy only the exe, then windeployqt deploys exactly the
 # needed Qt DLLs/plugins (no CMake .obj/Makefile junk). Delete-free: uses
 # Move-Item to relocate trimmed files and any prior zip/staging.
@@ -24,9 +34,14 @@ param(
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $MANIFEST_NAME = "MANIFEST.txt"
+$NOTICE_NAME = "THIRD_PARTY-NOTICE.md"
+$BUILDINFO_NAME = "BUILDINFO.txt"
+# Derived (MIT) source files that must carry an SPDX header. Kept as data so
+# the license contract C6 can be driven against a sandbox in -SelfTest.
+$DERIVED_SOURCES = @("src/core/CullEngine.cpp", "src/core/CullEngine.h")
 
 # =====================================================================
-# Release contracts (C1..C5)
+# Release contracts (C1..C7)
 #
 # These are deliberately factored out as standalone functions that take
 # explicit paths, so that -SelfTest can drive them against a throwaway
@@ -68,9 +83,10 @@ function Assert-ManualPresent($staging) {
 }
 
 # C3: the artifacts a fresh machine needs, including the offscreen platform
-# plugin that every headless QA gate depends on.
+# plugin that every headless QA gate depends on, plus the build provenance
+# file -- an untraceable zip is not a shippable artifact.
 function Assert-CoreArtifacts($staging) {
-  $need = @("LightAlbum.exe", "platforms/qoffscreen.dll", "platforms/qwindows.dll")
+  $need = @("LightAlbum.exe", "platforms/qoffscreen.dll", "platforms/qwindows.dll", $BUILDINFO_NAME)
   foreach ($f in $need) {
     $p = Join-Path $staging $f
     if (-not (Test-Path $p)) { throw ("C3 required artifact missing: " + $f) }
@@ -79,13 +95,25 @@ function Assert-CoreArtifacts($staging) {
 }
 
 # C4: the manifest is only worth shipping if it matches reality byte for byte.
+# NOTE the ordinal sort: Sort-Object uses culture-sensitive comparison, so the
+# entry order would depend on the machine's locale -- a build on a zh-CN Windows
+# and one on an en-US Windows would emit the same files in a different order,
+# and every cross-machine manifest diff would be noise. StringComparer::Ordinal
+# is locale-independent, which is what makes C7's reproducibility claim true.
 function New-ReleaseManifest($staging, $name) {
   $lines = @("# LightAlbum native release manifest", "# sha256 <TAB> bytes <TAB> relative/path", "")
-  $files = @(Get-ChildItem $staging -Recurse -File | Where-Object { $_.Name -ne $name } | Sort-Object FullName)
+  $files = @(Get-ChildItem $staging -Recurse -File | Where-Object { $_.Name -ne $name })
+  $paths = @()
   foreach ($f in $files) {
     $rel = $f.FullName.Substring($staging.Length).TrimStart('\', '/') -replace '\\', '/'
-    $h = (Get-FileHash $f.FullName -Algorithm SHA256).Hash.ToLower()
-    $lines += ($h + "`t" + $f.Length + "`t" + $rel)
+    $paths += [pscustomobject]@{ full = $f.FullName; len = $f.Length; rel = $rel }
+  }
+  [Array]::Sort($paths, [System.Comparison[System.Object]] {
+    param($a, $b) [System.StringComparer]::Ordinal.Compare($a.rel, $b.rel)
+  })
+  foreach ($p in $paths) {
+    $h = (Get-FileHash $p.full -Algorithm SHA256).Hash.ToLower()
+    $lines += ($h + "`t" + $p.len + "`t" + $p.rel)
   }
   Set-Content -Path (Join-Path $staging $name) -Value $lines -Encoding ASCII
   return $lines.Count
@@ -138,6 +166,148 @@ function Assert-ZipIntegrity($zipPath) {
   }
 }
 
+# C6: license compliance. Two halves, both required:
+#   (a) the attribution notice travels with the binary (MIT requires the
+#       copyright notice to accompany the distribution), and
+#   (b) every derived source file still carries its SPDX identifier -- so
+#       the attribution cannot be quietly dropped from the code while the
+#       notice file keeps claiming it applies.
+# $srcRoot is the tree that $derivedRel are relative to (native/ in
+# production, the sandbox in -SelfTest).
+function Assert-LicenseCompliance($staging, $noticeName, $srcRoot, $derivedRel) {
+  $np = Join-Path $staging $noticeName
+  if (-not (Test-Path $np)) { throw ("C6 " + $noticeName + " missing from staging") }
+  if ((Get-Item $np).Length -le 0) { throw ("C6 " + $noticeName + " is empty") }
+  if ($derivedRel.Count -eq 0) { throw "C6 no derived sources declared" }
+  foreach ($rel in $derivedRel) {
+    $sp = Join-Path $srcRoot $rel
+    if (-not (Test-Path $sp)) { throw ("C6 declared derived source missing: " + $rel) }
+    $head = @(Get-Content $sp -TotalCount 12)
+    $tagged = $false
+    foreach ($ln in $head) {
+      if ($ln -match '^\s*//\s*SPDX-License-Identifier:\s*(\S+)') { $tagged = $true; break }
+    }
+    if (-not $tagged) { throw ("C6 no SPDX-License-Identifier header in derived source: " + $rel) }
+  }
+}
+
+# --- Build provenance (SBOM) -------------------------------------------
+# Answers, for a zip found on a stranger's disk: which commit, which
+# toolchain, which build type produced this? Everything is read from files
+# that already exist (CMakeCache.txt, git) so there is nothing to keep in
+# sync by hand.
+function Get-CacheValue([string]$cachePath, [string]$key) {
+  if (-not (Test-Path $cachePath)) { return "" }
+  $m = Select-String -Path $cachePath -Pattern ('^' + [regex]::Escape($key) + ':[A-Z]+=(.*)$') | Select-Object -First 1
+  if (-not $m) { return "" }
+  return $m.Matches[0].Groups[1].Value.Trim()
+}
+
+function Get-GitCommit([string]$repoRoot) {
+  if (-not (Test-Path (Join-Path $repoRoot ".git"))) {
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) { return "unknown" }
+  }
+  if (-not (Get-Command git -ErrorAction SilentlyContinue)) { return "unknown" }
+  try {
+    $c = (& git -C $repoRoot rev-parse --short HEAD 2>$null)
+    if ($LASTEXITCODE -eq 0 -and $c) { return $c.Trim() }
+  } catch { }
+  return "unknown"
+}
+
+function Get-CompilerVersion([string]$compilerPath) {
+  if (-not $compilerPath -or -not (Test-Path $compilerPath)) { return "unknown" }
+  try {
+    $v = (& $compilerPath --version 2>$null | Select-Object -First 1)
+    if ($v) { return $v.Trim() }
+  } catch { }
+  return "unknown"
+}
+
+# $qtVersion: derived from the Qt6_DIR path baked into CMakeCache.txt
+# (for example .../6.8.3/mingw_64/lib/cmake/Qt6 -> 6.8.3), not from parsing
+# a header. Qt6_DIR is a path VALUE, so it is matched with a regex against
+# the string, not with Select-String (which reads files and would silently
+# return nothing -- that bug shipped "unknown" until the gate was inspected).
+function Get-QtVersionFromCache([string]$qt6Dir) {
+  if (-not $qt6Dir) { return "unknown" }
+  $m = [regex]::Match(($qt6Dir -replace '\\', '/'), '/(\d+\.\d+\.\d+)/')
+  if ($m.Success) { return $m.Groups[1].Value }
+  return "unknown"
+}
+
+# New-BuildInfo writes BUILDINFO.txt into staging and returns the line count.
+# Pure ASCII, LF-free (Set-Content -Encoding ASCII on PS 5.1 emits CRLF).
+function New-BuildInfo($staging, $name, $version, $srcRoot) {
+  $cache = Join-Path $srcRoot "build/CMakeCache.txt"
+  $cxx = Get-CacheValue $cache "CMAKE_CXX_COMPILER"
+  $qt6 = Get-CacheValue $cache "Qt6_DIR"
+  $qtVer = Get-QtVersionFromCache $qt6
+  $commit = Get-GitCommit $srcRoot
+  $buildType = Get-CacheValue $cache "CMAKE_BUILD_TYPE"
+  $ccVer = Get-CompilerVersion $cxx
+  $files = @(Get-ChildItem $staging -Recurse -File | Where-Object { $_.Name -ne $name })
+  $bytes = 0
+  foreach ($f in $files) { $bytes += $f.Length }
+  $lines = @(
+    "# LightAlbum native build provenance (SBOM)",
+    ("version            : " + $version),
+    ("git_commit         : " + $commit),
+    ("build_type         : " + $(if ($buildType) { $buildType } else { "unknown" })),
+    ("qt_version         : " + $qtVer),
+    ("qt_dir             : " + $(if ($qt6) { $qt6 } else { "unknown" })),
+    ("compiler           : " + $(if ($cxx) { $cxx } else { "unknown" })),
+    ("compiler_version   : " + $ccVer),
+    ("packaged_at        : " + (Get-Date -Format "yyyy-MM-ddTHH:mm:ss")),
+    ("packaged_by        : " + $env:USERNAME),
+    ("packaged_on_host   : " + $env:COMPUTERNAME),
+    ("file_count         : " + $files.Count),
+    ("total_bytes        : " + $bytes),
+    ("note               : counts above exclude this file; MANIFEST.txt lists every shipped file"),
+    ""
+  )
+  Set-Content -Path (Join-Path $staging $name) -Value $lines -Encoding ASCII
+  return $lines.Count
+}
+
+# C7: the manifest must be a pure function of the staged bytes, and it must
+# be in a total order. Two halves:
+#   (a) the on-disk manifest is in strictly ascending ORDINAL path order with
+#       no duplicate path. This is the artifact-level invariant a
+#       culture-sensitive or unstable enumeration would violate. Checked
+#       BEFORE any regeneration, so a tampered manifest is actually observed
+#       (regenerating first would silently repair the very defect under test).
+#   (b) generating twice over the same tree yields byte-identical output.
+#       Otherwise "diff two builds to see what changed" is meaningless.
+function Assert-ManifestReproducible($staging, $name) {
+  $mp = Join-Path $staging $name
+  if (-not (Test-Path $mp)) { throw ("C7 " + $name + " missing from staging") }
+  # (a) total order over the entry paths, as they are right now
+  $prev = ""
+  $seen = 0
+  foreach ($ln in @(Get-Content $mp)) {
+    if ($ln -match '^[0-9a-f]{64}[ \t]+\d+[ \t]+(.+)$') {
+      $p = $Matches[1]
+      if ($seen -gt 0 -and [System.StringComparer]::Ordinal.Compare($p, $prev) -le 0) {
+        throw ("C7 manifest entries are not in strictly ascending ordinal path order: '" + $prev + "' then '" + $p + "'")
+      }
+      $prev = $p
+      $seen++
+    }
+  }
+  if ($seen -eq 0) { throw "C7 manifest has no parseable entries to order-check" }
+  # (b) regeneration is a pure function of the staged bytes
+  $h1 = (Get-FileHash $mp -Algorithm SHA256).Hash
+  New-ReleaseManifest $staging $name | Out-Null
+  $h2 = (Get-FileHash $mp -Algorithm SHA256).Hash
+  New-ReleaseManifest $staging $name | Out-Null
+  $h3 = (Get-FileHash $mp -Algorithm SHA256).Hash
+  if ($h1 -ne $h2 -or $h2 -ne $h3) {
+    throw ("C7 manifest is not reproducible: onDisk=" + $h1.Substring(0, 12) + " regen1=" + $h2.Substring(0, 12) + " regen2=" + $h3.Substring(0, 12))
+  }
+  return $h2
+}
+
 # =====================================================================
 # -SelfTest: prove the contracts actually fire.
 #
@@ -147,18 +317,20 @@ function Assert-ZipIntegrity($zipPath) {
 # injections, which MUST turn the gate red -- otherwise "the contract
 # catches its defect" would be an unfalsifiable claim.
 # =====================================================================
-function Get-ContractTags($want, $cmPath, $clPath, $staging, $manName, $zipPath) {
+function Get-ContractTags($want, $cmPath, $clPath, $staging, $manName, $zipPath, $noticeName, $srcRoot, $derivedRel) {
   $tags = @()
   $probes = @(
     @{ t = "C1"; f = { Assert-VersionSync $want $cmPath $clPath } },
     @{ t = "C2"; f = { Assert-ManualPresent $staging } },
     @{ t = "C3"; f = { Assert-CoreArtifacts $staging } },
     @{ t = "C4"; f = { Assert-ManifestConsistent $staging $manName } },
-    @{ t = "C5"; f = { Assert-ZipIntegrity $zipPath } }
+    @{ t = "C5"; f = { Assert-ZipIntegrity $zipPath } },
+    @{ t = "C6"; f = { Assert-LicenseCompliance $staging $noticeName $srcRoot $derivedRel } },
+    @{ t = "C7"; f = { Assert-ManifestReproducible $staging $manName } }
   )
   foreach ($p in $probes) {
-    # Assign to $null: Assert-ZipIntegrity returns an entry count, and an
-    # unassigned call would leak it into the returned tag list.
+    # Assign to $null: several Assert-* return values (entry count, hash)
+    # and an unassigned call would leak them into the returned tag list.
     try { $null = & $p.f; $tags += ($p.t + ":PASS") }
     catch { $tags += ($p.t + ":CAUGHT") }
   }
@@ -176,6 +348,20 @@ function New-Sandbox($dir, $version) {
   Set-Content -Path (Join-Path $dist "platforms/qwindows.dll") -Encoding ASCII -Value "fake-win"
   Set-Content -Path (Join-Path $dist "platforms/qoffscreen.dll") -Encoding ASCII -Value "fake-off"
   Set-Content -Path (Join-Path $dist "USER-MANUAL.md") -Encoding ASCII -Value "# manual"
+  # C3 now also requires BUILDINFO.txt; the sandbox writes a stand-in.
+  New-BuildInfo $dist $BUILDINFO_NAME $version $dir | Out-Null
+  # license half of C6: the notice in the dist, plus a derived source tree
+  Set-Content -Path (Join-Path $dist $NOTICE_NAME) -Encoding ASCII -Value "# third party notice (sandbox)"
+  $srcDir = Join-Path $dir "src/core"
+  New-Item -ItemType Directory -Force -Path $srcDir | Out-Null
+  Set-Content -Path (Join-Path $srcDir "CullEngine.cpp") -Encoding ASCII -Value "// SPDX-License-Identifier: MIT`n// sandbox`nint main(){return 0;}`n"
+  Set-Content -Path (Join-Path $srcDir "CullEngine.h") -Encoding ASCII -Value "// SPDX-License-Identifier: MIT`n// sandbox`n"
+  # A pair whose relative order differs between culture-sensitive and ordinal
+  # comparison. Under zh-CN/en-US culture, "zz.txt" sorts before "Zz.txt";
+  # under Ordinal, "Zz.txt" (0x5A) sorts before "zz.txt" (0x7A). The sandbox
+  # carries both so C7's order check has a case that actually discriminates.
+  Set-Content -Path (Join-Path $dist "Zz.txt") -Encoding ASCII -Value "upper"
+  Set-Content -Path (Join-Path $dist "zz.txt") -Encoding ASCII -Value "lower"
   return $dist
 }
 
@@ -185,6 +371,10 @@ function Invoke-ReleaseSelfTest($noInject) {
   $cmPath = Join-Path $sandbox "CMakeLists.txt"
   $clPath = Join-Path $sandbox "CHANGELOG.md"
   $zipPath = Join-Path $sandbox "dist.zip"
+  # C6 looks at derived sources relative to the source root; in the sandbox
+  # that root is the sandbox itself, mirroring native/ in production.
+  $sandboxDerived = @("src/core/CullEngine.cpp", "src/core/CullEngine.h")
+  $spdxCpp = Join-Path $sandbox "src/core/CullEngine.cpp"
   New-Item -ItemType Directory -Force -Path $sandbox | Out-Null
   $fails = @()
   $caught = 0
@@ -198,8 +388,8 @@ function Invoke-ReleaseSelfTest($noInject) {
     if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
     [System.IO.Compression.ZipFile]::CreateFromDirectory($dist, $zipPath,
       [System.IO.Compression.CompressionLevel]::Optimal, $false)
-    $base = Get-ContractTags $fakeVer $cmPath $clPath $dist $MANIFEST_NAME $zipPath
-    foreach ($t in @("C1", "C2", "C3", "C4", "C5")) {
+    $base = Get-ContractTags $fakeVer $cmPath $clPath $dist $MANIFEST_NAME $zipPath $NOTICE_NAME $sandbox $sandboxDerived
+    foreach ($t in @("C1", "C2", "C3", "C4", "C5", "C6", "C7")) {
       if ($base -notcontains ($t + ":PASS")) { $fails += ("baseline:" + $t + " did not pass on a clean sandbox") }
     }
     $zipEntries = Assert-ZipIntegrity $zipPath
@@ -209,13 +399,41 @@ function Invoke-ReleaseSelfTest($noInject) {
       @{ id = "C1"; apply = { Set-Content -Path $clPath -Encoding ASCII -Value "# CHANGELOG`n`n## [8.8.8] - 2026-01-01`n" } },
       @{ id = "C2"; apply = { Remove-Item (Join-Path $dist "USER-MANUAL.md") -Force } },
       @{ id = "C3"; apply = { Remove-Item (Join-Path $dist "platforms/qoffscreen.dll") -Force } },
+      @{ id = "C3"; apply = { Remove-Item (Join-Path $dist $BUILDINFO_NAME) -Force } },
       @{ id = "C4"; apply = {
           $mp = Join-Path $dist $MANIFEST_NAME
           $txt = Get-Content $mp
           $txt[3] = ($txt[3] -replace '^[0-9a-f]{64}', '0000000000000000000000000000000000000000000000000000000000000000')
           Set-Content -Path $mp -Value $txt -Encoding ASCII
         } },
-      @{ id = "C5"; apply = { Set-Content -Path $zipPath -Encoding ASCII -Value "not-a-zip-at-all" } }
+      @{ id = "C5"; apply = { Set-Content -Path $zipPath -Encoding ASCII -Value "not-a-zip-at-all" } },
+      # C6 has two independent halves, so it gets two injections: the notice
+      # missing from the dist, and the SPDX header stripped from the source.
+      @{ id = "C6"; apply = { Remove-Item (Join-Path $dist $NOTICE_NAME) -Force } },
+      @{ id = "C6"; apply = { Set-Content -Path $spdxCpp -Encoding ASCII -Value "// no spdx here`nint main(){return 0;}`n" } },
+      # C7: the two halves are falsified separately. The order half is the
+      # one that can be injected deterministically -- shuffle the entry lines
+      # of an already-generated manifest, which is exactly what an unstable
+      # enumeration order would produce.
+      @{ id = "C7"; apply = {
+          $mp = Join-Path $dist $MANIFEST_NAME
+          $txt = @(Get-Content $mp)
+          $hdr = @()
+          $ent = @()
+          foreach ($l in $txt) { if ($l -match '^[0-9a-f]{64}') { $ent += $l } else { $hdr += $l } }
+          [array]::Reverse($ent)
+          Set-Content -Path $mp -Value ($hdr + $ent) -Encoding ASCII
+        } },
+      @{ id = "C7"; apply = {
+          $mp = Join-Path $dist $MANIFEST_NAME
+          $txt = @(Get-Content $mp)
+          $ent = @($txt | Where-Object { $_ -match '^[0-9a-f]{64}' })
+          # duplicate the first entry: same path twice is not a strict order
+          $idx = 0
+          for ($i = 0; $i -lt $txt.Count; $i++) { if ($txt[$i] -match '^[0-9a-f]{64}') { $idx = $i; break } }
+          $txt = @($txt[0..($idx-1)] + $ent[0] + $txt[$idx..($txt.Count-1)])
+          Set-Content -Path $mp -Value $txt -Encoding ASCII
+        } }
     )
     foreach ($inj in $injections) {
       $dist = New-Sandbox $sandbox $fakeVer
@@ -224,7 +442,7 @@ function Invoke-ReleaseSelfTest($noInject) {
       [System.IO.Compression.ZipFile]::CreateFromDirectory($dist, $zipPath,
         [System.IO.Compression.CompressionLevel]::Optimal, $false)
       & $inj.apply
-      $tags = Get-ContractTags $fakeVer $cmPath $clPath $dist $MANIFEST_NAME $zipPath
+      $tags = Get-ContractTags $fakeVer $cmPath $clPath $dist $MANIFEST_NAME $zipPath $NOTICE_NAME $sandbox $sandboxDerived
       if ($tags -contains ($inj.id + ":CAUGHT") -and $tags -notcontains ($inj.id + ":PASS")) {
         $caught++
       } else {
@@ -240,8 +458,7 @@ function Invoke-ReleaseSelfTest($noInject) {
   if ($noInject) {
     # Counter-example: with injections disabled the "contract catches its
     # defect" claim is unproven, so the gate MUST fail.
-    Write-Output ("LA_RELEASE_QA FAIL reason=NOINJECT contracts=5 injected=0 caught=0 -- self-test harness disabled, contract assertions unproven")
-    $script:SelfTestRc = 1
+    Write-Output ("LA_RELEASE_QA FAIL reason=NOINJECT contracts=7 injected=0 caught=0 -- self-test harness disabled, contract assertions unproven")    $script:SelfTestRc = 1
     return
   }
   if ($fails.Count -gt 0) {
@@ -249,7 +466,7 @@ function Invoke-ReleaseSelfTest($noInject) {
     $script:SelfTestRc = 1
     return
   }
-  Write-Output ("LA_RELEASE_QA PASS contracts=5 injected=5 caught=" + $caught + " baseline=5 zip=" + $zipEntries)
+  Write-Output ("LA_RELEASE_QA PASS contracts=7 injected=10 caught=" + $caught + " baseline=7 zip=" + $zipEntries)
   $script:SelfTestRc = 0
 }
 
@@ -400,10 +617,24 @@ if (Test-Path $docsDir) {
 if ($manual) { Copy-Item $manual.FullName (Join-Path $staging "USER-MANUAL.md") -Force }
 else { Write-Host "WARN: no user manual found; packaging without USER-MANUAL.md" }
 
-# 3.6) contracts C2/C3 on the staged tree, before anything is zipped
+# 3.6) third-party attribution notice. MIT requires the copyright notice to
+# travel with the distribution, and it was NOT copied before -- the dist had
+# no license file at all while docs/THIRD_PARTY_NOTICE.md claimed the native
+# port derives from an MIT project.
+$noticeSrc = Join-Path $docsDir "THIRD_PARTY_NOTICE.md"
+if (Test-Path $noticeSrc) {
+  Copy-Item $noticeSrc (Join-Path $staging $NOTICE_NAME) -Force
+} else {
+  Write-Host ("WARN: " + $noticeSrc + " not found; C6 will fail the release")
+}
+
+# 3.7) contracts C2/C6 on the staged tree, before anything is zipped.
+# C3 is deliberately NOT here: it requires BUILDINFO.txt, which can only be
+# written once the trim is done (the trim changes the file set the SBOM
+# reports on). It runs at 4.7 below.
 Assert-ManualPresent $staging
-Assert-CoreArtifacts $staging
-Write-Host "C2/C3 ok: manual present, core artifacts non-empty"
+Assert-LicenseCompliance $staging $NOTICE_NAME $root $DERIVED_SOURCES
+Write-Host "C2/C6 ok: manual present, license attribution shipped"
 
 # 4) optional trim (native has no QNetwork usage)
 if ($TrimNetwork) {
@@ -416,11 +647,27 @@ if ($TrimNetwork) {
   Write-Host "Trimmed Qt6Network + tls + networkinformation + generic (relocated, source unchanged)"
 }
 
-# 4.5) MANIFEST (sha256 + bytes + path) so the dist is verifiable and two
-# builds can be diffed. Generated AFTER the trim, so it describes what ships.
+# 4.5) BUILDINFO (provenance/SBOM) BEFORE the manifest, so the manifest
+# covers it and the file count/size it reports is the real total. Generated
+# after the trim because the trim changes the file set.
+$biLines = New-BuildInfo $staging $BUILDINFO_NAME $Version $root
+Write-Host ("SBOM: " + $BUILDINFO_NAME + " (" + $biLines + " lines)")
+# C3 now that BUILDINFO exists -- the exe, both platform plugins and the
+# provenance file must all be present and non-empty.
+Assert-CoreArtifacts $staging
+Write-Host "C3 ok: exe + qoffscreen + qwindows + BUILDINFO all present and non-empty"
+
+# 4.6) MANIFEST (sha256 + bytes + path) so the dist is verifiable and two
+# builds can be diffed. Generated AFTER the trim and after BUILDINFO, so it
+# describes exactly what ships.
 $manifestLines = New-ReleaseManifest $staging $MANIFEST_NAME
 Assert-ManifestConsistent $staging $MANIFEST_NAME
-Write-Host ("MANIFEST: " + $MANIFEST_NAME + " (" + ($manifestLines - 3) + " files, self-verified)")
+# C7: prove the manifest is a pure function of the staged bytes and totally
+# ordered. Reads the on-disk manifest first (C7 half a), then regenerates
+# twice (half b).
+$reproHash = Assert-ManifestReproducible $staging $MANIFEST_NAME
+Assert-ManifestConsistent $staging $MANIFEST_NAME
+Write-Host ("MANIFEST: " + $MANIFEST_NAME + " (" + ($manifestLines - 3) + " files, self-verified, reproducible=" + $reproHash.Substring(0, 12) + ")")
 
 # 5) zip (relocate any prior zip instead of deleting)
 $zip = Join-Path $root "$stagingName.zip"

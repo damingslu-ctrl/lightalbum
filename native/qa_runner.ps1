@@ -56,7 +56,7 @@ $gates = @(
   @{n="LA_THUMB_CACHE_QA";png=$false}  # D4: two-level byte-budgeted thumb LRU
   @{n="LA_BATCH_TX_QA";  png=$false}  # D5: atomic batch write-back (rollback)
   @{n="LA_GALLERY_BATCH_QA"; png=$false}  # D5b: gallery multi-select + batch bar
-  @{n="LA_RELEASE_QA";    png=$false; kind="ps1"; script="release.ps1"; scriptArgs="-SelfTest"}  # E: release contracts C1-C5
+  @{n="LA_RELEASE_QA";    png=$false; kind="ps1"; script="release.ps1"; scriptArgs="-SelfTest"}  # E: release contracts C1-C7
 )
 
 function Eval($lines, $exitCode, $killed) {
@@ -64,7 +64,13 @@ function Eval($lines, $exitCode, $killed) {
   # is an INFRA failure (console/redirect issue or a hung gate), never a healthy
   # result. On CI it MUST FAIL the job loudly, not silently pass as CHECK.
   if ($killed) { return "KILLED" }
-  if (@($lines -match "FAIL").Count -gt 0) { return "RED" }
+  # Match FAIL as a STANDALONE UPPERCASE token, case-sensitively. A plain
+  # -match "FAIL" is case-insensitive and also matches substrings of healthy
+  # fields: LA_BATCH_TX_QA prints "... PASS rows=6 failAt=-1 ..." and was scored
+  # RED purely because of the "failAt" key. Every real failure in this codebase
+  # is emitted as its own uppercase token ("LA_XXX FAIL reason=...", "LA_GEO_SMOKE
+  # FAIL"), so \bFAIL\b with -cmatch keeps genuine reds and drops false ones.
+  if (@($lines -cmatch '\bFAIL\b').Count -gt 0) { return "RED" }
   if ($exitCode -ne 0) { return "RED" }
   $greenPat = "PASS|OK|DONE|done|rings=|Loaded|loaded="
   if (@($lines -match $greenPat).Count -gt 0) { return "GREEN" }
@@ -139,7 +145,7 @@ foreach ($g in $gates) {
       $detail = ("TIMEOUT/KILLED: exe did not self-exit within " + $Timeout + "s (console/redirect or hung gate)")
     }
   } elseif ($verdict -eq "RED") {
-    $detail = (@($lines | Where-Object { $_ -match "FAIL" } | Select-Object -First 1) -join " ").Trim()
+    $detail = (@($lines | Where-Object { $_ -cmatch '\bFAIL\b' } | Select-Object -First 1) -join " ").Trim()
   } elseif ($verdict -eq "CHECK") {
     $detail = (@($lines | Select-Object -First 1) -join " ").Trim()
   }

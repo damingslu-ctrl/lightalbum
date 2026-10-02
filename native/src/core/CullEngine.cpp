@@ -1,3 +1,22 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: 2026 LightAlbum Contributors
+//
+// This file contains work derived from ai-photo-manager
+//   https://github.com/laoziocean-code/ai-photo-manager
+//   MIT License, Copyright (c) 2026 AI Photography Butler Contributors
+//
+// Derived parts absorbed here:
+//   - perceptual hash (pHash): grayscale -> (hashSize*4)^2 -> 2D DCT-II ->
+//     low-frequency hashSize^2 block compared against its median
+//   - the DCT-II transform itself (F = C * A * C^T)
+//   - near-duplicate grouping by Hamming distance over pHash
+//
+// Full attribution: docs/THIRD_PARTY_NOTICE.md, shipped inside the release
+// dist as THIRD_PARTY-NOTICE.md. Removing this header is a contract violation
+// and fails the LA_RELEASE_QA gate (contract C6).
+//
+// Everything else in this file (Qt/native port, Laplacian blur, exposure,
+// scoring, RAW exemption, fail-open policy) is original LightAlbum work.
 #include "CullEngine.h"
 #include <QCryptographicHash>
 #include <QImage>
