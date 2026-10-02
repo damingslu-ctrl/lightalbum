@@ -2,27 +2,27 @@
 #include "GalleryModel.h"
 #include "GalleryCardPainter.h"
 #include "Theme.h"
-#include <QGridLayout>
 #include <QTimer>
 #include <QMouseEvent>
 #include <QEnterEvent>
 #include <QScrollBar>
-#include <QSet>
 #include <QResizeEvent>
 #include <QPainter>
 #include <QPixmap>
+#include <QSet>
 
 // —— 单张卡片瓦片（自绘，复用 Lumen::paintGalleryCard）——
+// 方向 D3：池化复用——构造后通过 setRow() 重绑模型行与 feature 标记，避免每图 new/delete。
 class GalleryTile : public QWidget {
     Q_OBJECT
 public:
     GalleryTile(GalleryModel* m, int row, bool feature, QWidget* p = nullptr)
         : QWidget(p), model_(m), row_(row), feature_(feature) {
         setMouseTracking(true);
-        setMinimumSize(120, 130);
     }
     QSize sizeHint() const override { return QSize(216, 240); }
     int row() const { return row_; }
+    void setRow(int row, bool feature) { row_ = row; feature_ = feature; update(); }
     void setSelected(bool s) { sel_ = s; update(); }
 
 signals:
@@ -59,73 +59,135 @@ private:
 EditorialView::EditorialView(GalleryModel* model, QWidget* parent)
     : QScrollArea(parent), model_(model)
 {
-    setWidgetResizable(true);
+    setWidgetResizable(false);                  // 方向 D3：content_ 由我们显式设为虚拟尺寸
     setFrameShape(QFrame::NoFrame);
     setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     setStyleSheet(Lumen::scrollbar() + QStringLiteral("QScrollArea{background:transparent;}"));
     content_ = new QWidget(this);
-    grid_ = new QGridLayout(content_);
-    grid_->setContentsMargins(10, 10, 10, 10);
-    grid_->setSpacing(6);
+    content_->setObjectName(QStringLiteral("evContent"));
+    content_->setStyleSheet(QStringLiteral("background:transparent;"));
     setWidget(content_);
 
     connect(model_, &QAbstractItemModel::modelReset, this, &EditorialView::rebuild);
     connect(model_, &QAbstractItemModel::dataChanged, this, &EditorialView::onDataChanged);
-    rebuild();
+    connect(verticalScrollBar(), &QAbstractSlider::valueChanged, this, &EditorialView::updateWindow);
+
+    total_ = model_->rowCount();
+    relayout();
 }
 
-void EditorialView::rebuild()
+// 计算虚拟布局：列数 + 单元格尺寸 + 虚拟内容总高 + 流式单元列表（与旧 relayout 打包一致）
+void EditorialView::computeLayout()
 {
-    qDeleteAll(tiles_);
-    tiles_.clear();
-    const int n = model_->rowCount();
-    for (int r = 0; r < n; ++r) {
-        auto* t = new GalleryTile(model_, r, r == 0, content_);
-        connect(t, &GalleryTile::activated, this, [this](int row) {
-            selectedRow_ = row;
-            for (GalleryTile* x : tiles_) x->setSelected(x->row() == row);
-            const Photo* ph = model_->photoAt(row);
-            emit photoActivated(ph ? ph->path : QString());
-        });
-        tiles_.append(t);
+    const int W = viewport()->width();
+    if (W <= 0) return;
+    cols_ = qBound(3, int(W / 230), 5);
+    const int innerW = W - 2 * margin_;
+    cellW_ = (innerW - (cols_ - 1) * spacing_) / cols_;
+    cellH_ = qRound(cellW_ * 240.0 / 216.0);     // 维持原 sizeHint 比例 216×240
+
+    avail_.clear();
+    const int need = qMax(0, total_ - 1);        // 首图外还需 need 个流式单元
+    int r = 0, c = 0;
+    while (avail_.size() < need) {
+        if (!(r <= 1 && c <= 1)) avail_.append(QPoint(r, c));   // 跳过 feature 2×2 占用的 4 格
+        if (++c >= cols_) { c = 0; ++r; }
     }
-    relayout();
+    int maxR = 1;                                // feature 占据 0..1 行，内容高至少覆盖之
+    for (const QPoint& cell : avail_) maxR = qMax(maxR, cell.x());
+    contentH_ = 2 * margin_ + maxR * (cellH_ + spacing_) + cellH_;
+    contentW_ = W;
 }
 
 void EditorialView::relayout()
 {
-    if (!grid_) return;
-    while (grid_->count()) grid_->takeAt(0);   // 取下瓦片（不删除，保留复用）
-    const int n = tiles_.size();
-    if (n == 0) return;
-
     const int W = viewport()->width();
-    cols_ = qBound(3, int(W / 230), 5);
+    if (W <= 0) return;                          // 尚未确定尺寸，等 resizeEvent 再算
+    computeLayout();
+    content_->resize(contentW_, contentH_);
+    updateWindow();
+}
 
-    // feature（首图）占 (0,0,2,2)
-    grid_->addWidget(tiles_.first(), 0, 0, 2, 2);
+QRect EditorialView::featureRect() const
+{
+    return QRect(margin_, margin_,
+                 2 * cellW_ + spacing_, 2 * cellH_ + spacing_);
+}
 
-    auto key = [](int r, int c) { return QString::number(r) + QChar(',') + QString::number(c); };
-    QSet<QString> occ;
-    occ.insert(key(0, 0)); occ.insert(key(0, 1));
-    occ.insert(key(1, 0)); occ.insert(key(1, 1));
+QRect EditorialView::cellRect(int i) const
+{
+    const QPoint cell = avail_.value(i - 1, QPoint(0, 0));   // i >= 1
+    const int x = margin_ + cell.y() * (cellW_ + spacing_);
+    const int y = margin_ + cell.x() * (cellH_ + spacing_);
+    return QRect(x, y, cellW_, cellH_);
+}
 
-    int r = 0, c = 0;
-    for (int i = 1; i < n; ++i) {
-        while (occ.contains(key(r, c))) {
-            if (++c >= cols_) { c = 0; ++r; }
-        }
-        grid_->addWidget(tiles_[i], r, c);
-        occ.insert(key(r, c));
-        if (++c >= cols_) { c = 0; ++r; }
+// 取一个空闲池化瓦片（无则新建并一次性连接 activated → 选中态/灯箱）
+GalleryTile* EditorialView::acquire()
+{
+    if (!free_.isEmpty()) return free_.takeLast();
+    auto* t = new GalleryTile(model_, 0, false, content_);
+    connect(t, &GalleryTile::activated, this, [this](int row) {
+        selectedRow_ = row;
+        for (auto it = bound_.cbegin(); it != bound_.cend(); ++it)
+            it.value()->setSelected(it.key() == row);
+        const Photo* ph = model_->photoAt(row);
+        emit photoActivated(ph ? ph->path : QString());
+    });
+    pool_.append(t);
+    return t;
+}
+
+void EditorialView::recycle(GalleryTile* t)
+{
+    t->hide();
+    free_.append(t);
+}
+
+// 窗口化：将可见（含前后缓冲）模型行映射到池化瓦片（回收不可见、绑定新可见）
+void EditorialView::updateWindow()
+{
+    if (!content_ || cellH_ <= 0) return;
+    const QRect vp = viewport()->rect();
+    const int sy  = verticalScrollBar()->value();
+    const int buf = (cellH_ + spacing_) * 2;     // 上下各扩 2 行作为缓冲
+    const QRect vis(0, sy - buf, vp.width(), vp.height() + 2 * buf);
+
+    QSet<int> need;
+    if (featureRect().intersects(vis)) need.insert(0);
+    for (int i = 1; i < total_; ++i)
+        if (cellRect(i).intersects(vis)) need.insert(i);
+
+    // 回收已不可见的绑定瓦片
+    for (auto it = bound_.begin(); it != bound_.end(); ) {
+        if (!need.contains(it.key())) { recycle(it.value()); it = bound_.erase(it); }
+        else ++it;
     }
-    for (int cc = 0; cc < cols_; ++cc) grid_->setColumnStretch(cc, 1);
+    // 绑定新进入可见区的行
+    for (int row : need) {
+        if (bound_.contains(row)) continue;
+        GalleryTile* t = acquire();
+        t->setRow(row, row == 0);
+        t->setSelected(row == selectedRow_);
+        t->setGeometry(row == 0 ? featureRect() : cellRect(row));
+        t->show();
+        bound_.insert(row, t);
+    }
+}
+
+void EditorialView::rebuild()
+{
+    for (auto it = bound_.cbegin(); it != bound_.cend(); ++it) recycle(it.value());
+    bound_.clear();
+    total_ = model_->rowCount();
+    relayout();
 }
 
 void EditorialView::resizeEvent(QResizeEvent* e)
 {
     QScrollArea::resizeEvent(e);
-    if (!relayoutPending_) {
+    if (!relayoutPending_) {                     // 60ms 去抖，避免连续缩放反复重排
         relayoutPending_ = true;
         QTimer::singleShot(60, this, [this] { relayoutPending_ = false; relayout(); });
     }
@@ -134,33 +196,30 @@ void EditorialView::resizeEvent(QResizeEvent* e)
 void EditorialView::onDataChanged(const QModelIndex& top, const QModelIndex& bottom,
                                   const QVector<int>&)
 {
-    for (int r = top.row(); r <= bottom.row(); ++r)
-        if (r >= 0 && r < tiles_.size()) tiles_[r]->update();
+    for (int r = top.row(); r <= bottom.row(); ++r) {
+        auto it = bound_.find(r);
+        if (it != bound_.end()) it.value()->update();
+    }
 }
 
 // 仅预取可见（及相邻）卡片缩略图，替代原 QListView indexAt 逻辑
 void EditorialView::prefetchVisible()
 {
-    if (!content_) return;
-    const QRect vis = viewport()->rect().translated(content_->pos());
-    const int n = tiles_.size();
-    for (int i = 0; i < n; ++i) {
-        if (tiles_[i]->geometry().intersects(vis)) {
-            model_->pixmapAt(i);
-            if (i - 1 >= 0) model_->pixmapAt(i - 1);
-            if (i + 1 < n)  model_->pixmapAt(i + 1);
-        }
+    for (auto it = bound_.cbegin(); it != bound_.cend(); ++it) {
+        const int row = it.key();
+        model_->pixmapAt(row);
+        if (row - 1 >= 0)     model_->pixmapAt(row - 1);
+        if (row + 1 < total_) model_->pixmapAt(row + 1);
     }
 }
 
-QRect EditorialView::featureGeometry() const
-{
-    return tiles_.isEmpty() ? QRect() : tiles_.first()->geometry();
-}
+QRect EditorialView::featureGeometry() const { return featureRect(); }
 
 QRect EditorialView::tileGeometry(int i) const
 {
-    return (i >= 0 && i < tiles_.size()) ? tiles_[i]->geometry() : QRect();
+    if (i == 0) return featureRect();
+    if (i >= 1 && i < total_) return cellRect(i);
+    return QRect();
 }
 
 #include "EditorialView.moc"

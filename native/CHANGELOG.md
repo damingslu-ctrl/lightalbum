@@ -3,6 +3,18 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.2.7] - 2026-10-02
+
+### 功能（方向 D·规模化与流畅性：第三步列表虚拟化）
+- **`EditorialView` 窗口化虚拟化（列表虚拟化落地）**：彻底移除「`rebuild()` 为每张照片 `new GalleryTile` 控件（6425 个）」的非虚拟化实现——这正是 D 第二步 `LA_SCALE_PERF` 基线指出的 `firstMs≈815–994ms` 主因。改为：
+  - 去 `QGridLayout`，`content_` 设为**虚拟总高**（feature 2×2 + 流式网格），由该高度驱动滚动条；
+  - **池化 `GalleryTile`**（`pool_`/`free_`/`bound_`）：仅实例化「可见视口 + 上下各 2 行缓冲」的瓦片；`scroll`/`resize` 时按可见模型行 `recycle` + `setRow(row,feature)` 重绑复用，杜绝逐图 new/delete；`GalleryTile` 新增 `setRow()` 支持池化重绑。
+  - `relayout()` 重算列数/单元格/虚拟高并 `updateWindow()`；`resizeEvent`(60ms 去抖)/`valueChanged` 触发重算与重定位；`prefetchVisible()` 改为仅预取当前绑定（可见）行 ±1。
+  - **对外 API 语义零破坏**：`featureGeometry()`/`tileGeometry(int)`/`tileCount()`(=模型行数)/`columnCount()`/`prefetchVisible()`/`photoActivated` 全部保留等价行为，确保 `LA_GALLERY_E_QA`(几何/颜色)、`LA_SCALE_SMOKE`、`LA_SCALE_PERF` 不破。
+- **实测收益（D 第二步基线守护兑现「虚拟化落地后数值显著下降」）**：`LA_SCALE_PERF` 首屏 `firstMs` 由 ~841ms **降至 41ms（约 20×）**，滚动帧 `scrollMaxMs` 保持 15ms（≤50）；`galleryCtrls` 由 6470 **降至 51**（仅可见池化瓦片 + chrome）。`LA_GALLERY_E_QA` `featureOK=1` 不变；`LA_SCALE_SMOKE` 仍 `PASS photos=6425`。
+- **反例确证非空心**：`LA_SCALE_PERF_FIRST=30`（<实测 38/41）正确 `FAIL`（`reason=firstMs=38>budget=30`），回归红线真实有效。
+- 版本 2.2.6→2.2.7；`qa_runner` 21 门不受影响（`galleryCtrls` 断言仅要求 ≥0）。
+
 ## [2.2.6] - 2026-10-02
 
 ### 功能（方向 D·规模化与流畅性：第二步流畅性基线门禁）
