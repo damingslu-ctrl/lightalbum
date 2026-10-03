@@ -87,7 +87,16 @@ $GateTable = @(
   @{n="LA_SCALE_SMOKE";     png=$false; measuredMs=3351},
   @{n="LA_SCALE_PERF";      png=$false; measuredMs=338},
   @{n="LA_BATCH_TX_QA";     png=$false; measuredMs=7004},
-  @{n="LA_RELEASE_QA";      png=$false; kind="ps1"; script="release.ps1"; scriptArgs="-SelfTest"; measuredMs=3135}
+  @{n="LA_RELEASE_QA";      png=$false; kind="ps1"; script="release.ps1"; scriptArgs="-SelfTest"; measuredMs=3135},
+  # F high-DPR render (direction F step 1): HiDpi bake correctness. Builds a
+  # MapView, enters the china region, renders the static layer offscreen, and
+  # asserts viewPix_ device-pixel width == logical width * 2. Internally sets
+  # LA_HIDPI_DPR=2 to simulate a 200% display, decoupling the gate from the
+  # offscreen platform's unstable devicePixelRatio so it is reproducible.
+  # Lands in the full tier (no tier key = fail-safe default full): it builds a
+  # QWidget and renders offscreen, and 762ms > 500ms fast budget. No external
+  # 'need' env dependency.
+  @{n="LA_HIDPI_QA";        png=$false; measuredMs=762}
 )
 
 # Resolve a gate's tier. Absent key means "full" - the fail-safe default.

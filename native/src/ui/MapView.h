@@ -81,6 +81,10 @@ public:
     // A 爆炸弹层像素自测：进入省视图 + 合成缩略图 → 离屏渲染终态 + 分色统计
     void qaShootBurst(const QString& path);
 
+    // F 高 DPR 渲染（方向 F 第一步）：QA 钩子
+    void qaBakeViewPix();                 // 强制烘焙下钻静态层（不依赖事件循环）
+    int  qaViewPixDeviceWidth() const;   // viewPix_ 设备像素宽（验证 DPR 感知）
+
     // 省视图「爆炸弹层」：MapPage 注入该省照片缩略图后，从省中心爆炸弹出
     // 金色连线 + 圆角照片卡（冲击波双环 + 逐张错峰飞出）。reduceMotion 直接终态。
     // paths 与 thumbs 一一对应（点击卡片 → openPhotoRequested 打开灯箱）。
@@ -203,6 +207,7 @@ private:
 
     // 流畅性：下钻视图「静态层」缓存（网格/省面/国界/标签/足迹点每视图只栅格化一次）
     void invalidateViewCache() { viewPixValid_ = false; }
+    void bakeViewPix(const QRectF& dst);  // 下钻静态层 DPR 感知烘焙（paintMap 调用）
     QPixmap viewPix_;
     bool    viewPixValid_ = false;
     // 下钻视图滚轮缩放（1–8x，光标锚定）+ 拖拽平移；viewOrigin 为变换唯一真源

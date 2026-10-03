@@ -3,6 +3,7 @@
 #include <QPainter>
 #include <QFile>
 #include <QImage>
+#include "HiDpi.h"
 #include <QDir>
 #include <QFileInfo>
 #include <QJsonDocument>
@@ -1220,7 +1221,7 @@ void MapView::renderFootDotSprite()
     // 120px 高分辨率精灵：世界烘焙层在 3x 变换下按逻辑尺寸 blit 仍清晰；
     // 下钻层（无变换）绘制时为缩小采样，同样清晰
     const int D = 120;
-    footDotPix_ = QPixmap(D, D);
+    footDotPix_ = HiDpi::bakePixmap(QSize(D, D));
     footDotPix_.fill(Qt::transparent);
     QPainter p(&footDotPix_);
     p.setRenderHint(QPainter::Antialiasing, true);
@@ -1401,19 +1402,7 @@ void MapView::paintMap(QPainter& p)
         // 每帧仅 1 次 blit + 动态航线（流动虚线）+ 爆炸弹层。
         // 失效时机：进入/退出任一层级、窗口尺寸变化、足迹点更新。
         if (!viewPixValid_) {
-            viewPix_ = QPixmap(size());
-            viewPix_.fill(Qt::transparent);
-            QPainter vp(&viewPix_);
-            vp.setRenderHint(QPainter::Antialiasing, true);
-            const bool bakeArcs = arcTargets().size() > kArcBakeThreshold;
-            if (level_ == Region)
-                renderRegionStatic(vp, dst);
-            else
-                renderProvinceStatic(vp, dst);
-            if (bakeArcs)
-                drawArcs(vp, curViewBbox_, dst);   // 航线数千条时流动动画不可读 → 并入静态层
-            vp.end();
-            viewPixValid_ = true;
+            bakeViewPix(dst);
         }
         p.drawPixmap(0, 0, viewPix_);
         if (arcTargets().size() <= kArcBakeThreshold)
@@ -1445,6 +1434,38 @@ void MapView::paintMap(QPainter& p)
         p.setPen(QColor(0xe8, 0xc8, 0x7a));
         p.drawText(rect().adjusted(12, 10, 0, 0), Qt::AlignLeft | Qt::AlignTop, hoverHint_);
     }
+}
+
+// F 高 DPR 渲染（方向 F 第一步）：下钻静态层 DPR 感知烘焙。
+// 按设备像素比出图 + setDevicePixelRatio，绘制仍用逻辑坐标 → 缩放后清晰。
+void MapView::bakeViewPix(const QRectF& dst)
+{
+    viewPix_ = HiDpi::bakePixmap(size());
+    viewPix_.fill(Qt::transparent);
+    QPainter vp(&viewPix_);
+    vp.setRenderHint(QPainter::Antialiasing, true);
+    const bool bakeArcs = arcTargets().size() > kArcBakeThreshold;
+    if (level_ == Region)
+        renderRegionStatic(vp, dst);
+    else
+        renderProvinceStatic(vp, dst);
+    if (bakeArcs)
+        drawArcs(vp, curViewBbox_, dst);   // 航线数千条时流动动画不可读 → 并入静态层
+    vp.end();
+    viewPixValid_ = true;
+}
+
+void MapView::qaBakeViewPix()
+{
+    bakeViewPix(rect().adjusted(8, 8, -8, -8));
+}
+
+int MapView::qaViewPixDeviceWidth() const
+{
+    if (viewPix_.isNull()) return -1;
+    // 注意：QPixmap::width() 已返回设备像素（实际缓冲宽），不可再乘 devicePixelRatio
+    // （否则 2400×2=4800 假红）。正确 HiDPI 烘焙下 width()==逻辑宽×dpr。
+    return viewPix_.width();
 }
 
 // 帧耗时自测：LA_MAP_PERF=1 时逐层级各渲染 20 帧并打印平均毫秒/帧

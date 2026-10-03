@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(LightAlbumNative VERSION 2.8.0 LANGUAGES CXX)
+project(LightAlbumNative VERSION 2.9.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -62,6 +62,8 @@ set(LA_SOURCES
     src/ui/HomePage.cpp
     src/ui/Splash.h
     src/ui/Splash.cpp
+    src/ui/HiDpi.h
+    src/ui/HiDpi.cpp
     src/core/CullEngine.h
     src/core/CullEngine.cpp
     src/core/RetouchEngine.h

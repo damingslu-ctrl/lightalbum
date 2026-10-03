@@ -3,6 +3,66 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.9.0] - 2026-10-03
+
+### 变更 - 高 DPR 渲染（方向 F 第一步）
+
+**问题**：取证 `src` 内 `devicePixelRatio` 匹配数 **0** —— 全部自定义 `QImage` /
+`QPixmap` 都以「逻辑像素」烘焙（典型 `viewPix_ = QPixmap(size())`、
+`footDotPix_ = QPixmap(D, D)`、离屏 `QImage img(size(), ...)`）。在 125% / 150% /
+200% 系统缩放下，OS 会对位图做**最近邻拉伸** → 地图/足迹点/静态层模糊发虚。
+
+**方案**：新增 `native/src/ui/HiDpi.{h,cpp}` 作为**高 DPI 烘焙唯一真源**，把一切
+「按 `size()` 烘焙位图」收敛到一处，统一 `设备像素尺寸 = 逻辑尺寸 × dpr` +
+`setDevicePixelRatio(d)`，绘制仍用逻辑坐标 → 缩放后清晰。`MapView` 两处接入：
+
+- 下钻静态层 `bakeViewPix`：`viewPix_ = HiDpi::bakePixmap(size())`（原 `QPixmap(size())`）；
+- 足迹点精灵：`footDotPix_ = HiDpi::bakePixmap(QSize(D, D))`（原 `QPixmap(D, D)`，`D=120`）。
+- `worldPix_`（3× 超采样）不涉及 devicePixelRatio，无需改。
+
+`HiDpi::dpr()`：优先读 `LA_HIDPI_DPR` 覆盖（门禁/Headless 用，模拟指定 DPI 显示器），
+否则走 `QGuiApplication::primaryScreen()->devicePixelRatio()`（已含 `QT_SCALE_FACTOR`），
+无 GUI 实例回退 1。
+
+### 新增 - LA_HIDPI_QA（第 31 门，full 层）
+
+三断言：**A 机制**（`HiDpi::dpr()==2`）、**B 工具**（`HiDpi::bakeImage(1200,800)`
+设备像素宽 == 2400 且 dpr == 2，唯一真源）、**C 产品**（真实 `MapView` 进入 china
+大区烘焙静态层后 `viewPix_` 设备像素宽 == 逻辑宽 × 2，端到端依赖本修复）。
+
+门内 `qputenv("LA_HIDPI_DPR","2")` 模拟 200% 显示器，与 offscreen 平台
+`devicePixelRatio` 不稳定（被本机 200% 真显接管变 4）解耦 → 门禁**可复现**。
+
+**关键实测修正（本轮最重要）**：首版断言 `qaViewPixDeviceWidth` 写成
+`viewPix_.width() * viewPix_.devicePixelRatio()`，而 `QPixmap::width()` **已返回
+设备像素**（实际缓冲宽），再乘 dpr → 2400×2 = 4800 假红。修复后直接返回
+`viewPix_.width()`（设备像素）。根因是**测试侧双乘**，产品烘焙一直正确。
+
+**反例（非空心）**：`LA_HIDPI_QA_FORCE_LQ=1` 让 `bake*` 故意返回逻辑尺寸
+（`dpr=1`、`width()==逻辑宽`）→ B/C 必红。实测：
+`LA_HIDPI_QA FAIL B imgDevW=1200 expected=2400 B imgDpr=1 ... C viewPixDevW=1200 ...`。
+
+### 修复
+
+- `src/ui/HiDpi.{h,cpp}`：新增，高 DPI 烘焙唯一真源（含 `LA_HIDPI_DPR` 覆盖与
+  `LA_HIDPI_QA_FORCE_LQ` 反例分支）。
+- `src/ui/MapView.cpp`：`bakeViewPix` 改用 `HiDpi::bakePixmap(size())`；`footDotPix_`
+  改用 `HiDpi::bakePixmap(QSize(D,D))`；暴露 `qaBakeViewPix()` / `qaViewPixDeviceWidth()`
+  （修正双乘）。
+- `src/main.cpp`：引入 `ui/HiDpi.h`；在 `LA_EXIT_PROBE` 之后插入 `LA_HIDPI_QA` 完整
+  断言门（强制 `LA_HIDPI_DPR=2`）。
+- `CMakeLists.txt`：将 `HiDpi.{h,cpp}` 接入 `LA_SOURCES`。
+- `gate_matrix.ps1`：登记第 31 门 `LA_HIDPI_QA`，`measuredMs=762`，落入 full 层
+  （构造 QWidget 并离屏渲染，且 > 500ms 快层预算；无外部 `need` 依赖）。**纯 ASCII**。
+
+### 门数
+
+30 → **31** 门。全量回归两次：`PASS=29 FAIL=0 CHECK=0 SKIP=1 KILL=0`
+（`gates=31`，墙钟 ~76s，`VERDICT: GO`）。
+`LA_AGENT_SMOKE` 首次全量跑曾 `no-exit-request`（20109ms 略超 20s 预算），隔离复跑
+两次均 `PASS`（19133ms / 3136ms），判定为**负载下偶发超时**，与本改动无关（改动不触及
+agent 路径）。所有 `LA_MAP_*` 门保持 `[OK]`。
+
 ## [2.8.0] - 2026-10-03
 
 ### 变更 - 门禁矩阵化（方向 E 第三步）

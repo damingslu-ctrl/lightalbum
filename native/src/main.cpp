@@ -28,6 +28,7 @@
 #include "core/qaExit.h"        // 2.7.0 门禁自退契约 + 自退看门狗
 #include "ui/MainWindow.h"
 #include "ui/MapView.h"
+#include "ui/HiDpi.h"
 #include "ui/GalleryPage.h"
 #include "ui/GalleryModel.h"
 #include "ui/GalleryCardPainter.h"
@@ -1603,6 +1604,60 @@ int main(int argc, char *argv[])
         std::fflush(stderr);
         return probeRc;
     }
+
+    // F 高 DPR 渲染（方向 F 第一步）：高 DPI 烘焙正确性门禁。
+    // 强制 LA_HIDPI_DPR=2（模拟 200% 高 DPI 显示器），与 offscreen 平台 devicePixelRatio
+    // 不稳定解耦，使门禁可复现。
+    //   A 机制：HiDpi::dpr() == 2
+    //   B 工具：HiDpi::bakeImage(1200,800) 设备像素宽==2400 且 dpr==2（唯一真源）
+    //   C 产品：真实 MapView 烘焙下钻静态层后 viewPix_ 设备像素宽==2400（端到端，依赖修复）
+    // 反例：LA_HIDPI_QA_FORCE_LQ=1 → bake* 返回逻辑尺寸（dpr=1）→ B/C 失败 → 门红
+    if (!qEnvironmentVariableIsEmpty("LA_HIDPI_QA")) {
+        qputenv("LA_HIDPI_DPR", "2");   // 模拟 200% 显示器，门禁可复现
+        const double d = HiDpi::dpr();
+        bool ok = true;
+        QStringList fails;
+
+        if (std::fabs(d - 2.0) > 1e-6) {
+            ok = false;
+            fails << QStringLiteral("A dpr=%1 expected=2").arg(d);
+        }
+
+        const QImage baked = HiDpi::bakeImage(QSize(1200, 800));
+        if (baked.width() != 2400) {
+            ok = false;
+            fails << QStringLiteral("B imgDevW=%1 expected=2400").arg(baked.width());
+        }
+        if (std::fabs(baked.devicePixelRatio() - 2.0) > 1e-6) {
+            ok = false;
+            fails << QStringLiteral("B imgDpr=%1 expected=2").arg(baked.devicePixelRatio());
+        }
+
+        {
+            MapView mv(nullptr);
+            mv.resize(1200, 800);
+            mv.enterRegion(QStringLiteral("china"));
+            mv.qaBakeViewPix();
+            const int logicalW = mv.size().width();
+            const int devW = mv.qaViewPixDeviceWidth();
+            const int expect = int(logicalW * d + 0.5);
+            if (devW != expect) {
+                ok = false;
+                fails << QStringLiteral("C viewPixDevW=%1 expected=%2 logicalW=%3")
+                         .arg(devW).arg(expect).arg(logicalW);
+            }
+        }
+
+        if (ok) {
+            std::fprintf(stderr, "LA_HIDPI_QA PASS dpr=%.4f imgDevW=%d viewPixDevW=%d\n",
+                         d, baked.width(), int(1200 * d + 0.5));
+        } else {
+            std::fprintf(stderr, "LA_HIDPI_QA FAIL %s\n", qPrintable(fails.join(QLatin1Char(' '))));
+        }
+        std::fflush(stderr);
+        return 0;
+    }
+
     app.setOrganizationName(QStringLiteral("lightalbum"));
     Dark::apply(app);
 
