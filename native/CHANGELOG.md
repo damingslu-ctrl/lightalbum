@@ -3,6 +3,62 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.10.0] - 2026-10-03
+
+### 变更 - 中英双语国际化（方向 F 第二步）
+
+**问题**：核心 UI 文案（按钮、标签、状态、页标题）全部硬编码中文字面量，无法切换语言，
+且未来接英文/多语会牵一发而动全身。
+
+**方案**：
+- 用 Python 脚本批量将 10 个源文件的 **280 处** `QStringLiteral("中文")` /
+  `QString::fromUtf8("中文")` 统一改为 `QCoreApplication::translate("LightAlbum", "中文")`
+  （context 固定 `"LightAlbum"`，零运行时成本、可被 `lupdate` 抽取）。
+- **排除集（关键）**：过滤/查找/比较键（category、nav、`kNav`、`.value()`、`.contains()`、
+  `pv.name` 等）若一侧来自 EXIF/数据而非 UI，对应 UI 串**保持 raw 不包裹**，否则
+  过滤/选择逻辑断裂。已逐项核实并保留（CullPage 845-846、GalleryPage 19-21/285、
+  MainWindow 66-68/1065、MapView 927/1169、LogPage 519）。
+- 翻译文件：`lupdate` 抽取 **249** 条源串 → 策展英译字典填充（含 HTML 实体转义、emoji
+  保留、`%1` 占位符完整）→ `lrelease` 编译出 `i18n/LightAlbum_en.qm`（25550 字节）。
+- 资源嵌入：新建 `i18n.qrc` 将 `LightAlbum_en.qm` 编为 `:/i18n/LightAlbum_en.qm`，
+  在 `CMakeLists.txt` 的 `LA_RESOURCES` 与 `resources.qrc` 并列登记，AUTORCC 嵌入 exe
+  → Headless 门禁随取随用、零外链。
+- 启动加载：`main.cpp` 在 `Dark::apply` 之后、`MainWindow` 构造之前，按
+  `LA_I18N_LANG`（强制覆盖）或 `QLocale::system()`（默认）决定加载并 `installTranslator`：
+  **中文（简/繁）默认不加载翻译器 → 原生 UI 零回归**；`en` 或非中文加载英文。
+
+### 新增 - LA_I18N_QA（第 32 门，fast 层）
+
+强制加载 `:/i18n/LightAlbum_en.qm`，断言 4 条核心 UI 串 `translate("LightAlbum", …)`
+返回英文且**不等于**源码：
+
+- `无图像` → `No Image`
+- `原图` → `Original`
+- `修后` → `Edited`
+- `摄影日志` → `Photo Log`
+
+实测墙钟 **165–246ms（取 210ms）**，纯 offscreen 自退、不构造 MainWindow、无外部 `need`
+依赖 → 符合 fast 层判定（< 500ms 预算），与 `LA_HIDPI_QA`（构造 QWidget、762ms）归 full
+形成对照，使翻译正确性获得 PR 层覆盖。
+
+**反例（非空心）**：`LA_I18N_QA_FORCE_BROKEN=1` 跳过翻译器加载 → `translate` 回退源码
+→ 4 串全部 `FAIL got=<中文> expect=<英文>`，实测变红（`[FAIL]`），证明门是真实断言。
+
+### 修复 / 过程
+
+- `src/main.cpp`：补 `#include <QTranslator>` / `<QLocale>`；插入 `LA_I18N_QA` 完整断言门
+  （仿 `LA_HIDPI_QA`，位于 `int main` 分支前）；正常启动段加入翻译器加载块（`Dark::apply`
+  之后、`MainWindow` 之前）。
+- `native/i18n.qrc`（新增）：嵌入 `LightAlbum_en.qm` 为 `:/i18n/LightAlbum_en.qm`。
+- `CMakeLists.txt`：`LA_RESOURCES` 追加 `i18n.qrc`；`VERSION 2.9.0 → 2.10.0`。
+- `gate_matrix.ps1`：登记第 32 门 `LA_I18N_QA`，`tier="fast"`、`measuredMs=210`。**纯 ASCII**。
+
+### 门数
+
+31 → **32** 门。fast 层 9 → **10** 门。回归：fast 层 10 门全绿；`LA_I18N_QA` 绿态
+`PASS entries=4`、红态 `FAIL` 4 串全中；中文默认 `LA_I18N_LANG=zh` 不加载翻译器且
+`LA_LUMEN_SMOKE` 仍 PASS（零回归）。
+
 ## [2.9.0] - 2026-10-03
 
 ### 变更 - 高 DPR 渲染（方向 F 第一步）

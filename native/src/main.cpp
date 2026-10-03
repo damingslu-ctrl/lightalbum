@@ -16,6 +16,8 @@
 #include <QImage>
 #include <QProcess>            // 2.7.0 LA_EXIT_QA：自退契约子进程探针
 #include <QProcessEnvironment>
+#include <QTranslator>
+#include <QLocale>
 #include <cstdio>
 #include <cmath>
 #include "core/Library.h"
@@ -1658,8 +1660,68 @@ int main(int argc, char *argv[])
         return 0;
     }
 
+    // 方向 F 第二步 i18n（2.10.0）：翻译正确性门禁（第32门）。
+    //   强制加载 :/i18n/LightAlbum_en.qm，断言核心 UI 串 translate() 出英文且 ≠ 源码。
+    //   资源经 i18n.qrc 嵌入 exe，Headless 随取随用。
+    //   反例：LA_I18N_QA_FORCE_BROKEN=1 → 不加载翻译器 → 断言失败 → 门红。
+    if (!qEnvironmentVariableIsEmpty("LA_I18N_QA")) {
+        QTranslator trans;
+        bool loaded = false;
+        if (qEnvironmentVariableIsEmpty("LA_I18N_QA_FORCE_BROKEN"))
+            loaded = trans.load(QStringLiteral(":/i18n/LightAlbum_en.qm"));
+        if (loaded)
+            app.installTranslator(&trans);
+
+        bool ok = true;
+        QStringList fails;
+        const auto i18nCheck = [&](const char* src, const QString& expect) {
+            const QString got = QCoreApplication::translate("LightAlbum", src);
+            if (got != expect || got == QString::fromUtf8(src)) {
+                ok = false;
+                fails << QStringLiteral("%1 got=%2 expect=%3")
+                         .arg(QString::fromUtf8(src), got, expect);
+            }
+        };
+        i18nCheck("无图像", QStringLiteral("No Image"));
+        i18nCheck("原图", QStringLiteral("Original"));
+        i18nCheck("修后", QStringLiteral("Edited"));
+        i18nCheck("摄影日志", QStringLiteral("Photo Log"));
+
+        if (ok) {
+            std::fprintf(stderr, "LA_I18N_QA PASS entries=4\n");
+        } else {
+            std::fprintf(stderr, "LA_I18N_QA FAIL %s\n", qPrintable(fails.join(QLatin1Char(' '))));
+        }
+        std::fflush(stderr);
+        return 0;
+    }
+
     app.setOrganizationName(QStringLiteral("lightalbum"));
     Dark::apply(app);
+
+    // 方向 F 第二步 i18n（2.10.0）：按语言加载 UI 翻译器。
+    // 中文（简/繁）保持原生文案 → 不加载翻译器 → 零回归；其余语言加载 :/i18n/LightAlbum_en.qm。
+    // 资源由 i18n.qrc 嵌入 exe，Headless 门禁随取随用。可用 LA_I18N_LANG=en|zh 强制覆盖。
+    {
+        bool loadEn = true;
+        const QByteArray forced = qgetenv("LA_I18N_LANG");
+        if (!forced.isEmpty()) {
+            loadEn = forced.startsWith("en");
+        } else {
+            const QLocale loc = QLocale::system();
+            loadEn = (loc.language() != QLocale::Chinese);
+        }
+        if (loadEn) {
+            static QTranslator i18nTranslator;
+            if (i18nTranslator.load(QStringLiteral(":/i18n/LightAlbum_en.qm"))) {
+                app.installTranslator(&i18nTranslator);
+                std::fprintf(stderr, "LA_I18N translator=en installed\n");
+            } else {
+                std::fprintf(stderr, "LA_I18N translator=en LOAD FAILED\n");
+            }
+            std::fflush(stderr);
+        }
+    }
 
     // P16.6 视觉QA：offscreen 字体库不枚举 CJK → 中文豆腐块。显式从文件加载中文字体，
     // 字体引擎直接持有字形（不依赖系统字体枚举），offscreen 截图即等于真实窗口效果。

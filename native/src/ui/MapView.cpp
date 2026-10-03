@@ -1419,7 +1419,7 @@ void MapView::paintMap(QPainter& p)
     // 诚实足迹提示（GPS 数由 MapPage 经 setGpsCount 注入，绝不硬编码）
     p.setPen(QColor(0x8d, 0xa3, 0x96));
     const QString foot = (level_ == World)
-        ? QString::fromUtf8("足迹地图 · 10 大区 / 233 省 · 本库 GPS 足迹 %1（滚轮缩放 · 拖动平移）")
+        ? QCoreApplication::translate("LightAlbum", "足迹地图 · 10 大区 / 233 省 · 本库 GPS 足迹 %1（滚轮缩放 · 拖动平移）")
             .arg(gpsCount_)
         : QString();
     if (!foot.isEmpty())
@@ -1428,7 +1428,7 @@ void MapView::paintMap(QPainter& p)
     if (level_ == World && worldZoom_ > 1.01) {
         p.setPen(QColor(0xd9, 0xa9, 0x4e));
         p.drawText(rect().adjusted(0, 0, -12, -10), Qt::AlignRight | Qt::AlignBottom,
-                   QString::fromUtf8("缩放 ×%1").arg(worldZoom_, 0, 'f', 2));
+                   QCoreApplication::translate("LightAlbum", "缩放 ×%1").arg(worldZoom_, 0, 'f', 2));
     }
     if (!hoverHint_.isEmpty()) {
         p.setPen(QColor(0xe8, 0xc8, 0x7a));

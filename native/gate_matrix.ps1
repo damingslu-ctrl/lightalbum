@@ -67,6 +67,13 @@ $GateTable = @(
   @{n="LA_THUMB_CACHE_QA";  png=$false; tier="fast"; measuredMs=201},
   @{n="LA_GALLERY_BATCH_QA"; png=$false; tier="fast"; measuredMs=135},
   @{n="LA_GATE_MATRIX_QA";  png=$false; tier="fast"; kind="ps1"; script="gate_matrix.ps1"; scriptArgs="-SelfTest"; measuredMs=250},
+  # F i18n (direction F step 2): translation correctness. Forces loading of the
+  # embedded :/i18n/LightAlbum_en.qm, then asserts core UI strings resolve to
+  # English and differ from their (Chinese) source. Pure offscreen self-exit,
+  # no MainWindow, no external env. Counter-example LA_I18N_QA_FORCE_BROKEN=1
+  # skips the translator load and must go RED. Measured 165-246ms (x3) on
+  # 2026-10-03 -> 210ms; well under the 500ms fast budget.
+  @{n="LA_I18N_QA";        png=$false; tier="fast"; measuredMs=210},
   @{n="LA_LUMEN_SMOKE";     png=$false; measuredMs=7431},
   @{n="LA_AGENT_SMOKE";     png=$false; measuredMs=8662},
   @{n="LA_SCAN_SMOKE";      png=$false; need=@("LA_SCAN_ROOT","LA_SCAN_DB"); measuredMs=0},

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(LightAlbumNative VERSION 2.9.0 LANGUAGES CXX)
+project(LightAlbumNative VERSION 2.10.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -77,6 +77,7 @@ set(LA_SOURCES
 # P2 地图数据（零外链编进 exe）
 set(LA_RESOURCES
     resources.qrc
+    i18n.qrc
 )
 
 add_executable(LightAlbum WIN32 ${LA_SOURCES} ${LA_RESOURCES})

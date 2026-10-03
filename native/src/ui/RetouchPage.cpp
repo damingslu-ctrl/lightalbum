@@ -206,12 +206,12 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
             photoCombo_->addItem(photoLabel((*photos_)[i]));
         }
     }
-    presetCombo_->addItem(QStringLiteral("— 手动 —"), QStringLiteral("__manual__"));
+    presetCombo_->addItem(QCoreApplication::translate("LightAlbum", "— 手动 —"), QStringLiteral("__manual__"));
     for (const RetouchPreset& pr : presets_)
         presetCombo_->addItem(pr.name, pr.key);
-    bl->addWidget(new QLabel(QStringLiteral("照片"), bar));
+    bl->addWidget(new QLabel(QCoreApplication::translate("LightAlbum", "照片"), bar));
     bl->addWidget(photoCombo_);
-    bl->addWidget(new QLabel(QStringLiteral("预设"), bar));
+    bl->addWidget(new QLabel(QCoreApplication::translate("LightAlbum", "预设"), bar));
     bl->addWidget(presetCombo_);
     bl->addStretch(1);
     root->addWidget(bar);
@@ -227,9 +227,9 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
         l->setStyleSheet("QLabel{background:#000;border:1px solid #26312a;border-radius:12px;}");
     }
     auto* bl1 = new QVBoxLayout; bl1->setContentsMargins(0,0,0,0);
-    bl1->addWidget(beforeLbl_); bl1->addWidget(new QLabel(QStringLiteral("原图"), this), 0, Qt::AlignHCenter);
+    bl1->addWidget(beforeLbl_); bl1->addWidget(new QLabel(QCoreApplication::translate("LightAlbum", "原图"), this), 0, Qt::AlignHCenter);
     auto* bl2 = new QVBoxLayout; bl2->setContentsMargins(0,0,0,0);
-    bl2->addWidget(afterLbl_);  bl2->addWidget(new QLabel(QStringLiteral("修后"), this), 0, Qt::AlignHCenter);
+    bl2->addWidget(afterLbl_);  bl2->addWidget(new QLabel(QCoreApplication::translate("LightAlbum", "修后"), this), 0, Qt::AlignHCenter);
     pv->addStretch(1); pv->addLayout(bl1); pv->addLayout(bl2); pv->addStretch(1);
     auto* pvWrap = new QWidget(this);
     pvWrap->setLayout(pv);
@@ -251,7 +251,7 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
     auto* cl = new QHBoxLayout(chipWrap);
     cl->setContentsMargins(0, 0, 0, 0);
     cl->setSpacing(8);
-    chipTitle_ = new QLabel(QStringLiteral("智能建议："), chipWrap);
+    chipTitle_ = new QLabel(QCoreApplication::translate("LightAlbum", "智能建议："), chipWrap);
     chipTitle_->setStyleSheet("color:#8da396;");
     cl->addWidget(chipTitle_);
     chipRow_ = new QWidget(chipWrap);
@@ -271,7 +271,7 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
     prog_->setStyleSheet("QProgressBar{background:#0e1410;border:1px solid #26312a;"
         "border-radius:6px;height:8px;} QProgressBar::chunk{border-radius:6px;"
         "background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #4fc08a, stop:1 #6adba6);}");
-    badge_ = new QLabel(QStringLiteral("未调整 · 零云端"), foot);
+    badge_ = new QLabel(QCoreApplication::translate("LightAlbum", "未调整 · 零云端"), foot);
     badge_->setStyleSheet("color:#8da396;");
     fl->addWidget(prog_, 1);
     fl->addWidget(badge_);
@@ -302,12 +302,12 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
         b->setStyleSheet(QString::fromLatin1(css));
         return b;
     };
-    autoBtn_   = mkAct(QStringLiteral("智能增强"), emCss);
-    agentBtn_  = mkAct(QStringLiteral("AI 智能体"), viCss);
-    resetBtn_  = mkAct(QStringLiteral("重置"), resetCss);
-    undoBtn_   = mkAct(QStringLiteral("↶ 撤销"), resetCss);
-    redoBtn_   = mkAct(QStringLiteral("↷ 重做"), resetCss);
-    exportBtn_ = mkAct(QStringLiteral("导出副本"), goldCss);
+    autoBtn_   = mkAct(QCoreApplication::translate("LightAlbum", "智能增强"), emCss);
+    agentBtn_  = mkAct(QCoreApplication::translate("LightAlbum", "AI 智能体"), viCss);
+    resetBtn_  = mkAct(QCoreApplication::translate("LightAlbum", "重置"), resetCss);
+    undoBtn_   = mkAct(QCoreApplication::translate("LightAlbum", "↶ 撤销"), resetCss);
+    redoBtn_   = mkAct(QCoreApplication::translate("LightAlbum", "↷ 重做"), resetCss);
+    exportBtn_ = mkAct(QCoreApplication::translate("LightAlbum", "导出副本"), goldCss);
     abl->addWidget(autoBtn_);
     abl->addWidget(agentBtn_);
     abl->addWidget(resetBtn_);
@@ -345,7 +345,7 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
         auto* gv = new QVBoxLayout(galleryPanel_);
         gv->setContentsMargins(10, 14, 10, 14);
         gv->setSpacing(8);
-        auto* gt = new QLabel(QStringLiteral("滤镜预设"), galleryPanel_);
+        auto* gt = new QLabel(QCoreApplication::translate("LightAlbum", "滤镜预设"), galleryPanel_);
         gt->setStyleSheet(QStringLiteral("color:#f4f7f4;font-weight:bold;font-size:13px;"));
         gv->addWidget(gt);
         auto* gsa = new QScrollArea(galleryPanel_);
@@ -381,42 +381,42 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
             b->setStyleSheet("QPushButton{background:#131a15;border:1px solid #26312a;border-radius:8px;padding:6px 12px;color:#f4f7f4;}");
             return b;
         };
-        auto* hgeo = new QLabel(QStringLiteral("几何编辑"), gp);
+        auto* hgeo = new QLabel(QCoreApplication::translate("LightAlbum", "几何编辑"), gp);
         hgeo->setStyleSheet("color:#f4f7f4;font-weight:bold;font-size:12px;");
         gl2->addWidget(hgeo);
-        geoRotLBtn_ = gbtn(QStringLiteral("旋转⟲"));
-        geoRotRBtn_ = gbtn(QStringLiteral("旋转⟳"));
-        geoFlipHBtn_ = gbtn(QStringLiteral("⇋ 水平"));
-        geoFlipVBtn_ = gbtn(QStringLiteral("⇅ 垂直"));
-        geoRotLBtn_->setToolTip(QStringLiteral("向左旋转 90°"));
-        geoRotRBtn_->setToolTip(QStringLiteral("向右旋转 90°"));
-        geoFlipHBtn_->setToolTip(QStringLiteral("水平翻转（镜像）"));
-        geoFlipVBtn_->setToolTip(QStringLiteral("垂直翻转（镜像）"));
+        geoRotLBtn_ = gbtn(QCoreApplication::translate("LightAlbum", "旋转⟲"));
+        geoRotRBtn_ = gbtn(QCoreApplication::translate("LightAlbum", "旋转⟳"));
+        geoFlipHBtn_ = gbtn(QCoreApplication::translate("LightAlbum", "⇋ 水平"));
+        geoFlipVBtn_ = gbtn(QCoreApplication::translate("LightAlbum", "⇅ 垂直"));
+        geoRotLBtn_->setToolTip(QCoreApplication::translate("LightAlbum", "向左旋转 90°"));
+        geoRotRBtn_->setToolTip(QCoreApplication::translate("LightAlbum", "向右旋转 90°"));
+        geoFlipHBtn_->setToolTip(QCoreApplication::translate("LightAlbum", "水平翻转（镜像）"));
+        geoFlipVBtn_->setToolTip(QCoreApplication::translate("LightAlbum", "垂直翻转（镜像）"));
         auto* sep = new QFrame(gp); sep->setFrameShape(QFrame::VLine); sep->setFixedHeight(20);
         sep->setStyleSheet("color:#26312a;");
         straighten_ = new QSlider(Qt::Horizontal, gp);
         straighten_->setRange(-100, 100); straighten_->setValue(0);
         straighten_->setFixedWidth(160);
-        straighten_->setToolTip(QStringLiteral("拉直 ±10°"));
+        straighten_->setToolTip(QCoreApplication::translate("LightAlbum", "拉直 ±10°"));
         straighten_->setStyleSheet("QSlider::groove:horizontal{background:#0e1410;height:4px;border-radius:2px;}"
             "QSlider::handle:horizontal{background:#d9a94e;width:12px;height:12px;border-radius:6px;margin:-4px 0;}");
         aspectCombo_ = new QComboBox(gp);
-        aspectCombo_->addItem(QStringLiteral("自由"), 0.0);
+        aspectCombo_->addItem(QCoreApplication::translate("LightAlbum", "自由"), 0.0);
         aspectCombo_->addItem(QStringLiteral("1:1"), 1.0);
         aspectCombo_->addItem(QStringLiteral("4:3"), 4.0 / 3.0);
         aspectCombo_->addItem(QStringLiteral("3:2"), 1.5);
         aspectCombo_->addItem(QStringLiteral("16:9"), 16.0 / 9.0);
-        geoCropBtn_ = gbtn(QStringLiteral("应用裁剪"));
-        geoResetBtn_ = gbtn(QStringLiteral("重置几何"));
-        cropBtn_ = gbtn(QStringLiteral("✂ 裁剪"));
+        geoCropBtn_ = gbtn(QCoreApplication::translate("LightAlbum", "应用裁剪"));
+        geoResetBtn_ = gbtn(QCoreApplication::translate("LightAlbum", "重置几何"));
+        cropBtn_ = gbtn(QCoreApplication::translate("LightAlbum", "✂ 裁剪"));
         cropBtn_->setCheckable(true);
         cropBtn_->setStyleSheet("QPushButton{background:#131a15;border:1px solid #26312a;border-radius:8px;padding:6px 12px;color:#f4f7f4;}"
             "QPushButton:checked{border:2px solid #d9a94e;background:#262012;}");
         gl2->addWidget(geoRotLBtn_); gl2->addWidget(geoRotRBtn_);
         gl2->addWidget(geoFlipHBtn_); gl2->addWidget(geoFlipVBtn_);
         gl2->addWidget(sep);
-        gl2->addWidget(new QLabel(QStringLiteral("拉直"), gp)); gl2->addWidget(straighten_);
-        gl2->addWidget(new QLabel(QStringLiteral("裁剪"), gp)); gl2->addWidget(aspectCombo_);
+        gl2->addWidget(new QLabel(QCoreApplication::translate("LightAlbum", "拉直"), gp)); gl2->addWidget(straighten_);
+        gl2->addWidget(new QLabel(QCoreApplication::translate("LightAlbum", "裁剪"), gp)); gl2->addWidget(aspectCombo_);
         gl2->addWidget(geoCropBtn_); gl2->addWidget(geoResetBtn_);
         gl2->addWidget(cropBtn_);
         gl2->addStretch(1);
@@ -433,27 +433,27 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
             b->setStyleSheet(QString::fromLatin1(css));
             return b;
         };
-        maskBtn_ = mbtn(QStringLiteral("🖌 蒙版模式"),
+        maskBtn_ = mbtn(QCoreApplication::translate("LightAlbum", "🖌 蒙版模式"),
             "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:8px;padding:6px 12px;color:#f4f7f4;}"
             "QPushButton:checked{border:2px solid #4fc08a;background:#12241c;}");
         maskBtn_->setCheckable(true);
-        maskClearBtn_ = mbtn(QStringLiteral("清除蒙版"), "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:8px;padding:6px 12px;color:#f4f7f4;}");
-        maskApplyBtn_ = mbtn(QStringLiteral("局部应用"),
+        maskClearBtn_ = mbtn(QCoreApplication::translate("LightAlbum", "清除蒙版"), "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:8px;padding:6px 12px;color:#f4f7f4;}");
+        maskApplyBtn_ = mbtn(QCoreApplication::translate("LightAlbum", "局部应用"),
             "QPushButton{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #6adba6, stop:1 #2f7d57);border:none;border-radius:9px;padding:6px 14px;color:#f4f7f4;font-weight:bold;}");
         brushSlider_ = new QSlider(Qt::Horizontal, mp);
         brushSlider_->setRange(4, 80); brushSlider_->setValue(24);
         brushSlider_->setFixedWidth(120);
-        brushSlider_->setToolTip(QStringLiteral("笔刷大小（像素）"));
+        brushSlider_->setToolTip(QCoreApplication::translate("LightAlbum", "笔刷大小（像素）"));
         brushSlider_->setStyleSheet("QSlider::groove:horizontal{background:#0e1410;height:4px;border-radius:2px;}"
             "QSlider::handle:horizontal{background:#4fc08a;width:12px;height:12px;border-radius:6px;margin:-4px 0;}");
         eraseBridge_ = new EraseBridge(this);
         eraseBridge_->setModelSlot(qEnvironmentVariable("LA_INPAINT_MODEL"));
-        eraseBtn_ = mbtn(QStringLiteral("🧹 AI消除"), "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:8px;padding:6px 12px;color:#f4f7f4;}");
-        const QString slot = eraseBridge_->modelPath().isEmpty() ? QStringLiteral("未配置") : eraseBridge_->modelPath();
-        eraseSlotLbl_ = new QLabel(QStringLiteral("模型槽位：%1 · 执行器未接入 · 零云端").arg(slot), mp);
+        eraseBtn_ = mbtn(QCoreApplication::translate("LightAlbum", "🧹 AI消除"), "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:8px;padding:6px 12px;color:#f4f7f4;}");
+        const QString slot = eraseBridge_->modelPath().isEmpty() ? QCoreApplication::translate("LightAlbum", "未配置") : eraseBridge_->modelPath();
+        eraseSlotLbl_ = new QLabel(QCoreApplication::translate("LightAlbum", "模型槽位：%1 · 执行器未接入 · 零云端").arg(slot), mp);
         eraseSlotLbl_->setStyleSheet("color:#8da396;");
         ml->addWidget(maskBtn_);
-        ml->addWidget(new QLabel(QStringLiteral("笔刷"), mp)); ml->addWidget(brushSlider_);
+        ml->addWidget(new QLabel(QCoreApplication::translate("LightAlbum", "笔刷"), mp)); ml->addWidget(brushSlider_);
         ml->addWidget(maskClearBtn_); ml->addWidget(maskApplyBtn_);
         ml->addWidget(eraseBtn_); ml->addWidget(eraseSlotLbl_);
         ml->addStretch(1);
@@ -465,11 +465,11 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
         auto* cl4 = new QVBoxLayout(cp);
         cl4->setContentsMargins(14, 14, 14, 14);
         cl4->setSpacing(8);
-        compareBtn_ = new QPushButton(QStringLiteral("◐ 对比"), cp);
+        compareBtn_ = new QPushButton(QCoreApplication::translate("LightAlbum", "◐ 对比"), cp);
         compareBtn_->setCheckable(true);
         compareBtn_->setStyleSheet("QPushButton{background:#131a15;border:1px solid #26312a;border-radius:8px;padding:6px 12px;color:#f4f7f4;}"
             "QPushButton:checked{border:2px solid #d9a94e;background:#262012;}");
-        auto* cnote = new QLabel(QStringLiteral("拖动金色分割线对比原图与修后 · 零云端"), cp);
+        auto* cnote = new QLabel(QCoreApplication::translate("LightAlbum", "拖动金色分割线对比原图与修后 · 零云端"), cp);
         cnote->setStyleSheet("color:#8da396;");
         cl4->addWidget(compareBtn_);
         cl4->addWidget(cnote);
@@ -482,14 +482,14 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
         auto* al5 = new QVBoxLayout(ap);
         al5->setContentsMargins(14, 14, 14, 14);
         al5->setSpacing(10);
-        auto* ah = new QLabel(QStringLiteral("AI 智能体（Lumen × 本地 LLM）"), ap);
+        auto* ah = new QLabel(QCoreApplication::translate("LightAlbum", "AI 智能体（Lumen × 本地 LLM）"), ap);
         ah->setStyleSheet("color:#a88be5;font-weight:bold;font-size:12px;");
         goalEdit_ = new QLineEdit(ap);
-        goalEdit_->setPlaceholderText(QStringLiteral("目标（可选）：如 风光通透 / 胶片感"));
+        goalEdit_->setPlaceholderText(QCoreApplication::translate("LightAlbum", "目标（可选）：如 风光通透 / 胶片感"));
         goalEdit_->setStyleSheet(QStringLiteral(
             "QLineEdit{background:#0e1410;border:1px solid #26312a;border-radius:9px;"
             "padding:6px 10px;color:#f4f7f4;} QLineEdit:focus{border-color:#a88be5;}"));
-        auto* anote = new QLabel(QStringLiteral("描述目标，本地测量 → 本地 LLM 决策 → 所见即所得导出。"), ap);
+        auto* anote = new QLabel(QCoreApplication::translate("LightAlbum", "描述目标，本地测量 → 本地 LLM 决策 → 所见即所得导出。"), ap);
         anote->setStyleSheet("color:#8da396;");
         al5->addWidget(ah);
         al5->addWidget(goalEdit_);
@@ -694,7 +694,7 @@ void RetouchPage::onCardClicked(int i)
     }
     for (int k = 0; k < cards_.size(); ++k)
         cards_[k]->setStyleSheet(rtCardStyle(k == selCard_));
-    badge_->setText(QStringLiteral("%1 · 零云端").arg(presets_[i].name));
+    badge_->setText(QCoreApplication::translate("LightAlbum", "%1 · 零云端").arg(presets_[i].name));
 }
 
 void RetouchPage::refreshGallery()
@@ -771,7 +771,7 @@ void RetouchPage::onAgentRun()
     clearCardSel();    // 进入智能体模式 ≠ 预设卡片
     agentBtn_->setEnabled(false);
     prog_->setValue(15);
-    badge_->setText(QStringLiteral("AI 智能体决策中…（本地测量 → 本地 LLM）"));
+    badge_->setText(QCoreApplication::translate("LightAlbum", "AI 智能体决策中…（本地测量 → 本地 LLM）"));
 
     const QImage img = geoImg_;
     int iso = 0;
@@ -791,7 +791,7 @@ void RetouchPage::onAgentRun()
                 agentBtn_->setEnabled(true);
                 const AgentPlan plan = watcher->result();
                 if (!plan.ok || plan.params.isEmpty()) {
-                    badge_->setText(QStringLiteral("智能体决策失败：%1").arg(plan.reason));
+                    badge_->setText(QCoreApplication::translate("LightAlbum", "智能体决策失败：%1").arg(plan.reason));
                     return;
                 }
                 agentPlan_ = plan.params;
@@ -811,9 +811,9 @@ void RetouchPage::onAgentRun()
                 if (presetCombo_->currentData().toString() != QStringLiteral("__manual__"))
                     presetCombo_->setCurrentIndex(0);
                 agentNote_ = (plan.source == QStringLiteral("ollama"))
-                    ? QStringLiteral("AI 智能体 · %1 · %2 · 零云端").arg(plan.model, plan.intent)
-                    : QStringLiteral("AI 智能体 · 本地规则兜底 · %1 · 零云端").arg(plan.intent);
-                badge_->setText(QStringLiteral("%1\n依据：%2").arg(agentNote_, plan.reason));
+                    ? QCoreApplication::translate("LightAlbum", "AI 智能体 · %1 · %2 · 零云端").arg(plan.model, plan.intent)
+                    : QCoreApplication::translate("LightAlbum", "AI 智能体 · 本地规则兜底 · %1 · 零云端").arg(plan.intent);
+                badge_->setText(QCoreApplication::translate("LightAlbum", "%1\n依据：%2").arg(agentNote_, plan.reason));
                 prog_->setValue(0);  // P12: 完成即回零，进度条只在 AI 决策期间可见
                 doApply();
             });
@@ -827,7 +827,7 @@ void RetouchPage::rebuildGeo()
 {
     geoImg_ = applyGeometry(geoSrc_, rot_, flipH_, flipV_, angle_, aspect_, cropNorm_);
     if (geoImg_.isNull()) {
-        beforeLbl_->setText(QStringLiteral("无缩略图"));
+        beforeLbl_->setText(QCoreApplication::translate("LightAlbum", "无缩略图"));
         return;
     }
     srcPm_ = QPixmap::fromImage(geoImg_);
@@ -892,26 +892,26 @@ void RetouchPage::onMaskToggle(bool on)
         if (compareBtn_->isChecked()) compareBtn_->setChecked(false);
     }
     midStack_->setCurrentIndex(on ? 1 : 0);
-    badge_->setText(on ? QStringLiteral("涂抹要调整的区域 · 零云端")
-                       : QStringLiteral("退出蒙版 · 蒙版保留可再局部应用"));
+    badge_->setText(on ? QCoreApplication::translate("LightAlbum", "涂抹要调整的区域 · 零云端")
+                       : QCoreApplication::translate("LightAlbum", "退出蒙版 · 蒙版保留可再局部应用"));
 }
 
 void RetouchPage::onMaskClear()
 {
     canvas_->clearMask();
-    badge_->setText(QStringLiteral("蒙版已清除 · 零云端"));
+    badge_->setText(QCoreApplication::translate("LightAlbum", "蒙版已清除 · 零云端"));
 }
 
 void RetouchPage::onMaskApply()
 {
     if (!canvas_->hasPaint()) {
-        badge_->setText(QStringLiteral("先在蒙版模式涂抹要调整的区域"));
+        badge_->setText(QCoreApplication::translate("LightAlbum", "先在蒙版模式涂抹要调整的区域"));
         return;
     }
     const QImage base = geoImg_;
     const QImage toned = RetouchEngine::apply(base, buildFromMap(cur_));
     localOut_ = blendMask(base, toned, canvas_->mask());
-    if (localOut_.isNull()) { badge_->setText(QStringLiteral("局部应用失败")); return; }
+    if (localOut_.isNull()) { badge_->setText(QCoreApplication::translate("LightAlbum", "局部应用失败")); return; }
     if (maskMode_) {
         maskBtn_->setChecked(false);   // 触发 onMaskToggle(false)：退回预览、蒙版保留
     }
@@ -919,7 +919,7 @@ void RetouchPage::onMaskApply()
         Qt::KeepAspectRatio, Qt::SmoothTransformation));
     afterImg_ = localOut_;                                   // P4-3：供对比视图
     if (compareMode_) compareW_->setImages(geoImg_, afterImg_);
-    badge_->setText(QStringLiteral("局部调整已应用 · 零云端"));
+    badge_->setText(QCoreApplication::translate("LightAlbum", "局部调整已应用 · 零云端"));
     prog_->setValue(0);  // P12: 完成即回零，进度条只在 AI 决策期间可见
 }
 
@@ -932,7 +932,7 @@ void RetouchPage::onCropToggle(bool on)
         if (compareBtn_->isChecked()) compareBtn_->setChecked(false);
         cropCanvas_->setBase(geoImg_);
         cropCanvas_->setAspect(aspect_);
-        badge_->setText(QStringLiteral("拖角缩放 / 框内拖移，「应用裁剪」提交 · 零云端"));
+        badge_->setText(QCoreApplication::translate("LightAlbum", "拖角缩放 / 框内拖移，「应用裁剪」提交 · 零云端"));
     }
     midStack_->setCurrentIndex(on ? 2 : 0);
 }
@@ -944,7 +944,7 @@ void RetouchPage::onCompareToggle(bool on)
         if (maskBtn_->isChecked()) maskBtn_->setChecked(false);
         if (cropBtn_->isChecked()) cropBtn_->setChecked(false);
         compareW_->setImages(geoImg_, afterImg_);
-        badge_->setText(QStringLiteral("拖动金色分割线对比 · 零云端"));
+        badge_->setText(QCoreApplication::translate("LightAlbum", "拖动金色分割线对比 · 零云端"));
     }
     midStack_->setCurrentIndex(on ? 3 : 0);
 }
@@ -953,7 +953,7 @@ void RetouchPage::onCompareToggle(bool on)
 void RetouchPage::onEraseClicked()
 {
     if (!canvas_->hasPaint()) {
-        badge_->setText(QStringLiteral("先用蒙版模式涂抹要消除的区域"));
+        badge_->setText(QCoreApplication::translate("LightAlbum", "先用蒙版模式涂抹要消除的区域"));
         return;
     }
     eraseBridge_->submit(geoImg_, canvas_->mask());
@@ -965,7 +965,7 @@ void RetouchPage::onEraseTaskUpdated(int id)
     const EraseTask* t = eraseBridge_->task(id);
     if (!t) return;
     eraseSlotLbl_->setText(
-        QStringLiteral("任务#%1 %2 · %3").arg(id).arg(t->status, t->note));
+        QCoreApplication::translate("LightAlbum", "任务#%1 %2 · %3").arg(id).arg(t->status, t->note));
     if (t->status == QStringLiteral("done") && !t->result.isNull()) {
         // 结果回填通道：模型接入后消除结果进 after 预览
         localOut_ = t->result;
@@ -973,7 +973,7 @@ void RetouchPage::onEraseTaskUpdated(int id)
         afterLbl_->setPixmap(QPixmap::fromImage(t->result).scaled(kPreviewW, kPreviewH,
             Qt::KeepAspectRatio, Qt::SmoothTransformation));
         if (maskMode_) maskBtn_->setChecked(false);
-        badge_->setText(QStringLiteral("AI消除结果已回填 · 零云端"));
+        badge_->setText(QCoreApplication::translate("LightAlbum", "AI消除结果已回填 · 零云端"));
         prog_->setValue(0);  // P12: 完成即回零，进度条只在 AI 决策期间可见
     }
 }
@@ -1036,15 +1036,15 @@ void RetouchPage::onExport()
     if (!agentMode_ && canvas_->hasPaint())      // P4-2：导出与预览同序合成蒙版
         out = blendMask(work, out, canvas_->mask());
 
-    const QString fname = QFileDialog::getSaveFileName(this, QStringLiteral("导出修后副本"),
+    const QString fname = QFileDialog::getSaveFileName(this, QCoreApplication::translate("LightAlbum", "导出修后副本"),
         QDir::homePath() + "/" + QFileInfo(ph.path).baseName() + "_retouched.jpg",
         QStringLiteral("JPEG (*.jpg);;PNG (*.png)"));
     if (fname.isEmpty()) return;
     if (out.save(fname)) {
-        badge_->setText(QStringLiteral("已导出 · %1 · 零云端").arg(QFileInfo(fname).fileName()));
+        badge_->setText(QCoreApplication::translate("LightAlbum", "已导出 · %1 · 零云端").arg(QFileInfo(fname).fileName()));
         prog_->setValue(0);  // P12: 完成即回零，进度条只在 AI 决策期间可见
     } else {
-        badge_->setText(QStringLiteral("导出失败"));
+        badge_->setText(QCoreApplication::translate("LightAlbum", "导出失败"));
     }
 }
 
@@ -1076,7 +1076,7 @@ void RetouchPage::loadPhoto(int idx)
     QImage img(path);
     if (img.isNull()) {
         geoSrc_ = QImage(); geoImg_ = QImage();
-        beforeLbl_->setText(QStringLiteral("无缩略图"));
+        beforeLbl_->setText(QCoreApplication::translate("LightAlbum", "无缩略图"));
         resetHistory();              // 空基线：无可撤销
         updateUndoRedoButtons();
         return;
@@ -1175,7 +1175,7 @@ void RetouchPage::openPhoto(const QString& path)
 
 void RetouchPage::doApply()
 {
-    if (geoImg_.isNull()) { afterLbl_->setText(QStringLiteral("无缩略图")); return; }
+    if (geoImg_.isNull()) { afterLbl_->setText(QCoreApplication::translate("LightAlbum", "无缩略图")); return; }
     // P9：智能体模式走 Lumen 13 项增量管线；手动/预设走 RetouchEngine
     const QImage out = agentMode_
         ? LumenEngine::retouchWithPlan(geoImg_, agentPlan_)
@@ -1192,7 +1192,7 @@ void RetouchPage::doApply()
 void RetouchPage::updateBadge()
 {
     if (agentMode_ && !agentNote_.isEmpty()) { badge_->setText(agentNote_); return; }
-    badge_->setText(QStringLiteral("%1 · 零云端").arg(RetouchEngine::describe(buildFromMap(cur_))));
+    badge_->setText(QCoreApplication::translate("LightAlbum", "%1 · 零云端").arg(RetouchEngine::describe(buildFromMap(cur_))));
 }
 
 void RetouchPage::refreshChips()
@@ -1202,7 +1202,7 @@ void RetouchPage::refreshChips()
     while (hl->count()) { QLayoutItem* it = hl->takeAt(0); delete it->widget(); delete it; }
     const RetouchSuggest s = RetouchEngine::recommend(geoImg_);
     if (!s.valid || s.chips.isEmpty()) {
-        auto* t = new QLabel(QStringLiteral("曝光均衡，无需修正"), chipRow_);
+        auto* t = new QLabel(QCoreApplication::translate("LightAlbum", "曝光均衡，无需修正"), chipRow_);
         t->setStyleSheet("color:#8da396;");
         hl->addWidget(t);
         return;

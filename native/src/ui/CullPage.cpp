@@ -188,7 +188,7 @@ void CullCardDelegate::paint(QPainter* p, const QStyleOptionViewItem& o,
                       imgR.y() + (imgR.height() - scaled.height()) / 2, scaled);
     } else {
         p->setPen(QColor(0x5a, 0x6b, 0x60));
-        p->drawText(imgR, Qt::AlignCenter, QStringLiteral("无缩略图"));
+        p->drawText(imgR, Qt::AlignCenter, QCoreApplication::translate("LightAlbum", "无缩略图"));
     }
 
     const QString grade = idx.data(CullModel::GradeRole).toString();
@@ -206,19 +206,19 @@ void CullCardDelegate::paint(QPainter* p, const QStyleOptionViewItem& o,
     p->setPen(QColor(0x8d, 0xa3, 0x96));
     f.setBold(false); f.setPointSizeF(10); p->setFont(f);
     QString sub;
-    if (mark == QStringLiteral("like"))      sub = QString::fromUtf8("♥ 喜欢");
-    else if (mark == QStringLiteral("skip"))  sub = QString::fromUtf8("已略过");
-    else if (mark == QStringLiteral("lock"))  sub = QString::fromUtf8("已锁定");
+    if (mark == QStringLiteral("like"))      sub = QCoreApplication::translate("LightAlbum", "♥ 喜欢");
+    else if (mark == QStringLiteral("skip"))  sub = QCoreApplication::translate("LightAlbum", "已略过");
+    else if (mark == QStringLiteral("lock"))  sub = QCoreApplication::translate("LightAlbum", "已锁定");
     else sub = (status == QStringLiteral("rejected")) ? reason
-                                                   : QStringLiteral("本地精选");
+                                                   : QCoreApplication::translate("LightAlbum", "本地精选");
     p->drawText(txtR.adjusted(0, 18, 0, 0), Qt::AlignLeft | Qt::AlignTop, sub);
 
     // 标记徽标（单字，避免 emoji 字体缺失）：喜/略/锁
     if (!mark.isEmpty()) {
         QString ch, col;
-        if (mark == QStringLiteral("like"))      { ch = QString::fromUtf8("喜"); col = "#4fc08a"; }
-        else if (mark == QStringLiteral("skip")) { ch = QString::fromUtf8("略"); col = "#e0705f"; }
-        else { ch = QString::fromUtf8("锁"); col = "#d9a94e"; }
+        if (mark == QStringLiteral("like"))      { ch = QCoreApplication::translate("LightAlbum", "喜"); col = "#4fc08a"; }
+        else if (mark == QStringLiteral("skip")) { ch = QCoreApplication::translate("LightAlbum", "略"); col = "#e0705f"; }
+        else { ch = QCoreApplication::translate("LightAlbum", "锁"); col = "#d9a94e"; }
         QRect br(imgR.x() + 6, imgR.y() + 6, 22, 22);
         p->setPen(Qt::NoPen);
         p->setBrush(QColor(0x06, 0x08, 0x06, 210));
@@ -329,7 +329,7 @@ protected:
                          img.y() + (img.height() - sc.height()) / 2, sc);
         } else {
             p.setPen(QColor(0x5a, 0x6b, 0x60));
-            p.drawText(img, Qt::AlignCenter, QString::fromUtf8("无缩略图"));
+            p.drawText(img, Qt::AlignCenter, QCoreApplication::translate("LightAlbum", "无缩略图"));
         }
 
         if (fav_) {   // 引擎倾向：金底徽章（分高者）
@@ -339,7 +339,7 @@ protected:
             p.drawRoundedRect(b, 7, 7);
             p.setPen(QColor(0x17, 0x13, 0x08));
             QFont f = p.font(); f.setBold(true); f.setPointSizeF(10.5); p.setFont(f);
-            p.drawText(b, Qt::AlignCenter, QString::fromUtf8("引擎倾向"));
+            p.drawText(b, Qt::AlignCenter, QCoreApplication::translate("LightAlbum", "引擎倾向"));
         }
 
         const double sc = qBound(0.0, it_.total, 100.0) / 100.0;
@@ -389,10 +389,10 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     auto* kp = new QWidget(this);
     auto* kl = new QHBoxLayout(kp);
     kl->setContentsMargins(0, 0, 0, 0); kl->setSpacing(10);
-    const QStringList labels = {QString::fromUtf8("已分析"), QString::fromUtf8("候选"),
-                                QString::fromUtf8("废片"), QString::fromUtf8("去重组"),
-                                QString::fromUtf8("模糊"), QString::fromUtf8("曝光"),
-                                QString::fromUtf8("解码失败")};
+    const QStringList labels = {QCoreApplication::translate("LightAlbum", "已分析"), QCoreApplication::translate("LightAlbum", "候选"),
+                                QCoreApplication::translate("LightAlbum", "废片"), QCoreApplication::translate("LightAlbum", "去重组"),
+                                QCoreApplication::translate("LightAlbum", "模糊"), QCoreApplication::translate("LightAlbum", "曝光"),
+                                QCoreApplication::translate("LightAlbum", "解码失败")};
     for (const QString& l : labels) {
         auto* lb = new QLabel(QString::fromUtf8("<b style='font-size:15px;color:#f4f7f4;'>—</b><br>"
             "<span style='font-size:11px;color:#8da396;'>%1</span>").arg(l), kp);
@@ -412,20 +412,20 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     bl->setContentsMargins(0, 0, 0, 0);
     bl->setSpacing(10);
 
-    runBtn_ = new QPushButton(QString::fromUtf8("开始分析"), bar);
+    runBtn_ = new QPushButton(QCoreApplication::translate("LightAlbum", "开始分析"), bar);
     runBtn_->setStyleSheet(Lumen::btnGold());
 
     auto* stepWrap = new QWidget(bar);
     auto* sl = new QHBoxLayout(stepWrap);
     sl->setContentsMargins(0, 0, 0, 0); sl->setSpacing(6);
-    auto* stepLbl = new QLabel(QString::fromUtf8("目标张数"), bar);
+    auto* stepLbl = new QLabel(QCoreApplication::translate("LightAlbum", "目标张数"), bar);
     stepLbl->setStyleSheet(QStringLiteral("color:#8da396;"));
     auto* minus = new QPushButton(QString::fromUtf8("−"), bar);
     auto* plus  = new QPushButton(QString::fromUtf8("+"), bar);
     topNSpin_ = new QSpinBox(bar);
     topNSpin_->setRange(5, 600);
     topNSpin_->setValue(60);
-    topNSpin_->setSuffix(QString::fromUtf8(" 张"));
+    topNSpin_->setSuffix(QCoreApplication::translate("LightAlbum", " 张"));
     topNSpin_->setStyleSheet(Lumen::input());
     minus->setFixedWidth(26); plus->setFixedWidth(26);
     minus->setStyleSheet(QStringLiteral("QPushButton{background:#131a15;border:1px solid #26312a;"
@@ -436,19 +436,19 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     connect(plus,  &QPushButton::clicked, this, [this]{ topNSpin_->setValue(topNSpin_->value() + 10); });
 
     markCombo_ = new QComboBox(bar);
-    markCombo_->addItem(QString::fromUtf8("全部"), QString());
-    markCombo_->addItem(QString::fromUtf8("只看喜欢"), QStringLiteral("like"));
-    markCombo_->addItem(QString::fromUtf8("只看略过"), QStringLiteral("skip"));
-    markCombo_->addItem(QString::fromUtf8("只看锁定"), QStringLiteral("lock"));
+    markCombo_->addItem(QCoreApplication::translate("LightAlbum", "全部"), QString());
+    markCombo_->addItem(QCoreApplication::translate("LightAlbum", "只看喜欢"), QStringLiteral("like"));
+    markCombo_->addItem(QCoreApplication::translate("LightAlbum", "只看略过"), QStringLiteral("skip"));
+    markCombo_->addItem(QCoreApplication::translate("LightAlbum", "只看锁定"), QStringLiteral("lock"));
     markCombo_->setStyleSheet(Lumen::input());
 
-    progress_ = new QLabel(QString::fromUtf8("基于本地缩略图 · 零云端 · 失败即放行"), bar);
+    progress_ = new QLabel(QCoreApplication::translate("LightAlbum", "基于本地缩略图 · 零云端 · 失败即放行"), bar);
     progress_->setStyleSheet(QStringLiteral("color:#8da396;"));
 
     bl->addWidget(runBtn_);
 
     // P25 对决模式入口（分析完成后可点；空结果禁用）
-    duelBtn_ = new QPushButton(QString::fromUtf8("开始对决"), bar);
+    duelBtn_ = new QPushButton(QCoreApplication::translate("LightAlbum", "开始对决"), bar);
     duelBtn_->setStyleSheet(QStringLiteral(
         "QPushButton{background:#131a15;border:1px solid #d9a94e;border-radius:8px;"
         "padding:6px 16px;color:#d9a94e;}"
@@ -498,13 +498,13 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
         connect(b, &QPushButton::clicked, this, [this, m]{ onMark(m); });
         return b;
     };
-    likeBtn_  = mkMark(QString::fromUtf8("喜欢"), QStringLiteral("like"),
+    likeBtn_  = mkMark(QCoreApplication::translate("LightAlbum", "喜欢"), QStringLiteral("like"),
         "QPushButton{background:#131a15;border:1px solid #4fc08a;border-radius:8px;padding:6px 14px;color:#4fc08a;}");
-    skipBtn_  = mkMark(QString::fromUtf8("略过"), QStringLiteral("skip"),
+    skipBtn_  = mkMark(QCoreApplication::translate("LightAlbum", "略过"), QStringLiteral("skip"),
         "QPushButton{background:#131a15;border:1px solid #e0705f;border-radius:8px;padding:6px 14px;color:#e0705f;}");
-    lockBtn_  = mkMark(QString::fromUtf8("锁定"), QStringLiteral("lock"),
+    lockBtn_  = mkMark(QCoreApplication::translate("LightAlbum", "锁定"), QStringLiteral("lock"),
         "QPushButton{background:#131a15;border:1px solid #d9a94e;border-radius:8px;padding:6px 14px;color:#d9a94e;}");
-    unlockBtn_ = mkMark(QString::fromUtf8("解除"), QString(),
+    unlockBtn_ = mkMark(QCoreApplication::translate("LightAlbum", "解除"), QString(),
         "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:8px;padding:6px 14px;color:#8da396;}");
     sbl->addWidget(selThumb_);
     sbl->addWidget(selName_, 1);
@@ -518,7 +518,7 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     lockFrame_->setStyleSheet(QStringLiteral("#cullLockFrame{background:#0e1410;border:none;border-radius:12px;}"));
     auto* ll = new QVBoxLayout(lockFrame_);
     ll->setContentsMargins(12, 10, 12, 10); ll->setSpacing(8);
-    lockTitle_ = new QLabel(QString::fromUtf8("锁定区"), lockFrame_);
+    lockTitle_ = new QLabel(QCoreApplication::translate("LightAlbum", "锁定区"), lockFrame_);
     lockTitle_->setStyleSheet(QStringLiteral("color:#d9a94e;font-weight:bold;font-size:13px;"));
     ll->addWidget(lockTitle_);
     lockList_ = new QListWidget(lockFrame_);
@@ -578,7 +578,7 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     hrow->setSpacing(10);
     duelHead_ = new QLabel(duel_);
     duelHead_->setStyleSheet(QStringLiteral("color:#8da396;font-size:12px;border:none;background:transparent;"));
-    duelBackBtn_ = new QPushButton(QString::fromUtf8("返回总览 Esc"), duel_);
+    duelBackBtn_ = new QPushButton(QCoreApplication::translate("LightAlbum", "返回总览 Esc"), duel_);
     duelBackBtn_->setStyleSheet(QStringLiteral(
         "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:8px;"
         "padding:5px 14px;color:#8da396;}"
@@ -613,12 +613,12 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
         connect(b, &QPushButton::clicked, this, fn);
         return b;
     };
-    brow->addWidget(mkDuelBtn(QString::fromUtf8("左留 ←"), [this]{ duelPick(0); }));
-    brow->addWidget(mkDuelBtn(QString::fromUtf8("双弃 ↓"), [this]{ duelBoth(QStringLiteral("skip")); }));
-    brow->addWidget(mkDuelBtn(QString::fromUtf8("双锁 S"), [this]{ duelBoth(QStringLiteral("lock")); }));
-    brow->addWidget(mkDuelBtn(QString::fromUtf8("右留 →"), [this]{ duelPick(1); }));
+    brow->addWidget(mkDuelBtn(QCoreApplication::translate("LightAlbum", "左留 ←"), [this]{ duelPick(0); }));
+    brow->addWidget(mkDuelBtn(QCoreApplication::translate("LightAlbum", "双弃 ↓"), [this]{ duelBoth(QStringLiteral("skip")); }));
+    brow->addWidget(mkDuelBtn(QCoreApplication::translate("LightAlbum", "双锁 S"), [this]{ duelBoth(QStringLiteral("lock")); }));
+    brow->addWidget(mkDuelBtn(QCoreApplication::translate("LightAlbum", "右留 →"), [this]{ duelPick(1); }));
     auto* hint = new QLabel(
-        QString::fromUtf8("引擎按分预选（金框）· 败者自动标「略过」· 幸存者留用"), duel_);
+        QCoreApplication::translate("LightAlbum", "引擎按分预选（金框）· 败者自动标「略过」· 幸存者留用"), duel_);
     hint->setStyleSheet(QStringLiteral("color:#5a6b60;font-size:11px;border:none;background:transparent;"));
     brow->addStretch(1);
     brow->addWidget(hint);
@@ -650,7 +650,7 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     auto* sv = new QVBoxLayout(side);
     sv->setContentsMargins(0, 0, 0, 0);
     sv->setSpacing(12);
-    auto* rt = new QLabel(QString::fromUtf8("审美档案"), side);
+    auto* rt = new QLabel(QCoreApplication::translate("LightAlbum", "审美档案"), side);
     rt->setStyleSheet(QStringLiteral("color:#f4f7f4;font-weight:bold;font-size:14px;"));
     radar_ = new RadarWidget(side);
     radar_->setFixedSize(300, 320);
@@ -707,7 +707,7 @@ void CullPage::buildChips(const QMap<QString,int>& counts)
         cl->addWidget(b);
         return b;
     };
-    mk(QString::fromUtf8("全部"), QString(), model_->rowCount());
+    mk(QCoreApplication::translate("LightAlbum", "全部"), QString(), model_->rowCount());
     for (auto it = counts.begin(); it != counts.end(); ++it)
         mk(it.key(), it.key(), it.value());
     cl->addStretch(1);
@@ -742,12 +742,12 @@ void CullPage::onSelectionChanged(const QModelIndex& cur, const QModelIndex&)
     QPixmap pm(thumb);
     if (!pm.isNull())
         selThumb_->setPixmap(pm.scaled(56, 56, Qt::KeepAspectRatio, Qt::SmoothTransformation));
-    else { selThumb_->clear(); selThumb_->setText(QString::fromUtf8("无")); }
+    else { selThumb_->clear(); selThumb_->setText(QCoreApplication::translate("LightAlbum", "无")); }
     const QString mark = model_->data(model_->index(src.row(), 0), CullModel::MarkRole).toString();
     QString tag;
-    if (mark == QStringLiteral("like"))      tag = QString::fromUtf8(" · 已喜欢");
-    else if (mark == QStringLiteral("skip")) tag = QString::fromUtf8(" · 已略过");
-    else if (mark == QStringLiteral("lock")) tag = QString::fromUtf8(" · 已锁定");
+    if (mark == QStringLiteral("like"))      tag = QCoreApplication::translate("LightAlbum", " · 已喜欢");
+    else if (mark == QStringLiteral("skip")) tag = QCoreApplication::translate("LightAlbum", " · 已略过");
+    else if (mark == QStringLiteral("lock")) tag = QCoreApplication::translate("LightAlbum", " · 已锁定");
     selName_->setText(QFileInfo(thumb).fileName() + tag);
     selBar_->setVisible(true);
 }
@@ -769,10 +769,10 @@ void CullPage::rebuildLockArea()
     lockList_->clear();
     const QVector<QString> locked = model_->markedThumbs(QStringLiteral("lock"));
     lockCount_ = locked.size();
-    lockTitle_->setText(QString::fromUtf8("锁定区（%1）").arg(lockCount_));
+    lockTitle_->setText(QCoreApplication::translate("LightAlbum", "锁定区（%1）").arg(lockCount_));
     if (locked.isEmpty()) {
         auto* hint = new QListWidgetItem(lockList_);
-        hint->setText(QString::fromUtf8("锁定照片会出现在这里 · 选中卡片后点「锁定」"));
+        hint->setText(QCoreApplication::translate("LightAlbum", "锁定照片会出现在这里 · 选中卡片后点「锁定」"));
         hint->setForeground(QColor(0x5a, 0x6b, 0x60));
         hint->setFlags(Qt::NoItemFlags);
         return;
@@ -795,7 +795,7 @@ void CullPage::rebuildFilmstrip()
     QVector<QString> keep = model_->markedThumbs(QStringLiteral("like"));
     keep += model_->markedThumbs(QStringLiteral("lock"));
     if (keep.isEmpty()) {
-        auto* hint = new QLabel(QString::fromUtf8("保留作品会出现在这条胶片 · 选中后点 ♥/锁"),
+        auto* hint = new QLabel(QCoreApplication::translate("LightAlbum", "保留作品会出现在这条胶片 · 选中后点 ♥/锁"),
                                 filmRow_);
         hint->setStyleSheet(QStringLiteral("color:#5a6b60;font-size:11px;"));
         fl->addWidget(hint);
@@ -850,15 +850,15 @@ void CullPage::updateRadar()
         vals[0] = wide / n * 100; vals[1] = tele / n * 100; vals[2] = fast / n * 100;
         vals[3] = low / n * 100;  vals[4] = portrait / n * 100; vals[5] = bw / n * 100;
     }
-    const QStringList labels = {QString::fromUtf8("广角"), QString::fromUtf8("长焦"),
-        QString::fromUtf8("大光圈"), QString::fromUtf8("弱光"),
-        QString::fromUtf8("人像"), QString::fromUtf8("黑白")};
+    const QStringList labels = {QCoreApplication::translate("LightAlbum", "广角"), QCoreApplication::translate("LightAlbum", "长焦"),
+        QCoreApplication::translate("LightAlbum", "大光圈"), QCoreApplication::translate("LightAlbum", "弱光"),
+        QCoreApplication::translate("LightAlbum", "人像"), QCoreApplication::translate("LightAlbum", "黑白")};
     const QString note = (n < 30)
-        ? QString::fromUtf8("样本较少（%1 张），仅供参考；这只是设备与场景分布的客观统计，不等于读懂了你的审美。").arg(n)
-        : QString::fromUtf8("基于 %1 张作品 · 设备/场景分布，非审美判定 · 零云端").arg(n);
+        ? QCoreApplication::translate("LightAlbum", "样本较少（%1 张），仅供参考；这只是设备与场景分布的客观统计，不等于读懂了你的审美。").arg(n)
+        : QCoreApplication::translate("LightAlbum", "基于 %1 张作品 · 设备/场景分布，非审美判定 · 零云端").arg(n);
     radar_->setData(vals, labels, n, note);
     radarNote_->setText(note);
-    radarCount_->setText(QString::fromUtf8("样本 %1 张 · 仅本地可测维度").arg(n));
+    radarCount_->setText(QCoreApplication::translate("LightAlbum", "样本 %1 张 · 仅本地可测维度").arg(n));
     lastRadarN_ = n;
 }
 
@@ -894,11 +894,11 @@ void CullPage::onAnalyze()
         inputs.append(in);
     }
     if (inputs.isEmpty()) {
-        progress_->setText(QString::fromUtf8("无可用缩略图"));
+        progress_->setText(QCoreApplication::translate("LightAlbum", "无可用缩略图"));
         return;
     }
     runBtn_->setEnabled(false);
-    progress_->setText(QString::fromUtf8("分析中 0/%1").arg(inputs.size()));
+    progress_->setText(QCoreApplication::translate("LightAlbum", "分析中 0/%1").arg(inputs.size()));
 
     CullOptions opts;
     opts.topN = topNSpin_->value();
@@ -923,7 +923,7 @@ void CullPage::autoRun(int cap)
         in.category = ph.category;
         inputs.append(in);
     }
-    if (inputs.isEmpty()) { progress_->setText(QString::fromUtf8("无可用缩略图")); return; }
+    if (inputs.isEmpty()) { progress_->setText(QCoreApplication::translate("LightAlbum", "无可用缩略图")); return; }
     if (cap > 0 && inputs.size() > cap) inputs = inputs.mid(0, cap);
     CullOptions opts;
     opts.topN = topNSpin_->value();
@@ -933,19 +933,19 @@ void CullPage::autoRun(int cap)
 
 void CullPage::onProgress(int cur, int total, const QString&)
 {
-    progress_->setText(QString::fromUtf8("分析中 %1/%2").arg(cur).arg(total));
+    progress_->setText(QCoreApplication::translate("LightAlbum", "分析中 %1/%2").arg(cur).arg(total));
 }
 
 void CullPage::onFinished(const CullReport& rep)
 {
     runBtn_->setEnabled(true);
-    setKpi(0, QString::number(rep.total), QString::fromUtf8("已分析"));
-    setKpi(1, QString::number(rep.candidateCount), QString::fromUtf8("候选"));
-    setKpi(2, QString::number(rep.rejectedCount), QString::fromUtf8("废片"));
-    setKpi(3, QString::number(rep.dupGroups.size()), QString::fromUtf8("去重组"));
-    setKpi(4, QString::number(rep.blurryCount), QString::fromUtf8("模糊"));
-    setKpi(5, QString::number(rep.exposureCount), QString::fromUtf8("曝光"));
-    setKpi(6, QString::number(rep.unknownCount), QString::fromUtf8("解码失败"));
+    setKpi(0, QString::number(rep.total), QCoreApplication::translate("LightAlbum", "已分析"));
+    setKpi(1, QString::number(rep.candidateCount), QCoreApplication::translate("LightAlbum", "候选"));
+    setKpi(2, QString::number(rep.rejectedCount), QCoreApplication::translate("LightAlbum", "废片"));
+    setKpi(3, QString::number(rep.dupGroups.size()), QCoreApplication::translate("LightAlbum", "去重组"));
+    setKpi(4, QString::number(rep.blurryCount), QCoreApplication::translate("LightAlbum", "模糊"));
+    setKpi(5, QString::number(rep.exposureCount), QCoreApplication::translate("LightAlbum", "曝光"));
+    setKpi(6, QString::number(rep.unknownCount), QCoreApplication::translate("LightAlbum", "解码失败"));
 
     model_->setItems(rep.topItems, thumbsDir_);
     catCounts_ = model_->categoryCounts();
@@ -1006,7 +1006,7 @@ void CullPage::onFinished(const CullReport& rep)
         // 噪声）。收敛到 QaExit 契约：无条件排队，构造期/事件循环内都真退。
         QaExit::requestExit(0);
     } else {
-        progress_->setText(QString::fromUtf8("完成 · 候选 %1 / 废片 %2 / 去重 %3 组")
+        progress_->setText(QCoreApplication::translate("LightAlbum", "完成 · 候选 %1 / 废片 %2 / 去重 %3 组")
             .arg(rep.candidateCount).arg(rep.rejectedCount).arg(rep.dupGroups.size()));
     }
 }
@@ -1041,7 +1041,7 @@ void CullPage::buildDuelSession()
     }
     duelBtn_->setEnabled(!duelGroups_.isEmpty());
     if (!duelGroups_.isEmpty())
-        duelBtn_->setText(QString::fromUtf8("开始对决（%1 组）").arg(duelGroups_.size()));
+        duelBtn_->setText(QCoreApplication::translate("LightAlbum", "开始对决（%1 组）").arg(duelGroups_.size()));
 }
 
 void CullPage::duelEnterMode()
@@ -1109,14 +1109,14 @@ void CullPage::duelRender()
     if (duelIdx_ >= duelGroups_.size()) {
         paneL_->clear();
         paneR_->clear();
-        duelHead_->setText(QString::fromUtf8("对决完成 · 共 %1 组 · 点「返回总览」查看战果")
+        duelHead_->setText(QCoreApplication::translate("LightAlbum", "对决完成 · 共 %1 组 · 点「返回总览」查看战果")
                            .arg(duelGroups_.size()));
         return;
     }
     const DuelGroup& g = duelGroups_[duelIdx_];
     const CullItem& L = g.members[g.alive[0]];
     const CullItem& R = g.members[g.alive[1]];
-    duelHead_->setText(QString::fromUtf8("第 %1 / %2 组 · 本组已决 %3 · 在场 %4")
+    duelHead_->setText(QCoreApplication::translate("LightAlbum", "第 %1 / %2 组 · 本组已决 %3 · 在场 %4")
         .arg(duelIdx_ + 1).arg(duelGroups_.size())
         .arg(g.members.size() - g.alive.size()).arg(g.alive.size()));
     auto setPane = [this](DuelPane* pane, const CullItem& it) {

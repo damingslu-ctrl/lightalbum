@@ -1,4 +1,5 @@
 #include "MapPage.h"
+#include <QCoreApplication>
 #include "Theme.h"
 #include <QPointF>
 #include <QDir>
@@ -31,20 +32,20 @@ MapPage::MapPage(const QVector<Photo>* photos, const QString& thumbsDir,
     auto* bl = new QHBoxLayout(bar);
     bl->setContentsMargins(16, 8, 16, 8);
 
-    back_ = new QPushButton(QStringLiteral("\u2190 返回"), bar);
+    back_ = new QPushButton(QCoreApplication::translate("LightAlbum", "\u2190 返回"), bar);
     back_->setEnabled(false);
     back_->setStyleSheet(QStringLiteral(
         "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:9px;"
         "padding:5px 12px;color:#d9a94e;}"
         "QPushButton:disabled{color:#5a6b60;}"));
-    crumb_ = new QLabel(QStringLiteral("世界"), bar);
+    crumb_ = new QLabel(QCoreApplication::translate("LightAlbum", "世界"), bar);
     crumb_->setStyleSheet(QStringLiteral("color:#f0d08a;font-size:13px;"));
     bl->addWidget(back_);
     bl->addWidget(crumb_);
     // 迭代 1：世界层导航 —— 平移/缩放后一键回到默认视角（缩放归 1 + 中国居中）
     recenterBtn_ = new QPushButton(QString::fromUtf8("\u2302 \u56de\u5230\u4e2d\u56fd"), bar);
     recenterBtn_->setCursor(Qt::PointingHandCursor);
-    recenterBtn_->setToolTip(QString::fromUtf8("回到默认视角：缩放归 1、中国居中"));
+    recenterBtn_->setToolTip(QCoreApplication::translate("LightAlbum", "回到默认视角：缩放归 1、中国居中"));
     recenterBtn_->setStyleSheet(QStringLiteral(
         "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:9px;"
         "padding:5px 12px;color:#4fc08a;}"
@@ -54,9 +55,9 @@ MapPage::MapPage(const QVector<Photo>* photos, const QString& thumbsDir,
     bl->addWidget(recenterBtn_);
     bl->addStretch(1);
     // P16.4.2 重新定位（web 版 relocateBtn 对应物：基点=「我的位置」，金色航线起点）
-    relocBtn_ = new QPushButton(QString::fromUtf8("◎ 重新定位"), bar);
+    relocBtn_ = new QPushButton(QCoreApplication::translate("LightAlbum", "◎ 重新定位"), bar);
     relocBtn_->setCursor(Qt::PointingHandCursor);
-    relocBtn_->setToolTip(QString::fromUtf8("设置金色航线的起点（我的位置）"));
+    relocBtn_->setToolTip(QCoreApplication::translate("LightAlbum", "设置金色航线的起点（我的位置）"));
     relocBtn_->setStyleSheet(QStringLiteral(
         "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:9px;"
         "padding:5px 12px;color:#4fc08a;}"
@@ -84,14 +85,14 @@ MapPage::MapPage(const QVector<Photo>* photos, const QString& thumbsDir,
     sl->setContentsMargins(18, 18, 18, 18);
     sl->setSpacing(12);
 
-    auto* head = new QLabel(QStringLiteral("区域统计"), stats_);
+    auto* head = new QLabel(QCoreApplication::translate("LightAlbum", "区域统计"), stats_);
     QFont hf = head->font(); hf.setPointSizeF(14); hf.setBold(true);
     hf.setLetterSpacing(QFont::AbsoluteSpacing, 3.0);
     head->setFont(hf);
     head->setStyleSheet("color:#f4f7f4;");
     sl->addWidget(head);
 
-    statsTitle_ = new QLabel(QStringLiteral("尚未选择区域"), stats_);
+    statsTitle_ = new QLabel(QCoreApplication::translate("LightAlbum", "尚未选择区域"), stats_);
     QFont tf = statsTitle_->font(); tf.setPointSizeF(13); tf.setBold(true);
     statsTitle_->setFont(tf);
     statsTitle_->setStyleSheet("color:#d9a94e;");
@@ -104,16 +105,16 @@ MapPage::MapPage(const QVector<Photo>* photos, const QString& thumbsDir,
     statsBody_->setWordWrap(true);
     sl->addWidget(statsBody_);
 
-    viewBtn_ = new QPushButton(QStringLiteral("在图库查看 →"), stats_);
+    viewBtn_ = new QPushButton(QCoreApplication::translate("LightAlbum", "在图库查看 →"), stats_);
     viewBtn_->setCursor(Qt::PointingHandCursor);
     viewBtn_->setEnabled(false);
     viewBtn_->setStyleSheet(Lumen::btnGold());
     sl->addWidget(viewBtn_);
 
     // 迭代 2：一键用爆炸弹层播放「当前区域」全部作品（省 / 大区 / 国家三层级通用）
-    playBtn_ = new QPushButton(QString::fromUtf8("▶ 播放本区作品"), stats_);
+    playBtn_ = new QPushButton(QCoreApplication::translate("LightAlbum", "▶ 播放本区作品"), stats_);
     playBtn_->setCursor(Qt::PointingHandCursor);
-    playBtn_->setToolTip(QString::fromUtf8("用爆炸弹层播放该省/国家/大区的全部作品（最多 10 张）"));
+    playBtn_->setToolTip(QCoreApplication::translate("LightAlbum", "用爆炸弹层播放该省/国家/大区的全部作品（最多 10 张）"));
     playBtn_->setEnabled(false);
     playBtn_->setStyleSheet(QStringLiteral(
         "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:9px;"
@@ -234,12 +235,12 @@ void MapPage::onPicked(const QString& key, const QString& label, bool isProvince
         }
     }
     statsTitle_->setText(label);
-    QString body = QStringLiteral("本库作品总计：<b>%1</b> 幅<br>").arg(total);
+    QString body = QCoreApplication::translate("LightAlbum", "本库作品总计：<b>%1</b> 幅<br>").arg(total);
     body += isProvince
-        ? QStringLiteral("该省作品：<b>%1</b> 幅").arg(match)
-        : QStringLiteral("该大区作品：<b>%1</b> 幅").arg(match);
+        ? QCoreApplication::translate("LightAlbum", "该省作品：<b>%1</b> 幅").arg(match)
+        : QCoreApplication::translate("LightAlbum", "该大区作品：<b>%1</b> 幅").arg(match);
     if (match == 0)
-        body += QStringLiteral("<br><span style='color:#5a6b60;'>（该区域暂无 GPS 作品，可导入带 GPS 的照片）</span>");
+        body += QCoreApplication::translate("LightAlbum", "<br><span style='color:#5a6b60;'>（该区域暂无 GPS 作品，可导入带 GPS 的照片）</span>");
     statsBody_->setText(body);
     viewBtn_->setEnabled(true);
     playBtn_->setEnabled(match > 0);
@@ -302,10 +303,10 @@ void MapPage::onCountryPicked(const QString& name, const QStringList& paths)
     lastProv_.clear();
     lastIsProv_ = false;
     statsTitle_->setText(name);
-    QString body = QStringLiteral("本库作品总计：<b>%1</b> 幅<br>").arg(photos_ ? photos_->size() : 0);
-    body += QStringLiteral("该国家/地区 GPS 作品：<b>%1</b> 幅").arg(paths.size());
+    QString body = QCoreApplication::translate("LightAlbum", "本库作品总计：<b>%1</b> 幅<br>").arg(photos_ ? photos_->size() : 0);
+    body += QCoreApplication::translate("LightAlbum", "该国家/地区 GPS 作品：<b>%1</b> 幅").arg(paths.size());
     if (paths.isEmpty())
-        body += QStringLiteral("<br><span style='color:#5a6b60;'>（该国暂无 GPS 作品）</span>");
+        body += QCoreApplication::translate("LightAlbum", "<br><span style='color:#5a6b60;'>（该国暂无 GPS 作品）</span>");
     statsBody_->setText(body);
     viewBtn_->setEnabled(false);
     lastCountryPaths_ = paths;          // 供「▶ 播放本区作品」使用
@@ -365,7 +366,7 @@ void MapPage::onBurstRequest(const QString& key, const QString& label)
 void MapPage::onRelocate()
 {
     QDialog dlg(this);
-    dlg.setWindowTitle(QString::fromUtf8("重新定位 · 航线基点"));
+    dlg.setWindowTitle(QCoreApplication::translate("LightAlbum", "重新定位 · 航线基点"));
     dlg.setStyleSheet(QStringLiteral(
         "QDialog{background:#0e130f;}"
         "QLabel{color:#d9e4dc;font-size:12px;}"
@@ -393,7 +394,7 @@ void MapPage::onRelocate()
         combo->addItem(QString::fromUtf8(cities[i].zh));
         if (QString::fromUtf8(cities[i].zh) == homeName_) curIdx = i;
     }
-    combo->addItem(QString::fromUtf8("自定义经纬度…"));
+    combo->addItem(QCoreApplication::translate("LightAlbum", "自定义经纬度…"));
     combo->setCurrentIndex(curIdx);
     vl->addWidget(combo);
 
@@ -403,15 +404,15 @@ void MapPage::onRelocate()
     auto* dv = new QDoubleValidator(-180.0, 180.0, 4, &dlg);
     lonEd->setValidator(dv);
     latEd->setValidator(new QDoubleValidator(-90.0, 90.0, 4, &dlg));
-    lonEd->setPlaceholderText(QString::fromUtf8("经度 (东经为正)"));
-    latEd->setPlaceholderText(QString::fromUtf8("纬度 (北纬为正)"));
+    lonEd->setPlaceholderText(QCoreApplication::translate("LightAlbum", "经度 (东经为正)"));
+    latEd->setPlaceholderText(QCoreApplication::translate("LightAlbum", "纬度 (北纬为正)"));
     row->addWidget(lonEd);
     row->addWidget(latEd);
     vl->addLayout(row);
 
     auto* bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
-    bb->button(QDialogButtonBox::Ok)->setText(QString::fromUtf8("确定"));
-    bb->button(QDialogButtonBox::Cancel)->setText(QString::fromUtf8("取消"));
+    bb->button(QDialogButtonBox::Ok)->setText(QCoreApplication::translate("LightAlbum", "确定"));
+    bb->button(QDialogButtonBox::Cancel)->setText(QCoreApplication::translate("LightAlbum", "取消"));
     connect(bb, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
     connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
     vl->addWidget(bb);

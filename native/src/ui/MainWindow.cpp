@@ -204,7 +204,7 @@ public:
             sb->setText(QStringLiteral("★"));
             sb->setFixedSize(28, 26);
             sb->setCursor(Qt::PointingHandCursor);
-            sb->setToolTip(QStringLiteral("评分 %1").arg(i + 1));
+            sb->setToolTip(QCoreApplication::translate("LightAlbum", "评分 %1").arg(i + 1));
             connect(sb, &QToolButton::clicked, this, [this, i] {
                 if (!lib_) return;
                 const int nr = (curRating_ == i + 1) ? 0 : i + 1;
@@ -224,7 +224,7 @@ public:
         clearLayout(ctl_->layout());
         auto* cl = qobject_cast<QHBoxLayout*>(ctl_->layout());
         auto* privBtn = new QPushButton(
-            ph->priv ? QStringLiteral("🔓 已私密") : QStringLiteral("🔒 私密"), ctl_);
+            ph->priv ? QCoreApplication::translate("LightAlbum", "🔓 已私密") : QCoreApplication::translate("LightAlbum", "🔒 私密"), ctl_);
         privBtn->setCursor(Qt::PointingHandCursor);
         privBtn->setStyleSheet(Lumen::btnGhost());
         connect(privBtn, &QPushButton::clicked, this, [this, privBtn] {
@@ -232,16 +232,16 @@ public:
             const bool on = !privBtn->property("privOn").toBool();
             lib_->setPrivate(path_, on);
             privBtn->setProperty("privOn", on);
-            privBtn->setText(on ? QStringLiteral("🔓 已私密") : QStringLiteral("🔒 私密"));
+            privBtn->setText(on ? QCoreApplication::translate("LightAlbum", "🔓 已私密") : QCoreApplication::translate("LightAlbum", "🔒 私密"));
             changed_ = true;
         });
         privBtn->setProperty("privOn", ph->priv);
-        auto* open = new QPushButton(QStringLiteral("修图台 →"), ctl_);
+        auto* open = new QPushButton(QCoreApplication::translate("LightAlbum", "修图台 →"), ctl_);
         open->setCursor(Qt::PointingHandCursor);
         open->setStyleSheet(Lumen::btnPrimary());
         connect(open, &QPushButton::clicked, this,
                 [this, path = ph->path] { emit openInRetouch(path); });
-        auto* close = new QPushButton(QStringLiteral("关闭"), ctl_);
+        auto* close = new QPushButton(QCoreApplication::translate("LightAlbum", "关闭"), ctl_);
         close->setCursor(Qt::PointingHandCursor);
         close->setStyleSheet(Lumen::btnGhost());
         connect(close, &QPushButton::clicked, this, &PhotoLightbox::close);
@@ -317,7 +317,7 @@ private:
     void layoutImage()
     {
         if (orig_.isNull()) {
-            img_->setText(QStringLiteral("无缩略图"));
+            img_->setText(QCoreApplication::translate("LightAlbum", "无缩略图"));
             img_->setStyleSheet(QStringLiteral("color:#8da396;font-size:14px;"));
             return;
         }
@@ -365,7 +365,7 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
     auto* nvLay = new QVBoxLayout(navBox_);
     nvLay->setContentsMargins(0, 14, 0, 12);
     nvLay->setSpacing(4);
-    auto* navLogo = new QLabel(QStringLiteral("光"), navBox_);
+    auto* navLogo = new QLabel(QCoreApplication::translate("LightAlbum", "光"), navBox_);
     navLogo->setAlignment(Qt::AlignCenter);
     navLogo->setFixedHeight(30);
     navLogo->setStyleSheet(QStringLiteral(
@@ -441,7 +441,7 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
     auto* shadeEff = new QGraphicsOpacityEffect(topShade_);
     shadeEff->setOpacity(0.0);
     topShade_->setGraphicsEffect(shadeEff);
-    title_ = new QLabel(QString::fromUtf8("光影集"), topbar);
+    title_ = new QLabel(QCoreApplication::translate("LightAlbum", "光影集"), topbar);
     QFont tf = title_->font(); tf.setPointSizeF(15); tf.setBold(true);
     tf.setLetterSpacing(QFont::AbsoluteSpacing, 2.0);
     title_->setFont(tf);
@@ -451,7 +451,7 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
     dotSep->setFixedSize(4, 4);
     dotSep->setStyleSheet(QStringLiteral("background:#d9a94e;border-radius:2px;"));
     tl->addWidget(dotSep);
-    moduleLbl_ = new QLabel(QStringLiteral("首页"), topbar);   // P19：自 kpis_ 迁入
+    moduleLbl_ = new QLabel(QCoreApplication::translate("LightAlbum", "首页"), topbar);   // P19：自 kpis_ 迁入
     QFont mf2 = moduleLbl_->font(); mf2.setPointSizeF(11); mf2.setBold(true);
     mf2.setLetterSpacing(QFont::AbsoluteSpacing, 4.0);
     moduleLbl_->setFont(mf2);
@@ -459,20 +459,20 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
     tl->addWidget(moduleLbl_);
     tl->addStretch(1);
     search_ = new QLineEdit(topbar);
-    search_->setPlaceholderText(QString::fromUtf8("搜索标题 / 文件名 / 器材…"));
+    search_->setPlaceholderText(QCoreApplication::translate("LightAlbum", "搜索标题 / 文件名 / 器材…"));
     search_->setFixedWidth(220);
     search_->setStyleSheet(Lumen::input());
     search_->hide();                             // P19：点击 🔍 展开
     // P16 隐私库锁按钮：未初始化 → 设密码；锁定 → 输密码解锁；已解锁 → 重新上锁
     vaultBtn_ = new QPushButton(QStringLiteral("🔒"), topbar);
-    vaultBtn_->setToolTip(QString::fromUtf8("隐私库"));
+    vaultBtn_->setToolTip(QCoreApplication::translate("LightAlbum", "隐私库"));
     vaultBtn_->setCursor(Qt::PointingHandCursor);
     vaultBtn_->setFixedSize(32, 32);
     vaultBtn_->setStyleSheet(Lumen::btnGhost());
     connect(vaultBtn_, &QPushButton::clicked, this, &MainWindow::onVaultButton);
     tl->addWidget(vaultBtn_);
     searchToggle_ = new QPushButton(QStringLiteral("🔍"), topbar);
-    searchToggle_->setToolTip(QString::fromUtf8("搜索（图库筛选）"));
+    searchToggle_->setToolTip(QCoreApplication::translate("LightAlbum", "搜索（图库筛选）"));
     searchToggle_->setCursor(Qt::PointingHandCursor);
     searchToggle_->setFixedSize(32, 32);
     searchToggle_->setStyleSheet(Lumen::btnGhost());
@@ -487,7 +487,7 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
     // 窗口控制簇宽度（P29），两个 32px 钮会挤进 winCtl_ 底下；下拉零新增宽度。
     auto* importBtn = new QToolButton(topbar);
     importBtn->setText(QStringLiteral("＋"));
-    importBtn->setToolTip(QString::fromUtf8("导入照片"));
+    importBtn->setToolTip(QCoreApplication::translate("LightAlbum", "导入照片"));
     importBtn->setCursor(Qt::PointingHandCursor);
     importBtn->setFixedSize(32, 32);
     importBtn->setStyleSheet(Lumen::btnGold());
@@ -597,11 +597,11 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
                 if (!lib_ || paths.isEmpty()) return;
                 const BatchResult r = lib_->setRatings(paths, rating);
                 gallery_->refresh();
-                QMessageBox::information(this, QStringLiteral("批量评分"),
-                    QStringLiteral("请求 %1 张，成功 %2 张。%3")
+                QMessageBox::information(this, QCoreApplication::translate("LightAlbum", "批量评分"),
+                    QCoreApplication::translate("LightAlbum", "请求 %1 张，成功 %2 张。%3")
                         .arg(r.total).arg(r.done)
-                        .arg(r.ok ? QStringLiteral("已原子提交。")
-                                  : QStringLiteral("失败并已整体回滚：%1").arg(r.error)));
+                        .arg(r.ok ? QCoreApplication::translate("LightAlbum", "已原子提交。")
+                                  : QCoreApplication::translate("LightAlbum", "失败并已整体回滚：%1").arg(r.error)));
             });
     connect(gallery_, &GalleryPage::batchPrivateRequested, this,
             [this](const QStringList& paths, bool priv) {
@@ -609,11 +609,11 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
                 const BatchResult r = lib_->setPrivates(paths, priv);
                 gallery_->setHidePrivate(gallery_->hidePrivate()); // 私密标记影响可见性 → 重跑过滤
                 gallery_->refresh();
-                QMessageBox::information(this, QStringLiteral("批量私密"),
-                    QStringLiteral("请求 %1 张，成功 %2 张。%3")
+                QMessageBox::information(this, QCoreApplication::translate("LightAlbum", "批量私密"),
+                    QCoreApplication::translate("LightAlbum", "请求 %1 张，成功 %2 张。%3")
                         .arg(r.total).arg(r.done)
-                        .arg(r.ok ? QStringLiteral("已原子提交。")
-                                  : QStringLiteral("失败并已整体回滚：%1").arg(r.error)));
+                        .arg(r.ok ? QCoreApplication::translate("LightAlbum", "已原子提交。")
+                                  : QCoreApplication::translate("LightAlbum", "失败并已整体回滚：%1").arg(r.error)));
             });
 
     connect(gallery_, &GalleryPage::photoActivated, this,
@@ -838,16 +838,16 @@ void MainWindow::onVaultButton()
 
     if (saltHex.isEmpty() || hashHex.isEmpty()) {
         const QString p1 = QInputDialog::getText(
-            this, QStringLiteral("设置隐私库密码"),
-            QStringLiteral("为隐私库设置密码（标记为私密的照片需输入密码才可见）："),
+            this, QCoreApplication::translate("LightAlbum", "设置隐私库密码"),
+            QCoreApplication::translate("LightAlbum", "为隐私库设置密码（标记为私密的照片需输入密码才可见）："),
             QLineEdit::Password);
         if (p1.isEmpty()) return;
         const QString p2 = QInputDialog::getText(
-            this, QStringLiteral("确认密码"),
-            QStringLiteral("再输入一次相同密码："), QLineEdit::Password);
+            this, QCoreApplication::translate("LightAlbum", "确认密码"),
+            QCoreApplication::translate("LightAlbum", "再输入一次相同密码："), QLineEdit::Password);
         if (p2 != p1) {
-            QMessageBox::warning(this, QStringLiteral("隐私库"),
-                                 QStringLiteral("两次输入不一致，未设置。"));
+            QMessageBox::warning(this, QCoreApplication::translate("LightAlbum", "隐私库"),
+                                 QCoreApplication::translate("LightAlbum", "两次输入不一致，未设置。"));
             return;
         }
         const QByteArray salt = Vault::randomSalt();
@@ -855,27 +855,27 @@ void MainWindow::onVaultButton()
                            QString::fromLatin1(salt.toHex()));
         lib_->setMetaValue(QStringLiteral("vault_hash"), Vault::hashHex(p1, salt));
         vaultUnlocked_ = true;
-        vaultBtn_->setText(QStringLiteral("🔓 隐私库(已解锁)"));
+        vaultBtn_->setText(QCoreApplication::translate("LightAlbum", "🔓 隐私库(已解锁)"));
         refreshPrivateState();
         return;
     }
 
     if (!vaultUnlocked_) {
         const QString pwd = QInputDialog::getText(
-            this, QStringLiteral("解锁隐私库"),
-            QStringLiteral("输入隐私库密码："), QLineEdit::Password);
+            this, QCoreApplication::translate("LightAlbum", "解锁隐私库"),
+            QCoreApplication::translate("LightAlbum", "输入隐私库密码："), QLineEdit::Password);
         if (pwd.isEmpty()) return;
         if (Vault::verify(pwd, QByteArray::fromHex(saltHex.toLatin1()), hashHex)) {
             vaultUnlocked_ = true;
-            vaultBtn_->setText(QStringLiteral("🔓 隐私库(已解锁)"));
+            vaultBtn_->setText(QCoreApplication::translate("LightAlbum", "🔓 隐私库(已解锁)"));
             refreshPrivateState();
         } else {
-            QMessageBox::warning(this, QStringLiteral("隐私库"),
-                                 QStringLiteral("密码不正确。"));
+            QMessageBox::warning(this, QCoreApplication::translate("LightAlbum", "隐私库"),
+                                 QCoreApplication::translate("LightAlbum", "密码不正确。"));
         }
     } else {
         vaultUnlocked_ = false;
-        vaultBtn_->setText(QStringLiteral("🔒 隐私库"));
+        vaultBtn_->setText(QCoreApplication::translate("LightAlbum", "🔒 隐私库"));
         refreshPrivateState();
     }
 }
@@ -994,7 +994,7 @@ QWidget* MainWindow::makePlaceholder(const QString& secName, const QString& icon
     t->setFont(f);
     t->setStyleSheet("color:#f4f7f4;");
 
-    auto* chip = new QLabel(QStringLiteral("即将推出"), w);
+    auto* chip = new QLabel(QCoreApplication::translate("LightAlbum", "即将推出"), w);
     chip->setStyleSheet(QStringLiteral(
         "QLabel{background:#0e1410;border:1px solid #2f7d57;border-radius:999px;"
         "padding:3px 14px;color:#4fc08a;font-size:11px;}"));
@@ -1025,11 +1025,11 @@ QWidget* MainWindow::makeAbout() const
     cl->setContentsMargins(28, 26, 28, 26);
     cl->setSpacing(12);
 
-    auto* title = new QLabel(QStringLiteral("光影集 LightAlbum %1").arg(LA_VERSION), card);
+    auto* title = new QLabel(QCoreApplication::translate("LightAlbum", "光影集 LightAlbum %1").arg(LA_VERSION), card);
     QFont tf = title->font(); tf.setPointSizeF(17); tf.setBold(true);
     title->setFont(tf);
     title->setStyleSheet("color:#f4f7f4;border:none;background:transparent;");
-    auto* pos = new QLabel(QStringLiteral("核心客户端 · 本地优先"), card);
+    auto* pos = new QLabel(QCoreApplication::translate("LightAlbum", "核心客户端 · 本地优先"), card);
     pos->setStyleSheet("color:#d9a94e;border:none;background:transparent;");
     auto makeLine = [card](const QString& text) {
         auto* lb = new QLabel(text, card);
@@ -1094,15 +1094,15 @@ MapView* MainWindow::mapView() const
 QMenu* MainWindow::buildImportMenu()
 {
     QMenu* m = new QMenu(this);
-    QAction* aDir = m->addAction(QStringLiteral("导入目录…"));
+    QAction* aDir = m->addAction(QCoreApplication::translate("LightAlbum", "导入目录…"));
     connect(aDir, &QAction::triggered, this, &MainWindow::startImport);
 
-    QAction* aCloud = m->addAction(QStringLiteral("导入 iCloud 相册"));
+    QAction* aCloud = m->addAction(QCoreApplication::translate("LightAlbum", "导入 iCloud 相册"));
     connect(aCloud, &QAction::triggered, this, &MainWindow::importICloud);
 
     m->addSeparator();
     // 状态行占位文案，aboutToShow 时被真实探测结果替换
-    QAction* aStatus = m->addAction(QStringLiteral("正在检测 iCloud…"));
+    QAction* aStatus = m->addAction(QCoreApplication::translate("LightAlbum", "正在检测 iCloud…"));
     aStatus->setEnabled(false);
     aCloud->setEnabled(false);          // 探测前先禁用，命中后才开
 
@@ -1112,14 +1112,14 @@ QMenu* MainWindow::buildImportMenu()
         if (root.isEmpty()) {
             // 探测不到就**禁用**并说明原因——绝不静默导入 0 张后报「完成」。
             aCloud->setEnabled(false);
-            aStatus->setText(QStringLiteral("未检测到 iCloud 本地相册（%1 个文件待同步）")
+            aStatus->setText(QCoreApplication::translate("LightAlbum", "未检测到 iCloud 本地相册（%1 个文件待同步）")
                                  .arg(n));
         } else {
             // 命中就报真实文件数，让用户点之前就知道规模。
             aCloud->setEnabled(true);
-            aCloud->setToolTip(QStringLiteral("iCloud 本地目录\n%1\n共 %2 个文件")
+            aCloud->setToolTip(QCoreApplication::translate("LightAlbum", "iCloud 本地目录\n%1\n共 %2 个文件")
                                    .arg(root).arg(n));
-            aStatus->setText(QStringLiteral("已检测：%1 个文件").arg(n));
+            aStatus->setText(QCoreApplication::translate("LightAlbum", "已检测：%1 个文件").arg(n));
         }
     });
     return m;
@@ -1134,7 +1134,7 @@ void MainWindow::importICloud()
     const QString root = ICloudSource::detectRoot(QString(), &n);
     if (root.isEmpty()) {
         QMessageBox box(this);
-        box.setWindowTitle(QStringLiteral("导入 iCloud 相册"));
+        box.setWindowTitle(QCoreApplication::translate("LightAlbum", "导入 iCloud 相册"));
         box.setText(QStringLiteral(
             "未检测到 iCloud 本地相册目录。\n\n"
             "请确认 iCloud for Windows 已安装并开启「照片」同步；"
@@ -1145,20 +1145,20 @@ void MainWindow::importICloud()
     }
 
     QMessageBox box(this);
-    box.setWindowTitle(QStringLiteral("导入 iCloud 相册"));
+    box.setWindowTitle(QCoreApplication::translate("LightAlbum", "导入 iCloud 相册"));
     box.setText(QStringLiteral(
         "将导入 iCloud 本地相册：\n%1\n\n"
         "共扫描到 %2 个文件。\n\n"
         "云端未下载的占位文件会自动跳过；在 iCloud 里下载完成后重跑一次即可增量补齐。")
         .arg(root).arg(n));
-    QPushButton* go = box.addButton(QStringLiteral("开始导入"), QMessageBox::AcceptRole);
-    QPushButton* pick = box.addButton(QStringLiteral("改用手动选择…"),
+    QPushButton* go = box.addButton(QCoreApplication::translate("LightAlbum", "开始导入"), QMessageBox::AcceptRole);
+    QPushButton* pick = box.addButton(QCoreApplication::translate("LightAlbum", "改用手动选择…"),
                                       QMessageBox::ActionRole);
-    box.addButton(QStringLiteral("取消"), QMessageBox::RejectRole);
+    box.addButton(QCoreApplication::translate("LightAlbum", "取消"), QMessageBox::RejectRole);
     box.setDefaultButton(go);
     box.exec();
     if (box.clickedButton() == go) {
-        runImportInto(root, QStringLiteral("导入 iCloud 相册"));
+        runImportInto(root, QCoreApplication::translate("LightAlbum", "导入 iCloud 相册"));
     } else if (box.clickedButton() == pick) {
         startImport();          // 手动选目录：复用 P8 原生路径
     }
@@ -1167,10 +1167,10 @@ void MainWindow::importICloud()
 void MainWindow::startImport()
 {
     const QString dir = QFileDialog::getExistingDirectory(
-        this, QStringLiteral("选择要导入的照片目录"), QString(),
+        this, QCoreApplication::translate("LightAlbum", "选择要导入的照片目录"), QString(),
         QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
     if (dir.isEmpty()) return;
-    runImportInto(dir, QStringLiteral("导入照片"));
+    runImportInto(dir, QCoreApplication::translate("LightAlbum", "导入照片"));
 }
 
 // 2.6.0：把 P8 的导入主体从 startImport 抽出，两个入口共用（唯一写入路径）。
@@ -1179,7 +1179,7 @@ void MainWindow::runImportInto(const QString& dir, const QString& title)
     const QString dbPath = !dbPath_.isEmpty()
         ? dbPath_ : QStringLiteral("D:/lightalbum/library.db");
 
-    auto* dlg = new QProgressDialog(QStringLiteral("正在扫描导入…"), QStringLiteral("取消"),
+    auto* dlg = new QProgressDialog(QCoreApplication::translate("LightAlbum", "正在扫描导入…"), QCoreApplication::translate("LightAlbum", "取消"),
                                     0, qMax(1, lib_->kpi().total), this);
     dlg->setWindowModality(Qt::WindowModal);
     dlg->setMinimumDuration(0);
@@ -1202,16 +1202,16 @@ void MainWindow::runImportInto(const QString& dir, const QString& title)
                         .arg(r.added).arg(r.updated).arg(r.unchanged)
                         .arg(r.missing).arg(r.total).arg(r.seconds, 0, 'f', 1);
                 if (r.placeholders > 0)
-                    msg += QStringLiteral("\n云端占位跳过 %1 张").arg(r.placeholders);
+                    msg += QCoreApplication::translate("LightAlbum", "\n云端占位跳过 %1 张").arg(r.placeholders);
                 if (r.errorCount > 0)
-                    msg += QStringLiteral("\n\n错误 %1 条：\n%2")
+                    msg += QCoreApplication::translate("LightAlbum", "\n\n错误 %1 条：\n%2")
                                .arg(r.errorCount)
                                .arg(r.errors.join(QLatin1Char('\n')));
                 QMessageBox box(this);
-                box.setWindowTitle(title + QStringLiteral(" · 完成"));
+                box.setWindowTitle(title + QCoreApplication::translate("LightAlbum", " · 完成"));
                 box.setText(msg);
-                QPushButton* restart = box.addButton(QStringLiteral("重启载入"), QMessageBox::AcceptRole);
-                box.addButton(QStringLiteral("稍后"), QMessageBox::RejectRole);
+                QPushButton* restart = box.addButton(QCoreApplication::translate("LightAlbum", "重启载入"), QMessageBox::AcceptRole);
+                box.addButton(QCoreApplication::translate("LightAlbum", "稍后"), QMessageBox::RejectRole);
                 box.exec();
                 if (box.clickedButton() == restart) {
                     QProcess::startDetached(QCoreApplication::applicationFilePath(), {});

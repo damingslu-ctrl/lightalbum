@@ -18,6 +18,7 @@
 // Everything else in this file (Qt/native port, Laplacian blur, exposure,
 // scoring, RAW exemption, fail-open policy) is original LightAlbum work.
 #include "CullEngine.h"
+#include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QImage>
 #include <QFile>
@@ -70,7 +71,7 @@ double CullEngine::blurScore(const QImage& gray)
 void CullEngine::exposureStats(const QImage& gray, double& mean, double& under,
                                double& over, QString& verdict)
 {
-    mean = under = over = 0; verdict = QStringLiteral("未知");
+    mean = under = over = 0; verdict = QCoreApplication::translate("LightAlbum", "未知");
     if (gray.format() != QImage::Format_Grayscale8) return;
     const int w = gray.width(), h = gray.height();
     if (w == 0 || h == 0) return;
@@ -89,11 +90,11 @@ void CullEngine::exposureStats(const QImage& gray, double& mean, double& under,
     mean = double(s) / n;
     under = double(u) / n;
     over  = double(o) / n;
-    if (under > 0.45 && mean < 70)       verdict = QStringLiteral("严重欠曝");
-    else if (over > 0.45 && mean > 185)  verdict = QStringLiteral("严重过曝");
-    else if (under > 0.25)               verdict = QStringLiteral("欠曝");
-    else if (over > 0.25)                verdict = QStringLiteral("过曝");
-    else                                 verdict = QStringLiteral("正常");
+    if (under > 0.45 && mean < 70)       verdict = QCoreApplication::translate("LightAlbum", "严重欠曝");
+    else if (over > 0.45 && mean > 185)  verdict = QCoreApplication::translate("LightAlbum", "严重过曝");
+    else if (under > 0.25)               verdict = QCoreApplication::translate("LightAlbum", "欠曝");
+    else if (over > 0.25)                verdict = QCoreApplication::translate("LightAlbum", "过曝");
+    else                                 verdict = QCoreApplication::translate("LightAlbum", "正常");
 }
 
 // —— 感知哈希：灰度 → (hashSize*4)² → 2D DCT-II → 低频 hashSize² 与中位数比较 ——
@@ -161,9 +162,9 @@ double CullEngine::lightingScore(const QString& verdict)
 {
     // 与 Python _LIGHTING_BY_VERDICT 一致
     static const QHash<QString, double> m = {
-        {QStringLiteral("正常"), 85.0}, {QStringLiteral("欠曝"), 60.0},
-        {QStringLiteral("过曝"), 60.0}, {QStringLiteral("严重欠曝"), 25.0},
-        {QStringLiteral("严重过曝"), 25.0},
+        {QCoreApplication::translate("LightAlbum", "正常"), 85.0}, {QCoreApplication::translate("LightAlbum", "欠曝"), 60.0},
+        {QCoreApplication::translate("LightAlbum", "过曝"), 60.0}, {QCoreApplication::translate("LightAlbum", "严重欠曝"), 25.0},
+        {QCoreApplication::translate("LightAlbum", "严重过曝"), 25.0},
     };
     return m.value(verdict, -1.0);    // 未知 → -1 (None)
 }
@@ -221,7 +222,7 @@ CullReport CullEngine::analyze(const QVector<CullInput>& inputs,
         if (img.isNull()) {
             // 解码失败：放行（失败即放行）
             it.blur = 999.0; it.isBlurry = false;
-            it.exposureVerdict = QStringLiteral("未知");
+            it.exposureVerdict = QCoreApplication::translate("LightAlbum", "未知");
             it.sharpness = -1; it.lighting = -1;
             it.resolutionOk = true;
             it.status = QStringLiteral("candidate");
@@ -255,7 +256,7 @@ CullReport CullEngine::analyze(const QVector<CullInput>& inputs,
         }
 
         items.append(it);
-        if (progress) progress(idx + 1, n, QStringLiteral("预处理 %1/%2").arg(idx + 1).arg(n));
+        if (progress) progress(idx + 1, n, QCoreApplication::translate("LightAlbum", "预处理 %1/%2").arg(idx + 1).arg(n));
     }
 
     // —— 精确去重（MD5）——
@@ -273,7 +274,7 @@ CullReport CullEngine::analyze(const QVector<CullInput>& inputs,
         for (int j : it.value()) {
             if (j == keep) { items[j].dupGroup = grpNo; continue; }
             items[j].status = QStringLiteral("rejected");
-            items[j].rejectReason = QStringLiteral("完全重复（MD5 相同）");
+            items[j].rejectReason = QCoreApplication::translate("LightAlbum", "完全重复（MD5 相同）");
             items[j].dupGroup = grpNo;
             items[j].dupOf = items[keep].thumbPath;
             rep.dupCount++;
@@ -307,7 +308,7 @@ CullReport CullEngine::analyze(const QVector<CullInput>& inputs,
             for (int j : grp) {
                 if (j == keep) { items[j].dupGroup = grpNo; continue; }
                 items[j].status = QStringLiteral("rejected");
-                items[j].rejectReason = QStringLiteral("高度相似（感知哈希）");
+                items[j].rejectReason = QCoreApplication::translate("LightAlbum", "高度相似（感知哈希）");
                 items[j].dupGroup = grpNo;
                 items[j].dupOf = items[keep].thumbPath;
                 rep.dupCount++;
@@ -323,18 +324,18 @@ CullReport CullEngine::analyze(const QVector<CullInput>& inputs,
             // RAW 豁免：只查分辨率
             if (!it.resolutionOk) {
                 it.status = QStringLiteral("rejected");
-                it.rejectReason = QStringLiteral("分辨率过低");
+                it.rejectReason = QCoreApplication::translate("LightAlbum", "分辨率过低");
             } else it.status = QStringLiteral("candidate");
             continue;
         }
         if (it.isBlurry) {
             it.status = QStringLiteral("rejected");
-            it.rejectReason = QStringLiteral("疑似模糊/对焦不实");
+            it.rejectReason = QCoreApplication::translate("LightAlbum", "疑似模糊/对焦不实");
             rep.blurryCount++;
             continue;
         }
-        if (it.exposureVerdict == QStringLiteral("严重欠曝") ||
-            it.exposureVerdict == QStringLiteral("严重过曝")) {
+        if (it.exposureVerdict == QCoreApplication::translate("LightAlbum", "严重欠曝") ||
+            it.exposureVerdict == QCoreApplication::translate("LightAlbum", "严重过曝")) {
             it.status = QStringLiteral("rejected");
             it.rejectReason = it.exposureVerdict;
             rep.exposureCount++;
@@ -342,7 +343,7 @@ CullReport CullEngine::analyze(const QVector<CullInput>& inputs,
         }
         if (!it.resolutionOk) {
             it.status = QStringLiteral("rejected");
-            it.rejectReason = QStringLiteral("分辨率过低");
+            it.rejectReason = QCoreApplication::translate("LightAlbum", "分辨率过低");
             continue;
         }
         it.status = QStringLiteral("candidate");

@@ -4,6 +4,7 @@
 // 全出血横滑轮播 / 底部分段进度），内容全部绑定本机真实库（数据诚实铁律）。
 // ============================================================================
 #include "HomePage.h"
+#include <QCoreApplication>
 #include "Theme.h"
 #include <QLabel>
 #include <QToolButton>
@@ -557,9 +558,9 @@ QVector<HomePage::Chapter> HomePage::buildChapters(const QVector<Photo>& photos,
 
         c.subtitle = c.yearMax > 0
             ? (c.yearMin == c.yearMax
-                   ? QStringLiteral("%1 · %2 幅").arg(c.yearMin).arg(c.photos.size())
-                   : QStringLiteral("%1 — %2 · %3 幅").arg(c.yearMin).arg(c.yearMax).arg(c.photos.size()))
-            : QStringLiteral("%1 幅").arg(c.photos.size());
+                   ? QCoreApplication::translate("LightAlbum", "%1 · %2 幅").arg(c.yearMin).arg(c.photos.size())
+                   : QCoreApplication::translate("LightAlbum", "%1 — %2 · %3 幅").arg(c.yearMin).arg(c.yearMax).arg(c.photos.size()))
+            : QCoreApplication::translate("LightAlbum", "%1 幅").arg(c.photos.size());
 
         const QString metaPlace = !c.city.isEmpty() ? c.city
                                 : !ps.isEmpty()     ? ps
@@ -602,7 +603,7 @@ HomePage::HomePage(Library* lib, const QString& thumbsDir, QWidget* parent)
         auto* lv = new QVBoxLayout(logoBox);
         lv->setContentsMargins(0, 6, 0, 6);
         lv->setSpacing(0);
-        auto* logo = new QLabel(QStringLiteral("光影集"), logoBox);
+        auto* logo = new QLabel(QCoreApplication::translate("LightAlbum", "光影集"), logoBox);
         logo->setFont(Lumen::serifFont(14, QFont::DemiBold, 3.0));
         logo->setStyleSheet(QStringLiteral("color:#f4f7f4;background:transparent;"));
         auto* en = new QLabel(QStringLiteral("QUIET FRAME · LIGHTALBUM"), logoBox);
@@ -629,7 +630,7 @@ HomePage::HomePage(Library* lib, const QString& thumbsDir, QWidget* parent)
             "font-size:12px;font-weight:bold;}"));
     }
     {
-        auto* avatar = new QLabel(QStringLiteral("光"), topBar_);
+        auto* avatar = new QLabel(QCoreApplication::translate("LightAlbum", "光"), topBar_);
         avatar->setFixedSize(30, 30);
         avatar->setAlignment(Qt::AlignCenter);
         avatar->setFont(Lumen::serifFont(12, QFont::DemiBold));
@@ -647,7 +648,7 @@ HomePage::HomePage(Library* lib, const QString& thumbsDir, QWidget* parent)
         auto* ev = new QVBoxLayout(empty);
         ev->setAlignment(Qt::AlignCenter);
         ev->setSpacing(14);
-        auto* t = new QLabel(QStringLiteral("光影集"), empty);
+        auto* t = new QLabel(QCoreApplication::translate("LightAlbum", "光影集"), empty);
         t->setFont(Lumen::serifFont(30, QFont::DemiBold, 8.0));
         t->setStyleSheet(QStringLiteral("color:#f4f7f4;"));
         t->setAlignment(Qt::AlignCenter);
@@ -662,11 +663,11 @@ HomePage::HomePage(Library* lib, const QString& thumbsDir, QWidget* parent)
         // 的大头，所以和「导入目录」并排给出（不是藏在顶栏下拉里）。
         auto* row = new QHBoxLayout;
         row->setSpacing(10);
-        auto* imp = new QPushButton(QStringLiteral("导入目录"), empty);
+        auto* imp = new QPushButton(QCoreApplication::translate("LightAlbum", "导入目录"), empty);
         imp->setCursor(Qt::PointingHandCursor);
         imp->setStyleSheet(Lumen::btnGold());
         connect(imp, &QPushButton::clicked, this, &HomePage::importRequested);
-        auto* impCloud = new QPushButton(QStringLiteral("导入 iCloud 相册"), empty);
+        auto* impCloud = new QPushButton(QCoreApplication::translate("LightAlbum", "导入 iCloud 相册"), empty);
         impCloud->setCursor(Qt::PointingHandCursor);
         impCloud->setStyleSheet(Lumen::btnGhost());
         connect(impCloud, &QPushButton::clicked, this, &HomePage::icloudImportRequested);
@@ -743,8 +744,8 @@ HomePage::HomePage(Library* lib, const QString& thumbsDir, QWidget* parent)
         pv->addSpacing(14);
         auto* fRow = new QHBoxLayout;
         fRow->setSpacing(12);
-        prevChapBtn_ = makeTextBtn(panel_, QStringLiteral("←  上一章"), 11);
-        nextChapBtn_ = makeTextBtn(panel_, QStringLiteral("下一章  →"), 11);
+        prevChapBtn_ = makeTextBtn(panel_, QCoreApplication::translate("LightAlbum", "←  上一章"), 11);
+        nextChapBtn_ = makeTextBtn(panel_, QCoreApplication::translate("LightAlbum", "下一章  →"), 11);
         connect(prevChapBtn_, &QToolButton::clicked, this,
                 [this] { setChapter((chapterIdx_ - 1 + chapters_.size()) % chapters_.size()); });
         connect(nextChapBtn_, &QToolButton::clicked, this,
@@ -834,7 +835,7 @@ void HomePage::refreshPanel()
                     ++located;
             }
         }
-        coverLbl_->setText(QStringLiteral("定位覆盖 %1 / %2 幅 · 共 %3 章")
+        coverLbl_->setText(QCoreApplication::translate("LightAlbum", "定位覆盖 %1 / %2 幅 · 共 %3 章")
                                .arg(located).arg(usable).arg(chapters_.size()));
     }
     // 封面打底：与 Stage 同一张开场照（亮度择优后的起点，非盲取最新一张）

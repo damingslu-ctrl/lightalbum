@@ -1,4 +1,5 @@
 #include "LogPage.h"
+#include <QCoreApplication>
 #include "Theme.h"
 #include <QScrollArea>
 #include <QVBoxLayout>
@@ -171,7 +172,7 @@ LogPage::LogPage(const QVector<Photo>* photos, QWidget* parent)
     auto* hl = new QVBoxLayout(head);
     hl->setContentsMargins(0, 0, 0, 0);
     hl->setSpacing(6);
-    auto* title = new QLabel(QString::fromUtf8("摄影日志"), head);
+    auto* title = new QLabel(QCoreApplication::translate("LightAlbum", "摄影日志"), head);
     QFont tf = title->font(); tf.setPointSizeF(20); tf.setBold(true);
     tf.setLetterSpacing(QFont::AbsoluteSpacing, 4.0);
     title->setFont(tf);
@@ -232,14 +233,14 @@ LogPage::LogPage(const QVector<Photo>* photos, QWidget* parent)
     chipsLay->setSpacing(8);
     chipsScroll->setWidget(chipsWidget);
 
-    auto* allChip = mkChip(QStringLiteral("全部"), true, chipsWidget);
+    auto* allChip = mkChip(QCoreApplication::translate("LightAlbum", "全部"), true, chipsWidget);
     chips_.append(allChip);
     chipsLay->addWidget(allChip);
     for (const QString& y : yList) { auto* c = mkChip(y, false, chipsWidget); chips_.append(c); chipsLay->addWidget(c); }
     for (const QString& c : cList) { auto* b = mkChip(c, false, chipsWidget); chips_.append(b); chipsLay->addWidget(b); }
     tlb->addWidget(chipsScroll, 1);
 
-    exportBtn_ = new QPushButton(QStringLiteral("导出 CSV"), toolbar_);
+    exportBtn_ = new QPushButton(QCoreApplication::translate("LightAlbum", "导出 CSV"), toolbar_);
     exportBtn_->setCursor(Qt::PointingHandCursor);
     exportBtn_->setFixedHeight(28);
     exportBtn_->setStyleSheet(QStringLiteral(
@@ -332,12 +333,12 @@ LogPage::LogPage(const QVector<Photo>* photos, QWidget* parent)
     gearLegend_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
     monthChart_= new BarChart(root);
 
-    grid->addWidget(makeCard(QString::fromUtf8("光圈分布"),   QString::fromUtf8("常用景深与通光量"),    apChart_), 0, 0);
-    grid->addWidget(makeCard(QString::fromUtf8("快门速度"),   QString::fromUtf8("从高速定格到长曝"),    shChart_), 0, 1);
-    grid->addWidget(makeCard(QString::fromUtf8("感光度 ISO"), QString::fromUtf8("画质与噪点的权衡"),    isoChart_), 0, 2);
-    grid->addWidget(makeCard(QString::fromUtf8("镜头焦距"),   QString::fromUtf8("广角到长焦的取舍"),    focChart_), 1, 0);
-    grid->addWidget(makeCard(QString::fromUtf8("器材使用"),   QString::fromUtf8("机身 / 镜头出勤率"),   gearChart_, gearLegend_), 1, 1);
-    grid->addWidget(makeCard(QString::fromUtf8("按月的拍摄活跃度"), QString::fromUtf8("一年里的创作节律"), monthChart_), 1, 2);
+    grid->addWidget(makeCard(QCoreApplication::translate("LightAlbum", "光圈分布"),   QCoreApplication::translate("LightAlbum", "常用景深与通光量"),    apChart_), 0, 0);
+    grid->addWidget(makeCard(QCoreApplication::translate("LightAlbum", "快门速度"),   QCoreApplication::translate("LightAlbum", "从高速定格到长曝"),    shChart_), 0, 1);
+    grid->addWidget(makeCard(QCoreApplication::translate("LightAlbum", "感光度 ISO"), QCoreApplication::translate("LightAlbum", "画质与噪点的权衡"),    isoChart_), 0, 2);
+    grid->addWidget(makeCard(QCoreApplication::translate("LightAlbum", "镜头焦距"),   QCoreApplication::translate("LightAlbum", "广角到长焦的取舍"),    focChart_), 1, 0);
+    grid->addWidget(makeCard(QCoreApplication::translate("LightAlbum", "器材使用"),   QCoreApplication::translate("LightAlbum", "机身 / 镜头出勤率"),   gearChart_, gearLegend_), 1, 1);
+    grid->addWidget(makeCard(QCoreApplication::translate("LightAlbum", "按月的拍摄活跃度"), QCoreApplication::translate("LightAlbum", "一年里的创作节律"), monthChart_), 1, 2);
 
     lay->addLayout(grid);
 
@@ -486,7 +487,7 @@ void LogPage::recompute()
         if (i < 6) { gk.append(gv[i].first); gc.append(palette[i % palette.size()]); gv_.append(gv[i].second); }
         else other += gv[i].second;
     }
-    if (other > 0) { gk.append(QString::fromUtf8("其他")); gc.append(QStringLiteral("#5a6b60")); gv_.append(other); }
+    if (other > 0) { gk.append(QCoreApplication::translate("LightAlbum", "其他")); gc.append(QStringLiteral("#5a6b60")); gv_.append(other); }
     gearChart_->setData(gk, gv_, gc);
     QString legendHtml;
     for (int i = 0; i < gk.size(); ++i)
@@ -512,13 +513,13 @@ void LogPage::recompute()
         QString::number(regions.size()),
         QString::number(cams.size()),
         QString::number(favN),
-        topCam + QStringLiteral(" · ") + QString::number(topCamN) + QString::fromUtf8("幅"),
-        topFoc + QStringLiteral(" · ") + QString::number(topFocN) + QString::fromUtf8("幅")
+        topCam + QStringLiteral(" · ") + QString::number(topCamN) + QCoreApplication::translate("LightAlbum", "幅"),
+        topFoc + QStringLiteral(" · ") + QString::number(topFocN) + QCoreApplication::translate("LightAlbum", "幅")
     };
     const QStringList kpiL = {
         QString::fromUtf8("作品总数"), QString::fromUtf8("足迹地区"),
-        QString::fromUtf8("使用机身"), QString::fromUtf8("已收藏"),
-        QString::fromUtf8("最常机身"), QString::fromUtf8("最常焦段")
+        QCoreApplication::translate("LightAlbum", "使用机身"), QCoreApplication::translate("LightAlbum", "已收藏"),
+        QCoreApplication::translate("LightAlbum", "最常机身"), QCoreApplication::translate("LightAlbum", "最常焦段")
     };
     QList<QLabel*> kpiLbls = kpiRow_->findChildren<QLabel*>();
     for (int i = 0; i < 6 && i < kpiLbls.size(); ++i) {
@@ -548,7 +549,7 @@ void LogPage::recompute()
 void LogPage::exportCsv()
 {
     const QString path = QFileDialog::getSaveFileName(this,
-        QStringLiteral("导出摄影日志 CSV"), QStringLiteral("lightalbum-log.csv"),
+        QCoreApplication::translate("LightAlbum", "导出摄影日志 CSV"), QStringLiteral("lightalbum-log.csv"),
         QStringLiteral("CSV (*.csv)"));
     if (path.isEmpty()) return;
     QFile f(path);

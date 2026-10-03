@@ -80,7 +80,7 @@ GalleryPage::GalleryPage(const QVector<Photo>* photos, const QString& thumbsDir,
     searchLay->setContentsMargins(20, 8, 20, 8);
     searchLay->setSpacing(8);
     auto* searchLe = new QLineEdit(searchBar);
-    searchLe->setPlaceholderText(QStringLiteral("搜索 地点 / 时间 / 评分 / 关键词…"));
+    searchLe->setPlaceholderText(QCoreApplication::translate("LightAlbum", "搜索 地点 / 时间 / 评分 / 关键词…"));
     searchLe->setClearButtonEnabled(true);
     searchLe->setStyleSheet(QStringLiteral(
         "QLineEdit{background:#0e1410;border:1px solid #26312a;border-radius:9px;"
@@ -151,13 +151,13 @@ void GalleryPage::buildBatchBar()
         bl->addWidget(b);
         starBtns_.append(b);
     }
-    privBtn_ = new QPushButton(QStringLiteral("🔒 私密"), batchBar_);
+    privBtn_ = new QPushButton(QCoreApplication::translate("LightAlbum", "🔒 私密"), batchBar_);
     privBtn_->setCursor(Qt::PointingHandCursor);
     privBtn_->setStyleSheet(btnCss);
     connect(privBtn_, &QPushButton::clicked, this, [this] { emitBatchPrivate(true); });
     bl->addWidget(privBtn_);
 
-    auto* clearBtn = new QPushButton(QStringLiteral("取消选择"), batchBar_);
+    auto* clearBtn = new QPushButton(QCoreApplication::translate("LightAlbum", "取消选择"), batchBar_);
     clearBtn->setCursor(Qt::PointingHandCursor);
     clearBtn->setStyleSheet(btnCss);
     connect(clearBtn, &QPushButton::clicked, this, [this] { view_->clearSelection(); });
@@ -172,9 +172,9 @@ void GalleryPage::onSelectionChanged(int count)
     selCount_ = count;
     batchBar_->setVisible(count > 0);
     if (count > 0) {
-        batchInfo_->setText(QStringLiteral("已选 %1 张").arg(count));
+        batchInfo_->setText(QCoreApplication::translate("LightAlbum", "已选 %1 张").arg(count));
         for (int i = 0; i < starBtns_.size(); ++i)
-            starBtns_[i]->setToolTip(QStringLiteral("将选中的 %1 张设为 %2 星").arg(count).arg(i + 1));
+            starBtns_[i]->setToolTip(QCoreApplication::translate("LightAlbum", "将选中的 %1 张设为 %2 星").arg(count).arg(i + 1));
     }
     updateCount();                            // 计数文案追加「已选 N」注记
 }
@@ -260,7 +260,7 @@ void GalleryPage::buildChips()
 
     // 全部
     {
-        auto* b = new QPushButton(QStringLiteral("全部 %1").arg(nVisible), chipsBar_);
+        auto* b = new QPushButton(QCoreApplication::translate("LightAlbum", "全部 %1").arg(nVisible), chipsBar_);
         b->setCheckable(true);
         b->setCursor(Qt::PointingHandCursor);
         b->setStyleSheet(chipCss);
@@ -283,15 +283,15 @@ void GalleryPage::buildChips()
     // 其他（低置信度）与 未分类
     {
         const int c = catCnt.value(QStringLiteral("其他"), 0);
-        if (c > 0) addChip(catChips_, QStringLiteral("其他"),
-                           QStringLiteral("其他 %1").arg(c));
+        if (c > 0) addChip(catChips_, QCoreApplication::translate("LightAlbum", "其他"),
+                           QCoreApplication::translate("LightAlbum", "其他 %1").arg(c));
     }
     {
         int unc = 0;
         for (const Photo& p : *photos_)
             if (!(hidePrivate_ && p.priv) && p.category.isEmpty()) ++unc;
         if (unc > 0) addChip(catChips_, GalleryModel::kNoCategory,
-                             QStringLiteral("未分类 %1").arg(unc));
+                             QCoreApplication::translate("LightAlbum", "未分类 %1").arg(unc));
     }
     chipLay->addStretch(1);
     chipsBar_->setVisible(catChips_.size() > 1);   // 只有「全部」= 无分类数据
@@ -300,7 +300,7 @@ void GalleryPage::buildChips()
     // 人物 chips（有数据才显示整条）
     auto* personLay = static_cast<QHBoxLayout*>(personBar_->layout());
     if (!persons.isEmpty()) {
-        auto* allBtn = new QPushButton(QStringLiteral("全部人物"), personBar_);
+        auto* allBtn = new QPushButton(QCoreApplication::translate("LightAlbum", "全部人物"), personBar_);
         allBtn->setCheckable(true);
         allBtn->setCursor(Qt::PointingHandCursor);
         allBtn->setStyleSheet(chipCss);
@@ -379,18 +379,18 @@ void GalleryPage::updateCount()
     const int n = model_.rowCount();
     const int total = photos_ ? photos_->size() : n;
     QStringList notes;
-    if (!searchText_.trimmed().isEmpty()) notes << QStringLiteral("已筛");
+    if (!searchText_.trimmed().isEmpty()) notes << QCoreApplication::translate("LightAlbum", "已筛");
     if (!activeCat_.isEmpty())
         notes << (activeCat_ == GalleryModel::kNoCategory
-                      ? QStringLiteral("未分类")
-                      : QStringLiteral("分类：%1").arg(activeCat_));
-    if (!activePerson_.isEmpty()) notes << QStringLiteral("人物：%1").arg(activePerson_);
-    if (selCount_ > 0) notes << QStringLiteral("已选 %1").arg(selCount_);
+                      ? QCoreApplication::translate("LightAlbum", "未分类")
+                      : QCoreApplication::translate("LightAlbum", "分类：%1").arg(activeCat_));
+    if (!activePerson_.isEmpty()) notes << QCoreApplication::translate("LightAlbum", "人物：%1").arg(activePerson_);
+    if (selCount_ > 0) notes << QCoreApplication::translate("LightAlbum", "已选 %1").arg(selCount_);
     const QString suffix = notes.isEmpty()
         ? QString() : QStringLiteral("（%1）").arg(notes.join(QStringLiteral(" · ")));
     count_->setText(n == total && notes.isEmpty()
-        ? QStringLiteral("显示 <b>%1</b> / %2 幅").arg(n).arg(total)
-        : QStringLiteral("显示 <b>%1</b> / %2 幅%3").arg(n).arg(total).arg(suffix));
+        ? QCoreApplication::translate("LightAlbum", "显示 <b>%1</b> / %2 幅").arg(n).arg(total)
+        : QCoreApplication::translate("LightAlbum", "显示 <b>%1</b> / %2 幅%3").arg(n).arg(total).arg(suffix));
 }
 
 void GalleryPage::applyFilter(const QString& q)
@@ -408,8 +408,8 @@ void GalleryPage::applyGeoFilter(const QString& regionId, const QString& provEn)
     const int n = model_.rowCount();
     const int total = photos_ ? photos_->size() : n;
     count_->setText((regionId.isEmpty() && provEn.isEmpty())
-        ? QStringLiteral("显示 <b>%1</b> / %2 幅").arg(n).arg(total)
-        : QStringLiteral("显示 <b>%1</b> / %2 幅（区域筛选）").arg(n).arg(total));
+        ? QCoreApplication::translate("LightAlbum", "显示 <b>%1</b> / %2 幅").arg(n).arg(total)
+        : QCoreApplication::translate("LightAlbum", "显示 <b>%1</b> / %2 幅（区域筛选）").arg(n).arg(total));
 }
 
 void GalleryPage::prefetch()

@@ -1,4 +1,5 @@
 #include "CompareWidget.h"
+#include <QCoreApplication>
 #include <QPainter>
 #include <QMouseEvent>
 #include <algorithm>
@@ -35,7 +36,7 @@ void CompareWidget::paintEvent(QPaintEvent*)
     p.fillRect(rect(), QColor(0x06, 0x08, 0x06));
     if (before_.isNull()) {
         p.setPen(QColor(0x8d, 0xa3, 0x96));
-        p.drawText(rect(), Qt::AlignCenter, QStringLiteral("无图像"));
+        p.drawText(rect(), Qt::AlignCenter, QCoreApplication::translate("LightAlbum", "无图像"));
         return;
     }
     const QRect d = dispRect();
@@ -57,8 +58,8 @@ void CompareWidget::paintEvent(QPaintEvent*)
     // 角标
     p.setPen(QColor(0xf4, 0xf7, 0xf4));
     QFont f = p.font(); f.setPointSizeF(10); p.setFont(f);
-    p.drawText(QRect(d.left() + 8, d.top() + 6, 80, 20), Qt::AlignLeft, QStringLiteral("原图"));
-    p.drawText(QRect(d.right() - 88, d.top() + 6, 80, 20), Qt::AlignRight, QStringLiteral("修后"));
+    p.drawText(QRect(d.left() + 8, d.top() + 6, 80, 20), Qt::AlignLeft, QCoreApplication::translate("LightAlbum", "原图"));
+    p.drawText(QRect(d.right() - 88, d.top() + 6, 80, 20), Qt::AlignRight, QCoreApplication::translate("LightAlbum", "修后"));
 }
 
 void CompareWidget::mousePressEvent(QMouseEvent* e)
