@@ -1311,5 +1311,17 @@ Errors: %1 — %2</translation>
         <source>缩放 ×%1</source>
         <translation>Zoom ×%1</translation>
     </message>
+    <message>
+        <source>光点</source>
+        <translation>Dots</translation>
+    </message>
+    <message>
+        <source>轨迹</source>
+        <translation>Track</translation>
+    </message>
+    <message>
+        <source>热力</source>
+        <translation>Heat</translation>
+    </message>
 </context>
 </TS>

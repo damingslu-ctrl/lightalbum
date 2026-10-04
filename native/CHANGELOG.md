@@ -3,6 +3,46 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.12.0] - 2026-10-04
+
+### 新增 - 足迹轨迹 / 热力双模式（方向 A 第一步：数据时间维 + 双层绘制 + 三态开关）
+
+**背景**：足迹地图此前只有「翡翠光点」一种呈现（`FL_Dots`），无法表达"按时间先后走过的路径"与"拍摄密度"这两类信息。本步在**不改动数据模型**的前提下补齐时间维并新增两个可切换层。
+
+**数据时间维（零模型改动）**：`Photo.date` 早已存在（`core/Library.h:28`），本次只做提取与对齐——`MapPage::computeGpsPoints` 扩展出参 `QVector<QDate>* datesOut`，在**同一过滤循环内**（`hasGps && !priv && !(la==0&&lo==0)`）解析日期，保证与 `gpsPts_` 逐点严格对齐；解析失败回退为无效 `QDate`（数据诚实：不编造日期）。日期经 `MapView::setGpsDates()` 注入为平行成员 `gpsDates_`。
+
+**双层绘制（烘焙静态层，不破 LA_MAP_PERF）**：新增 `drawTrajectoryWorld`/`drawHeatWorld`（世界层，`buildWorldPixmap` 内）与 `drawTrajectory`/`drawHeat`（下钻层，注入 `renderRegionStatic` / `renderProvinceStatic` / `renderCountryOnly` 的 `drawGpsDots` 之后）。二者**复用 `viewOrigin` 变换**（铁律：绘制与命中同源），且都落在既有一次性栅格化缓存内，因此帧耗时预算不受影响。轨迹按 `sortedTrackIdx()`（`gpsDates_` 升序 `std::stable_sort`，无日期者置后且保持原序）连折线；热力为密度分级的暖色径向渐变。
+
+**三态开关**：`MapPage` 顶栏新增 `QButtonGroup` 独占三段按钮「光点 / 轨迹 / 热力」，沿用既有墨韵深色样式、`translate("LightAlbum", ...)` 包裹（lupdate 可抽取），连 `view_->setFootLayerMode(0/1/2)`。切换时 `buildWorldPixmap()` + `invalidateViewCache()` 双重重烘焙。
+
+**零回归策略**：`footLayer_` 默认 `FL_Dots`，所有新增绘制均在 `footLayer_ != FL_Dots` 时才执行 → 未切换时输出与 2.11.1 逐像素一致，`LA_MAP_A_QA` / `LA_MAP_PERF` 不受影响。
+
+**颜色分离（颜色校验铁律·实测）**：轨迹取青（蓝主导 `b>r+15 && b>g+15`）、热力取暖（红主导 `r-g>90 && r-b>90`），与既有翡翠光点（绿主导）、金色航线（`r≈g`）色相分离 → 三类像素统计互不污染，门禁可独立断言。
+
+### 新增 - LA_MAP_TRACK_QA（第 35 门，full 层）
+
+注入 5 个确定性 GPS 点（北京/上海/广州/成都/乌鲁木齐）+ 确定性递增日期，`footLayer=轨迹`，离屏渲染世界层并统计**青色轨迹像素**，断言 `>= 30`。经 `System.Diagnostics.Process` 直连自退，输出 `LA_MAP_TRACK_QA trackPx=…`。
+
+**反例（非空心）**：`LA_MAP_TRACK_QA_FORCE_BROKEN=1` 强制回落 `FL_Dots` → 不画轨迹 → `trackPx=0 < 30` → 输出 `FAIL cyan=0` → 门红。
+
+### 新增 - LA_MAP_HEAT_QA（第 36 门，full 层）
+
+同构探针，`footLayer=热力`，统计**暖色热力像素**，断言 `>= 30`。
+
+**反例（非空心）**：`LA_MAP_HEAT_QA_FORCE_BROKEN=1` 强制回落 `FL_Dots` → `warmPx=0 < 30` → 门红。
+
+两门均属 map 类（构造 MainWindow、离屏渲染世界层），按矩阵分层依据落 **full 层**（不写 `tier` 键 = fail-safe 默认），不挤占 500ms fast 预算。
+
+### 修复 / 过程
+- `src/ui/MapView.{h,cpp}`：`FootLayer` 枚举 + `gpsDates_`/`footLayer_` 成员 + `setGpsDates`/`setFootLayerMode`/`footLayerMode` + `sortedTrackIdx` + 四个轨迹/热力绘制函数 + `qaShootTrack`/`qaShootHeat` 像素探针（含 FORCE_BROKEN 反例）。
+- `src/ui/MapPage.{h,cpp}`：`computeGpsPoints` 增 `datesOut` 出参；两处调用点（构造 + `setHidePrivate`）注入日期；顶栏三态分段按钮 + `setFootLayerMode` 连线。
+- `src/main.cpp`：`animOk` 排除列表加入两个新门；新增两处 QA 派发（镜像 `LA_MAP_COUNTRY_QA` 模板）。
+- `gate_matrix.ps1`：新增 2 门（full 层，带注释与 `measuredMs`）。
+- `CMakeLists.txt`：`VERSION 2.11.1 → 2.12.0`。
+
+### 门数
+36 门（新增 2）。fast 层 12 门不变，full 层 22 → 24 门。
+
 ## [2.11.1] - 2026-10-04
 
 ### 修复 - i18n 默认路径在中文 Windows 误载英文翻译器（debug 客户端「界面显示异常」根因）

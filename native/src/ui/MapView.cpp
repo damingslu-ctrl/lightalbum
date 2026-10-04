@@ -15,6 +15,8 @@
 #include <QDebug>
 #include <cmath>
 #include <algorithm>
+#include <QDate>
+#include <QRadialGradient>
 #include <QHash>
 #include <QPoint>
 #include <QCoreApplication>
@@ -287,6 +289,12 @@ void MapView::buildWorldPixmap()
             drawFootprintDot(p, pt, 2.0, dens[i]);
         }
     }
+    // A 方向：轨迹/热力（默认 FL_Dots 零回归；仅用户切换或门禁探针才绘制）
+    if (footLayer_ == FL_Track && gpsPts_.size() >= 2) {
+        drawTrajectoryWorld(p);
+    } else if (footLayer_ == FL_Heat && !gpsPts_.isEmpty()) {
+        drawHeatWorld(p);
+    }
     p.end();
 }
 
@@ -297,6 +305,21 @@ void MapView::setGpsPoints(const QVector<QPointF>& pts)
     arcTargetsDirty_ = true;    // 航线目标集缓存失效
     invalidateViewCache();      // 下钻静态层含足迹点 → 失效
     buildWorldPixmap();          // 重新烘焙世界静态层（含足迹点，随漂移一起移动）
+    update();
+}
+
+void MapView::setGpsDates(const QVector<QDate>& dates)
+{
+    gpsDates_ = dates;
+}
+
+void MapView::setFootLayerMode(int mode)
+{
+    const int m = (mode < FL_Dots || mode > FL_Heat) ? FL_Dots : mode;
+    if (m == footLayer_) return;
+    footLayer_ = m;
+    buildWorldPixmap();     // 世界层重烘焙（含轨迹/热力）
+    invalidateViewCache();  // 下钻静态层下次 paint 重烘焙
     update();
 }
 
@@ -503,6 +526,9 @@ void MapView::renderRegionStatic(QPainter& p, const QRectF& dst) const
         drawLabel(p, c + QPointF(4, 4), pv.zh.isEmpty() ? pv.name : pv.zh, QColor(0xe8, 0xe2, 0xd4));
     }
     drawGpsDots(p, bbox, dst);   // P16.4
+    // A 方向：轨迹/热力（默认光点，零回归）
+    if (footLayer_ == FL_Track && gpsPts_.size() >= 2) drawTrajectory(p, bbox, dst);
+    else if (footLayer_ == FL_Heat && !gpsPts_.isEmpty()) drawHeat(p, bbox, dst);
 }
 
 // 国家视图：国界轮廓（含湖泊镂空）+ 经纬网格 + 国名 halo + 该国 GPS 足迹/航线
@@ -535,6 +561,9 @@ void MapView::renderCountryOnly(QPainter& p, const QRectF& dst) const
                                   (bbox.top() + bbox.bottom()) * 0.5 * scale);
     drawLabel(p, c, curRegionName_, QColor(0xe8, 0xe2, 0xd4));
     drawGpsDots(p, bbox, dst);
+    // A 方向：轨迹/热力
+    if (footLayer_ == FL_Track && gpsPts_.size() >= 2) drawTrajectory(p, bbox, dst);
+    else if (footLayer_ == FL_Heat && !gpsPts_.isEmpty()) drawHeat(p, bbox, dst);
 }
 
 void MapView::renderProvince(QPainter& p, const QRectF& dst) const
@@ -562,6 +591,9 @@ void MapView::renderProvinceStatic(QPainter& p, const QRectF& dst) const
     const QString label = (curProvince_.zh.isEmpty() ? curProvince_.name : curProvince_.zh);
     drawLabel(p, c + QPointF(6, 5), label, QColor(0xe8, 0xe2, 0xd4));
     drawGpsDots(p, curProvince_.bbox, dst);   // P16.4
+    // A 方向：轨迹/热力
+    if (footLayer_ == FL_Track && gpsPts_.size() >= 2) drawTrajectory(p, curProvince_.bbox, dst);
+    else if (footLayer_ == FL_Heat && !gpsPts_.isEmpty()) drawHeat(p, curProvince_.bbox, dst);
 }
 
 void MapView::drawGpsDots(QPainter& p, const QRectF& bbox, const QRectF& dst) const
@@ -667,6 +699,102 @@ void MapView::qaShootA(const QString& path)
     if (!path.isEmpty()) img.save(path);
     std::fprintf(stderr, "LA_MAP_A_QA jade=%d points=%d png=%s\n",
                  jade, gpsPts_.size(), qPrintable(path));
+    std::fflush(stderr);
+}
+
+// A 方向：轨迹像素自测。注入确定性足迹点（footLayer=轨迹），离屏渲染世界层，
+// 统计青色（蓝主导）轨迹像素；FORCE_BROKEN 强制光点 → 轨迹像素为 0 → RED。
+void MapView::qaShootTrack(const QString& path)
+{
+    const bool broken = !qEnvironmentVariableIsEmpty("LA_MAP_TRACK_QA_FORCE_BROKEN");
+    footLayer_ = broken ? FL_Dots : FL_Track;
+    arcRegionIds_.clear();
+    gpsDates_.clear();
+    for (int i = 0; i < 5; ++i) gpsDates_.append(QDate(2024, 1, 1 + i));
+    setGpsPoints({
+        QPointF(eqX(116.40), eqY(39.90)),
+        QPointF(eqX(121.47), eqY(31.23)),
+        QPointF(eqX(113.26), eqY(23.13)),
+        QPointF(eqX(104.07), eqY(30.57)),
+        QPointF(eqX(87.62),  eqY(43.82)),
+    });
+
+    const int W = int(MAP_W), H = int(MAP_H);
+    QImage img(W, H, QImage::Format_ARGB32);
+    img.fill(Qt::transparent);
+    {
+        QPainter p(&img);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        p.setRenderHint(QPainter::SmoothPixmapTransform, true);
+        p.drawPixmap(QRectF(0, 0, W, H), worldPix_, worldPix_.rect());
+    }
+    int cyan = 0;
+    const uchar* bits = img.constBits();
+    const int bpl = img.bytesPerLine();
+    for (int y = 0; y < H; ++y) {
+        const uchar* row = bits + y * bpl;
+        for (int x = 0; x < W; ++x) {
+            const uchar* px = row + x * 4;
+            const int b = px[0], g = px[1], r = px[2];
+            if (b > 140 && b > r + 15 && b > g + 15) ++cyan;
+        }
+    }
+    const int thr = 30;
+    if (cyan < thr) {
+        std::fprintf(stderr, "LA_MAP_TRACK_QA FAIL cyan=%d threshold=%d broken=%d\n", cyan, thr, int(broken));
+        std::fflush(stderr);
+        return;
+    }
+    if (!path.isEmpty()) img.save(path);
+    std::fprintf(stderr, "LA_MAP_TRACK_QA trackPx=%d points=%d broken=%d\n", cyan, gpsPts_.size(), int(broken));
+    std::fflush(stderr);
+}
+
+// A 方向：热力像素自测。注入确定性足迹点（footLayer=热力），离屏渲染世界层，
+// 统计暖色（红主导）热力像素；FORCE_BROKEN 强制光点 → 暖色像素为 0 → RED。
+void MapView::qaShootHeat(const QString& path)
+{
+    const bool broken = !qEnvironmentVariableIsEmpty("LA_MAP_HEAT_QA_FORCE_BROKEN");
+    footLayer_ = broken ? FL_Dots : FL_Heat;
+    arcRegionIds_.clear();
+    gpsDates_.clear();
+    for (int i = 0; i < 5; ++i) gpsDates_.append(QDate(2024, 1, 1 + i));
+    setGpsPoints({
+        QPointF(eqX(116.40), eqY(39.90)),
+        QPointF(eqX(121.47), eqY(31.23)),
+        QPointF(eqX(113.26), eqY(23.13)),
+        QPointF(eqX(104.07), eqY(30.57)),
+        QPointF(eqX(87.62),  eqY(43.82)),
+    });
+
+    const int W = int(MAP_W), H = int(MAP_H);
+    QImage img(W, H, QImage::Format_ARGB32);
+    img.fill(Qt::transparent);
+    {
+        QPainter p(&img);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        p.setRenderHint(QPainter::SmoothPixmapTransform, true);
+        p.drawPixmap(QRectF(0, 0, W, H), worldPix_, worldPix_.rect());
+    }
+    int warm = 0;
+    const uchar* bits = img.constBits();
+    const int bpl = img.bytesPerLine();
+    for (int y = 0; y < H; ++y) {
+        const uchar* row = bits + y * bpl;
+        for (int x = 0; x < W; ++x) {
+            const uchar* px = row + x * 4;
+            const int b = px[0], g = px[1], r = px[2];
+            if (r > 140 && r - g > 90 && r - b > 90) ++warm;
+        }
+    }
+    const int thr = 30;
+    if (warm < thr) {
+        std::fprintf(stderr, "LA_MAP_HEAT_QA FAIL warm=%d threshold=%d broken=%d\n", warm, thr, int(broken));
+        std::fflush(stderr);
+        return;
+    }
+    if (!path.isEmpty()) img.save(path);
+    std::fprintf(stderr, "LA_MAP_HEAT_QA warmPx=%d points=%d broken=%d\n", warm, gpsPts_.size(), int(broken));
     std::fflush(stderr);
 }
 
@@ -1287,6 +1415,102 @@ QVector<int> MapView::computeDensity() const
     densCache_ = out;
     densDirty_ = false;
     return out;
+}
+
+// A 方向：轨迹/热力绘制。颜色校验铁律：青色轨迹 / 暖色热力均实测，
+// 与翡翠光点（绿主导）、金色航线（金）色相分离，门禁像素统计互不污染。
+QVector<int> MapView::sortedTrackIdx() const
+{
+    QVector<int> idx(gpsPts_.size());
+    for (int i = 0; i < idx.size(); ++i) idx[i] = i;
+    std::stable_sort(idx.begin(), idx.end(), [this](int a, int b) {
+        const bool va = a < gpsDates_.size() && gpsDates_[a].isValid();
+        const bool vb = b < gpsDates_.size() && gpsDates_[b].isValid();
+        if (va != vb) return va;                          // 有日期的在前
+        if (va && gpsDates_[a] != gpsDates_[b])
+            return gpsDates_[a] < gpsDates_[b];           // 按日期升序连折线
+        return a < b;                                     // 稳定：保持原序
+    });
+    return idx;
+}
+
+// 世界层轨迹（预投影逻辑坐标直接绘制，painter 已 scale(PIX)）
+void MapView::drawTrajectoryWorld(QPainter& p) const
+{
+    const QVector<int> ord = sortedTrackIdx();
+    if (ord.size() < 2) return;
+    QPainterPath path;
+    path.moveTo(gpsPts_[ord[0]]);
+    for (int i = 1; i < ord.size(); ++i) path.lineTo(gpsPts_[ord[i]]);
+    p.setBrush(Qt::NoBrush);
+    p.setPen(QPen(QColor(0x3f, 0xb0, 0xe8, 90), 3.0)); p.drawPath(path);  // 柔光底
+    p.setPen(QPen(QColor(0x7f, 0xe0, 0xff), 1.3));      p.drawPath(path);  // 亮芯
+    p.setPen(QPen(QColor(0xbf, 0xf0, 0xff), 1.0)); p.setBrush(Qt::NoBrush);
+    for (int i = 0; i < ord.size(); ++i) p.drawEllipse(gpsPts_[ord[i]], 1.6, 1.6);
+}
+
+// 世界层热力（暖色径向渐变，密度越高 halo 越大）
+void MapView::drawHeatWorld(QPainter& p) const
+{
+    if (gpsPts_.isEmpty()) return;
+    const QVector<int> dens = computeDensity();
+    for (int i = 0; i < gpsPts_.size(); ++i) {
+        const QPointF& pt = gpsPts_[i];
+        if (pt.x() < 0 || pt.x() > MAP_W || pt.y() < 0 || pt.y() > MAP_H) continue;
+        const int d = dens.isEmpty() ? 0 : dens[i];
+        const double r = 6.0 + std::min(d, 8) * 1.6;
+        QRadialGradient g(pt, r);
+        g.setColorAt(0.0, QColor(0xff, 0x5a, 0x2a, 200));
+        g.setColorAt(0.5, QColor(0xff, 0x7a, 0x3a, 90));
+        g.setColorAt(1.0, QColor(0xff, 0x8a, 0x4a, 0));
+        p.setBrush(g); p.setPen(Qt::NoPen);
+        p.drawEllipse(pt, r, r);
+    }
+}
+
+// 下钻层轨迹（与 drawGpsDots 同一 viewOrigin 变换）
+void MapView::drawTrajectory(QPainter& p, const QRectF& bbox, const QRectF& dst) const
+{
+    const QVector<int> ord = sortedTrackIdx();
+    if (ord.size() < 2) return;
+    double scale = 1;
+    const QPointF o = viewOrigin(bbox, dst, scale);
+    p.save();
+    p.setClipRect(dst);
+    QPainterPath path;
+    path.moveTo(o + gpsPts_[ord[0]] * scale);
+    for (int i = 1; i < ord.size(); ++i) path.lineTo(o + gpsPts_[ord[i]] * scale);
+    p.setBrush(Qt::NoBrush);
+    p.setPen(QPen(QColor(0x3f, 0xb0, 0xe8, 90), 3.2)); p.drawPath(path);
+    p.setPen(QPen(QColor(0x7f, 0xe0, 0xff), 1.4));      p.drawPath(path);
+    p.setPen(QPen(QColor(0xbf, 0xf0, 0xff), 1.0)); p.setBrush(Qt::NoBrush);
+    for (int i = 0; i < ord.size(); ++i) p.drawEllipse(o + gpsPts_[ord[i]] * scale, 2.2, 2.2);
+    p.restore();
+}
+
+// 下钻层热力
+void MapView::drawHeat(QPainter& p, const QRectF& bbox, const QRectF& dst) const
+{
+    if (gpsPts_.isEmpty()) return;
+    double scale = 1;
+    const QPointF o = viewOrigin(bbox, dst, scale);
+    const QVector<int> dens = computeDensity();
+    p.save();
+    p.setClipRect(dst);
+    for (int i = 0; i < gpsPts_.size(); ++i) {
+        const QPointF pt = o + gpsPts_[i] * scale;
+        if (pt.x() < dst.left() || pt.x() > dst.right() ||
+            pt.y() < dst.top()  || pt.y() > dst.bottom()) continue;
+        const int d = dens.isEmpty() ? 0 : dens[i];
+        const double r = (6.0 + std::min(d, 8) * 1.6) * scale;
+        QRadialGradient g(pt, r);
+        g.setColorAt(0.0, QColor(0xff, 0x5a, 0x2a, 200));
+        g.setColorAt(0.5, QColor(0xff, 0x7a, 0x3a, 90));
+        g.setColorAt(1.0, QColor(0xff, 0x8a, 0x4a, 0));
+        p.setBrush(g); p.setPen(Qt::NoPen);
+        p.drawEllipse(pt, r, r);
+    }
+    p.restore();
 }
 
 // 经纬网格（下钻视图）：预投影空间 → fitRect 变换

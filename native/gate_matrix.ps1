@@ -100,6 +100,15 @@ $GateTable = @(
   @{n="LA_MAP_BURST_QA";    png=$true; measuredMs=3166},
   @{n="LA_MAP_REGION_QA";   png=$true; arg=",china"; measuredMs=3075},
   @{n="LA_MAP_COUNTRY_QA";  png=$true; measuredMs=2617},
+  # A direction: footprint trajectory / heat layers. LA_MAP_TRACK_QA injects 5
+  # deterministic GPS points with footLayer=track and counts cyan (blue-dominant)
+  # pixels; LA_MAP_HEAT_QA counts warm (red-dominant) pixels with footLayer=heat.
+  # Counter-examples *_FORCE_BROKEN=1 force the layer back to dots, so the extra
+  # pixel count is 0 and the gate goes RED. Both render the world layer offscreen
+  # like the other map gates, so they sit in the full tier (no tier key = the
+  # fail-safe default). measuredMs is filled in from qa_runner.ps1 -Timing.
+  @{n="LA_MAP_TRACK_QA";    png=$true; measuredMs=3100},
+  @{n="LA_MAP_HEAT_QA";     png=$true; measuredMs=3012},
   @{n="LA_MAP_CLICK_QA";    png=$false; measuredMs=2553},
   @{n="LA_MAP_PERF";        png=$false; measuredMs=3735},
   @{n="LA_GALLERY_E_QA";    png=$true; measuredMs=2589},

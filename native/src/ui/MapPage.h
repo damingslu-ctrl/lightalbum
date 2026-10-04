@@ -3,6 +3,7 @@
 #include <QPushButton>
 #include <QLabel>
 #include "MapView.h"
+#include <QDate>
 #include "../core/Library.h"
 
 class MapPage : public QWidget {
@@ -29,7 +30,7 @@ private slots:
 
 private:
     int computeGpsCount() const;   // P16.1 真实 GPS 足迹计数（尊重隐私门）
-    QVector<QPointF> computeGpsPoints(QStringList* pathsOut = nullptr) const;   // P16.4 真实 GPS 足迹点（pathsOut 同步给出对应照片路径）
+    QVector<QPointF> computeGpsPoints(QStringList* pathsOut = nullptr, QVector<QDate>* datesOut = nullptr) const;   // P16.4 真实 GPS 足迹点（pathsOut 同步路径，datesOut 同步拍摄日期）
     QStringList computeArcRegionIds() const;     // P16.4.2 有作品的大区 id（航线目标）
 
 private:
@@ -46,6 +47,7 @@ private:
     QLabel*      statsBody_ = nullptr;
     QPushButton* viewBtn_ = nullptr;
     QPushButton* playBtn_ = nullptr;    // 迭代 2：「▶ 播放本区作品」
+    QButtonGroup* footLayerGroup_ = nullptr;   // A 方向：光点/轨迹/热力 三态分段开关
     const QVector<Photo>* photos_ = nullptr;
     QString     thumbsDir_;            // 缩略图目录（爆炸弹层取图用）
     QStringList lastCountryPaths_;      // 国家视图的该国 GPS 照片路径（播放按钮用）

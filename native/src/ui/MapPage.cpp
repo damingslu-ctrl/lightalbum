@@ -13,6 +13,8 @@
 #include <QLineEdit>
 #include <QDoubleValidator>
 #include <QDialogButtonBox>
+#include <QDate>
+#include <QButtonGroup>
 
 MapPage::MapPage(const QVector<Photo>* photos, const QString& thumbsDir,
                  QWidget* parent) : QWidget(parent), photos_(photos), thumbsDir_(thumbsDir)
@@ -63,14 +65,39 @@ MapPage::MapPage(const QVector<Photo>* photos, const QString& thumbsDir,
         "padding:5px 12px;color:#4fc08a;}"
         "QPushButton:hover{border-color:#4fc08a;}"));
     bl->addWidget(relocBtn_);
+    // A 方向：足迹层三态开关（光点/轨迹/热力）。默认光点 → 零回归。
+    // 铁律：三串必须以 translate() 字面量直调——经 lambda 形参传入会让 lupdate
+    // 无法静态抽取（形参是变量非字面量），导致英文模式回落中文硬编码。
+    footLayerGroup_ = new QButtonGroup(this);
+    footLayerGroup_->setExclusive(true);
+    const QString segStyle = QStringLiteral(
+        "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:9px;"
+        "padding:5px 10px;color:#8da396;}"
+        "QPushButton:checked{background:#1d2a22;border-color:#4fc08a;color:#4fc08a;}");
+    auto mkSeg = [&](const QString& label, int mode) {
+        QPushButton* b = new QPushButton(label, bar);
+        b->setCheckable(true);
+        b->setCursor(Qt::PointingHandCursor);
+        b->setStyleSheet(segStyle);
+        footLayerGroup_->addButton(b, mode);
+        bl->addWidget(b);
+        return b;
+    };
+    mkSeg(QCoreApplication::translate("LightAlbum", "光点"), 0)->setChecked(true);
+    mkSeg(QCoreApplication::translate("LightAlbum", "轨迹"), 1);
+    mkSeg(QCoreApplication::translate("LightAlbum", "热力"), 2);
+    connect(footLayerGroup_, QOverload<int>::of(&QButtonGroup::idClicked),
+            this, [this](int id) { view_->setFootLayerMode(id); });
     ll->addWidget(bar);
 
     view_ = new MapView(left);
     view_->setGpsCount(computeGpsCount());     // P16.1：注入真实 GPS 足迹数
     {
         QStringList gpsPaths;
-        view_->setGpsPoints(computeGpsPoints(&gpsPaths));   // P16.4：注入真实 GPS 足迹点
+        QVector<QDate> gpsDates;
+        view_->setGpsPoints(computeGpsPoints(&gpsPaths, &gpsDates));   // P16.4：注入真实 GPS 足迹点
         view_->setGpsPaths(gpsPaths);                       // 与点一一对应的照片路径（国家视图）
+        view_->setGpsDates(gpsDates);                       // A 方向：拍摄日期（轨迹排序用）
     }
     view_->setArcRegionIds(computeArcRegionIds()); // P16.4.2：有作品大区 → 航线目标
     ll->addWidget(view_, 1);
@@ -162,8 +189,10 @@ void MapPage::setHidePrivate(bool hide)
     view_->setGpsCount(computeGpsCount());         // P16.1：隐私门切换 → 足迹数同步
     {
         QStringList gpsPaths;
-        view_->setGpsPoints(computeGpsPoints(&gpsPaths));       // P16.4：足迹点同步
+        QVector<QDate> gpsDates;
+        view_->setGpsPoints(computeGpsPoints(&gpsPaths, &gpsDates));       // P16.4：足迹点同步
         view_->setGpsPaths(gpsPaths);
+        view_->setGpsDates(gpsDates);                                    // A 方向：日期同步
     }
     view_->setArcRegionIds(computeArcRegionIds()); // P16.4.2：航线目标同步
     // 已选区域时重算一次统计，保持口径一致
@@ -184,10 +213,11 @@ int MapPage::computeGpsCount() const
 
 // P16.4 真实 GPS 足迹点：仅 hasGps 且未被隐私门屏蔽的照片；经纬度 → 预投影空间（与 MapView 一致）
 // pathsOut 非空时同步给出与点一一对应的照片原路径（国家视图 pip 匹配用）
-QVector<QPointF> MapPage::computeGpsPoints(QStringList* pathsOut) const
+QVector<QPointF> MapPage::computeGpsPoints(QStringList* pathsOut, QVector<QDate>* datesOut) const
 {
     QVector<QPointF> pts;
     if (pathsOut) pathsOut->clear();
+    if (datesOut) datesOut->clear();
     if (!photos_) return pts;
     pts.reserve(photos_->size());
     for (const Photo& p : *photos_) {
@@ -197,6 +227,14 @@ QVector<QPointF> MapPage::computeGpsPoints(QStringList* pathsOut) const
         const double y = (90.0 - p.la) / 180.0 * MapView::MAP_H;
         pts.append(QPointF(x, y));
         if (pathsOut) pathsOut->append(p.path);
+        if (datesOut) {   // A 方向：解析拍摄日期（解析失败 → 无效 QDate，轨迹排序时置后）
+            QDate dt = QDate::fromString(p.date.left(10), QStringLiteral("yyyy-MM-dd"));
+            if (!dt.isValid())
+                dt = QDate::fromString(p.date.left(10), QStringLiteral("yyyy:MM:dd"));
+            if (!dt.isValid())
+                dt = QDate::fromString(p.date, QStringLiteral("yyyy-MM-dd HH:mm:ss"));
+            datesOut->append(dt);
+        }
     }
     return pts;
 }

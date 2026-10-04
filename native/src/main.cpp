@@ -2079,6 +2079,8 @@ int main(int argc, char *argv[])
         && !qEnvironmentVariableIsSet("LA_MAP_BURST_QA")
         && !qEnvironmentVariableIsSet("LA_MAP_COUNTRY_QA")
         && !qEnvironmentVariableIsSet("LA_MAP_PERF")
+        && !qEnvironmentVariableIsSet("LA_MAP_TRACK_QA")
+        && !qEnvironmentVariableIsSet("LA_MAP_HEAT_QA")
         && !qEnvironmentVariableIsSet("LA_GALLERY_E_QA")
         && !qEnvironmentVariableIsSet("LA_CULL_DUEL_QA")
         && !qEnvironmentVariableIsSet("LA_GALLERY_FILL_QA")
@@ -2227,6 +2229,28 @@ int main(int argc, char *argv[])
         QDir().mkpath(QFileInfo(p).absolutePath());
         if (MapView* mv = win.mapView()) mv->qaShootCountry(p, nm);
         std::fprintf(stderr, "LA_MAP_COUNTRY_QA_DONE\n");
+        std::fflush(stderr);
+        return 0;
+    }
+
+    // A 方向·足迹轨迹像素自测：LA_MAP_TRACK_QA=<png> 时注入确定性足迹点（footLayer=轨迹），
+    // 离屏渲染世界层并统计青色轨迹像素；FORCE_BROKEN 强制光点 → 轨迹像素为 0 → RED。
+    if (!qEnvironmentVariableIsEmpty("LA_MAP_TRACK_QA")) {
+        const QString p = qEnvironmentVariable("LA_MAP_TRACK_QA");
+        QDir().mkpath(QFileInfo(p).absolutePath());
+        if (MapView* mv = win.mapView()) mv->qaShootTrack(p);
+        std::fprintf(stderr, "LA_MAP_TRACK_QA_DONE\n");
+        std::fflush(stderr);
+        return 0;
+    }
+
+    // A 方向·足迹热力像素自测：LA_MAP_HEAT_QA=<png> 时注入确定性足迹点（footLayer=热力），
+    // 离屏渲染世界层并统计暖色热力像素；FORCE_BROKEN 强制光点 → 暖色像素为 0 → RED。
+    if (!qEnvironmentVariableIsEmpty("LA_MAP_HEAT_QA")) {
+        const QString p = qEnvironmentVariable("LA_MAP_HEAT_QA");
+        QDir().mkpath(QFileInfo(p).absolutePath());
+        if (MapView* mv = win.mapView()) mv->qaShootHeat(p);
+        std::fprintf(stderr, "LA_MAP_HEAT_QA_DONE\n");
         std::fflush(stderr);
         return 0;
     }

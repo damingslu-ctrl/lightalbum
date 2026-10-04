@@ -13,6 +13,7 @@
 #include <QColor>
 #include <QPainter>
 #include <QKeyEvent>
+#include <QDate>
 
 // 预投影坐标系：所有环/省/经纬都落在 [0,MAP_W]x[0,MAP_H] 的等距圆柱平面
 struct Ring { QVector<QPointF> pts; };
@@ -42,6 +43,7 @@ class MapView : public QWidget {
     Q_OBJECT
 public:
     enum Level { World, Region, Province };
+    enum FootLayer { FL_Dots = 0, FL_Track = 1, FL_Heat = 2 };
 
     static constexpr double MAP_W = 1000.0, MAP_H = 500.0;
     explicit MapView(QWidget* parent = nullptr);
@@ -62,6 +64,11 @@ public:
     // 在世界/大区/省三级以翡翠光点呈现你的实际拍摄足迹。
     void setGpsPoints(const QVector<QPointF>& pts);
 
+    // A 方向：足迹层时间维 + 三态开关（默认 FL_Dots 零回归）
+    void setGpsDates(const QVector<QDate>& dates);
+    void setFootLayerMode(int mode);    // 0=光点 1=轨迹 2=热力
+    int  footLayerMode() const { return footLayer_; }
+
     // P16.4.2 金色航线基点（「我的位置」，经纬度，默认上海）。设置后重新烘焙世界层。
     void setHomePoint(double lon, double lat);
     double homeLon() const { return homeLon_; }
@@ -81,6 +88,9 @@ public:
     void qaShootCountry(const QString& path, const QString& name);
     // A 爆炸弹层像素自测：进入省视图 + 合成缩略图 → 离屏渲染终态 + 分色统计
     void qaShootBurst(const QString& path);
+    // A 方向：轨迹/热力像素自测（离屏世界层 + 青/暖色像素统计）
+    void qaShootTrack(const QString& path);
+    void qaShootHeat(const QString& path);
 
     // F3 a11y·键盘可达（方向 F 第三步，2.11.0）：offscreen 门禁断言（焦点策略 + 键盘缩放）
     static int qaKeyboardCheck();
@@ -137,6 +147,13 @@ private:
     // P16.4.2 航线目标集 = GPS 足迹点 ∪ 有作品大区的中心点（预投影空间）
     QVector<QPointF> arcTargets() const;
 
+    // A 方向：轨迹折线 + 热力面（复用 viewOrigin / 预投影空间，与 drawGpsDots 同源）
+    QVector<int> sortedTrackIdx() const;                         // 按 gpsDates_ 升序
+    void drawTrajectoryWorld(QPainter& p) const;                 // 世界层
+    void drawHeatWorld(QPainter& p) const;
+    void drawTrajectory(QPainter& p, const QRectF& bbox, const QRectF& dst) const;  // 下钻层
+    void drawHeat(QPainter& p, const QRectF& bbox, const QRectF& dst) const;
+
     QPointF preToWidget(const QPointF& pre, const QRectF& dst, double scale,
                          double offX = 0) const;
     double fitScale(const QRectF& bbox, const QRectF& dst) const;
@@ -174,6 +191,8 @@ private:
     QString             hoverHint_;            // 鼠标悬停提示（省名）
     int                 gpsCount_ = 0;         // P16.1 真实 GPS 足迹数（含隐私门下计数）
     QVector<QPointF>    gpsPts_;               // P16.4 真实照片 GPS 足迹点（预投影空间）
+    QVector<QDate>     gpsDates_;              // A 方向：与 gpsPts_ 逐点对齐的拍摄日期
+    int                footLayer_ = FL_Dots;   // A 方向：足迹层模式（默认光点，零回归）
     double              homeLon_ = 121.47;     // P16.4.2 航线基点（默认上海，经纬度）
     double              homeLat_ = 31.23;
     QStringList         arcRegionIds_;         // P16.4.2 有作品的大区（中心点为航线目标）
