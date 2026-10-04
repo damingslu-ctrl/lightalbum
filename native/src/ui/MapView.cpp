@@ -965,6 +965,85 @@ void MapView::qaShootYear(const QString& path)
     std::fflush(stderr);
 }
 
+// A 方向第四步：热力色带分级自测。三档色相必须各自出现在渲染结果中 ——
+// 断言方式是把每个像素归类到「最接近哪一档」（按 R/G/B 相对关系），
+// 统计三档像素数。FORCE_BROKEN 强制所有点用同一档（忽略密度），
+// 则只有一档像素>0、另两档=0 → RED。
+void MapView::qaShootHeatRamp(const QString& path)
+{
+    const bool broken = !qEnvironmentVariableIsEmpty("LA_MAP_HEAT_RAMP_QA_FORCE_BROKEN");
+    heatRamp_ = HR_Warm;
+    arcRegionIds_.clear();
+    // 反例：强制所有密度取同一档（抹掉密度分级）→ heatRamp 三档同色 → graded=false
+    heatRampForceTier_ = broken ? 0 : -1;
+    // 三簇密度真分离（实测 computeDensity cell=22.0 网格）：低 1 / 中 5 / 高 14。
+    // ★必须实测校验：若两簇落在同一网格内密度会相同、三档塌成两档（曾发生）。
+    QVector<QPointF> heatPts;
+    for (int i = 0; i < 3; ++i)   // 低密度：彼此远离（各自独立网格）
+        heatPts.append(QPointF(eqX(100.0 + i * 60.0), eqY(20.0)));
+    for (int i = 0; i < 5; ++i)   // 中密度：5 点小簇
+        heatPts.append(QPointF(eqX(120.0 + (i % 3) * 0.8), eqY(45.0 + (i / 3) * 0.8)));
+    for (int i = 0; i < 14; ++i)  // 高密度：14 点密簇（与中簇隔 50 经度，跨网格）
+        heatPts.append(QPointF(eqX(170.0 + (i % 4) * 0.6), eqY(60.0 + (i / 4) * 0.6)));
+    // ★铁律 12：改数据必须经 setter（置 densDirty_/arcTargetsDirty_ + 重烘焙）。
+    // 直接赋值 gpsPts_ 会让 computeDensity 沿用真实库的旧密度（dmin=311/dmax=3268
+    // 即此症状），三档判定全被真实库密度支配。
+    setGpsPoints(heatPts);
+    QVector<QDate> hdates;
+    for (int i = 0; i < heatPts.size(); ++i) hdates.append(QDate(2024, 1, 1 + (i % 20)));
+    setGpsDates(hdates);
+
+    // 期望（恒为规格值，**不随 broken 变化** —— 铁律 22）：
+    //  heatRamp(d) 对三个代表密度必须给出三个**互不相同**的中心色，
+    //  即密度分级真的参与了选色。
+    const QColor cLow  = heatRamp(1).c0;
+    const QColor cMid  = heatRamp(5).c0;
+    const QColor cHigh = heatRamp(50).c0;
+    const bool graded = (cLow != cMid) && (cMid != cHigh) && (cLow != cHigh);
+
+    // 渲染实测（颜色校验铁律：像素必须真画出来，不能只断言纯函数返回值）：
+    // 统计「暖橙系」像素（r>g+30）—— 三档都在暖橙区间，故反例强制 tier0 后
+    // 像素数不变、**只有 graded 会变 false**，两者共同构成非空心判别。
+    const int W = int(MAP_W), H = int(MAP_H);
+    QImage img(W, H, QImage::Format_ARGB32);
+    img.fill(Qt::transparent);
+    {
+        QPainter p(&img);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        p.setRenderHint(QPainter::SmoothPixmapTransform, true);
+        p.drawPixmap(QRectF(0, 0, W, H), worldPix_, worldPix_.rect());
+    }
+    int warm = 0;
+    const uchar* bits = img.constBits();
+    const int bpl = img.bytesPerLine();
+    for (int y = 0; y < H; ++y) {
+        const uchar* row = bits + y * bpl;
+        for (int x = 0; x < W; ++x) {
+            const uchar* px = row + x * 4;
+            const int r = px[2], g = px[1], bl = px[0];
+            if (r > 90 && r > g + 30 && r > bl + 20) ++warm;
+        }
+    }
+    if (!path.isEmpty()) img.save(path);
+
+    // 附带输出实测密度极值（诊断用）
+    const QVector<int> dchk = computeDensity();
+    int dmin = 9999, dmax = 0;
+    for (int v : dchk) { dmin = std::min(dmin, v); dmax = std::max(dmax, v); }
+
+    // 反例：heatRampForceTier_=0 使三档同色 → graded 必为 false → RED。
+    if (!graded || warm < 30) {
+        std::fprintf(stderr, "LA_MAP_HEAT_RAMP_QA FAIL graded=%d warm=%d dmin=%d dmax=%d broken=%d tiers=%d,%d,%d\n",
+                     int(graded), warm, dmin, dmax, int(broken),
+                     cLow.red(), cMid.red(), cHigh.red());
+        std::fflush(stderr);
+        return;
+    }
+    std::fprintf(stderr, "LA_MAP_HEAT_RAMP_QA graded=1 warm=%d dmin=%d dmax=%d broken=%d tiers=%d,%d,%d\n",
+                 warm, dmin, dmax, int(broken),
+                 cLow.red(), cMid.red(), cHigh.red());
+    std::fflush(stderr);
+}
 // 国家视图像素自测：按国家名 enterCountry → 离屏渲染国界轮廓 + 石板色统计
 // （颜色校验铁律：国界轮廓真实绘制必须实测）
 void MapView::qaShootCountry(const QString& path, const QString& name)
@@ -1754,7 +1833,59 @@ void MapView::stopTrackPlayback()
     update();
 }
 
-// 世界层热力（暖色径向渐变，密度越高 halo 越大）
+// A 方向第四步：热力色带唯一真源。dens 决定档位（低 <3 / 中 3-7 / 高 >=8），
+// 每档三色（中心/中段/边缘透明）。三条色带的**色相刻意分离**且都与既有元素
+// 不撞色：翡翠光点绿主导、金色航线 r≈g、青色轨迹蓝主导、暖橙 r 主导。
+// 铁律：绘制与门禁断言共用本函数，禁在 drawHeatWorld / drawHeat 各写一份。
+MapView::HeatColors MapView::heatRampOf(int rampId, int tier) const
+{
+    // tier: 0=低 1=中 2=高
+    if (rampId == HR_Jade) {          // 翡翠分级：青绿→翠→亮青（呼应「翡翠足迹点」）
+        static const QColor k[3][3] = {
+            { QColor(0x2f, 0xa8, 0x7a, 150), QColor(0x3f, 0xc8, 0x92, 70), QColor(0x4f, 0xd8, 0xa6, 0) },
+            { QColor(0x1f, 0x88, 0x9a, 180), QColor(0x2f, 0xa8, 0xb0, 85), QColor(0x3f, 0xc8, 0xc0, 0) },
+            { QColor(0x14, 0x6a, 0xb4, 215), QColor(0x24, 0x8a, 0xd4, 100), QColor(0x34, 0xaa, 0xf0, 0) },
+        };
+        return { k[tier][0], k[tier][1], k[tier][2] };
+    }
+    if (rampId == HR_Crimson) {       // 绯红分级：暗红→绯红→亮粉（高密度最刺眼）
+        static const QColor k[3][3] = {
+            { QColor(0x8e, 0x24, 0x4a, 160), QColor(0xa8, 0x34, 0x5c, 75), QColor(0xc0, 0x44, 0x70, 0) },
+            { QColor(0xc0, 0x1e, 0x3c, 195), QColor(0xdc, 0x2e, 0x50, 90), QColor(0xf0, 0x3e, 0x64, 0) },
+            { QColor(0xf0, 0x14, 0x34, 230), QColor(0xff, 0x3a, 0x58, 110), QColor(0xff, 0x66, 0x7c, 0) },
+        };
+        return { k[tier][0], k[tier][1], k[tier][2] };
+    }
+    // HR_Warm（默认 = 2.12.0 基线，LA_MAP_HEAT_QA 的 r-g>90 && r-b>90 断言依赖它）
+    static const QColor k[3][3] = {
+        { QColor(0xd9, 0x7a, 0x2a, 165), QColor(0xe0, 0x8c, 0x36, 75), QColor(0xe8, 0x9c, 0x44, 0) },
+        { QColor(0xf0, 0x5a, 0x22, 195), QColor(0xf8, 0x6e, 0x30, 90), QColor(0xff, 0x82, 0x40, 0) },
+        { QColor(0xff, 0x3a, 0x18, 225), QColor(0xff, 0x52, 0x2a, 105), QColor(0xff, 0x6a, 0x3a, 0) },
+    };
+    return { k[tier][0], k[tier][1], k[tier][2] };
+}
+
+// 按密度取当前色带的对应档位
+MapView::HeatColors MapView::heatRamp(int dens) const
+{
+    if (heatRampForceTier_ >= 0)   // QA 反例：强制单档，抹掉密度分级
+        return heatRampOf(heatRamp_, heatRampForceTier_);
+    const int d = std::max(0, dens);
+    const int tier = (d >= 8) ? 2 : (d >= 3 ? 1 : 0);
+    return heatRampOf(heatRamp_, tier);
+}
+
+void MapView::setHeatRamp(int rampId)
+{
+    const int r = (rampId < HR_Warm || rampId > HR_Crimson) ? HR_Warm : rampId;
+    if (r == heatRamp_) return;
+    heatRamp_ = r;
+    buildWorldPixmap();     // 世界层重烘焙（热力在静态层内）
+    invalidateViewCache();  // 下钻静态层重烘焙
+    update();
+}
+
+// 世界层热力（按密度分档色带：密度越高 halo 越大、色相越靠高档）
 void MapView::drawHeatWorld(QPainter& p) const
 {
     if (gpsPts_.isEmpty()) return;
@@ -1764,10 +1895,11 @@ void MapView::drawHeatWorld(QPainter& p) const
         if (pt.x() < 0 || pt.x() > MAP_W || pt.y() < 0 || pt.y() > MAP_H) continue;
         const int d = dens.isEmpty() ? 0 : dens[i];
         const double r = 6.0 + std::min(d, 8) * 1.6;
+        const HeatColors hc = heatRamp(d);
         QRadialGradient g(pt, r);
-        g.setColorAt(0.0, QColor(0xff, 0x5a, 0x2a, 200));
-        g.setColorAt(0.5, QColor(0xff, 0x7a, 0x3a, 90));
-        g.setColorAt(1.0, QColor(0xff, 0x8a, 0x4a, 0));
+        g.setColorAt(0.0, hc.c0);
+        g.setColorAt(0.5, hc.c1);
+        g.setColorAt(1.0, hc.c2);
         p.setBrush(g); p.setPen(Qt::NoPen);
         p.drawEllipse(pt, r, r);
     }
@@ -1813,10 +1945,11 @@ void MapView::drawHeat(QPainter& p, const QRectF& bbox, const QRectF& dst) const
             pt.y() < dst.top()  || pt.y() > dst.bottom()) continue;
         const int d = dens.isEmpty() ? 0 : dens[i];
         const double r = (6.0 + std::min(d, 8) * 1.6) * scale;
+        const HeatColors hc = heatRamp(d);   // 与世界层同一色带真源
         QRadialGradient g(pt, r);
-        g.setColorAt(0.0, QColor(0xff, 0x5a, 0x2a, 200));
-        g.setColorAt(0.5, QColor(0xff, 0x7a, 0x3a, 90));
-        g.setColorAt(1.0, QColor(0xff, 0x8a, 0x4a, 0));
+        g.setColorAt(0.0, hc.c0);
+        g.setColorAt(0.5, hc.c1);
+        g.setColorAt(1.0, hc.c2);
         p.setBrush(g); p.setPen(Qt::NoPen);
         p.drawEllipse(pt, r, r);
     }

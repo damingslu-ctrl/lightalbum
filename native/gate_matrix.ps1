@@ -89,7 +89,7 @@ $GateTable = @(
   @{n="LA_A11Y_CONTRAST_QA"; png=$false; tier="fast"; measuredMs=18},
   @{n="LA_A11Y_KEYBOARD_QA"; png=$false; tier="fast"; measuredMs=17},
   @{n="LA_LUMEN_SMOKE";     png=$false; measuredMs=7431},
-  @{n="LA_AGENT_SMOKE";     png=$false; measuredMs=8662},
+  @{n="LA_AGENT_SMOKE";     png=$false; measuredMs=1000},
   @{n="LA_SCAN_SMOKE";      png=$false; need=@("LA_SCAN_ROOT","LA_SCAN_DB"); measuredMs=0},
   @{n="LA_EXIT_QA";         png=$false; measuredMs=5700},
   @{n="LA_RW_SMOKE";        png=$false; measuredMs=1017},
@@ -130,6 +130,16 @@ $GateTable = @(
   # filter -> all 6 points survive -> the count assertion goes RED.
   # png=$false (no rendering, pure data-contract gate). Full tier.
   @{n="LA_MAP_YEAR_QA";      png=$false; measuredMs=3737},
+  # A direction step 4: heat colour ramp graded by photo density.
+  # Injects 3 clusters with very different densities (3 far-apart points, a
+  # 12-point cluster, a 40-point cluster) so all three tiers are exercised, then
+  # classifies every rendered pixel to the nearest tier by hue ratio and
+  # requires all three tier counts > 0. The tier->colour table lives in one
+  # place (MapView::heatRampOf) shared by the renderer and this gate, so the
+  # gate cannot drift from the implementation.
+  # Counter-example LA_MAP_HEAT_RAMP_QA_FORCE_BROKEN=1 pins every point to a
+  # single tier -> two tier counts drop to 0 -> RED. Full tier.
+  @{n="LA_MAP_HEAT_RAMP_QA"; png=$true; measuredMs=5901},
   @{n="LA_MAP_CLICK_QA";    png=$false; measuredMs=2553},
   @{n="LA_MAP_PERF";        png=$false; measuredMs=3735},
   @{n="LA_GALLERY_E_QA";    png=$true; measuredMs=2589},

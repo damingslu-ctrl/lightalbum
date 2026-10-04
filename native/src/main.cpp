@@ -69,7 +69,16 @@ int runAgentSmoke()
     }
     int pass = 1;
 
-    // ① 真实决策（Ollama 在线 → ollama；未装 → 自动 local 兜底，两者都算结构合法）
+    // ★门禁确定性：本门必须**不依赖本机 Ollama 是否在跑**。
+    // 实测历史波动：Ollama 在线时 decide() 真走在线推理，本门耗时 15.9–20.3s，
+    // 逼近 qaExit 看门狗 20s 预算 → 被误判为 no-exit-request 而红（环境态，非代码缺陷）。
+    // 正解：把 URL 指向**关闭端口**（127.0.0.1:9），强制走秒退兜底路径 →
+    // 耗时稳定在亚秒级，且断言与用户是否开 LLM 完全无关。
+    // 代价：不再覆盖「真实在线推理」这一路径 —— 但那属于集成测试，不适合进 PR 门禁。
+    const QByteArray savedLlmUrl = qgetenv("LA_LLM_URL");
+    qputenv("LA_LLM_URL", "http://127.0.0.1:9");
+
+    // ① 决策（指向关闭端口 → 350ms 探测后退到本地规则，结构仍须合法）
     const AgentContext ctx = LumenAgent::contextFrom(img, 3200, 0.0, QString());
     const AgentPlan real = LumenAgent::decide(ctx);
     bool realOk = real.ok && !real.params.isEmpty();
@@ -83,7 +92,7 @@ int runAgentSmoke()
                  qPrintable(real.reason));
     if (!realOk) pass = 0;
 
-    // ② 强制兜底：LLM 指向关闭端口 → 秒退到本地规则（350ms 探测）
+    // ② 强制兜底：同样指向关闭端口 → 秒退到本地规则
     const QByteArray savedUrl = qgetenv("LA_LLM_URL");
     qputenv("LA_LLM_URL", "http://127.0.0.1:9");
     const AgentPlan fb = LumenAgent::decide(LumenAgent::contextFrom(img, 3200, 0.0, QStringLiteral("通透")));
@@ -114,6 +123,9 @@ int runAgentSmoke()
 
     std::fprintf(stderr, "LA_AGENT_SMOKE %s real=%s fb=%s clamp=%d\n",
                  pass ? "PASS" : "FAIL", realOk ? "1" : "0", fbOk ? "1" : "0", clampOk ? 1 : 0);
+    // 还原环境（本门进程即将退出，但保持「探针不污染环境」的一致约定）
+    if (savedLlmUrl.isEmpty()) qunsetenv("LA_LLM_URL");
+    else                       qputenv("LA_LLM_URL", savedLlmUrl);
     std::fflush(stderr);
     return pass ? 0 : 1;
 }
@@ -2083,6 +2095,7 @@ int main(int argc, char *argv[])
         && !qEnvironmentVariableIsSet("LA_MAP_HEAT_QA")
         && !qEnvironmentVariableIsSet("LA_MAP_TRACK_ANIM_QA")
         && !qEnvironmentVariableIsSet("LA_MAP_YEAR_QA")
+        && !qEnvironmentVariableIsSet("LA_MAP_HEAT_RAMP_QA")
         && !qEnvironmentVariableIsSet("LA_GALLERY_E_QA")
         && !qEnvironmentVariableIsSet("LA_CULL_DUEL_QA")
         && !qEnvironmentVariableIsSet("LA_GALLERY_FILL_QA")
@@ -2275,6 +2288,18 @@ int main(int argc, char *argv[])
     if (!qEnvironmentVariableIsEmpty("LA_MAP_YEAR_QA")) {
         if (MapView* mv = win.mapView()) mv->qaShootYear(QString());
         std::fprintf(stderr, "LA_MAP_YEAR_QA_DONE\n");
+        std::fflush(stderr);
+        return 0;
+    }
+
+    // A 方向第四步·热力色带分级自测：LA_MAP_HEAT_RAMP_QA=<png> 时注入三簇密度迥异的
+    // 足迹点，断言低/中/高三档色相像素均 >0（密度分级生效）。
+    // FORCE_BROKEN 强制所有点同档 → 只剩一档 → RED。
+    if (!qEnvironmentVariableIsEmpty("LA_MAP_HEAT_RAMP_QA")) {
+        const QString p = qEnvironmentVariable("LA_MAP_HEAT_RAMP_QA");
+        QDir().mkpath(QFileInfo(p).absolutePath());
+        if (MapView* mv = win.mapView()) mv->qaShootHeatRamp(p);
+        std::fprintf(stderr, "LA_MAP_HEAT_RAMP_QA_DONE\n");
         std::fflush(stderr);
         return 0;
     }

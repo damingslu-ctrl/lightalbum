@@ -1339,5 +1339,21 @@ Errors: %1 — %2</translation>
         <source>沿轨迹按拍摄日期依次播放足迹（需先切到「轨迹」层）</source>
         <translation>Play the footprint track in capture-date order (switch to the Track layer first)</translation>
     </message>
+    <message>
+        <source>热力色带：按拍摄密度分级着色（需先切到「热力」层）</source>
+        <translation>Heat colour ramp: shaded by capture density (switch to the Heat layer first)</translation>
+    </message>
+    <message>
+        <source>暖橙</source>
+        <translation>Warm Orange</translation>
+    </message>
+    <message>
+        <source>翡翠</source>
+        <translation>Jade</translation>
+    </message>
+    <message>
+        <source>绯红</source>
+        <translation>Crimson</translation>
+    </message>
 </context>
 </TS>

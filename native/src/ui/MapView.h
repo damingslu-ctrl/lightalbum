@@ -75,6 +75,12 @@ public:
     void setFootYearFilter(int year);
     int  footYearFilter() const { return footYearFilter_; }
 
+    // A 方向第四步：热力色带（按密度分级）。rampId: 0=暖橙(默认,2.12 基线) 1=翡翠 2=绯红。
+    // 铁律：色带定义唯一真源 = heatRamp()，绘制与门禁共用（禁在两处各写一份颜色表）。
+    enum HeatRamp { HR_Warm = 0, HR_Jade = 1, HR_Crimson = 2 };
+    void setHeatRamp(int rampId);
+    int  heatRamp() const { return heatRamp_; }
+
     // A 方向第二步：轨迹播放（沿线按日期依次飞过播放头）
     void startTrackPlayback();          // 起播（已在播放则重置重来）
     void stopTrackPlayback();
@@ -83,6 +89,8 @@ public:
     void qaShootTrackAnim(const QString& path);
     // A 方向第三步：按年筛选自测（点数 + pts/paths/dates 下标对齐 + 幂等 + 0=全部）
     void qaShootYear(const QString& path);
+    // A 方向第四步：热力色带分级自测（三档色相各存在 + 切换后像素变化）
+    void qaShootHeatRamp(const QString& path);
 
     // P16.4.2 金色航线基点（「我的位置」，经纬度，默认上海）。设置后重新烘焙世界层。
     void setHomePoint(double lon, double lat);
@@ -168,6 +176,12 @@ private:
     void drawHeatWorld(QPainter& p) const;
     void drawTrajectory(QPainter& p, const QRectF& bbox, const QRectF& dst) const;  // 下钻层
     void drawHeat(QPainter& p, const QRectF& bbox, const QRectF& dst) const;
+    // A 方向第四步：热力色带唯一真源。返回 {中心色, 中段色, 边缘透明色}，
+    // 颜色按密度分三档（低/中/高）。绘制与门禁共用（禁在两处各写一份颜色表）。
+    struct HeatColors { QColor c0, c1, c2; };
+    HeatColors heatRamp(int dens) const;
+    // 选中的色带（每档三色），供门禁断言与 UI 预览共用
+    HeatColors heatRampOf(int rampId, int tier) const;
     // A 方向第二步：方向箭头（静态烘焙层内，一次栅格化）+ 播放头（动态层）
     void drawTrackArrows(QPainter& p, const QVector<QPointF>& pts) const;   // pts 已变换到目标坐标系
     void drawTrackPlayback(QPainter& p) const;                                // 动态层：播放头 + 拖尾
@@ -215,6 +229,8 @@ private:
     QVector<QDate>     gpsDates_;              // A 方向：与 gpsPts_ 逐点对齐的拍摄日期
     int                footLayer_ = FL_Dots;   // A 方向：足迹层模式（默认光点，零回归）
     int                footYearFilter_ = 0;    // A 方向第三步：按年筛选（0=全部年份）
+    int                heatRamp_ = HR_Warm;    // A 方向第四步：热力色带（默认暖橙=2.12 基线）
+    int                heatRampForceTier_ = -1; // QA 反例：>=0 时强制单档（抹掉密度分级）
 
     // A 方向第二步：轨迹播放状态（动态层，禁进静态烘焙层否则每帧重栅格化破 PERF）
     QTimer           trackTimer_;             // 16ms 驱动，播放期挂载、播完自停

@@ -133,6 +133,26 @@ MapPage::MapPage(const QVector<Photo>* photos, const QString& thumbsDir,
         view_->stopTrackPlayback();                    // 集合已变，旧的播放进度失效
     });
     bl->addWidget(yearBox_);
+    // A 方向第四步：热力色带（按密度分级）。仅热力层可用。
+    heatRampBox_ = new QComboBox(bar);
+    heatRampBox_->setCursor(Qt::PointingHandCursor);
+    heatRampBox_->setToolTip(QCoreApplication::translate(
+        "LightAlbum", "热力色带：按拍摄密度分级着色（需先切到「热力」层）"));
+    heatRampBox_->addItem(QCoreApplication::translate("LightAlbum", "暖橙"), 0);
+    heatRampBox_->addItem(QCoreApplication::translate("LightAlbum", "翡翠"), 1);
+    heatRampBox_->addItem(QCoreApplication::translate("LightAlbum", "绯红"), 2);
+    heatRampBox_->setStyleSheet(QStringLiteral(
+        "QComboBox{background:#131a15;border:1px solid #26312a;border-radius:9px;"
+        "padding:4px 8px;color:#d9e4dc;min-width:64px;}"
+        "QComboBox QAbstractItemView{background:#0e130f;color:#d9e4dc;"
+        "selection-background-color:#1d2a22;selection-color:#4fc08a;}"));
+    connect(heatRampBox_, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int) {
+        view_->setHeatRamp(heatRampBox_->currentData().toInt());
+    });
+    connect(footLayerGroup_, QOverload<int>::of(&QButtonGroup::idClicked),
+            this, [this](int id) { heatRampBox_->setEnabled(id == 2); });  // 仅热力层
+    bl->addWidget(heatRampBox_);
     ll->addWidget(bar);
 
     view_ = new MapView(left);

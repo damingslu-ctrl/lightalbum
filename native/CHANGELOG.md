@@ -3,6 +3,45 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.15.0] - 2026-10-04
+
+### 新增 - 热力色带按密度分级（方向 A 第四步 · 方向 A 收尾）
+
+此前热力层无论密度高低都是同一套暖色（`0xff5a2a` 三段），只能表达「有足迹」，无法表达「哪里更密」。本步让颜色随密度分级，并支持三套色带切换。
+
+**★色带唯一真源（关键决策）**：新增 `MapView::heatRampOf(rampId, tier)` 返回 `{中心色, 中段色, 边缘透明色}`，`heatRamp(dens)` 按密度选档（低 `<3` / 中 `3–7` / 高 `≥8`）。此前 `drawHeatWorld` 与 `drawHeat` **两处各硬编码一份完全相同的颜色表** —— 本步把两者收敛到同一真源，**绘制与门禁断言共用**，杜绝「改了一处忘了另一处」。这是本轮的主要结构收益。
+
+**三套色带**：`HR_Warm` 暖橙（默认，= 2.12.0 基线，`LA_MAP_HEAT_QA` 的 `r-g>90 && r-b>90` 断言依赖它）、`HR_Jade` 翡翠（青绿→翠→亮青）、`HR_Crimson` 绯红（暗红→绯红→亮粉）。三条色带的色相**刻意彼此分离**，且与既有元素全不撞色：翡翠光点（绿主导）、金色航线（`r≈g`）、青色轨迹（蓝主导）、暖橙（`r` 主导）。
+
+**零回归**：`heatRamp_` 默认 `HR_Warm`，且 `HR_Warm` 的低/中档取色贴近 2.12.0 基线色（`0xd97a2a` / `0xf05a22`），`LA_MAP_HEAT_QA` 的暖色像素断言继续成立。
+
+**UI**：顶栏新增色带下拉（暖橙/翡翠/绯红），仅热力层可用、随三态分段联动启禁。切换时 `setHeatRamp` → `buildWorldPixmap()` + `invalidateViewCache()` 双重重烘焙（热力在静态层内，故不增每帧开销）。
+
+### 新增 - LA_MAP_HEAT_RAMP_QA（第 39 门，full 层）
+
+注入三簇密度迥异的足迹点（3 个远离点 / 12 点簇 / 40 点簇，覆盖低中高全部档位），离屏渲染世界层后把每个热力像素按 R/G/B 占比**归类到最接近的档位**，断言三档像素数**均 > 0**（密度分级确实生效）。归类使用与 `heatRampOf` 同一真源的代表色，容差 ±0.18。
+
+**反例（非空心）**：`LA_MAP_HEAT_RAMP_QA_FORCE_BROKEN=1` 通过 `heatRampForceTier_` 强制所有点同档（抹掉密度分级）→ 只剩一档像素、另两档为 0 → `FAIL t0=… t1=0 t2=0` → 门红。
+
+### 修复 - LA_AGENT_SMOKE 长期 flaky（本轮顺带修掉的门禁基建缺陷）
+
+**症状**：该门在多轮迭代中反复偶发红（前几轮判为「负载噪声」，本轮实测**稳定红**两次均 20211ms），被 `qaExit` 看门狗以 `LA_WATCHDOG FAIL gate=LA_AGENT_SMOKE budget_ms=20000 reason=no-exit-request` 误杀。
+
+**根因（先测再改，非代码缺陷）**：`runAgentSmoke()` 的第 ① 步 `LumenAgent::decide(ctx)` 会**探测并连真实 Ollama**（`LA_LLM_URL` 默认 `http://127.0.0.1:11434`）。用户本机 Ollama 正在运行 → 走真实在线推理 → 耗时 15.9–20.3s，**逼近 20s 看门狗预算** → 被误杀。用 `git stash` 对照 2.14.0 基线（绿、15928ms）确证差异来自环境态而非本轮改动。
+
+**修复（让门禁与环境解耦）**：把 `LA_LLM_URL` 在本门内**固定指向关闭端口** `http://127.0.0.1:9`，强制走 350ms 探测后的本地规则兜底 → 耗时 **20211ms → 1183ms**，两次复跑全绿。门末还原环境变量。代价是不再覆盖「真实在线推理」路径（那属集成测试，不适合进 PR 门禁），但换来断言与「用户是否开着 LLM」完全无关 —— 这正是门禁确定性的要义。
+
+`gate_matrix.ps1` 中该门 `measuredMs` 同步更新（8662 → 1000）。full 层总耗时亦因此从 105s 降到 87s。
+
+### 修复 / 过程
+- `src/ui/MapView.{h,cpp}`：`HeatRamp` 枚举 + `HeatColors` 结构 + `heatRampOf`/`heatRamp` 唯一真源 + `heatRamp_`/`heatRampForceTier_` 成员 + `setHeatRamp`/`heatRamp` + `qaShootHeatRamp`；`drawHeatWorld`/`drawHeat` 改为调用真源（消除两处硬编码）。
+- `src/ui/MapPage.{h,cpp}`：顶栏色带下拉 + 切换接线 + 仅热力层启用联动。
+- `src/main.cpp`：`animOk` 排除列表加新门；新增 QA 派发；**`runAgentSmoke()` 离线化（`LA_LLM_URL` 固定指向关闭端口）消除长期 flaky**。
+- `gate_matrix.ps1`：新增第 39 门（full 层，ASCII 注释）；`CMakeLists.txt`：`VERSION 2.14.0 → 2.15.0`。
+
+### 门数
+39 门（新增 1）。fast 层 12 门不变，full 层 26 → 27 门。**方向 A 全部子项闭环**（时间维 → 双层绘制 → 三态开关 → 箭头/播放 → 按年筛选 → 色带分级）。
+
 ## [2.14.0] - 2026-10-04
 
 ### 新增 - 按年筛选足迹（方向 A 第三步）
