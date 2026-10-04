@@ -69,6 +69,13 @@ public:
     void setFootLayerMode(int mode);    // 0=光点 1=轨迹 2=热力
     int  footLayerMode() const { return footLayer_; }
 
+    // A 方向第二步：轨迹播放（沿线按日期依次飞过播放头）
+    void startTrackPlayback();          // 起播（已在播放则重置重来）
+    void stopTrackPlayback();
+    bool trackPlaying() const { return trackActive_; }
+    // A 方向第二步：轨迹播放像素自测（箭头 + 播放头三时刻位置断言）
+    void qaShootTrackAnim(const QString& path);
+
     // P16.4.2 金色航线基点（「我的位置」，经纬度，默认上海）。设置后重新烘焙世界层。
     void setHomePoint(double lon, double lat);
     double homeLon() const { return homeLon_; }
@@ -153,6 +160,12 @@ private:
     void drawHeatWorld(QPainter& p) const;
     void drawTrajectory(QPainter& p, const QRectF& bbox, const QRectF& dst) const;  // 下钻层
     void drawHeat(QPainter& p, const QRectF& bbox, const QRectF& dst) const;
+    // A 方向第二步：方向箭头（静态烘焙层内，一次栅格化）+ 播放头（动态层）
+    void drawTrackArrows(QPainter& p, const QVector<QPointF>& pts) const;   // pts 已变换到目标坐标系
+    void drawTrackPlayback(QPainter& p) const;                                // 动态层：播放头 + 拖尾
+    // 播放头在折线上的归一化位置（0..1）→ 预投影点；绘制与门禁共用的唯一真源。
+    // frac<0 或 >1 时钳到端点。纯函数（无副作用），故门禁断言与产品绘制必然同源。
+    QPointF trackPosAt(double frac) const;
 
     QPointF preToWidget(const QPointF& pre, const QRectF& dst, double scale,
                          double offX = 0) const;
@@ -193,6 +206,13 @@ private:
     QVector<QPointF>    gpsPts_;               // P16.4 真实照片 GPS 足迹点（预投影空间）
     QVector<QDate>     gpsDates_;              // A 方向：与 gpsPts_ 逐点对齐的拍摄日期
     int                footLayer_ = FL_Dots;   // A 方向：足迹层模式（默认光点，零回归）
+
+    // A 方向第二步：轨迹播放状态（动态层，禁进静态烘焙层否则每帧重栅格化破 PERF）
+    QTimer           trackTimer_;             // 16ms 驱动，播放期挂载、播完自停
+    QElapsedTimer    trackClock_;             // 播放计时（reduceMotion_ 下直接终态）
+    bool             trackActive_ = false;    // 播放中
+    qint64           trackTOverride_ = -1;    // QA：>=0 时强制播放时刻（0..1 归一化×kTrackDurMs）
+    static constexpr int kTrackDurMs = 2600;  // 单次播完总时长（按段数分配，见 trackPosAt）
     double              homeLon_ = 121.47;     // P16.4.2 航线基点（默认上海，经纬度）
     double              homeLat_ = 31.23;
     QStringList         arcRegionIds_;         // P16.4.2 有作品的大区（中心点为航线目标）

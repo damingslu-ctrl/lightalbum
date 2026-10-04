@@ -3,6 +3,39 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.13.0] - 2026-10-04
+
+### 新增 - 轨迹方向箭头 + 播放动画（方向 A 第二步）
+
+2.12.0 的轨迹层只有一条静态折线，无法表达「行进方向」与「按时间走过」。本步在不改动数据模型、不破坏性能预算的前提下补齐二者的表达。
+
+**方向箭头（静态烘焙层）**：新增 `drawTrackArrows(p, pts)`，在每段中点绘制一个朝向下一段的三角（`QPainterPath` 三点闭合，随段方向旋转，退化段 `len<1e-6` 跳过）。世界层注入 `drawTrajectoryWorld`、下钻层注入 `drawTrajectory`，**均落在既有一次性栅格化缓存内** → 不增加每帧开销。
+
+**播放头（动态层）**：新增 `drawTrackPlayback(p)` —— 翡翠实心芯 + 随进度收缩的脉冲环 + 身后 3 段递减拖尾。**铁律：播放头只在 `paintMap` 动态段调用，严禁进入 `bakeViewPix`/`buildWorldPixmap`** —— 否则每帧重栅格化整条轨迹，`LA_MAP_PERF` 预算会被击穿。
+
+**位置唯一真源**：`trackPosAt(frac)` 为纯函数，按**累计弧长**（非点序号）插值，使播放头匀速沿折线前进，frac 超出 `[0,1]` 钳到端点。产品绘制与门禁断言**共用同一函数**（契约同源铁律）→ 门禁不可能与实现漂移。
+
+**计时与降级**：`trackTimer_`(16ms) + `trackClock_`，仅播放期挂载、播完自停（不常驻空转）；`reduceMotion_` 为真时直接呈终态（末点脉冲驻留）而不空转。`startTrackPlayback()` 在非轨迹层或轨迹点 < 2 时拒绝起播；`setFootLayerMode` 离开轨迹层即 `stopTrackPlayback()`，防播放态残留到光点/热力层。
+
+**UI**：MapPage 顶栏新增「▶ 播放足迹」按钮（复用既有 jade 深色样式），点击切换播放/停止；**仅轨迹层可用**，随三态分段按钮联动启禁。文案走 `translate("LightAlbum", …)` 字面量直调（遵 2.12.0 铁律 16）。
+
+### 新增 - LA_MAP_TRACK_ANIM_QA（第 37 门，full 层）
+
+注入 5 个确定性 GPS 点 + 递增日期，两类断言：
+- **A 箭头存在性**：统计最亮一档青色像素（`b>235 && g>225 && r>170 && b>r+25`，比轨迹亮芯更亮）`> 0`。
+- **B 三时刻位置（核心，区分器）**：播放头在 `t=0 / t=mid / t=end` 的**两两位移均 > 8px**。这是「真沿线移动」与「原地闪」的唯一区分器 —— 只断言「有像素」会是空心断言。位移经 `trackPosAt()` 求出，与产品渲染同源。
+
+**反例（非空心）**：`LA_MAP_TRACK_ANIM_QA_FORCE_BROKEN=1` 把播放头钉死在首点 → 三时刻位置全等（位移全 0）→ `FAIL dPM=0.00 dEM=0.00 dPE=0.00` → 门红。
+
+### 修复 / 过程
+- `src/ui/MapView.{h,cpp}`：`trackTimer_`/`trackClock_`/`trackActive_`/`trackTOverride_`/`kTrackDurMs` 成员；`drawTrackArrows`/`drawTrackPlayback`/`trackPosAt`/`startTrackPlayback`/`stopTrackPlayback`/`qaShootTrackAnim`；构造函数接线播放时钟；`setFootLayerMode` 离层即停播；`paintMap` 动态段接入播放头。
+- `src/ui/MapPage.{h,cpp}`：顶栏「▶ 播放足迹」按钮 + 播放/停止切换 + 随三态分段联动启禁。
+- `src/main.cpp`：`animOk` 排除列表加新门；新增 QA 派发（镜像 `LA_MAP_HEAT_QA` 模板）。
+- `gate_matrix.ps1`：新增第 37 门（full 层，ASCII 注释，实测 `measuredMs`）；`CMakeLists.txt`：`VERSION 2.12.0 → 2.13.0`。
+
+### 门数
+37 门（新增 1）。fast 层 12 门不变，full 层 24 → 25 门。
+
 ## [2.12.0] - 2026-10-04
 
 ### 新增 - 足迹轨迹 / 热力双模式（方向 A 第一步：数据时间维 + 双层绘制 + 三态开关）

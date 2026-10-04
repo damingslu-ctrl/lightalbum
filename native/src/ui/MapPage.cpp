@@ -88,6 +88,25 @@ MapPage::MapPage(const QVector<Photo>* photos, const QString& thumbsDir,
     mkSeg(QCoreApplication::translate("LightAlbum", "热力"), 2);
     connect(footLayerGroup_, QOverload<int>::of(&QButtonGroup::idClicked),
             this, [this](int id) { view_->setFootLayerMode(id); });
+    // A 方向第二步：播放足迹（仅轨迹层可用；离开轨迹层即禁用）
+    trackPlayBtn_ = new QPushButton(
+        QCoreApplication::translate("LightAlbum", "▶ 播放足迹"), bar);
+    trackPlayBtn_->setCursor(Qt::PointingHandCursor);
+    trackPlayBtn_->setEnabled(false);
+    trackPlayBtn_->setToolTip(QCoreApplication::translate(
+        "LightAlbum", "沿轨迹按拍摄日期依次播放足迹（需先切到「轨迹」层）"));
+    trackPlayBtn_->setStyleSheet(QStringLiteral(
+        "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:9px;"
+        "padding:5px 12px;color:#4fc08a;}"
+        "QPushButton:hover{border-color:#4fc08a;}"
+        "QPushButton:disabled{color:#5a6b60;border-color:#1d2620;}"));
+    connect(trackPlayBtn_, &QPushButton::clicked, this, [this] {
+        if (view_->trackPlaying()) view_->stopTrackPlayback();
+        else                       view_->startTrackPlayback();
+    });
+    connect(footLayerGroup_, QOverload<int>::of(&QButtonGroup::idClicked),
+            this, [this](int id) { trackPlayBtn_->setEnabled(id == 1); });  // 仅轨迹层
+    bl->addWidget(trackPlayBtn_);
     ll->addWidget(bar);
 
     view_ = new MapView(left);

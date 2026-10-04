@@ -48,6 +48,7 @@ private:
     QPushButton* viewBtn_ = nullptr;
     QPushButton* playBtn_ = nullptr;    // 迭代 2：「▶ 播放本区作品」
     QButtonGroup* footLayerGroup_ = nullptr;   // A 方向：光点/轨迹/热力 三态分段开关
+    QPushButton* trackPlayBtn_ = nullptr;     // A 方向第二步：「▶ 播放足迹」
     const QVector<Photo>* photos_ = nullptr;
     QString     thumbsDir_;            // 缩略图目录（爆炸弹层取图用）
     QStringList lastCountryPaths_;      // 国家视图的该国 GPS 照片路径（播放按钮用）

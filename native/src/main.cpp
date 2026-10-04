@@ -2081,6 +2081,7 @@ int main(int argc, char *argv[])
         && !qEnvironmentVariableIsSet("LA_MAP_PERF")
         && !qEnvironmentVariableIsSet("LA_MAP_TRACK_QA")
         && !qEnvironmentVariableIsSet("LA_MAP_HEAT_QA")
+        && !qEnvironmentVariableIsSet("LA_MAP_TRACK_ANIM_QA")
         && !qEnvironmentVariableIsSet("LA_GALLERY_E_QA")
         && !qEnvironmentVariableIsSet("LA_CULL_DUEL_QA")
         && !qEnvironmentVariableIsSet("LA_GALLERY_FILL_QA")
@@ -2251,6 +2252,18 @@ int main(int argc, char *argv[])
         QDir().mkpath(QFileInfo(p).absolutePath());
         if (MapView* mv = win.mapView()) mv->qaShootHeat(p);
         std::fprintf(stderr, "LA_MAP_HEAT_QA_DONE\n");
+        std::fflush(stderr);
+        return 0;
+    }
+
+    // A 方向·足迹轨迹箭头/播放动画自测：LA_MAP_TRACK_ANIM_QA=<png> 时注入确定性足迹点，
+    // 断言箭头像素 > 0 且播放头在 t=0/mid/end 三时刻落于不同位置（证明真沿线移动）。
+    // FORCE_BROKEN 强制播放头恒回首点 → 三时刻全等 → RED。
+    if (!qEnvironmentVariableIsEmpty("LA_MAP_TRACK_ANIM_QA")) {
+        const QString p = qEnvironmentVariable("LA_MAP_TRACK_ANIM_QA");
+        QDir().mkpath(QFileInfo(p).absolutePath());
+        if (MapView* mv = win.mapView()) mv->qaShootTrackAnim(p);
+        std::fprintf(stderr, "LA_MAP_TRACK_ANIM_QA_DONE\n");
         std::fflush(stderr);
         return 0;
     }

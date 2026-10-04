@@ -109,6 +109,16 @@ $GateTable = @(
   # fail-safe default). measuredMs is filled in from qa_runner.ps1 -Timing.
   @{n="LA_MAP_TRACK_QA";    png=$true; measuredMs=3100},
   @{n="LA_MAP_HEAT_QA";     png=$true; measuredMs=3012},
+  # A direction step 2: track direction arrows + playback animation.
+  # Asserts arrow pixels > 0 AND that the playback head sits at THREE DIFFERENT
+  # positions at t=0 / t=mid / t=end (the discriminator between real motion along
+  # the polyline and a stationary blink -- a pixel-count-only check would be
+  # vacuous). Positions come from trackPosAt(), the same single source the
+  # product renderer uses, so the gate cannot drift from the implementation.
+  # Counter-example LA_MAP_TRACK_ANIM_QA_FORCE_BROKEN=1 pins the head to the
+  # first point -> all three positions equal -> RED. Full tier (offscreen
+  # MainWindow render, like the other map gates). measuredMs from -Timing.
+  @{n="LA_MAP_TRACK_ANIM_QA"; png=$true; measuredMs=3437},
   @{n="LA_MAP_CLICK_QA";    png=$false; measuredMs=2553},
   @{n="LA_MAP_PERF";        png=$false; measuredMs=3735},
   @{n="LA_GALLERY_E_QA";    png=$true; measuredMs=2589},

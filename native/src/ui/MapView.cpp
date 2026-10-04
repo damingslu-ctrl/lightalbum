@@ -99,6 +99,17 @@ MapView::MapView(QWidget* parent) : QWidget(parent)
         if (burstClock_.elapsed() > 1600) burstTimer_.stop();
     });
 
+    // A 方向第二步：轨迹播放时钟。仅播放期挂载、播完自停（不常驻空转）
+    connect(&trackTimer_, &QTimer::timeout, this, [this] {
+        if (!trackActive_) { trackTimer_.stop(); return; }
+        update();
+        if (trackClock_.elapsed() >= kTrackDurMs) {
+            trackTimer_.stop();
+            trackActive_ = false;   // 终态：末点脉冲驻留，update 收尾
+            update();
+        }
+    });
+
     emit breadcrumbChanged(breadcrumb());
 }
 
@@ -318,6 +329,7 @@ void MapView::setFootLayerMode(int mode)
     const int m = (mode < FL_Dots || mode > FL_Heat) ? FL_Dots : mode;
     if (m == footLayer_) return;
     footLayer_ = m;
+    if (m != FL_Track) stopTrackPlayback();   // 离开轨迹层即停播（防播放态残留到光点/热力）
     buildWorldPixmap();     // 世界层重烘焙（含轨迹/热力）
     invalidateViewCache();  // 下钻静态层下次 paint 重烘焙
     update();
@@ -795,6 +807,82 @@ void MapView::qaShootHeat(const QString& path)
     }
     if (!path.isEmpty()) img.save(path);
     std::fprintf(stderr, "LA_MAP_HEAT_QA warmPx=%d points=%d broken=%d\n", warm, gpsPts_.size(), int(broken));
+    std::fflush(stderr);
+}
+
+// A 方向第二步：轨迹箭头 + 播放头像素/位置自测。
+// 断言 A：箭头像素 > 0（B 主导的三角，沿轨迹分布）。
+// 断言 B（核心）：播放头在 t=0 / t=mid / t=end 三时刻**必须落在不同位置** ——
+//   这是「真沿线移动」与「原地闪」的区分器；只断言「有像素」会是空心断言。
+//   位置经 trackPosAt()（与产品绘制同一真源）求出，FORCE_BROKEN 强制 frac 恒 0
+//   → 三时刻全等 → 反例必红。
+void MapView::qaShootTrackAnim(const QString& path)
+{
+    const bool broken = !qEnvironmentVariableIsEmpty("LA_MAP_TRACK_ANIM_QA_FORCE_BROKEN");
+    footLayer_ = FL_Track;
+    arcRegionIds_.clear();
+    gpsDates_.clear();
+    for (int i = 0; i < 5; ++i) gpsDates_.append(QDate(2024, 1, 1 + i));
+    setGpsPoints({
+        QPointF(eqX(116.40), eqY(39.90)),
+        QPointF(eqX(121.47), eqY(31.23)),
+        QPointF(eqX(113.26), eqY(23.13)),
+        QPointF(eqX(104.07), eqY(30.57)),
+        QPointF(eqX(87.62),  eqY(43.82)),
+    });
+
+    // 播放头三时刻位置（经唯一真源 trackPosAt；FORCE_BROKEN 时恒回首点 → 三者全等）
+    QPointF p0, pM, pE;
+    if (broken) {
+        p0 = pM = pE = trackPosAt(0.0);
+    } else {
+        p0 = trackPosAt(0.0);
+        pM = trackPosAt(0.5);
+        pE = trackPosAt(1.0);
+    }
+    const double dPM = std::hypot(pM.x() - p0.x(), pM.y() - p0.y());   // 首→中位移
+    const double dEM = std::hypot(pE.x() - pM.x(), pE.y() - pM.y());   // 中→末位移
+    const double dPE = std::hypot(pE.x() - p0.x(), pE.y() - p0.y());   // 首→末位移
+
+    // 箭头像素统计：离屏渲染世界层（footLayer=Track → 轨迹+箭头进烘焙层）
+    const int W = int(MAP_W), H = int(MAP_H);
+    QImage img(W, H, QImage::Format_ARGB32);
+    img.fill(Qt::transparent);
+    {
+        QPainter p(&img);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        p.setRenderHint(QPainter::SmoothPixmapTransform, true);
+        p.drawPixmap(QRectF(0, 0, W, H), worldPix_, worldPix_.rect());
+    }
+    // 箭头用比轨迹更亮的青白（0xbf,0xf0,0xff → b 显著高于轨迹亮芯），
+    // 统计「最亮一档」的青色像素作为箭头存在性证据。
+    int arrow = 0;
+    const uchar* bits = img.constBits();
+    const int bpl = img.bytesPerLine();
+    for (int y = 0; y < H; ++y) {
+        const uchar* row = bits + y * bpl;
+        for (int x = 0; x < W; ++x) {
+            const uchar* px = row + x * 4;
+            const int b = px[0], g = px[1], r = px[2];
+            if (b > 235 && g > 225 && r > 170 && b > r + 25) ++arrow;
+        }
+    }
+    if (!path.isEmpty()) img.save(path);
+
+    // 判定：箭头像素 > 0，且三时刻两两位移均超过阈值（阈值按折线总长 ~ 实测尺度给 8px）
+    const double thr = 8.0;
+    const bool arrowOk = arrow > 0;
+    const bool moveOk = (dPM > thr) && (dEM > thr) && (dPE > thr);
+    if (!arrowOk || !moveOk) {
+        std::fprintf(stderr,
+            "LA_MAP_TRACK_ANIM_QA FAIL arrow=%d dPM=%.2f dEM=%.2f dPE=%.2f thr=%.1f broken=%d\n",
+            arrow, dPM, dEM, dPE, thr, int(broken));
+        std::fflush(stderr);
+        return;
+    }
+    std::fprintf(stderr,
+        "LA_MAP_TRACK_ANIM_QA arrow=%d dPM=%.2f dEM=%.2f dPE=%.2f broken=%d\n",
+        arrow, dPM, dEM, dPE, int(broken));
     std::fflush(stderr);
 }
 
@@ -1447,6 +1535,144 @@ void MapView::drawTrajectoryWorld(QPainter& p) const
     p.setPen(QPen(QColor(0x7f, 0xe0, 0xff), 1.3));      p.drawPath(path);  // 亮芯
     p.setPen(QPen(QColor(0xbf, 0xf0, 0xff), 1.0)); p.setBrush(Qt::NoBrush);
     for (int i = 0; i < ord.size(); ++i) p.drawEllipse(gpsPts_[ord[i]], 1.6, 1.6);
+    // A 方向第二步：方向箭头（静态层，一次栅格化）
+    QVector<QPointF> w;
+    w.reserve(ord.size());
+    for (int i : ord) w.append(gpsPts_[i]);
+    drawTrackArrows(p, w);
+}
+
+// 方向箭头：每段中点画一个朝向下一段的三角（静态烘焙层内，随轨迹一起栅格化）。
+// pts 已变换到目标坐标系（世界层=预投影；下钻层=已乘 scale 的 widget 坐标）。
+void MapView::drawTrackArrows(QPainter& p, const QVector<QPointF>& pts) const
+{
+    if (pts.size() < 2) return;
+    p.save();
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(0xbf, 0xf0, 0xff, 210));
+    for (int i = 0; i + 1 < pts.size(); ++i) {
+        const QPointF a = pts[i], b = pts[i + 1];
+        const double dx = b.x() - a.x(), dy = b.y() - a.y();
+        const double len = std::sqrt(dx * dx + dy * dy);
+        if (len < 1e-6) continue;                 // 退化段（重合点）不画
+        const QPointF mid((a.x() + b.x()) / 2.0, (a.y() + b.y()) / 2.0);
+        const double ux = dx / len, uy = dy / len; // 单位方向
+        const double L = 3.4, Wd = 2.3;           // 箭头长 / 半宽
+        QPainterPath tri;
+        tri.moveTo(mid + QPointF(ux * L, uy * L));                       // 尖（朝前）
+        tri.lineTo(mid + QPointF(-ux * L * 0.5 - uy * Wd, -uy * L * 0.5 + ux * Wd));
+        tri.lineTo(mid + QPointF(-ux * L * 0.5 + uy * Wd, -uy * L * 0.5 - ux * Wd));
+        tri.closeSubpath();
+        p.drawPath(tri);
+    }
+    p.restore();
+}
+
+// 播放头归一化位置 → 预投影点。frac∈[0,1] 按「累计弧长」插值（非按点序号），
+// 使匀速沿折线前进。超出范围钳到端点。绘制与门禁断言共用本函数（契约同源铁律）。
+QPointF MapView::trackPosAt(double frac) const
+{
+    const QVector<int> ord = sortedTrackIdx();
+    if (ord.isEmpty()) return QPointF();
+    if (ord.size() == 1) return gpsPts_[ord[0]];
+    const double f = std::max(0.0, std::min(1.0, frac));
+    // 累计弧长
+    QVector<double> acc(ord.size(), 0.0);
+    for (int i = 1; i < ord.size(); ++i) {
+        const QPointF a = gpsPts_[ord[i - 1]], b = gpsPts_[ord[i]];
+        const double dx = b.x() - a.x(), dy = b.y() - a.y();
+        acc[i] = acc[i - 1] + std::sqrt(dx * dx + dy * dy);
+    }
+    const double total = acc.last();
+    if (total < 1e-9) return gpsPts_[ord.first()];   // 全部重合
+    const double target = f * total;
+    for (int i = 1; i < ord.size(); ++i) {
+        if (target <= acc[i]) {
+            const double segLen = acc[i] - acc[i - 1];
+            const double localT = segLen < 1e-9 ? 0.0 : (target - acc[i - 1]) / segLen;
+            const QPointF a = gpsPts_[ord[i - 1]], b = gpsPts_[ord[i]];
+            return a + (b - a) * localT;
+        }
+    }
+    return gpsPts_[ord.last()];
+}
+
+// 播放头（动态层）：翡翠高亮圆 + 外扩脉冲环 + 身后拖尾。
+// 铁律：本函数只在 paintMap 动态段调用，**禁**进 bakeViewPix/buildWorldPixmap ——
+// 否则每帧重栅格化整条轨迹，LA_MAP_PERF 预算会被击穿。
+void MapView::drawTrackPlayback(QPainter& p) const
+{
+    if (footLayer_ != FL_Track) return;           // 仅轨迹层播放
+    const QVector<int> ord = sortedTrackIdx();
+    if (ord.size() < 2) return;
+    // 播放进度：reduceMotion_ 或非播放态 → 终态（1.0，末点脉冲驻留）
+    double frac = 1.0;
+    if (trackActive_ && !reduceMotion_) {
+        const double e = double(trackClock_.elapsed()) / double(kTrackDurMs);
+        frac = std::max(0.0, std::min(1.0, e));
+    }
+    if (trackTOverride_ >= 0) frac = std::max(0.0, std::min(1.0, trackTOverride_ / double(kTrackDurMs)));
+    const QPointF pos = trackPosAt(frac);
+
+    const QRectF dst = rect().adjusted(8, 8, -8, -8);
+    QPointF w = pos;
+    if (level_ == World) {
+        // 世界层：与 buildWorldPixmap 同变换（scale + 漂移 + 纵向偏移）
+        const double scale = dst.height() / MAP_H * worldZoom_;
+        w = preToWidget(pos, dst, scale, -driftPx_);
+        w.ry() += worldOffYClamped() * scale;
+    } else {
+        double s = 1;
+        const QPointF o = viewOrigin(curViewBbox_, dst, s);
+        w = o + pos * s;
+    }
+    p.save();
+    p.setClipRect(dst);
+    // 拖尾：沿轨迹回溯 3 段递减半径的半透明点（示意来路）
+    for (int k = 3; k >= 1; --k) {
+        const double f2 = std::max(0.0, frac - 0.035 * k);
+        QPointF t = trackPosAt(f2);
+        QPointF tw = t;
+        if (level_ == World) {
+            const double scale = dst.height() / MAP_H * worldZoom_;
+            tw = preToWidget(t, dst, scale, -driftPx_);
+            tw.ry() += worldOffYClamped() * scale;
+        } else {
+            double s = 1;
+            const QPointF o = viewOrigin(curViewBbox_, dst, s);
+            tw = o + t * s;
+        }
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(0x5f, 0xdc, 0xa6, 60 * (4 - k) / 3));
+        p.drawEllipse(tw, 2.0 + k * 0.5, 2.0 + k * 0.5);
+    }
+    // 脉冲环（随进度收缩）
+    const double pulse = trackActive_ && !reduceMotion_
+        ? std::fmod(trackClock_.elapsed() / 260.0, 1.0) : 1.0;
+    p.setPen(QPen(QColor(0x5f, 0xdc, 0xa6, 200), 1.6));
+    p.setBrush(Qt::NoBrush);
+    p.drawEllipse(w, 4.0 + pulse * 5.0, 4.0 + pulse * 5.0);
+    // 实心芯
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(0x9f, 0xf2, 0xcf));
+    p.drawEllipse(w, 3.2, 3.2);
+    p.restore();
+}
+
+void MapView::startTrackPlayback()
+{
+    if (footLayer_ != FL_Track || sortedTrackIdx().size() < 2) return;  // 无轨迹/非轨迹层不播
+    trackClock_.restart();
+    trackActive_ = true;
+    if (!reduceMotion_) trackTimer_.start(16);   // 减弱动效：直接终态，不空转
+    update();
+}
+
+void MapView::stopTrackPlayback()
+{
+    trackActive_ = false;
+    trackTimer_.stop();
+    update();
 }
 
 // 世界层热力（暖色径向渐变，密度越高 halo 越大）
@@ -1485,7 +1711,12 @@ void MapView::drawTrajectory(QPainter& p, const QRectF& bbox, const QRectF& dst)
     p.setPen(QPen(QColor(0x7f, 0xe0, 0xff), 1.4));      p.drawPath(path);
     p.setPen(QPen(QColor(0xbf, 0xf0, 0xff), 1.0)); p.setBrush(Qt::NoBrush);
     for (int i = 0; i < ord.size(); ++i) p.drawEllipse(o + gpsPts_[ord[i]] * scale, 2.2, 2.2);
+    // A 方向第二步：方向箭头（静态层，随下钻静态层一起栅格化）
+    QVector<QPointF> w;
+    w.reserve(ord.size());
+    for (int i : ord) w.append(o + gpsPts_[i] * scale);
     p.restore();
+    drawTrackArrows(p, w);
 }
 
 // 下钻层热力
@@ -1647,6 +1878,9 @@ void MapView::paintMap(QPainter& p)
     const bool burstView = (level_ == Province && hasCurProvince_) || (level_ == Region);
     if (burstView && burstActive_)
         drawBurst(p, dst);   // 爆炸弹层：金色连线 + 照片卡 + 冲击波（省视图/国家视图共用）
+
+    // A 方向第二步：轨迹播放头（动态层 —— 禁入 bakeViewPix，否则每帧重栅格化破 PERF）
+    drawTrackPlayback(p);
 
     if (level_ == World)
         drawLegend(p);   // 很精细：世界视图图例
