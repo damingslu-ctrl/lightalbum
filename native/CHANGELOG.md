@@ -3,6 +3,31 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.11.1] - 2026-10-04
+
+### 修复 - i18n 默认路径在中文 Windows 误载英文翻译器（debug 客户端「界面显示异常」根因）
+
+**问题**：2.10.0 引入的中英双语 i18n 在部分中文 Windows 上**整屏 UI 变成英文**——「区域统计 / 已分析 / 摄影日志」等核心文案全部回退为 `No Image / Original / Edited / Photo Log` 英译，用户报告"好多之前没问题的现在出现问题了"。
+
+**根因（铁证）**：原默认路径判定用 `QLocale::system().language() != QLocale::Chinese` 决定是否加载 `:/i18n/LightAlbum_en.qm`。Qt6 的 `language()` 返回的是**"区域格式"（locale for formatting）**语言，受 Windows「区域 → 管理 → 非 Unicode 程序的语言」/ 独立区域格式设置影响；在**显示语言为中文、区域格式被设为英语**的机器上会**误返 `English`**（本机实测 `lang=1` 即 English，而 `uiLanguages()` 居首为 `zh-Hans-CN`）。于是中文系统被误判为「非中文」→ 强制加载英文翻译器 → 全 UI 英文化。这是**纯判定缺陷**，与翻译文件本身无关。
+
+**修复**：新增纯函数 `laI18nShouldLoadEn(forced, loc)` 作为语言决策唯一真源：
+- 若 `LA_I18N_LANG` 显式设置（`en`/`zh`），**优先**于系统 locale（便于强制/测试）；
+- 否则 `language()==Chinese` 或 `uiLanguages()` 任一含 `zh*` → 保持原生中文 UI（不加载）；
+- 仅当系统既非中文 locale、`uiLanguages()` 也无 `zh*` 时，才加载英文。
+
+`uiLanguages()` 对应 `GetUserPreferredUILanguages`，反映 OS **显示语言**列表，语义正确，弥补 `language()` 的盲区。中文默认不加载翻译器 → 原生 UI 零回归（与 2.10.0 设计一致）。
+
+**门禁升级**：`LA_I18N_QA`（第 32 门，fast 层）由原 4 条「翻译正确性」断言**扩至 9 条**——在 4 条翻译断言之后，新增 5 条「构造-locale 决策」断言，把 2.10.0 漏测的默认路径焊进门禁（`zh_CN→不加载`、`zh_TW→不加载`、`en_US→加载`、`forced=en` 覆盖系统、`forced=zh` 显式保持中文）。反例 `LA_I18N_QA_FORCE_BROKEN=1` 仍非空心（不加载翻译器 → 4 串全 FAIL）。
+
+### 修复 / 过程
+- `src/main.cpp`：新增 `laI18nShouldLoadEn()` 纯函数；默认加载块改用该函数替代 `language()!=Chinese` 判定；`LA_I18N_QA` 门由 4 断言扩至 9 断言（含 5 条决策断言）。
+- `CMakeLists.txt`：`VERSION 2.11.0 → 2.11.1`。
+- `gate_matrix.ps1`：`LA_I18N_QA` 注释补记决策断言（`tier="fast"` / `measuredMs=210` 不变）。
+
+### 门数
+34 门（无新增门）。fast 层 12 门不变。回归：重建后 `LA_I18N_QA PASS entries=9`（含 5 决策断言全过）；修复前 exe 实测 `LA_I18N_DEBUG lang=1 ui=zh-Hans-CN,... loadEn=1 translator=en installed`（复现误载），修复后 `loadEn=0` 且无 `translator=en installed` 行（中文 UI 恢复）。`LA_SCALE_PERF ctrls=60` / `LA_GALLERY_E_QA featureOK=1` 全绿；图库离屏 grab 仅 2 缩略图为探针假象（虚拟化未触发布局），非真实回归。
+
 ## [2.11.0] - 2026-10-04
 
 ### 变更 - 无障碍 a11y（方向 F 第三步：键盘可达 + 对比度合规）

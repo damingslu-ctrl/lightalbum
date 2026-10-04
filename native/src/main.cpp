@@ -1552,6 +1552,25 @@ static int runExitQa()
 
 } // namespace
 
+// i18n 语言决策（纯函数，2.11.1 修复）：是否加载英文翻译器。
+// forced 非空时以其为准（"en"* -> true，其余 -> false）；否则判系统「显示语言」：
+// language()==Chinese 或 uiLanguages() 含 zh* -> 中文用户 -> 保持原生中文 UI（不加载）。
+// ★ 根因：Qt6 的 QLocale::system().language() 在部分中文 Windows 上返回的并非
+//   显示语言（本机 zh-CN 显示语言曾被误判为非中文 -> 全 UI 误载 en 翻译器）。
+//   uiLanguages() 反映 OS 显示语言列表（GetUserPreferredUILanguages），语义正确。
+static bool laI18nShouldLoadEn(const QByteArray& forced, const QLocale& loc)
+{
+    if (!forced.isEmpty())
+        return forced.startsWith("en");
+    if (loc.language() == QLocale::Chinese)
+        return false;
+    const QStringList ui = loc.uiLanguages();
+    for (const QString& u : ui) {
+        if (u.startsWith(QLatin1String("zh"), Qt::CaseInsensitive))
+            return false;
+    }
+    return true;
+}
 
 int main(int argc, char *argv[])
 {
@@ -1687,8 +1706,31 @@ int main(int argc, char *argv[])
         i18nCheck("修后", QStringLiteral("Edited"));
         i18nCheck("摄影日志", QStringLiteral("Photo Log"));
 
+        // 默认路径语言决策断言（2.11.1）：构造 locale 跨机确定性——
+        // zh 系显示语言必须不加载 en（本事故根因）；en 系必须加载；forced 覆盖优先。
+        struct I18nDecisionCase { const char* forced; const char* locName; bool expectLoad; };
+        const I18nDecisionCase decisions[] = {
+            { "",     "zh_CN", false },
+            { "",     "zh_TW", false },
+            { "",     "en_US", true  },
+            { "en",   "zh_CN", true  },   // forced 优先于系统 locale（门禁注入路径）
+            { "zh",   "en_US", false },   // forced 显式 zh -> 保持中文
+        };
+        for (const I18nDecisionCase& dc : decisions) {
+            const bool got = laI18nShouldLoadEn(QByteArray(dc.forced),
+                                                QLocale(QString::fromLatin1(dc.locName)));
+            if (got != dc.expectLoad) {
+                ok = false;
+                fails << QStringLiteral("decision forced=%1 loc=%2 got=%3 expect=%4")
+                         .arg(QString::fromLatin1(dc.forced[0] == '\0' ? "<empty>" : dc.forced),
+                              QString::fromLatin1(dc.locName))
+                         .arg(got ? 1 : 0)
+                         .arg(dc.expectLoad ? 1 : 0);
+            }
+        }
+
         if (ok) {
-            std::fprintf(stderr, "LA_I18N_QA PASS entries=4\n");
+            std::fprintf(stderr, "LA_I18N_QA PASS entries=9\n");
         } else {
             std::fprintf(stderr, "LA_I18N_QA FAIL %s\n", qPrintable(fails.join(QLatin1Char(' '))));
         }
@@ -1759,14 +1801,13 @@ int main(int argc, char *argv[])
     // 中文（简/繁）保持原生文案 → 不加载翻译器 → 零回归；其余语言加载 :/i18n/LightAlbum_en.qm。
     // 资源由 i18n.qrc 嵌入 exe，Headless 门禁随取随用。可用 LA_I18N_LANG=en|zh 强制覆盖。
     {
-        bool loadEn = true;
-        const QByteArray forced = qgetenv("LA_I18N_LANG");
-        if (!forced.isEmpty()) {
-            loadEn = forced.startsWith("en");
-        } else {
-            const QLocale loc = QLocale::system();
-            loadEn = (loc.language() != QLocale::Chinese);
-        }
+        const QLocale sysLoc = QLocale::system();
+        const bool loadEn = laI18nShouldLoadEn(qgetenv("LA_I18N_LANG"), sysLoc);
+        if (!qEnvironmentVariableIsEmpty("LA_I18N_DEBUG"))
+            std::fprintf(stderr, "LA_I18N_DEBUG lang=%d ui=%s loadEn=%d\n",
+                         int(sysLoc.language()),
+                         qPrintable(sysLoc.uiLanguages().join(QLatin1Char(','))),
+                         int(loadEn));
         if (loadEn) {
             static QTranslator i18nTranslator;
             if (i18nTranslator.load(QStringLiteral(":/i18n/LightAlbum_en.qm"))) {
