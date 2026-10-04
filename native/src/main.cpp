@@ -2082,6 +2082,7 @@ int main(int argc, char *argv[])
         && !qEnvironmentVariableIsSet("LA_MAP_TRACK_QA")
         && !qEnvironmentVariableIsSet("LA_MAP_HEAT_QA")
         && !qEnvironmentVariableIsSet("LA_MAP_TRACK_ANIM_QA")
+        && !qEnvironmentVariableIsSet("LA_MAP_YEAR_QA")
         && !qEnvironmentVariableIsSet("LA_GALLERY_E_QA")
         && !qEnvironmentVariableIsSet("LA_CULL_DUEL_QA")
         && !qEnvironmentVariableIsSet("LA_GALLERY_FILL_QA")
@@ -2264,6 +2265,16 @@ int main(int argc, char *argv[])
         QDir().mkpath(QFileInfo(p).absolutePath());
         if (MapView* mv = win.mapView()) mv->qaShootTrackAnim(p);
         std::fprintf(stderr, "LA_MAP_TRACK_ANIM_QA_DONE\n");
+        std::fflush(stderr);
+        return 0;
+    }
+
+    // A 方向第三步·按年筛选自测：LA_MAP_YEAR_QA=1 时注入跨年份确定性 GPS 点，
+    // 断言筛选后点数、pts/paths/dates 下标对齐（国家视图依赖）、幂等、0=全部。
+    // FORCE_BROKEN 让注入点过滤失效 → 点数为全量 → RED。
+    if (!qEnvironmentVariableIsEmpty("LA_MAP_YEAR_QA")) {
+        if (MapView* mv = win.mapView()) mv->qaShootYear(QString());
+        std::fprintf(stderr, "LA_MAP_YEAR_QA_DONE\n");
         std::fflush(stderr);
         return 0;
     }

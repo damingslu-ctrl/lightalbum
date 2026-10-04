@@ -324,6 +324,15 @@ void MapView::setGpsDates(const QVector<QDate>& dates)
     gpsDates_ = dates;
 }
 
+// A 方向第三步：按年筛选。数据侧已按年过滤（注入点），此处只记录当前筛选态供 UI 回显
+// 与门禁断言；重复设置同一年不重烘焙（幂等）。
+void MapView::setFootYearFilter(int year)
+{
+    if (footYearFilter_ == year) return;
+    footYearFilter_ = year;
+    update();
+}
+
 void MapView::setFootLayerMode(int mode)
 {
     const int m = (mode < FL_Dots || mode > FL_Heat) ? FL_Dots : mode;
@@ -810,8 +819,7 @@ void MapView::qaShootHeat(const QString& path)
     std::fflush(stderr);
 }
 
-// A 方向第二步：轨迹箭头 + 播放头像素/位置自测。
-// 断言 A：箭头像素 > 0（B 主导的三角，沿轨迹分布）。
+    // A 方向第二步：轨迹箭头 + 播放头像素/位置自测。// 断言 A：箭头像素 > 0（B 主导的三角，沿轨迹分布）。
 // 断言 B（核心）：播放头在 t=0 / t=mid / t=end 三时刻**必须落在不同位置** ——
 //   这是「真沿线移动」与「原地闪」的区分器；只断言「有像素」会是空心断言。
 //   位置经 trackPosAt()（与产品绘制同一真源）求出，FORCE_BROKEN 强制 frac 恒 0
@@ -883,6 +891,77 @@ void MapView::qaShootTrackAnim(const QString& path)
     std::fprintf(stderr,
         "LA_MAP_TRACK_ANIM_QA arrow=%d dPM=%.2f dEM=%.2f dPE=%.2f broken=%d\n",
         arrow, dPM, dEM, dPE, int(broken));
+    std::fflush(stderr);
+}
+
+// A 方向第三步：按年筛选自测。注入跨年份确定性 GPS 点，断言
+//   A 可见点数：筛选 2024 后 gpsPts_ 只剩该年点（FORCE_BROKEN 下失效 → 全量）
+//   B 下标对齐：gpsPts_.size() == gpsPaths_.size() == gpsDates_.size()
+//     （铁律：国家视图 gpsPaths_[i] 依赖该对齐，筛选若只动其一即错位）
+//   C 筛选态可读：setFootYearFilter 幂等 + 0 表示全部
+void MapView::qaShootYear(const QString& path)
+{
+    Q_UNUSED(path);
+    const bool broken = !qEnvironmentVariableIsEmpty("LA_MAP_YEAR_QA_FORCE_BROKEN");
+    // 构造 6 点：2019×2 / 2021×2 / 2024×2，年份与点一一对应
+    struct Row { int year; double lon, lat; };
+    const Row rows[6] = {
+        {2019, 116.40, 39.90}, {2019, 121.47, 31.23},
+        {2021, 113.26, 23.13}, {2021, 104.07, 30.57},
+        {2024,  87.62, 43.82}, {2024, 116.40, 39.90},
+    };
+    const int targetYear = 2024;
+    const int expectKept = 2;      // 2024 的点数
+    const int expectAll  = 6;      // 未筛选的总点数
+
+    auto inject = [&](int yearFilter) {
+        QVector<QPointF> pts;
+        QStringList paths;
+        QVector<QDate> dates;
+        for (int i = 0; i < 6; ++i) {
+            if (yearFilter > 0 && rows[i].year != yearFilter) continue;   // 注入点过滤
+            pts.append(QPointF(eqX(rows[i].lon), eqY(rows[i].lat)));
+            paths.append(QStringLiteral("synthetic/%1.jpg").arg(i));
+            dates.append(QDate(rows[i].year, 1, 1 + (i % 4)));
+        }
+        setGpsPoints(pts);
+        setGpsPaths(paths);
+        setGpsDates(dates);
+    };
+    // 反例注入：仍按 targetYear 注入数据，但**跳过注入点过滤**（模拟筛选彻底失效的缺陷）
+    inject(broken ? 0 : targetYear);
+    // 筛选态照常设定为 targetYear（缺陷场景下 UI 认为是 2024，实际数据未过滤）
+    setFootYearFilter(targetYear);
+
+    const int nPts    = gpsPts_.size();
+    const int nPaths  = gpsPaths_.size();
+    const int nDates  = gpsDates_.size();
+    const int yearNow = footYearFilter_;
+    // ★期望值恒为 expectKept，**绝不随 broken 变化** —— 否则反例会自证通过（空心门禁）。
+    // 反例须让 nPts(=6) 与 expect(=2) 相等 → 不等 → RED。
+    const bool countOk = (nPts == expectKept);
+    const bool yearOk  = (yearNow == targetYear);   // 筛选态本身必须生效
+    const bool alignOk = (nPts == nPaths) && (nPts == nDates);
+    // 幂等：重复设置同一年不改变态
+    setFootYearFilter(targetYear);
+    const bool idemOk = (footYearFilter_ == targetYear);
+    // 全部年份（0）应恢复全量 —— 反例下同样要求，证明 0 是真「全部」而非绕过筛选
+    inject(0);
+    setFootYearFilter(0);
+    const int nAll = gpsPts_.size();
+    const bool allOk = (nAll == expectAll);
+
+    if (!countOk || !yearOk || !alignOk || !idemOk || !allOk) {
+        std::fprintf(stderr,
+            "LA_MAP_YEAR_QA FAIL pts=%d expect=%d paths=%d dates=%d all=%d expectAll=%d year=%d yearOk=%d alignOk=%d idemOk=%d allOk=%d broken=%d\n",
+            nPts, expectKept, nPaths, nDates, nAll, expectAll, yearNow,
+            int(yearOk), int(alignOk), int(idemOk), int(allOk), int(broken));
+        std::fflush(stderr);
+        return;
+    }
+    std::fprintf(stderr,
+        "LA_MAP_YEAR_QA PASS pts=%d paths=%d dates=%d all=%d year=%d broken=%d\n",
+        nPts, nPaths, nDates, nAll, yearNow, int(broken));
     std::fflush(stderr);
 }
 

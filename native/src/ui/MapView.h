@@ -69,12 +69,20 @@ public:
     void setFootLayerMode(int mode);    // 0=光点 1=轨迹 2=热力
     int  footLayerMode() const { return footLayer_; }
 
+    // A 方向第三步：按年筛选足迹。year=0 表示全部年份。
+    // 铁律：筛选在**注入点**（MapPage::computeGpsPoints）完成 —— gpsPts_/gpsDates_/
+    // gpsPaths_ 三者按下标严格对齐（国家视图 gpsPaths_[i] 依赖它），故绝不能只过滤绘制。
+    void setFootYearFilter(int year);
+    int  footYearFilter() const { return footYearFilter_; }
+
     // A 方向第二步：轨迹播放（沿线按日期依次飞过播放头）
     void startTrackPlayback();          // 起播（已在播放则重置重来）
     void stopTrackPlayback();
     bool trackPlaying() const { return trackActive_; }
     // A 方向第二步：轨迹播放像素自测（箭头 + 播放头三时刻位置断言）
     void qaShootTrackAnim(const QString& path);
+    // A 方向第三步：按年筛选自测（点数 + pts/paths/dates 下标对齐 + 幂等 + 0=全部）
+    void qaShootYear(const QString& path);
 
     // P16.4.2 金色航线基点（「我的位置」，经纬度，默认上海）。设置后重新烘焙世界层。
     void setHomePoint(double lon, double lat);
@@ -206,6 +214,7 @@ private:
     QVector<QPointF>    gpsPts_;               // P16.4 真实照片 GPS 足迹点（预投影空间）
     QVector<QDate>     gpsDates_;              // A 方向：与 gpsPts_ 逐点对齐的拍摄日期
     int                footLayer_ = FL_Dots;   // A 方向：足迹层模式（默认光点，零回归）
+    int                footYearFilter_ = 0;    // A 方向第三步：按年筛选（0=全部年份）
 
     // A 方向第二步：轨迹播放状态（动态层，禁进静态烘焙层否则每帧重栅格化破 PERF）
     QTimer           trackTimer_;             // 16ms 驱动，播放期挂载、播完自停

@@ -3,6 +3,40 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.14.0] - 2026-10-04
+
+### 新增 - 按年筛选足迹（方向 A 第三步）
+
+足迹地图此前只能看全量足迹，无法回答「某年我去了哪」。本步给三层（光点/轨迹/热力）加统一的年份维度筛选。
+
+**数据诚实**：年份下拉只列**库中真实出现过的年份**（`computeFootYears()` 扫 `Photo.year` 去重降序），不按 `kpi.minYear..maxYear` 补齐中间空档 —— 没有照片的年份不作为可选项出现。`Photo.year` 在 `Library.cpp:84` 早已填充，本步零模型改动、零重复解析。
+
+**★筛选位置铁律（本步最关键决策）**：筛选在**注入点**（`MapPage::computeGpsPoints`）完成，而非绘制层。原因是 `gpsPts_` / `gpsPaths_` / `gpsDates_` 三者**按下标严格对齐** —— `enterCountry` 里 `gpsPaths_[i]` 与 `gpsPts_[i]` 配对（`MapView.cpp:2304`）构造国家视图的照片路径。若只在绘制时过滤，三者长度将不一致，国家视图会把照片路径配到错误的足迹点上。故 `if (footYear_ > 0 && p.year != footYear_) continue;` 与其余过滤条件同处一个循环，`pts/paths/dates` 一起产出。
+
+**同步入口收敛**：新增 `MapPage::syncFootData()` 作为足迹数据同步的**唯一入口**（注入 pts/dates/paths + 计数 + 记录筛选态）。构造、`setHidePrivate`（隐私门）、年份切换三处全部改走它 —— 铁律：任何改变**可见足迹集合**的操作都必须经此入口，否则三者的下标对齐与缓存失效（`densDirty_`/`arcTargetsDirty_`/`invalidateViewCache`）会各自漂移。
+
+**UI**：顶栏新增年份下拉（`QComboBox`，墨韵深色样式 + 选中态翡翠），首项「全部年份」（值 0），切换时 `syncFootData()` + 航线目标同步 + `stopTrackPlayback()`（集合已变，旧播放进度失效）。筛选对三层同时生效，不因当前处于轨迹层而失效。
+
+### 新增 - LA_MAP_YEAR_QA（第 38 门，full 层）
+
+纯数据契约门（`png=$false`，不渲染）。注入 6 个跨年份确定性 GPS 点（2019/2021/2024 各 2），四类断言：
+
+- **A 点数**：筛选 2024 后 `gpsPts_` 恰为该年点数（2）。
+- **B 下标对齐（核心）**：`gpsPts_.size() == gpsPaths_.size() == gpsDates_.size()` —— 直接锁死国家视图依赖的那条不变量。**只断言「点数对」是弱断言**，对齐才是本步真正要防的回归。
+- **C 幂等**：`setFootYearFilter` 重复设置同一年不改变态。
+- **D 0=全部**：切回 0 恢复全量 6 点。
+
+**反例（非空心）**：`LA_MAP_YEAR_QA_FORCE_BROKEN=1` 让注入点过滤失效 → 6 点全可见 → A 断言 `pts=6 expect=2` → RED。
+
+### 修复 / 过程
+- `src/ui/MapView.{h,cpp}`：`footYearFilter_` 成员 + `setFootYearFilter`/`footYearFilter`（幂等）+ `qaShootYear` 探针。
+- `src/ui/MapPage.{h,cpp}`：`computeGpsPoints` 增年份过滤（与 pts/paths/dates 同循环）；新增 `computeFootYears()`/`syncFootData()`/`footYear_`/`yearBox_`；三处调用点收敛到 `syncFootData`；补 `QComboBox`/`QList`/`QSet`/`<algorithm>`/`<functional>` 头文件。
+- `src/main.cpp`：`animOk` 排除列表加新门；新增 QA 派发。
+- `gate_matrix.ps1`：新增第 38 门（full 层，ASCII 注释）；`CMakeLists.txt`：`VERSION 2.13.0 → 2.14.0`。
+
+### 门数
+38 门（新增 1）。fast 层 12 门不变，full 层 25 → 26 门。
+
 ## [2.13.0] - 2026-10-04
 
 ### 新增 - 轨迹方向箭头 + 播放动画（方向 A 第二步）

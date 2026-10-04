@@ -1323,5 +1323,21 @@ Errors: %1 — %2</translation>
         <source>热力</source>
         <translation>Heat</translation>
     </message>
+    <message>
+        <source>全部年份</source>
+        <translation>All Years</translation>
+    </message>
+    <message>
+        <source>按拍摄年份筛选足迹（对光点/轨迹/热力三层同时生效）</source>
+        <translation>Filter footprints by capture year (applies to all three layers)</translation>
+    </message>
+    <message>
+        <source>▶ 播放足迹</source>
+        <translation>▶ Play Footprints</translation>
+    </message>
+    <message>
+        <source>沿轨迹按拍摄日期依次播放足迹（需先切到「轨迹」层）</source>
+        <translation>Play the footprint track in capture-date order (switch to the Track layer first)</translation>
+    </message>
 </context>
 </TS>

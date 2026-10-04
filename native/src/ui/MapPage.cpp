@@ -15,6 +15,11 @@
 #include <QDialogButtonBox>
 #include <QDate>
 #include <QButtonGroup>
+#include <QComboBox>
+#include <QList>
+#include <QSet>
+#include <algorithm>
+#include <functional>
 
 MapPage::MapPage(const QVector<Photo>* photos, const QString& thumbsDir,
                  QWidget* parent) : QWidget(parent), photos_(photos), thumbsDir_(thumbsDir)
@@ -107,17 +112,31 @@ MapPage::MapPage(const QVector<Photo>* photos, const QString& thumbsDir,
     connect(footLayerGroup_, QOverload<int>::of(&QButtonGroup::idClicked),
             this, [this](int id) { trackPlayBtn_->setEnabled(id == 1); });  // 仅轨迹层
     bl->addWidget(trackPlayBtn_);
+    // A 方向第三步：按年筛选。只列库中真实出现的年份（数据诚实，不补空档）。
+    yearBox_ = new QComboBox(bar);
+    yearBox_->setCursor(Qt::PointingHandCursor);
+    yearBox_->setToolTip(QCoreApplication::translate(
+        "LightAlbum", "按拍摄年份筛选足迹（对光点/轨迹/热力三层同时生效）"));
+    yearBox_->addItem(QCoreApplication::translate("LightAlbum", "全部年份"), 0);
+    for (int y : computeFootYears())
+        yearBox_->addItem(QString::number(y), y);
+    yearBox_->setStyleSheet(QStringLiteral(
+        "QComboBox{background:#131a15;border:1px solid #26312a;border-radius:9px;"
+        "padding:4px 8px;color:#d9e4dc;min-width:86px;}"
+        "QComboBox QAbstractItemView{background:#0e130f;color:#d9e4dc;"
+        "selection-background-color:#1d2a22;selection-color:#4fc08a;}"));
+    connect(yearBox_, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int) {
+        footYear_ = yearBox_->currentData().toInt();   // 0 = 全部年份
+        syncFootData();                                // 三层同步过滤
+        view_->setArcRegionIds(computeArcRegionIds());
+        view_->stopTrackPlayback();                    // 集合已变，旧的播放进度失效
+    });
+    bl->addWidget(yearBox_);
     ll->addWidget(bar);
 
     view_ = new MapView(left);
-    view_->setGpsCount(computeGpsCount());     // P16.1：注入真实 GPS 足迹数
-    {
-        QStringList gpsPaths;
-        QVector<QDate> gpsDates;
-        view_->setGpsPoints(computeGpsPoints(&gpsPaths, &gpsDates));   // P16.4：注入真实 GPS 足迹点
-        view_->setGpsPaths(gpsPaths);                       // 与点一一对应的照片路径（国家视图）
-        view_->setGpsDates(gpsDates);                       // A 方向：拍摄日期（轨迹排序用）
-    }
+    syncFootData();   // A 方向第三步：足迹数据同步统一入口（含 pts/dates/paths/计数）
     view_->setArcRegionIds(computeArcRegionIds()); // P16.4.2：有作品大区 → 航线目标
     ll->addWidget(view_, 1);
     lay->addWidget(left, 1);
@@ -205,19 +224,26 @@ MapPage::MapPage(const QVector<Photo>* photos, const QString& thumbsDir,
 void MapPage::setHidePrivate(bool hide)
 {
     hidePrivate_ = hide;
-    view_->setGpsCount(computeGpsCount());         // P16.1：隐私门切换 → 足迹数同步
-    {
-        QStringList gpsPaths;
-        QVector<QDate> gpsDates;
-        view_->setGpsPoints(computeGpsPoints(&gpsPaths, &gpsDates));       // P16.4：足迹点同步
-        view_->setGpsPaths(gpsPaths);
-        view_->setGpsDates(gpsDates);                                    // A 方向：日期同步
-    }
+    syncFootData();   // 隐私门切换 → 足迹集合可能变小（年份筛选下同样生效）
     view_->setArcRegionIds(computeArcRegionIds()); // P16.4.2：航线目标同步
     // 已选区域时重算一次统计，保持口径一致
     if (!lastRegion_.isEmpty() || !lastProv_.isEmpty())
         onPicked(lastIsProv_ ? lastProv_ : lastRegion_,
                  statsTitle_->text(), lastIsProv_);
+}
+
+// A 方向第三步：足迹数据同步唯一入口。pts / dates / paths 三者由同一过滤循环产出
+// （computeGpsPoints 内保证下标对齐），再依次注入 MapView —— setGpsPoints 内部会
+// 触发 densDirty_/arcTargetsDirty_/invalidateViewCache + 重烘焙世界层。
+void MapPage::syncFootData()
+{
+    view_->setGpsCount(computeGpsCount());
+    QStringList gpsPaths;
+    QVector<QDate> gpsDates;
+    view_->setGpsPoints(computeGpsPoints(&gpsPaths, &gpsDates));
+    view_->setGpsPaths(gpsPaths);
+    view_->setGpsDates(gpsDates);
+    view_->setFootYearFilter(footYear_);
 }
 
 // P16.1 真实 GPS 足迹数：hasGps 为真且未被隐私门屏蔽的照片计数（诚实，不编造）。
@@ -242,6 +268,9 @@ QVector<QPointF> MapPage::computeGpsPoints(QStringList* pathsOut, QVector<QDate>
     for (const Photo& p : *photos_) {
         if (!p.hasGps || (hidePrivate_ && p.priv)) continue;
         if (p.la == 0.0 && p.lo == 0.0) continue;   // 数据诚实：零坐标视为无效
+        // A 方向第三步：按年筛选。铁律：pts / paths / dates 三者必须同在此处一起过滤，
+        // 否则 gpsPaths_ 与 gpsPts_ 下标错位 → 国家视图照片路径对错点。
+        if (footYear_ > 0 && p.year != footYear_) continue;
         const double x = (p.lo + 180.0) / 360.0 * MapView::MAP_W;
         const double y = (90.0 - p.la) / 180.0 * MapView::MAP_H;
         pts.append(QPointF(x, y));
@@ -256,6 +285,22 @@ QVector<QPointF> MapPage::computeGpsPoints(QStringList* pathsOut, QVector<QDate>
         }
     }
     return pts;
+}
+
+// A 方向第三步：库中出现的全部年份（降序）。数据诚实：只列真实有照片的年份，
+// 不按 kpi 的 min/max 补齐中间空档。
+QList<int> MapPage::computeFootYears() const
+{
+    QList<int> ys;
+    if (!photos_) return ys;
+    QSet<int> seen;
+    for (const Photo& p : *photos_) {
+        if (hidePrivate_ && p.priv) continue;
+        if (p.year > 0) seen.insert(p.year);
+    }
+    ys = seen.values();
+    std::sort(ys.begin(), ys.end(), std::greater<int>());
+    return ys;
 }
 
 // P16.4.2 有作品的大区 id：至少 1 幅（未被隐私门屏蔽）照片的大区，作为航线目标。

@@ -119,6 +119,17 @@ $GateTable = @(
   # first point -> all three positions equal -> RED. Full tier (offscreen
   # MainWindow render, like the other map gates). measuredMs from -Timing.
   @{n="LA_MAP_TRACK_ANIM_QA"; png=$true; measuredMs=3437},
+  # A direction step 3: filter the footprint layer by capture year.
+  # Injects 6 deterministic GPS points across 2019/2021/2024 (2 each) and
+  # asserts: (A) filtering to 2024 leaves exactly that year's points;
+  # (B) gpsPts_ / gpsPaths_ / gpsDates_ all have the SAME length -- the
+  # country view indexes gpsPaths_[i] against gpsPts_[i], so filtering only
+  # some of the three would silently misalign photo paths to wrong points;
+  # (C) setFootYearFilter is idempotent; (D) year 0 restores the full set.
+  # Counter-example LA_MAP_YEAR_QA_FORCE_BROKEN=1 disables the injection-point
+  # filter -> all 6 points survive -> the count assertion goes RED.
+  # png=$false (no rendering, pure data-contract gate). Full tier.
+  @{n="LA_MAP_YEAR_QA";      png=$false; measuredMs=3737},
   @{n="LA_MAP_CLICK_QA";    png=$false; measuredMs=2553},
   @{n="LA_MAP_PERF";        png=$false; measuredMs=3735},
   @{n="LA_GALLERY_E_QA";    png=$true; measuredMs=2589},
