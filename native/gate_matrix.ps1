@@ -23,7 +23,7 @@
   today's behaviour. release.ps1 and the local iterate.ps1 keep using it, so
   packaging is NOT weakened by the matrix.
 .usage
-  powershell -ExecutionPolicy Bypass -File gate_matrix.ps1 -SelfTest   # gate 30
+  powershell -ExecutionPolicy Bypass -File gate_matrix.ps1 -SelfTest   # gate 34
   powershell -ExecutionPolicy Bypass -File gate_matrix.ps1 -List
   . gate_matrix.ps1 -LoadOnly # dot-source: populates $GateTable + functions
 .NOTES
@@ -74,6 +74,20 @@ $GateTable = @(
   # skips the translator load and must go RED. Measured 165-246ms (x3) on
   # 2026-10-03 -> 210ms; well under the 500ms fast budget.
   @{n="LA_I18N_QA";        png=$false; tier="fast"; measuredMs=210},
+  # F a11y step (direction F step 3): accessibility - contrast + keyboard reach.
+  # LA_A11Y_CONTRAST_QA audits 15 hardcoded DarkPalette color pairs against
+  # WCAG 2.1 (4.5:1 body). Pure offscreen self-exit, no MainWindow, no env.
+  # Counter-example LA_A11Y_CONTRAST_QA_FORCE_BROKEN=1 injects a failing
+  # "BROKEN Line on Inset" pair and must go RED. Measured 18ms (x3, 2026-10-04).
+  # LA_A11Y_KEYBOARD_QA forwards EditorialView::qaKeyboardCheck() +
+  # MapView::qaKeyboardCheck(): asserts StrongFocus on gallery tile + map and
+  # that simulated Enter / Key_Plus trigger activation / zoom. Pure offscreen
+  # self-exit, no MainWindow, no env. Counter-example
+  # LA_A11Y_KEYBOARD_QA_FORCE_BROKEN=1 forces NoFocus and must go RED.
+  # Measured 17ms (x3, 2026-10-04). Both sit in the fast tier: cheaper than
+  # every full-tier gate and far under the 500 ms fast budget.
+  @{n="LA_A11Y_CONTRAST_QA"; png=$false; tier="fast"; measuredMs=18},
+  @{n="LA_A11Y_KEYBOARD_QA"; png=$false; tier="fast"; measuredMs=17},
   @{n="LA_LUMEN_SMOKE";     png=$false; measuredMs=7431},
   @{n="LA_AGENT_SMOKE";     png=$false; measuredMs=8662},
   @{n="LA_SCAN_SMOKE";      png=$false; need=@("LA_SCAN_ROOT","LA_SCAN_DB"); measuredMs=0},

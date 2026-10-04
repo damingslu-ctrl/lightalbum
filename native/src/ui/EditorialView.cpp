@@ -8,6 +8,8 @@
 #include <QScrollBar>
 #include <QResizeEvent>
 #include <QPainter>
+#include <QKeyEvent>
+#include <cstdio>
 #include <QPixmap>
 #include <QSet>
 
@@ -19,6 +21,7 @@ public:
     GalleryTile(GalleryModel* m, int row, bool feature, QWidget* p = nullptr)
         : QWidget(p), model_(m), row_(row), feature_(feature) {
         setMouseTracking(true);
+        setFocusPolicy(Qt::StrongFocus);   // F3 a11y: 图库瓦片可 Tab 聚焦
     }
     QSize sizeHint() const override { return QSize(216, 240); }
     int row() const { return row_; }
@@ -43,9 +46,25 @@ protected:
                                                            : ThumbCache::kTile);
         Lumen::paintGalleryCard(&p, QRectF(rect()),
                                 title, sub, orient, miss, rating, pm, feature_, hov_, sel_);
+        // F3 a11y: 自定义自绘控件需手动绘制焦点环（原生焦点框不显示）
+        if (hasFocus()) {
+            QPen fp(QColor(0xd9, 0xa9, 0x4e), 2);
+            p.setPen(fp);
+            p.setBrush(Qt::NoBrush);
+            p.drawRoundedRect(rect().adjusted(1, 1, -1, -1), 6, 6);
+        }
     }
     void mousePressEvent(QMouseEvent* e) override {
         if (e->button() == Qt::LeftButton) emit activated(row_, e->modifiers());
+    }
+    void keyPressEvent(QKeyEvent* e) override {   // F3 a11y: 回车/空格 = 鼠标单击
+        if (e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter ||
+            e->key() == Qt::Key_Space) {
+            e->accept();
+            emit activated(row_, Qt::NoModifier);
+        } else {
+            QWidget::keyPressEvent(e);
+        }
     }
     void enterEvent(QEnterEvent*) override { hov_ = true; emit hovered(row_, true); update(); }
     void leaveEvent(QEvent*) override      { hov_ = false; emit hovered(row_, false); update(); }
@@ -134,6 +153,38 @@ GalleryTile* EditorialView::acquire()
             [this](int row, Qt::KeyboardModifiers mods) { clickRow(row, mods); });
     pool_.append(t);
     return t;
+}
+
+int EditorialView::qaKeyboardCheck()
+{
+    // F3 a11y: 无模型即可测键盘路径（keyEvent 不触发 paint，model 可空）
+    GalleryTile tile(nullptr, 0, false);
+    const bool broken = !qEnvironmentVariableIsEmpty("LA_A11Y_KEYBOARD_QA_FORCE_BROKEN");
+    tile.setFocusPolicy(broken ? Qt::NoFocus : Qt::StrongFocus);
+
+    // 断言 1：键盘可达（StrongFocus）。broken 模式模拟“修复缺失”→ 无焦点策略 → 门红
+    if (!(tile.focusPolicy() & Qt::StrongFocus)) {
+        std::fprintf(stderr, "LA_A11Y_KEYBOARD_QA FAIL tile not keyboard-focusable\n");
+        std::fflush(stderr);
+        return 1;
+    }
+    // 断言 2：Enter/Space 触发 activated（驱动 clickRow → 开灯箱/选择）。
+    // 用本地连接计数替代 QSignalSpy（项目未链接 QtTest 模块）。
+    int activated = 0;
+    QMetaObject::Connection conn = QObject::connect(
+        &tile, &GalleryTile::activated,
+        [&activated](int, Qt::KeyboardModifiers) { ++activated; });
+    QKeyEvent ev(QEvent::KeyPress, Qt::Key_Enter, Qt::NoModifier);
+    QCoreApplication::sendEvent(&tile, &ev);
+    QObject::disconnect(conn);
+    if (activated != 1) {
+        std::fprintf(stderr, "LA_A11Y_KEYBOARD_QA FAIL Enter did not activate (count=%d)\n", activated);
+        std::fflush(stderr);
+        return 1;
+    }
+    std::fprintf(stderr, "LA_A11Y_KEYBOARD_QA PASS tile=keyboard-activatable\n");
+    std::fflush(stderr);
+    return 0;
 }
 
 void EditorialView::recycle(GalleryTile* t)

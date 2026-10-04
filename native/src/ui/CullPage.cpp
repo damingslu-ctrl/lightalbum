@@ -619,7 +619,7 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     brow->addWidget(mkDuelBtn(QCoreApplication::translate("LightAlbum", "右留 →"), [this]{ duelPick(1); }));
     auto* hint = new QLabel(
         QCoreApplication::translate("LightAlbum", "引擎按分预选（金框）· 败者自动标「略过」· 幸存者留用"), duel_);
-    hint->setStyleSheet(QStringLiteral("color:#5a6b60;font-size:11px;border:none;background:transparent;"));
+    hint->setStyleSheet(QStringLiteral("color:#8da996;font-size:11px;border:none;background:transparent;"));
     brow->addStretch(1);
     brow->addWidget(hint);
     dv->addLayout(brow);
@@ -797,7 +797,7 @@ void CullPage::rebuildFilmstrip()
     if (keep.isEmpty()) {
         auto* hint = new QLabel(QCoreApplication::translate("LightAlbum", "保留作品会出现在这条胶片 · 选中后点 ♥/锁"),
                                 filmRow_);
-        hint->setStyleSheet(QStringLiteral("color:#5a6b60;font-size:11px;"));
+        hint->setStyleSheet(QStringLiteral("color:#8da996;font-size:11px;"));
         fl->addWidget(hint);
         return;
     }

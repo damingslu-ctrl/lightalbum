@@ -24,6 +24,7 @@ public:
 
     // 仅预取当前可见（及前后缓冲）卡片缩略图，替代原 QListView indexAt 逻辑
     void prefetchVisible();
+    static int qaKeyboardCheck();   // F3 a11y 键盘可达门禁（offscreen）
 
 signals:
     void photoActivated(const QString& path);   // 点击卡片 → 沉浸式灯箱

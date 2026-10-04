@@ -12,6 +12,7 @@
 #include <QHash>
 #include <QColor>
 #include <QPainter>
+#include <QKeyEvent>
 
 // 预投影坐标系：所有环/省/经纬都落在 [0,MAP_W]x[0,MAP_H] 的等距圆柱平面
 struct Ring { QVector<QPointF> pts; };
@@ -81,6 +82,9 @@ public:
     // A 爆炸弹层像素自测：进入省视图 + 合成缩略图 → 离屏渲染终态 + 分色统计
     void qaShootBurst(const QString& path);
 
+    // F3 a11y·键盘可达（方向 F 第三步，2.11.0）：offscreen 门禁断言（焦点策略 + 键盘缩放）
+    static int qaKeyboardCheck();
+
     // F 高 DPR 渲染（方向 F 第一步）：QA 钩子
     void qaBakeViewPix();                 // 强制烘焙下钻静态层（不依赖事件循环）
     int  qaViewPixDeviceWidth() const;   // viewPix_ 设备像素宽（验证 DPR 感知）
@@ -115,6 +119,7 @@ protected:
     void mouseMoveEvent(QMouseEvent*) override;
     void mouseReleaseEvent(QMouseEvent*) override;
     void wheelEvent(QWheelEvent*) override;   // 世界层滚轮缩放（光标锚定）
+    void keyPressEvent(QKeyEvent*) override;  // F3 a11y：键盘导航（缩放/平移/下钻）
 
 private:
     void paintMap(QPainter& p);   // 绘制主体（paintEvent 与帧耗时自测共用调度）
@@ -214,6 +219,10 @@ private:
     QPointF viewOrigin(const QRectF& bbox, const QRectF& dst, double& s) const;
     void    clampViewPan(const QRectF& bbox, const QRectF& dst, double s);
     void    resetViewZoom();                      // 进入视图时重置缩放/平移
+    // F3 a11y：键盘导航（滚轮缩放 / 拖拽平移 / 下钻 的键盘等价，视口中心锚定）
+    void    zoomBy(double factor);                // factor>1 放大
+    void    panBy(double dx, double dy);          // 屏幕像素平移
+    void    drillAtCenter();                      // 视口中心下钻 / 返回上一级
     double  viewZoom_ = 1.0;
     QPointF viewPan_;
 

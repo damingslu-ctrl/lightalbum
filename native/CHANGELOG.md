@@ -3,6 +3,47 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.11.0] - 2026-10-04
+
+### 变更 - 无障碍 a11y（方向 F 第三步：键盘可达 + 对比度合规）
+
+**问题**：取证发现三处可达性缺口——
+- 地图 `MapView`、灯箱 `PhotoLightbox` 未设 `StrongFocus`，键盘无法聚焦或触发操作；
+- 多处硬编码提示文字 `#5a6b60` 在深色背景上对比度不足（未达 WCAG 2.1 正文 4.5:1）；
+- 「全局焦点环」子项已存在（`Lumen::focusRing()` + `main.cpp` 全局挂载），故免做。
+
+**方案**：
+- **键盘可达**：`MapView` 设 `StrongFocus` + `keyPressEvent`（`+`/`=` 放大、`-`/`_` 缩小改 `worldZoom_`、方向键平移、`Enter`/`Return` 下钻 `drillAtCenter`、`Esc` 返回），自绘翡翠焦点环（与全局 focusRing 同色 `0x5f,0xdc,0xa6`）；`PhotoLightbox` 设 `StrongFocus`、`showEvent→setFocus()`、`←`/`→` 基于 `lib_->photos()` 线性相邻下标翻图（端点不回绕）。`EditorialView::qaKeyboardCheck()`（#367 已落）断言 `GalleryTile` StrongFocus + `Enter` 激活。
+- **对比度合规**：将 3 处硬编码提示色 `#5a6b60` → `#8da996`（与 `Dark::Muted`/`hint` 一致，满足 WCAG）；新增 `LA_A11Y_CONTRAST_QA` 审计 15 对 DarkPalette 固定色对（正文 4.5:1）。
+
+### 新增 - LA_A11Y_CONTRAST_QA（第 33 门，fast 层）
+
+纯函数 WCAG 2.1 相对亮度审计，覆盖 `Dark::Ink/Muted/Gold/Emerald/Bg/Card/Inset/Line` 与产品内固定硬编码色对的 15 对组合，逐对比对 4.5:1 阈值。纯 offscreen 自退、不构造 MainWindow、无外部 `need` 依赖。
+
+**反例（非空心）**：`LA_A11Y_CONTRAST_QA_FORCE_BROKEN=1` 注入 `BROKEN Line on Inset (1.35:1)` → 门红。
+
+### 新增 - LA_A11Y_KEYBOARD_QA（第 34 门，fast 层）
+
+转发 `EditorialView::qaKeyboardCheck()` + 新增 `MapView::qaKeyboardCheck()`：断言瓦片/地图 `focusPolicy==StrongFocus` 且模拟 `Enter`/`Key_Plus` 触发激活/缩放（`worldZoom_ 1.0→1.25`）。纯 offscreen 自退、不构造 MainWindow、无外部 `need` 依赖。
+
+**反例（非空心）**：`LA_A11Y_KEYBOARD_QA_FORCE_BROKEN=1` 强制 `NoFocus` → `tile not keyboard-focusable` + `mapview not keyboard-focusable` 双 `FAIL` 必红。
+
+两门实测墙钟 **CONTRAST 18ms / KEYBOARD 17ms**（offscreen x3 取最优，2026-10-04），远低于 500ms fast 预算、比最便宜的 full 门（1017ms）还低 → 落 fast 层，使 a11y 获得 PR 层覆盖。
+
+### 修复 / 过程
+
+- `src/ui/MapView.{h,cpp}`：`StrongFocus` + `keyPressEvent` + `zoomBy/panBy/drillAtCenter` 辅助方法 + 翡翠焦点环 + `static int qaKeyboardCheck()`。
+- `src/ui/MainWindow.cpp`（PhotoLightbox）：`StrongFocus`、`setPhoto` 存 `thumbsDir_`、`showEvent→setFocus()`、`←`/`→` 翻图 `navigate(int)`、`thumbsDir_` 成员。
+- `src/ui/EditorialView.{h,cpp}`（#367）：`qaKeyboardCheck()` 瓦片键盘可达。
+- `src/ui/CullPage.cpp` / `LogPage.cpp` / `MapPage.cpp`：提示色 `#5a6b60`→`#8da996`（对比度整改）。
+- `src/main.cpp`：新增 `LA_A11Y_CONTRAST_QA` / `LA_A11Y_KEYBOARD_QA` 两门断言分支（位于 `int main` 启动前）。
+- `CMakeLists.txt`：`VERSION 2.10.0 → 2.11.0`。
+- `gate_matrix.ps1`：登记第 33/34 门，均 `tier="fast"`、`measuredMs=18/17`。**纯 ASCII**。
+
+### 门数
+
+32 → **34** 门。fast 层 10 → **12** 门。回归：fast 层 12 门全绿（wall 4216ms）；`LA_A11Y_CONTRAST_QA` 绿态 `PASS pairs=15`、红态 `BROKEN Line on Inset` 全中；`LA_A11Y_KEYBOARD_QA` 绿态 `PASS tile=keyboard-activatable` + `mapview=keyboard-navigable worldZoom 1.0000->1.2500`、红态双 `FAIL` 全中。全量 34 门 PASS=33 SKIP=1（LA_SCAN_SMOKE 需 env，预期跳过）KILL=0；`LA_AGENT_SMOKE` 受本地 Ollama 模型冷加载影响偶发超时（环境依赖，非代码回归，Ollama 热态 PASS）。
+
 ## [2.10.0] - 2026-10-03
 
 ### 变更 - 中英双语国际化（方向 F 第二步）

@@ -9,6 +9,7 @@
 #include <QJsonDocument>
 #include <QMouseEvent>
 #include <QWheelEvent>
+#include <QKeyEvent>
 #include <QPainterPath>
 #include <QLineF>
 #include <QDebug>
@@ -67,6 +68,7 @@ MapView::MapView(QWidget* parent) : QWidget(parent)
 {
     setMinimumSize(320, 200);
     setMouseTracking(true);
+    setFocusPolicy(Qt::StrongFocus);   // F3 a11y：地图可键盘聚焦（缩放/平移/下钻）
     reduceMotion_ = Lumen::systemReducedMotion();   // P15：尊重系统「减弱动效」
 
     loadData();
@@ -1380,6 +1382,15 @@ void MapView::paintEvent(QPaintEvent*)
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing, true);
     paintMap(p);
+    // F3 a11y：键盘聚焦可见反馈——翡翠焦点环（与全局 focusRing / GalleryTile 同语言）。
+    // 仅自绘 QWidget 需手动描边；按钮类已由 Lumen::focusRing() 全局覆盖。
+    if (hasFocus()) {
+        p.save();
+        p.setPen(QPen(QColor(0x5f, 0xdc, 0xa6), 2));
+        p.setBrush(Qt::NoBrush);
+        p.drawRoundedRect(rect().adjusted(2, 2, -3, -3), 6, 6);
+        p.restore();
+    }
 }
 
 // 绘制主体（paintEvent 与 LA_MAP_PERF 帧耗时自测共用同一调度）
@@ -1912,4 +1923,176 @@ QString MapView::breadcrumb() const
     return QString("世界 › %1 › %2")
         .arg(curRegionName_.isEmpty() ? curRegionId_ : curRegionName_)
         .arg(curProvince_.zh.isEmpty() ? curProvince_.name : curProvince_.zh);
+}
+
+// ============================================================================
+// F3 a11y·键盘可达（方向 F 第三步，2.11.0）
+//   滚轮缩放 / 拖拽平移 / 下钻 的键盘等价，视口中心锚定，保证纯键盘可操作。
+//   与鼠标/滚轮逻辑共用同一套坐标变换（铁律：绘制与命中同源），仅触发方式不同。
+// ============================================================================
+
+// 键盘缩放：factor>1 放大，锚定视口中心（保持中心预投影点不动）。
+void MapView::zoomBy(double factor)
+{
+    const QRectF dst = rect().adjusted(8, 8, -8, -8);
+    if (level_ == World) {
+        const double base = dst.height() / MAP_H;
+        if (base <= 0) return;
+        const double oldScale = base * worldZoom_;
+        const double oldOffY = worldOffYClamped();
+        const QPointF cur = rect().center();
+        const QPointF pre = widgetToPre(cur, dst, oldScale, wrapX(driftPx_), oldOffY);
+        const double nz = qBound(1.0, worldZoom_ * factor, 4.0);
+        if (qFuzzyCompare(nz, worldZoom_)) return;
+        const double newScale = base * nz;
+        driftPx_  = wrapX(pre.x() - cur.x() / newScale);
+        worldOffY_ = pre.y() * newScale - (cur.y() - dst.y());
+        worldZoom_ = nz;
+        update();
+    } else {
+        const double nz = qBound(1.0, viewZoom_ * factor, 8.0);
+        if (qFuzzyCompare(nz, viewZoom_)) return;
+        viewZoom_ = nz;
+        const QPointF cur = rect().center();
+        double s0 = 1;
+        const QPointF o0 = viewOrigin(curViewBbox_, dst, s0);
+        const QPointF pre = (cur - o0) / s0;
+        double s1 = 1;
+        viewOrigin(curViewBbox_, dst, s1);
+        const QPointF bc((curViewBbox_.left() + curViewBbox_.right()) * 0.5,
+                         (curViewBbox_.top() + curViewBbox_.bottom()) * 0.5);
+        viewPan_ = cur - QPointF(pre.x() * s1, pre.y() * s1)
+                   - dst.center() + QPointF(bc.x() * s1, bc.y() * s1);
+        clampViewPan(curViewBbox_, dst, s1);
+        invalidateViewCache();
+        update();
+    }
+}
+
+// 键盘平移：以屏幕像素为单位移动视口（世界层→漂移/纵向偏移；下钻层→viewPan_）。
+void MapView::panBy(double dx, double dy)
+{
+    const QRectF dst = rect().adjusted(8, 8, -8, -8);
+    if (level_ == World) {
+        const double scale = dst.height() / MAP_H * worldZoom_;
+        if (scale > 0) {
+            driftPx_  = wrapX(driftPx_ - dx / scale);
+            worldOffY_ -= dy / scale;
+        }
+    } else {
+        viewPan_ += QPointF(dx, dy);
+        double sp = 1;
+        viewOrigin(curViewBbox_, dst, sp);
+        clampViewPan(curViewBbox_, dst, sp);
+        invalidateViewCache();
+    }
+    update();
+}
+
+// 键盘下钻：在视口中心触发与鼠标点击一致的下钻（命中同一套变换数学）。
+// 世界层→大区/国家视图；大区层→省；省层→若爆炸弹层激活则打开首张照片，否则返回上一级。
+void MapView::drillAtCenter()
+{
+    if (level_ == World) {
+        const QRectF dst = rect().adjusted(8, 8, -8, -8);
+        const double scale = dst.height() / MAP_H * worldZoom_;
+        const double offY = worldOffYClamped();
+        const QPointF cur = rect().center();
+        const QPointF pre = widgetToPre(cur, dst, scale, wrapX(driftPx_), offY);
+        const double span = MAP_W * scale;
+        for (int fi = 0; fi < worldFeatures_.size(); ++fi) {
+            if (!featureBbox_[fi].contains(pre)) continue;
+            if (!pointInFeature(pre, worldFeatures_[fi])) continue;
+            const int r = featureRegion_.value(fi, -1);
+            if (r >= 0) { emit picked(regions_[r].id, regions_[r].name, false); enterRegion(regions_[r].id); }
+            else enterCountry(fi);
+            return;
+        }
+        for (const RegionInfo& ri : regions_) {       // 回退：大区锚点圆命中
+            QPointF w = preToWidget(ri.proj, dst, scale, -driftPx_);
+            double wx = dst.x() + fmod(w.x() - dst.x(), span);
+            if (wx < dst.x()) wx += span;
+            if (std::hypot(wx - cur.x(), (w.y() - offY) - cur.y()) < 10) {
+                emit picked(ri.id, ri.name, false); enterRegion(ri.id); return;
+            }
+        }
+    } else if (level_ == Region) {
+        if (curProvinces_.isEmpty()) { goUp(); return; }   // 国家视图无更深层级 → 返回
+        const QRectF dst = rect().adjusted(8, 8, -8, -8);
+        double scale = 1;
+        QRectF bbox; bool first = true;
+        for (const ProvinceInfo& pv : curProvinces_) { if (first){bbox=pv.bbox;first=false;} else bbox|=pv.bbox; }
+        const QPointF vo = viewOrigin(bbox, dst, scale);
+        const QPointF cur = rect().center();
+        for (const ProvinceInfo& pv : curProvinces_) {
+            QPainterPath path; const QPointF o = vo;
+            path.moveTo(o + pv.ring.pts.first() * scale);
+            for (int i = 1; i < pv.ring.pts.size(); ++i) path.lineTo(o + pv.ring.pts[i] * scale);
+            path.closeSubpath();
+            if (path.contains(cur)) {
+                const QString label = pv.zh.isEmpty() ? pv.name : pv.zh;
+                emit picked(pv.name, label, true); enterProvince(pv.name); return;
+            }
+        }
+    } else if (level_ == Province) {
+        if (burstActive_ && !burstPaths_.isEmpty())
+            emit openPhotoRequested(burstPaths_.first());
+        else
+            goUp();
+    }
+}
+
+void MapView::keyPressEvent(QKeyEvent* e)
+{
+    switch (e->key()) {
+    case Qt::Key_Plus:
+    case Qt::Key_Equal:        // = / + 放大
+        zoomBy(1.25); e->accept(); break;
+    case Qt::Key_Minus:
+    case Qt::Key_Underscore:    // - 缩小
+        zoomBy(1.0 / 1.25); e->accept(); break;
+    case Qt::Key_Left:  panBy(-44, 0); e->accept(); break;
+    case Qt::Key_Right: panBy( 44, 0); e->accept(); break;
+    case Qt::Key_Up:    panBy(0, -44); e->accept(); break;
+    case Qt::Key_Down:  panBy(0,  44); e->accept(); break;
+    case Qt::Key_Return:
+    case Qt::Key_Enter:
+        drillAtCenter(); e->accept(); break;
+    case Qt::Key_Escape:
+        if (level_ != World) { goUp(); e->accept(); }   // 键盘返回上一级
+        else QWidget::keyPressEvent(e);
+        break;
+    default:
+        QWidget::keyPressEvent(e);
+    }
+}
+
+// F3 a11y·键盘可达门禁（offscreen 自退）：构造 MapView（资源随 exe 嵌入、QApplication 已存在），
+// 断言 ① 焦点策略为 StrongFocus；② Key_Plus 触发 worldZoom_ 增大（键盘等价滚轮放大）。
+// 反例 LA_A11Y_KEYBOARD_QA_FORCE_BROKEN=1 → 强制 NoFocus → 门红。
+int MapView::qaKeyboardCheck()
+{
+    MapView mv;
+    mv.resize(900, 600);   // 离屏门里尺寸最小 → 强制真实几何，zoom 数学避免除零
+    const bool broken = !qEnvironmentVariableIsEmpty("LA_A11Y_KEYBOARD_QA_FORCE_BROKEN");
+    mv.setFocusPolicy(broken ? Qt::NoFocus : Qt::StrongFocus);
+
+    // 断言 1：键盘可达（StrongFocus）。broken 模式模拟“修复缺失”→ 无焦点策略 → 门红
+    if (!(mv.focusPolicy() & Qt::StrongFocus)) {
+        std::fprintf(stderr, "LA_A11Y_KEYBOARD_QA FAIL mapview not keyboard-focusable\n");
+        std::fflush(stderr);
+        return 1;
+    }
+    // 断言 2：Key_Plus 触发世界层缩放（worldZoom_ 增大），键盘等价滚轮放大
+    const double z0 = mv.worldZoom_;
+    QKeyEvent ev(QEvent::KeyPress, Qt::Key_Plus, Qt::NoModifier);
+    QCoreApplication::sendEvent(&mv, &ev);
+    if (!(mv.worldZoom_ > z0 + 1e-9)) {
+        std::fprintf(stderr, "LA_A11Y_KEYBOARD_QA FAIL Plus did not zoom map (z0=%.4f z1=%.4f)\n", z0, mv.worldZoom_);
+        std::fflush(stderr);
+        return 1;
+    }
+    std::fprintf(stderr, "LA_A11Y_KEYBOARD_QA PASS mapview=keyboard-navigable worldZoom %.4f->%.4f\n", z0, mv.worldZoom_);
+    std::fflush(stderr);
+    return 0;
 }

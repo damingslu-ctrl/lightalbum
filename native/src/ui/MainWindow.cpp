@@ -120,6 +120,7 @@ public:
         setObjectName(QStringLiteral("photoLightbox"));
         setAttribute(Qt::WA_StyledBackground, true);
         setStyleSheet(QStringLiteral("QWidget#photoLightbox{background:rgba(6,8,6,0.97);}"));
+        setFocusPolicy(Qt::StrongFocus);   // F3 a11y：灯箱可键盘聚焦（←/→ 翻图）
 
         // P20：无布局——img_/bottom_ 全走手动 geometry（见 resizeEvent）
 
@@ -178,6 +179,7 @@ public:
     void setPhoto(const Photo* ph, const QString& thumbsDir)
     {
         path_ = ph->path;
+        thumbsDir_ = thumbsDir;   // F3 a11y：翻图复用
         changed_ = false;
         // ---- 大图：存原图，layoutImage() 按窗口自适应（resize 也走这里）----
         orig_ = QPixmap(QDir(thumbsDir).filePath(ph->thumbFile));
@@ -256,9 +258,12 @@ protected:
     void showEvent(QShowEvent* e) override {
         if (parentWidget()) setGeometry(parentWidget()->rect());
         QWidget::showEvent(e);
+        setFocus();   // F3 a11y：灯箱获得键盘焦点后支持 ←/→ 翻图
     }
     void keyPressEvent(QKeyEvent* e) override {
         if (e->key() == Qt::Key_Escape) { e->accept(); close(); }
+        else if (e->key() == Qt::Key_Left)  { navigate(-1); e->accept(); }
+        else if (e->key() == Qt::Key_Right) { navigate( 1); e->accept(); }
         else QWidget::keyPressEvent(e);
     }
     // P20：满幅 img_ + 底部黑幕跟随窗口尺寸（黑幕常驻最上层）
@@ -300,6 +305,19 @@ public:
     bool hasChanges() const { return changed_; }
     void clearChanges() { changed_ = false; }
 
+    // F3 a11y：←/→ 沿 lib 照片序翻图（端点不回绕）
+    void navigate(int delta) {
+        if (!lib_) return;
+        const QVector<Photo>& ps = lib_->photos();
+        int idx = -1;
+        for (int i = 0; i < ps.size(); ++i) if (ps[i].path == path_) { idx = i; break; }
+        if (idx < 0) return;
+        const int ni = idx + delta;
+        if (ni < 0 || ni >= ps.size()) return;
+        setPhoto(&ps[ni], thumbsDir_);
+        setFocus();
+    }
+
 private:
     // P16：星级按钮着色（r 颗金星，其余灰）
     void setStars(int r)
@@ -338,6 +356,7 @@ private:
     QWidget* starRow_ = nullptr;
     QWidget* ctl_ = nullptr;
     QString  path_;
+    QString  thumbsDir_;   // F3 a11y：翻图复用
     int      curRating_ = 0;
     bool     changed_ = false;
     QVector<QToolButton*> starBtns_;

@@ -345,7 +345,7 @@ LogPage::LogPage(const QVector<Photo>* photos, QWidget* parent)
     // —— 页脚快照 ——
     foot_ = new QLabel(root);
     foot_->setStyleSheet(QStringLiteral(
-        "color:#5a6b60;font-family:Consolas,'SFMono-Regular',monospace;font-size:11px;"));
+        "color:#8da996;font-family:Consolas,'SFMono-Regular',monospace;font-size:11px;"));
     lay->addWidget(foot_);
 
     lay->addStretch(1);

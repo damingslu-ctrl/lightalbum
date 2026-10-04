@@ -240,7 +240,7 @@ void MapPage::onPicked(const QString& key, const QString& label, bool isProvince
         ? QCoreApplication::translate("LightAlbum", "该省作品：<b>%1</b> 幅").arg(match)
         : QCoreApplication::translate("LightAlbum", "该大区作品：<b>%1</b> 幅").arg(match);
     if (match == 0)
-        body += QCoreApplication::translate("LightAlbum", "<br><span style='color:#5a6b60;'>（该区域暂无 GPS 作品，可导入带 GPS 的照片）</span>");
+        body += QCoreApplication::translate("LightAlbum", "<br><span style='color:#8da996;'>（该区域暂无 GPS 作品，可导入带 GPS 的照片）</span>");
     statsBody_->setText(body);
     viewBtn_->setEnabled(true);
     playBtn_->setEnabled(match > 0);
@@ -306,7 +306,7 @@ void MapPage::onCountryPicked(const QString& name, const QStringList& paths)
     QString body = QCoreApplication::translate("LightAlbum", "本库作品总计：<b>%1</b> 幅<br>").arg(photos_ ? photos_->size() : 0);
     body += QCoreApplication::translate("LightAlbum", "该国家/地区 GPS 作品：<b>%1</b> 幅").arg(paths.size());
     if (paths.isEmpty())
-        body += QCoreApplication::translate("LightAlbum", "<br><span style='color:#5a6b60;'>（该国暂无 GPS 作品）</span>");
+        body += QCoreApplication::translate("LightAlbum", "<br><span style='color:#8da996;'>（该国暂无 GPS 作品）</span>");
     statsBody_->setText(body);
     viewBtn_->setEnabled(false);
     lastCountryPaths_ = paths;          // 供「▶ 播放本区作品」使用

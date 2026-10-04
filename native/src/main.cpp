@@ -1696,6 +1696,62 @@ int main(int argc, char *argv[])
         return 0;
     }
 
+    // 方向 F 第三步 a11y·对比度合规（2.11.0）：WCAG 2.1 相对亮度审计（第33门）。
+    //   含 DarkPalette 真实常量 + 产品内固定硬编码色对，逐对算对比度比对阈值
+    //   （正文 4.5:1 / 大字·UI 3:1）。纯函数，offscreen 自退。
+    //   反例 LA_A11Y_CONTRAST_QA_FORCE_BROKEN=1 → 注入 Line on Inset(1.35:1) → 门红。
+    if (!qEnvironmentVariableIsEmpty("LA_A11Y_CONTRAST_QA")) {
+        const auto lin = [](double c) {
+            c /= 255.0;
+            return c <= 0.03928 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4);
+        };
+        const auto lum = [&](const QColor& c) {
+            return 0.2126 * lin(c.red()) + 0.7152 * lin(c.green()) + 0.0722 * lin(c.blue());
+        };
+        const auto cr = [&](const QColor& fg, const QColor& bg) {
+            const double l1 = lum(fg), l2 = lum(bg);
+            return (qMax(l1, l2) + 0.05) / (qMin(l1, l2) + 0.05);
+        };
+        struct Pair { QString label; QColor fg; QColor bg; double thr; };
+        QVector<Pair> pairs = {
+            {"Ink on Bg",                  Dark::Ink, Dark::Bg,     4.5},
+            {"Ink on Card",                Dark::Ink, Dark::Card,   4.5},
+            {"Ink on Inset",               Dark::Ink, Dark::Inset,  4.5},
+            {"Muted on Bg",                Dark::Muted,Dark::Bg,     4.5},
+            {"Muted on Card",              Dark::Muted,Dark::Card,   4.5},
+            {"Muted on Inset",             Dark::Muted,Dark::Inset,  4.5},
+            {"Gold on Bg",                 Dark::Gold, Dark::Bg,     4.5},
+            {"Gold on Card",               Dark::Gold, Dark::Card,   4.5},
+            {"Emerald on Card",            Dark::Emerald, Dark::Card,4.5},
+            {"Emerald on Bg",              Dark::Emerald, Dark::Bg,  4.5},
+            {"Bg on Gold (selection)",     Dark::Bg,   Dark::Gold,   4.5},
+            {"btnGold #1a1204 on Gold",    QColor(0x1a,0x12,0x04), Dark::Gold, 4.5},
+            {"checkedChip #0c100d on Gold",QColor(0x0c,0x10,0x0d), Dark::Gold, 4.5},
+            {"hint #8da996 on Bg",         QColor(0x8d,0xa9,0x96), Dark::Bg,     4.5},
+            {"lightbox meta #9db2a5 on bottom", QColor(0x9d,0xb2,0xa5), QColor(0x04,0x06,0x04), 4.5},
+        };
+        if (!qEnvironmentVariableIsEmpty("LA_A11Y_CONTRAST_QA_FORCE_BROKEN"))
+            pairs.append({"BROKEN Line on Inset", Dark::Line, Dark::Inset, 4.5});
+        bool ok = true; QStringList fails;
+        for (const auto& p : pairs) {
+            const double r = cr(p.fg, p.bg);
+            if (r < p.thr) { ok = false; fails << QStringLiteral("%1 %2<%3").arg(p.label).arg(r, 0, 'f', 2).arg(p.thr, 0, 'f', 1); }
+        }
+        if (ok) std::fprintf(stderr, "LA_A11Y_CONTRAST_QA PASS pairs=%d\n", pairs.size());
+        else    std::fprintf(stderr, "LA_A11Y_CONTRAST_QA FAIL %s\n", qPrintable(fails.join(QLatin1Char(' '))));
+        std::fflush(stderr); return 0;
+    }
+
+    // 方向 F 第三步 a11y·键盘可达（2.11.0）：GalleryTile + MapView 键盘聚焦与操作（第34门）。
+    //   断言瓦片/地图 focusPolicy==StrongFocus 且模拟 Enter/Key_Plus 触发激活/缩放。
+    //   offscreen 自退。反例 LA_A11Y_KEYBOARD_QA_FORCE_BROKEN=1 → 强制 NoFocus → 门红。
+    if (!qEnvironmentVariableIsEmpty("LA_A11Y_KEYBOARD_QA")) {
+        const int rEdit = EditorialView::qaKeyboardCheck();
+        const int rMap  = MapView::qaKeyboardCheck();
+        if (rEdit != 0 || rMap != 0) return 1;
+        return 0;
+    }
+
     app.setOrganizationName(QStringLiteral("lightalbum"));
     Dark::apply(app);
 
