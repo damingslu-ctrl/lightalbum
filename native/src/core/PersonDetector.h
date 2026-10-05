@@ -41,7 +41,20 @@ public:
     // 默认人物标签（所有检测到人脸共享，用户在 UI 重命名）。
     static const QString& defaultPerson();
 
+    // ---- 方向 C·人物自动聚类：抽取代表脸 embedding 并落库 ----
+    // 遍历 person 为空照片，POST /face/detect，取 faces[] 中 score 最大者 embedding
+    // （512-d）→ float32 小端 BLOB，经 lib->setFaceEmbeddings 写回 face_emb 列。
+    // 已标注（person 非空）照片跳过；无脸/失败整张放过（不中断整批）。守恒：只写 face_emb 列。
+    static bool detectEmbeddings(Library* lib,
+                                 const QString& url = QStringLiteral("http://127.0.0.1:8767"),
+                                 int limit = -1,
+                                 std::function<void(int, int, const QString&)> progress = {},
+                                 std::function<bool()> cancel = {});
+
     // ---- QA 钩子（反例/确定路径用）----
-    static void setSyntheticForQa(const QVector<PersonItem>& items);  // 非空→绕过网络
+    static void setSyntheticForQa(const QVector<PersonItem>& items);  // 非空→绕过网络（detect）
     static void clearSyntheticForQa();
+    // QA 合成钩子：非空时 detectEmbeddings 绕过网络，直接套用 {path, emb}（embedding 抽取）。
+    static void setSyntheticEmbForQa(const QVector<FaceItem>& items);
+    static void clearSyntheticEmbForQa();
 };

@@ -28,6 +28,7 @@
 #include "core/PhotoDedup.h"
 #include "core/Classifier.h"   // 方向 C·智能分类：CLIP 客户端桥（QA 门用合成钩子）
 #include "core/PersonDetector.h"  // 方向 C·人脸识别（方案A）：face_server 客户端桥（QA 门用合成钩子）
+#include "core/FaceCluster.h"     // 方向 C·人物自动聚类：阈值余弦聚类纯函数（QA 门直调）
 #include <QTemporaryDir>
 #include <QPainter>
 #include <QSet>
@@ -1328,6 +1329,243 @@ int runClassifyQa()
     return okAll ? 0 : 1;
 }
 
+// 方向 C·人物自动聚类门禁（LA_FACE_CLUSTER_QA）。
+// 不依赖外部 face_server：用 PersonDetector::setSyntheticEmbForQa 注入确定 embedding
+// （3 张同一张脸 + 3 张孤立脸），经「抽 embedding 落库 face_emb → FaceCluster 阈值余弦
+// 聚类 → applyClusters 写回 person」全链路，断言：
+//   (A) face_emb 落库后可读回（聚类输入集 = 6）
+//   (B) 守恒：inputCount == outputCount == 6，每 path 恰出现一次、无重复
+//   (C) 分组正确：同一张脸 3 张归一簇「人物1」，孤立脸各自成簇（共 4 簇）
+//   (D) DB person 列写回正确
+//   (E) 内存同步（GalleryModel 读内存 Photo.person）
+//   (F) 检索契约：rowCount(人物1)==3 / rowCount(全部)==6
+//   (G) 重命名后仍可检索（沿用 2.19.0 renamePerson 契约，未回归）
+// 反例 LA_FACE_CLUSTER_QA_FORCE_BROKEN=1 经 FaceCluster::setForceClusterBrokenForQa
+// 丢一张 → 守恒断言 (B) 转红（非空心：正例同一断言实测为绿）。
+int runFaceClusterQa()
+{
+    const bool broken = !qEnvironmentVariableIsEmpty("LA_FACE_CLUSTER_QA_FORCE_BROKEN");
+
+    // 临时库：绝不碰真实 library.db
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::TempLocation)
+        + QStringLiteral("/la_fcluster_qa");
+    QDir(dir).removeRecursively();
+    QDir().mkpath(dir);
+    const QString dbPath = QDir(dir).filePath(QStringLiteral("cluster.db"));
+    QFile::remove(dbPath);
+
+    // 造库：6 行 photos（含 face_emb 列，对齐 Library::open 的迁移后 schema）
+    const int kRows = 6;
+    {
+        QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"),
+                                                   QStringLiteral("la_fcl_seed"));
+        db.setDatabaseName(dbPath);
+        if (!db.open()) {
+            std::fprintf(stderr, "LA_FACE_CLUSTER_QA FAIL seedopen\n");
+            std::fflush(stderr);
+            return 2;
+        }
+        QSqlQuery q(db);
+        q.exec(QStringLiteral(
+            "CREATE TABLE photos (path TEXT PRIMARY KEY, rel TEXT, thumb TEXT, "
+            "missing INTEGER DEFAULT 0, exif_json TEXT, category TEXT, person TEXT, "
+            "private INTEGER DEFAULT 0, rating INTEGER DEFAULT 0, mark TEXT, face_emb BLOB)"));
+        q.exec(QStringLiteral("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)"));
+        for (int i = 0; i < kRows; ++i) {
+            q.prepare(QStringLiteral(
+                "INSERT INTO photos(path,rel,thumb,missing,exif_json,category,person,private,rating,mark) "
+                "VALUES(?,?,?,0,?,?,?,0,0,?)"));
+            q.addBindValue(QStringLiteral("D:/c%1.jpg").arg(i));
+            q.addBindValue(QStringLiteral("c%1.jpg").arg(i));
+            q.addBindValue(QStringLiteral("t%1.jpg").arg(i));
+            q.addBindValue(QStringLiteral("{}"));
+            q.addBindValue(QStringLiteral(""));      // category 空
+            q.addBindValue(QStringLiteral(""));      // person 空=未标注（聚类输入集）
+            q.addBindValue(QStringLiteral(""));      // mark
+            q.exec();
+        }
+        db.close();
+        QSqlDatabase::removeDatabase(QStringLiteral("la_fcl_seed"));
+    }
+
+    QString err;
+    Library lib;
+    if (!lib.open(dbPath, &err)) {
+        std::fprintf(stderr, "LA_FACE_CLUSTER_QA FAIL open=%s\n", qPrintable(err));
+        std::fflush(stderr);
+        return 2;
+    }
+
+    // 512-d 合成 embedding：p0,p1,p2 = 同一张脸（基向量）；p3,p4,p5 = 互相正交且与基正交。
+    // 正交向量余弦 0 < 阈值 0.4 → 各自成簇；基向量余弦 1.0 → 归一簇。
+    const int kDim = 512;
+    // ⚠ QByteArray::resize() 不做零初始化（残留堆垃圾 → cosine=NaN）。必须显式填 0。
+    const auto unitVec = [kDim](int idx) {
+        QByteArray b(kDim * 4, '\0');        // 显式零初始化（非 resize）
+        float* p = reinterpret_cast<float*>(b.data());
+        p[idx] = 1.0f;                       // 单分量单位向量：与其它分量正交（余弦 0）
+        return b;
+    };
+    QVector<FaceItem> synEmb;
+    for (int i = 0; i < 3; ++i)              // 同一张脸 3 张
+        synEmb.append({QStringLiteral("D:/c%1.jpg").arg(i), unitVec(0)});
+    for (int i = 3; i < 6; ++i)              // 3 张互不相同的脸
+        synEmb.append({QStringLiteral("D:/c%1.jpg").arg(i), unitVec(i)});
+    PersonDetector::setSyntheticEmbForQa(synEmb);
+    // 反例钩子：cluster 丢一张 → 守恒断言转红
+    FaceCluster::setForceBrokenForQa(broken);
+
+    QStringList fails;
+    const auto note = [&fails](bool ok, const QString& what) {
+        if (!ok) fails << what;
+    };
+
+    // ① 索引自检 + 守恒基线
+    note(lib.verifyPathIndex(), QStringLiteral("verifyPathIndex false"));
+    note(lib.photos().size() == kRows,
+         QStringLiteral("conserve size=%1 want=%2").arg(lib.photos().size()).arg(kRows));
+
+    // ② 抽 embedding 并落库 face_emb（合成钩子 → 绕过网络）
+    const bool okEmb = PersonDetector::detectEmbeddings(&lib, QStringLiteral("http://127.0.0.1:8767"));
+    note(okEmb, QStringLiteral("detectEmbeddings returned false"));
+
+    // ③ (A) 聚类输入集读回 = 6
+    const QVector<FaceItem> embs = lib.getFaceEmbeddings();
+    note(embs.size() == kRows,
+         QStringLiteral("getFaceEmbeddings=%1 want=%2").arg(embs.size()).arg(kRows));
+    note(embs.size() > 0 && embs.first().emb.size() == kDim * 4,
+         QStringLiteral("emb bytesize=%1 want=%2")
+             .arg(embs.isEmpty() ? -1 : embs.first().emb.size()).arg(kDim * 4));
+
+    // ④ 阈值余弦聚类
+    QVector<ClusterInput> items;
+    items.reserve(embs.size());
+    for (const FaceItem& e : embs) items.append({e.path, e.emb});
+    const ClusterResult cr = FaceCluster::cluster(items, 0.4, 1);
+
+    // (B) 守恒契约：总数守恒 + 每 path 恰一次（这是本门的核心契约，反例打这里）
+    note(cr.inputCount == kRows,
+         QStringLiteral("cluster inputCount=%1 want=%2").arg(cr.inputCount).arg(kRows));
+    note(cr.outputCount == cr.inputCount,
+         QStringLiteral("BROKEN conserve outputCount=%1 inputCount=%2")
+             .arg(cr.outputCount).arg(cr.inputCount));
+    {
+        QSet<QString> seen;
+        int dup = 0;
+        int total = 0;
+        for (const ClusterGroup& g : cr.groups)
+            for (const QString& p : g.paths) {
+                ++total;
+                if (seen.contains(p)) ++dup;
+                seen.insert(p);
+            }
+        note(dup == 0, QStringLiteral("conserve dup path x%1").arg(dup));
+        note(total == cr.inputCount,
+             QStringLiteral("conserve listed=%1 input=%2").arg(total).arg(cr.inputCount));
+    }
+
+    // (C) 分组正确：4 簇（1 个 3 成员 + 3 个单成员），主簇 label=人物1
+    note(cr.groups.size() == 4,
+         QStringLiteral("cluster groups=%1 want=4").arg(cr.groups.size()));
+    int biggest = 0;
+    for (const ClusterGroup& g : cr.groups)
+        biggest = qMax(biggest, int(g.paths.size()));
+    note(biggest == 3, QStringLiteral("biggest cluster=%1 want=3").arg(biggest));
+
+    // ⑤ 簇标签写回 person（applyClusters；不覆盖非空）
+    QVector<ClusterItem> out;
+    for (const ClusterGroup& g : cr.groups)
+        for (const QString& p : g.paths)
+            out.append({p, g.label});
+    const BatchResult br = lib.applyClusters(out);
+    note(br.ok, QStringLiteral("applyClusters not ok: %1").arg(br.error));
+
+    // DB / 内存读助手（独立连接读真实落盘值）
+    const auto dbPerson = [&dbPath](const QString& p) {
+        QString v;
+        QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"),
+                                                   QStringLiteral("la_fcl_read"));
+        db.setDatabaseName(dbPath);
+        if (db.open()) {
+            QSqlQuery q(db);
+            q.prepare(QStringLiteral("SELECT person FROM photos WHERE path=?"));
+            q.addBindValue(p);
+            if (q.exec() && q.next()) v = q.value(0).toString();
+            db.close();
+        }
+        QSqlDatabase::removeDatabase(QStringLiteral("la_fcl_read"));
+        return v;
+    };
+    const auto memPerson = [&lib](const QString& p) {
+        for (const Photo& ph : lib.photos())
+            if (ph.path == p) return ph.person;
+        return QStringLiteral("__missing__");
+    };
+
+    // 找到 3 成员主簇的 label（正例应为「人物1」；反例丢一张后主簇仍最大）
+    QString mainLabel;
+    for (const ClusterGroup& g : cr.groups)
+        if (g.paths.size() == biggest) { mainLabel = g.label; break; }
+    note(mainLabel == QStringLiteral("人物1"),
+         QStringLiteral("main cluster label=%1 want=人物1").arg(mainLabel));
+
+    // (D) DB 写回正确
+    note(!dbPerson(QStringLiteral("D:/c0.jpg")).isEmpty(),
+         QStringLiteral("db c0 should have person (empty=%1)").arg(dbPerson(QStringLiteral("D:/c0.jpg"))));
+    // (E) 内存同步
+    note(memPerson(QStringLiteral("D:/c0.jpg")) == dbPerson(QStringLiteral("D:/c0.jpg")),
+         QStringLiteral("mem c0=%1 db=%2").arg(memPerson(QStringLiteral("D:/c0.jpg")))
+             .arg(dbPerson(QStringLiteral("D:/c0.jpg"))));
+
+    // (F) 检索契约（GalleryModel 读内存 person）
+    GalleryModel model;
+    model.setSource(&lib.photos());
+    model.setPersonFilter(mainLabel);
+    note(model.rowCount() == 3,
+         QStringLiteral("rowCount(%1)=%2 want=3").arg(mainLabel).arg(model.rowCount()));
+    model.setPersonFilter(QString());
+    note(model.rowCount() == kRows,
+         QStringLiteral("rowCount(全部)=%1 want=%2").arg(model.rowCount()).arg(kRows));
+
+    // (G) 重命名契约（2.19.0 能力不得因聚类写回而回归）
+    if (!broken) {
+        const bool renamed = lib.renamePerson(mainLabel, QStringLiteral("张三"));
+        note(renamed, QStringLiteral("renamePerson returned false"));
+        note(dbPerson(QStringLiteral("D:/c0.jpg")) == QStringLiteral("张三"),
+             QStringLiteral("db c0 after rename=%1").arg(dbPerson(QStringLiteral("D:/c0.jpg"))));
+        model.setPersonFilter(QStringLiteral("张三"));
+        note(model.rowCount() == 3,
+             QStringLiteral("rowCount(张三) after rename=%1 want=3").arg(model.rowCount()));
+    }
+
+    // 反例签名化：只坏守恒，不坏写回（避免反例断言本身失真）
+    if (broken) {
+        note(cr.outputCount == cr.inputCount - 1,
+             QStringLiteral("BROKEN expected outputCount=inputCount-1, got %1/%2")
+                 .arg(cr.outputCount).arg(cr.inputCount));
+        note(lib.photos().size() == kRows,
+             QStringLiteral("BROKEN photo count must stay %1").arg(kRows));
+    }
+
+    // 复位静态钩子
+    FaceCluster::setForceBrokenForQa(false);
+    PersonDetector::clearSyntheticEmbForQa();
+    if (!qEnvironmentVariableIsSet("LA_FACE_CLUSTER_QA_KEEP"))
+        QDir(dir).removeRecursively();
+
+    const bool okAll = fails.isEmpty();
+    if (okAll) {
+        std::fprintf(stderr,
+            "LA_FACE_CLUSTER_QA PASS rows=%d broken=%d emb=1 conserve=1 group=1 write=1 sync=1 retrieve=1 rename=1\n",
+            kRows, int(broken));
+    } else {
+        std::fprintf(stderr, "LA_FACE_CLUSTER_QA FAIL broken=%d reason=%s\n",
+                     int(broken), qPrintable(fails.join(QChar(';'))));
+    }
+    std::fflush(stderr);
+    return okAll ? 0 : 1;
+}
+
 // 方向 C·人脸识别（方案A）门禁（LA_PERSON_QA）。
 // 不依赖外部 face_server：用 PersonDetector::setSyntheticForQa 注入确定结果，测
 // 「写回 + 检索契约 + 重命名契约」。反例 LA_PERSON_QA_FORCE_BROKEN=1 令 Library 写库但
@@ -2548,6 +2786,10 @@ int main(int argc, char *argv[])
     // 方向 C·人脸识别（方案A）：人物检测写回 + 检索 + 重命名契约门禁（合成钩子绕过 face_server）
     if (qEnvironmentVariableIsSet("LA_PERSON_QA"))
         return runPersonQa();
+
+    // 方向 C·人物自动聚类：embedding 落库 + 阈值余弦聚类 + 守恒契约门禁（合成钩子绕过 face_server）
+    if (qEnvironmentVariableIsSet("LA_FACE_CLUSTER_QA"))
+        return runFaceClusterQa();
 
     // 方向 D 第五步 b：图库多选 + 批量工具条门禁
     if (qEnvironmentVariableIsSet("LA_GALLERY_BATCH_QA"))

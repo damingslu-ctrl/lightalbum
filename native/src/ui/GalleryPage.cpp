@@ -134,6 +134,15 @@ GalleryPage::GalleryPage(const QVector<Photo>* photos, const QString& thumbsDir,
         "QPushButton:hover{border-color:#4fc08a;color:#d9e4dc;}"));
     connect(personBtn, &QPushButton::clicked, this, &GalleryPage::personDetectRequested);
     clusterLay->addWidget(personBtn);
+    // 方向 C·人物自动聚类：请求 MainWindow 抽 embedding + 阈值余弦聚类（视图不持写能力，只发信号）
+    auto* faceClusterBtn = new QPushButton(QCoreApplication::translate("LightAlbum", "智能聚类"), clusterBar_);
+    faceClusterBtn->setCursor(Qt::PointingHandCursor);
+    faceClusterBtn->setStyleSheet(QStringLiteral(
+        "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:9px;"
+        "padding:3px 12px;color:#8da996;font-size:12px;}"
+        "QPushButton:hover{border-color:#4fc08a;color:#d9e4dc;}"));
+    connect(faceClusterBtn, &QPushButton::clicked, this, &GalleryPage::faceClusterRequested);
+    clusterLay->addWidget(faceClusterBtn);
     lay->addWidget(clusterBar_);
 
     // 方向 C 第一步：搜索框（地点/时间/评分/关键词过滤，经 applyFilter → GalleryModel::setFilter）
@@ -275,6 +284,7 @@ void GalleryPage::qaFireBatchRating(int rating) { emitBatchRating(rating); }
 void GalleryPage::qaFireBatchPrivate(bool priv) { emitBatchPrivate(priv); }
 void GalleryPage::qaFireClassify() { emit classifyRequested(); }
 void GalleryPage::qaFirePersonDetect() { emit personDetectRequested(); }
+void GalleryPage::qaFireFaceCluster() { emit faceClusterRequested(); }
 
 // ---- P16 chips：按数据 + 隐私门状态重建（空分类不展示，全空隐藏整条）----
 void GalleryPage::buildChips()

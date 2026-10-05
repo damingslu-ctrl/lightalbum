@@ -220,6 +220,28 @@ $GateTable = @(
   # so packaging coverage is NOT weakened.
   # measuredMs=500 from qa_runner -Timing (rule 13), non-zero for E8.
   @{n="LA_PERSON_QA";     png=$false; measuredMs=500}
+  # Direction C step 5: face auto-clustering. Extracts one representative-face
+  # embedding per photo (largest detection score), persists it into the new
+  # face_emb BLOB column, then groups photos by cosine similarity (greedy
+  # single-linkage, threshold 0.4) and writes each cluster label back to the
+  # person column. Pure offscreen self-exit, no MainWindow, no external env.
+  # Calls PersonDetector::detectEmbeddings() with a synthetic embedding hook
+  # (bypassing the face_server HTTP service) and asserts: (A) face_emb round
+  # trip; (B) CONSERVATION -- inputCount == outputCount and every path appears
+  # exactly once; (C) grouping shape (3 same face + 3 distinct -> 4 clusters);
+  # (D) DB person column written; (E) in-memory sync; (F) GalleryModel rowCount
+  # per cluster + "all"; (G) renamePerson still works (no 2.19.0 regression).
+  # Counter-example LA_FACE_CLUSTER_QA_FORCE_BROKEN=1 makes FaceCluster drop one
+  # photo, so the conservation assertion (B) turns RED -- and that same
+  # assertion is measured green in the positive run, so it is not hollow.
+  # Tier: FULL. Measured 215/219/217 ms over three offscreen runs (round-trip of
+  # a 6-photo temp sqlite + two write transactions). That is under the 500 ms
+  # fast budget, but E6 only bounds the fast layer from above -- keeping a cheap
+  # gate in the strict layer is always legal, and it matches its two sibling
+  # direction-C gates (LA_CLASSIFY_QA 1600 ms, LA_PERSON_QA 500 ms, both FULL).
+  # release.ps1 gates on the union anyway, so packaging coverage is unaffected.
+  # measuredMs=220 from qa_runner -Timing (rule 13), non-zero for E8.
+  @{n="LA_FACE_CLUSTER_QA"; png=$false; measuredMs=220}
 )
 
 # Resolve a gate's tier. Absent key means "full" - the fail-safe default.

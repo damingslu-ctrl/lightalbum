@@ -30,6 +30,8 @@ bool Library::open(const QString& dbPath, QString* err)
             m.exec(QStringLiteral(
                 "ALTER TABLE photos ADD COLUMN private INTEGER DEFAULT 0"));
             m.exec(QStringLiteral("ALTER TABLE photos ADD COLUMN mark TEXT"));
+            // 方向 C·人物自动聚类：代表脸 embedding（512-d float32 BLOB）。重复 ADD 报错无害，静默忽略。
+            m.exec(QStringLiteral("ALTER TABLE photos ADD COLUMN face_emb BLOB"));
             m.exec(QStringLiteral(
                 "CREATE INDEX IF NOT EXISTS idx_photos_cat ON photos(category)"));
             mig.close();
@@ -402,6 +404,130 @@ bool Library::renamePerson(const QString& oldName, const QString& newName)
     for (const auto& u : updates)
         if (Photo* ph = findMutable(u.first)) ph->person = u.second;
     return true;
+}
+
+// ---- 方向 C·人物自动聚类：批量写回代表脸 embedding（仅 face_emb 列）----
+// 单事务、COMMIT 后才返回；embedding 不进内存（不触 Photo 副本）。守恒：只改 face_emb 列。
+BatchResult Library::setFaceEmbeddings(const QVector<FaceItem>& items)
+{
+    BatchResult r;
+    r.total = items.size();
+    if (items.isEmpty()) { r.ok = true; return r; }   // 空批=成功空操作
+
+    QSqlDatabase db = rw();
+    const QString sql = QStringLiteral("UPDATE photos SET face_emb=? WHERE path=?");
+    if (!db.transaction()) {
+        r.error = db.lastError().text();
+        return r;
+    }
+    QSqlQuery q(db);
+    if (!q.prepare(sql)) {
+        r.error = q.lastError().text();
+        db.rollback();
+        return r;
+    }
+    int done = 0;
+    for (int i = 0; i < items.size(); ++i) {
+        q.addBindValue(items[i].emb);    // QByteArray → BLOB
+        q.addBindValue(items[i].path);
+        if (!q.exec()) {                  // 任一条失败 → 整体回滚
+            r.error = q.lastError().text();
+            r.failedIndex = i;
+            r.done = 0;
+            db.rollback();
+            return r;
+        }
+        done += q.numRowsAffected();
+    }
+    if (!db.commit()) {
+        r.error = db.lastError().text();
+        r.failedIndex = items.size() - 1;
+        r.done = 0;
+        db.rollback();
+        return r;
+    }
+    r.ok = true;
+    r.done = done;
+    return r;   // face_emb 不进内存，无需同步 Photo 副本
+}
+
+// ---- 方向 C·人物自动聚类：批量写回聚类簇标签（person 列）----
+// 守恒 + 不覆盖非空：UPDATE WHERE person IS NULL OR person=''；内存同步仅对空者生效。
+// 复用 g_forcePersonNoSync 反例钩子（写库但跳过内存同步 → GalleryModel 按 person 检索失效 RED）。
+BatchResult Library::applyClusters(const QVector<ClusterItem>& items)
+{
+    BatchResult r;
+    r.total = items.size();
+    if (items.isEmpty()) { r.ok = true; return r; }   // 空批=成功空操作
+
+    QSqlDatabase db = rw();
+    const QString sql = QStringLiteral(
+        "UPDATE photos SET person=? WHERE path=? AND (person IS NULL OR person='')");
+    if (!db.transaction()) {
+        r.error = db.lastError().text();
+        return r;
+    }
+    QSqlQuery q(db);
+    if (!q.prepare(sql)) {
+        r.error = q.lastError().text();
+        db.rollback();
+        return r;
+    }
+    int done = 0;
+    for (int i = 0; i < items.size(); ++i) {
+        q.addBindValue(items[i].label);
+        q.addBindValue(items[i].path);
+        if (!q.exec()) {                  // 任一条失败 → 整体回滚
+            r.error = q.lastError().text();
+            r.failedIndex = i;
+            r.done = 0;
+            db.rollback();
+            return r;
+        }
+        done += q.numRowsAffected();
+    }
+    if (!db.commit()) {
+        r.error = db.lastError().text();
+        r.failedIndex = items.size() - 1;
+        r.done = 0;
+        db.rollback();
+        return r;
+    }
+    r.ok = true;
+    r.done = done;
+
+    // COMMIT 成功后才同步内存副本（保持 DB ↔ 内存一致）；
+    // 仅更新 person 当前为空的照片（与 DB WHERE 语义一致），避免覆盖用户已标注。
+    // QA 反例开关打开时故意跳过 → GalleryModel 按内存 person 检索失效（RED）。
+    if (!g_forcePersonNoSync) {
+        for (const ClusterItem& it : items)
+            if (Photo* ph = findMutable(it.path)) {
+                if (ph->person.isEmpty()) ph->person = it.label;
+            }
+    }
+    return r;
+}
+
+// ---- 方向 C·人物自动聚类：读取「person 为空且有 face_emb」的照片（聚类输入集）----
+// 走只读主连接；缺失 BLOB 的行跳过（不参与聚类）。不改动任何状态。
+QVector<FaceItem> Library::getFaceEmbeddings() const
+{
+    QVector<FaceItem> out;
+    if (!QSqlDatabase::contains(QStringLiteral("la_lib"))) return out;
+    QSqlQuery q(QSqlDatabase::database(QStringLiteral("la_lib")));
+    if (!q.exec(QStringLiteral(
+            "SELECT path, face_emb FROM photos WHERE person IS NULL OR person=''"))) {
+        return out;
+    }
+    while (q.next()) {
+        QByteArray emb = q.value(1).toByteArray();
+        if (emb.isEmpty()) continue;       // 仅含已有 embedding 的行
+        FaceItem it;
+        it.path = q.value(0).toString();
+        it.emb  = emb;
+        out.append(it);
+    }
+    return out;
 }
 
 // ---- D5：path ->下标索引（批量写回去 O(N²)）----

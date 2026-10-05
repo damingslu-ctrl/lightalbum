@@ -16,6 +16,11 @@ static QVector<PersonItem> g_synthetic;
 void PersonDetector::setSyntheticForQa(const QVector<PersonItem>& items) { g_synthetic = items; }
 void PersonDetector::clearSyntheticForQa() { g_synthetic.clear(); }
 
+// ---- QA 钩子状态（非空→detectEmbeddings 绕过网络，直接落库合成 embedding）----
+static QVector<FaceItem> g_syntheticEmb;
+void PersonDetector::setSyntheticEmbForQa(const QVector<FaceItem>& items) { g_syntheticEmb = items; }
+void PersonDetector::clearSyntheticEmbForQa() { g_syntheticEmb.clear(); }
+
 const QString& PersonDetector::defaultPerson()
 {
     static const QString s = QStringLiteral("人物1");
@@ -126,3 +131,89 @@ bool PersonDetector::detect(Library* lib,
         lib->setPersons(batch);
     return true;
 }
+
+// 把 face_server 返回的 embedding JSON 数组（512 个 double）转成小端序 float32 BLOB。
+// ⚠ QByteArray::resize() 不做零初始化（残留堆垃圾）；此处每个元素都会被覆写，
+//   仍显式零初始化以防 arr.size() 与写入数不一致时留下脏字节。
+// x86 上 float* 直接落盘即小端序。
+static QByteArray toEmbBlob(const QJsonArray& arr)
+{
+    QByteArray b(arr.size() * 4, '\0');
+    float* p = reinterpret_cast<float*>(b.data());
+    for (int i = 0; i < arr.size(); ++i) p[i] = float(arr[i].toDouble());
+    return b;
+}
+
+bool PersonDetector::detectEmbeddings(Library* lib,
+                                       const QString& url, int limit,
+                                       std::function<void(int, int, const QString&)> progress,
+                                       std::function<bool()> cancel)
+{
+    if (!lib) return false;
+
+    // ---- QA 确定路径：直接套用合成 embedding，不触网 ----
+    if (!g_syntheticEmb.isEmpty()) {
+        lib->setFaceEmbeddings(g_syntheticEmb);
+        if (progress) progress(g_syntheticEmb.size(), g_syntheticEmb.size(), QString());
+        return true;
+    }
+
+    // ---- 真路径：先探测服务（失败即返回 false，UI 据此提示启动服务）----
+    if (!probe(url)) return false;
+
+    const QVector<Photo>& photos = lib->photos();
+    QVector<const Photo*> pending;
+    pending.reserve(photos.size());
+    for (const Photo& p : photos)
+        if (p.person.isEmpty())       // 跳过已标注，聚类只处理未标注集
+            pending.append(&p);
+    if (limit > 0 && pending.size() > limit) pending.resize(limit);
+    const int total = pending.size();
+    int done = 0;
+    if (progress) progress(0, total, QString());
+
+    QNetworkAccessManager mgr;
+    QVector<FaceItem> batch;
+    batch.reserve(total);
+    for (int i = 0; i < total; ++i) {
+        if (cancel && cancel()) break;
+        const Photo* p = pending[i];
+        QJsonObject body;
+        body.insert(QLatin1String("path"), p->path);
+        QNetworkRequest req(QUrl(url).resolved(QStringLiteral("/face/detect")));
+        req.setTransferTimeout(60000);
+        req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+        QNetworkReply* reply = mgr.post(
+            req, QJsonDocument(body).toJson(QJsonDocument::Compact));
+        const bool ok = waitReply(reply, 60000);
+        if (!ok) {                      // 网络层失败 → 整张放过
+            reply->deleteLater();
+            done += 1;
+            if (progress) progress(done, total, p->path);
+            continue;
+        }
+        const QJsonObject res = QJsonDocument::fromJson(reply->readAll()).object();
+        reply->deleteLater();
+        const QJsonArray faces = res.value(QLatin1String("ok")).toBool(false)
+            ? res.value(QLatin1String("faces")).toArray() : QJsonArray();
+        // 取 score 最大的代表脸 embedding（多脸取代表脸，对齐 per-photo 单标签模型）
+        if (!faces.isEmpty()) {
+            double best = -1;
+            QJsonObject bestFace;
+            for (const QJsonValue& fv : faces) {
+                const QJsonObject f = fv.toObject();
+                const double s = f.value(QLatin1String("score")).toDouble(0.0);
+                if (s > best) { best = s; bestFace = f; }
+            }
+            const QJsonArray emb = bestFace.value(QLatin1String("embedding")).toArray();
+            if (!emb.isEmpty())
+                batch.append({p->path, toEmbBlob(emb)});
+        }
+        done += 1;
+        if (progress) progress(done, total, p->path);
+    }
+    if (!batch.isEmpty())
+        lib->setFaceEmbeddings(batch);
+    return true;
+}
+

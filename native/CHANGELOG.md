@@ -3,6 +3,60 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.20.0] - 2026-10-05
+
+### 新增 - 人物自动聚类（方向 C 第五步）
+
+2.19.0 交付「检测标注 + 用户重命名」，但所有检测到人脸共享默认标签「人物1」——**多人合影无法区分**。本步把 2.19.0 已回传却丢弃的 512-d ArcFace `embedding` 用起来，实现**阈值余弦聚类**自动区分不同人物，用户随后仍可在人物 chips 右键改名。
+
+**★三项裁定（用户对齐）**：① 方向 = **人物自动聚类**（补齐 2.19.0 范围裁定留下的缺口）；② 算法 = **阈值余弦聚类**（贪心单连锁，代表脸 = 群首，阈值 0.4）；③ embedding 存储 = **落库 `face_emb` BLOB**（512 × float32 小端 = 2048 字节）。
+
+**取证依据**：`PersonDetector::detect` 在 2.19.0 只取 `faces.size()`、**丢弃 `embedding`**（原第 121 行 `batch.append({p->path, defaultPerson()})`），证明数据基础已具备、只是未利用。
+
+**★schema 迁移（P16 风格）**：`photos` 表新增 `face_emb BLOB`（`ALTER TABLE ... ADD COLUMN`，重复 ADD 报错无害静默忽略）。**embedding 不进内存 `Photo` 副本**（512×4 字节 × 数千张会撑爆内存），按需经 `getFaceEmbeddings()` 从只读主连接读盘。
+
+**core 纯函数 `FaceCluster.{h,cpp}`**（对齐 `PhotoCluster` 范式）：`cluster(items, threshold=0.4, startIndex=1)` 贪心单连锁——按序遍历，对每个 embedding 找「代表脸余弦 >= 阈值」的已有簇，命中并入否则新建；`cosine(a,b)` 两长度一致 float32 BLOB 点积/模；label = `人物N`。**★守恒契约（铁律 6）**：每个输入 path 恰出现一次、`outputCount == inputCount`、无重复无遗漏（`ClusterResult` 显式携带 `inputCount`/`outputCount` 供门断言）。`setForceBrokenForQa` 反例钩子。
+
+**core 桥扩展 `PersonDetector`**：`detectEmbeddings(lib,url,limit,progress,cancel)`——遍历 `person` 为空照片 `POST /face/detect`，**多脸取代表脸**（`score` 最大者，对齐 per-photo 单标签模型）→ `toEmbBlob` 转 float32 小端 BLOB → 整批 `lib->setFaceEmbeddings(batch)`。复用既有 `isLocalUrl` 回环守卫 + `waitReply`；`setSyntheticEmbForQa`/`clearSyntheticEmbForQa` 合成钩子绕过网络。
+
+**★写回 API + 守恒契约**：`setFaceEmbeddings` 单事务 `UPDATE photos SET face_emb=? WHERE path=?`（只改 `face_emb` 列，不进内存）；`applyClusters` 单事务 `UPDATE photos SET person=? WHERE path=? AND (person IS NULL OR person='')`——**WHERE 条件保证不覆盖非空**（用户已重命名的照片绝不被聚类结果污染），内存同步同样只对 `person` 当前为空者生效（与 DB 语义严格一致），复用 `g_forcePersonNoSync` 反例钩子；`getFaceEmbeddings()` 读「person 为空且有 face_emb」的行（缺失 BLOB 跳过）。任一条失败整体 `rollback`。
+
+**UI（视图不持写能力，铁律 5）**：GalleryPage 聚类条新增「智能聚类」按钮 → 只发 `faceClusterRequested()` signal；`MainWindow::runFaceCluster` 镜像 `runPersonDetect`——`probe` / 提示启动 `face_server:8767` / pending 统计 / `QProgressDialog` + `QFutureWatcher<bool>` + `std::atomic<bool>` 取消 + `QtConcurrent::run`，后台链路 `detectEmbeddings` → `getFaceEmbeddings` → `FaceCluster::cluster` → `applyClusters`，完成 `gallery_->refresh()`。**★起始编号防撞号**：扫描既有 `person` token 里的「人物N」取最大 N，`startIndex=N+1`，避免聚类产生的「人物1」与用户已改名的既有标签撞号（撞号会把两个人的照片混进同一 chips）。
+
+### 新增 - LA_FACE_CLUSTER_QA（第 44 门，full 层）
+
+不依赖外部 face_server：用 `PersonDetector::setSyntheticEmbForQa` 注入 6 条确定 embedding（**同一张脸 3 张** + **互不相同的 3 张**），走完「抽 embedding 落库 → 阈值余弦聚类 → applyClusters 写回」全链路。纯离屏自退，不构造 `MainWindow`。断言覆盖：
+
+- **A embedding 落库往返**：`getFaceEmbeddings()` 读回 6 条、字节数 == 512×4。
+- **B ★守恒（核心契约）**：`inputCount == outputCount == 6`，每 path 恰一次、无重复。
+- **C 分组形状**：4 簇（1 个 3 成员主簇 + 3 个单成员），主簇 label == `人物1`。
+- **D DB 写回**：`photos.person` 已写入（非空）。
+- **E 内存同步**：`Photo.person` 与 DB 一致（GalleryModel 读内存）。
+- **F 检索契约**：`rowCount(人物1)==3`、`rowCount(全部)==6`。
+- **G ★无回归**：`renamePerson` 改名后检索仍正确（2.19.0 能力未被聚类写回破坏）。
+
+**反例（非空心）**：`LA_FACE_CLUSTER_QA_FORCE_BROKEN=1` 经 `FaceCluster::setForceBrokenForQa(true)` 让**真实实现**丢一张 → 主断言 B 精准转红，实测 `FAIL ... reason=BROKEN conserve outputCount=5 inputCount=6;conserve listed=5 input=6`。**同一断言在正例实测为绿**（`conserve=1`），故断言必然有效、绝非空心；反例另签名化断言「照片总数仍 == 6」，证明**只坏守恒不坏其它**。
+
+**★分层实测决定（规则 13）**：离屏实测 **215/219/217ms**（三次）。虽在 500ms 快门预算内，但 E6 只对 fast 层**上界**约束、把便宜门留在 strict 层永远合法，且与同族 `LA_PERSON_QA`（500ms）、`LA_CLASSIFY_QA`（1600ms）一致 → 入 **full 层**，`measuredMs=220`（记录实测值而非猜测值）。`release.ps1` 门禁走并集（44 门全跑），打包强度未削弱。
+
+### 修复 / 过程
+- **新增** `src/core/FaceCluster.{h,cpp}`：`cluster` / `cosine` / `setForceBrokenForQa`；`ClusterInput`/`ClusterGroup`/`ClusterResult` 结构（`ClusterResult` 显式携带守恒计数）。
+- `src/core/PersonDetector.{h,cpp}`：新增 `detectEmbeddings` / `setSyntheticEmbForQa` / `clearSyntheticEmbForQa` / `toEmbBlob`；`detect` 行为不变。
+- `src/core/Library.{h,cpp}`：新增 `FaceItem`/`ClusterItem` 结构；`setFaceEmbeddings` / `applyClusters` / `getFaceEmbeddings`；`face_emb BLOB` 列迁移。
+- `src/ui/GalleryPage.{h,cpp}`：新增 `faceClusterRequested` signal、「智能聚类」按钮、`qaFireFaceCluster`。
+- `src/ui/MainWindow.{h,cpp}`：新增 `runFaceCluster` + 接线 + `#include "../core/FaceCluster.h"`。
+- `src/main.cpp`：新增 `runFaceClusterQa()` + `LA_FACE_CLUSTER_QA` 派发 + `core/FaceCluster.h` 引入。
+- `gate_matrix.ps1`：新增第 44 门（纯 ASCII 注释，规则 13）。
+- `CMakeLists.txt`：`VERSION 2.19.0 → 2.20.0`，登记 `FaceCluster.h/.cpp`。
+
+### QA
+- 新门正例 `LA_FACE_CLUSTER_QA PASS rows=6 broken=0 emb=1 conserve=1 group=1 write=1 sync=1 retrieve=1 rename=1`（rc=0）。
+- 新门反例 `LA_FACE_CLUSTER_QA_FORCE_BROKEN=1` → `FAIL ... conserve outputCount=5 inputCount=6`（rc=1）。
+- **★踩坑取证（`QByteArray::resize()` 不零初始化）**：首轮正例即 RED（`groups=5 want=4; biggest=2 want=3`）。加临时诊断打印字节头定位到根因——`unitVec` 用 `b.resize(kDim*4)` 后只写 1 个分量，**其余 511 个 float 是未初始化堆垃圾**（实测 `nonzero=492`、字节头为 `...indexix_pho`），导致 `cosine` 溢出为 `NaN`。修复：改用 `QByteArray b(kDim*4, '\0')` 显式零初始化；生产侧 `toEmbBlob` 同步加固（每元素虽都覆写，仍显式零初始化以防 `arr.size()` 与写入数不一致留下脏字节）。**该坑对任何「resize + 部分写入 + 当数值用」的场景都成立，已写入铁律 19。**
+- `LA_GATE_MATRIX_QA PASS gates=44 fast=13 full=31 errs=0`，E1–E10 全绿。
+- **全量回归 `qa_runner.ps1`（44 门并集）：`SUMMARY: PASS=43 FAIL=0 CHECK=0 SKIP=1 KILL=0`**，总墙钟 168793ms（SKIP = `LA_SCAN_SMOKE` 需外部 `LA_SCAN_ROOT/LA_SCAN_DB`，非回归）。
+- 隔离复跑 `LA_PERSON_QA` / `LA_CLASSIFY_QA` / `LA_DEDUP_QA` / `LA_I18N_QA` / `LA_BATCH_TX_QA` 全绿，2.19.0/2.18.0 能力无回归。
+
 ## [2.19.0] - 2026-10-05
 
 ### 新增 - 人脸识别标注 + 人物重命名（方向 C 第四步）

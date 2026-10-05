@@ -37,6 +37,20 @@ struct PersonItem {
     QString name;
 };
 
+// 方向 C·人物自动聚类：单条写回项（path 标识 + 512-d float32 代表脸 embedding BLOB）。
+// emb 为小端序 float32 字节流（512 * 4 = 2048 字节），由 PersonDetector 从 face_server 抽取。
+struct FaceItem {
+    QString     path;
+    QByteArray  emb;
+};
+
+// 方向 C·人物自动聚类：单条写回项（path 标识 + 簇标签，如「人物1」）。
+// 写回 DB 时只持久化 label（与 photos 表 person 列一致）。
+struct ClusterItem {
+    QString path;
+    QString label;
+};
+
 struct Photo {
     QString path, rel, thumbFile;
     // exif_json 字段（与 web 版 PHOTOS 对象一一对应）
@@ -91,6 +105,17 @@ public:
     bool renamePerson(const QString& oldName, const QString& newName);
     // QA 反例钩子：setPersons 写库但跳过内存同步（使 GalleryModel 按内存 person 检索失效）。
     static void setForcePersonNoSyncForQa(bool on);
+
+    // ---- 方向 C·人物自动聚类：写回 API（复用 rw() 单事务 + COMMIT 后同步）----
+    // 批量写回「代表脸 embedding」：每张待检测照片（person 为空）的 512-d float32 BLOB。
+    // 守恒契约：只改 face_emb 列，不增删照片；embedding 不进内存副本（按需 getFaceEmbeddings 读盘）。
+    BatchResult setFaceEmbeddings(const QVector<FaceItem>& items);
+    // 批量写回「聚类簇标签」：把 FaceCluster 产出的簇 label 写回 person 列。
+    // 守恒 + 不覆盖非空：UPDATE 带 WHERE person IS NULL OR person=''；内存同步同样只对空者生效。
+    // 复用 g_forcePersonNoSync 反例钩子（写库但跳过内存同步 → 检索失效 RED）。
+    BatchResult applyClusters(const QVector<ClusterItem>& items);
+    // 读取「person 为空且有 face_emb」的照片（聚类输入集）；缺失 BLOB 的行跳过。
+    QVector<FaceItem> getFaceEmbeddings() const;
 
     // ---- 方向 C·QA 钩子（反例用）----
     // 打开后 setCategories 故意"写库但跳过内存同步"——使 GalleryModel（读内存

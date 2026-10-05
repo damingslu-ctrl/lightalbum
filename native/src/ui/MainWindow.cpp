@@ -12,6 +12,7 @@
 #include "../core/qaExit.h"      // 2.7.0 门禁自退契约（禁裸调 quit）
 #include "../core/Classifier.h"   // 方向 C·智能分类：CLIP 客户端桥
 #include "../core/PersonDetector.h"  // 方向 C·人脸识别（方案A）：face_server 客户端桥
+#include "../core/FaceCluster.h"     // 方向 C·人物自动聚类：阈值余弦聚类纯函数
 #include "../core/MotionPref.h"
 #include "../core/Vault.h"
 #include <QDialog>
@@ -648,6 +649,7 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
     connect(gallery_, &GalleryPage::classifyRequested, this, [this] { runClassify(); });
     // 方向 C·人脸识别（方案A）：识别人物按钮 → 探测 face_server → 异步跑检测（视图不持写能力）
     connect(gallery_, &GalleryPage::personDetectRequested, this, [this] { runPersonDetect(); });
+    connect(gallery_, &GalleryPage::faceClusterRequested, this, [this] { runFaceCluster(); });
     // 人物 chips 右键重命名 → 落库重命名 + 重建 chips（视图不持写能力，写回在 MainWindow）
     connect(gallery_, &GalleryPage::renamePersonRequested, this,
             [this](const QString& oldName, const QString& newName) {
@@ -1385,6 +1387,98 @@ void MainWindow::runPersonDetect()
     const auto cancelPred = [cancelled] { return cancelled->load(); };
     watcher->setFuture(QtConcurrent::run([this, url, prog, cancelPred] {
         return PersonDetector::detect(lib_, url, -1, prog, cancelPred);
+    }));
+}
+
+// 方向 C·人物自动聚类：收到图库「智能聚类」信号后，探测本地 face_server，异步
+// ① 抽取代表脸 embedding 并落库 face_emb ② FaceCluster 阈值余弦聚类 ③ applyClusters
+// 写回 person ④ 刷新人物 chips。QtConcurrent 不阻塞 GUI，带进度对话框与取消。
+// 视图不持写能力（规则5）：真正的写库在 PersonDetector/Library 内、MainWindow 持有的 lib_ 上执行。
+// 起始编号：扫描既有 person token 中的「人物N」取最大 N，startIndex=N+1，避免与用户
+// 已重命名的既有标签撞号（撞号会把两个人的照片混进同一人物 chips）。
+void MainWindow::runFaceCluster()
+{
+    if (!lib_) return;
+    const QString url = QStringLiteral("http://127.0.0.1:8767");   // 仅回环（PersonDetector 守卫）
+    // 1) 探测服务（不可用 → 提示启动，不报错）
+    if (!PersonDetector::probe(url)) {
+        QMessageBox::information(this,
+            QCoreApplication::translate("LightAlbum", "人脸服务未就绪"),
+            QCoreApplication::translate("LightAlbum",
+                "请先启动本地人脸服务（D:\\lightalbum_ai\\face_server.py），"
+                "再点「智能聚类」。仅支持本机回环地址，照片不会外传。"));
+        return;
+    }
+    // 2) 统计待聚类数（person 为空）
+    int pending = 0;
+    for (const Photo& p : lib_->photos())
+        if (p.person.isEmpty()) ++pending;
+    if (pending == 0) {
+        QMessageBox::information(this,
+            QCoreApplication::translate("LightAlbum", "智能聚类"),
+            QCoreApplication::translate("LightAlbum",
+                "库内照片均已标注人物，无需再聚类。要重新聚类请先清空人物标注。"));
+        return;
+    }
+    // 3) 起始编号：既有「人物N」的最大 N + 1
+    int maxN = 0;
+    for (const Photo& p : lib_->photos()) {
+        for (const QString& t : p.person.split(',', Qt::SkipEmptyParts)) {
+            const QString tt = t.trimmed();
+            if (tt.startsWith(QStringLiteral("人物"))) {
+                bool ok = false;
+                const int n = tt.mid(2).toInt(&ok);
+                if (ok && n > maxN) maxN = n;
+            }
+        }
+    }
+    const int startIndex = maxN + 1;
+    // 4) 进度对话框 + 后台跑
+    auto* dlg = new QProgressDialog(
+        QCoreApplication::translate("LightAlbum", "正在聚类人物…"),
+        QCoreApplication::translate("LightAlbum", "取消"), 0, pending, this);
+    dlg->setWindowModality(Qt::WindowModal);
+    dlg->setMinimumDuration(0);
+    auto* watcher = new QFutureWatcher<bool>(this);
+    auto* cancelled = new std::atomic<bool>(false);
+    connect(dlg, &QProgressDialog::canceled, this, [cancelled] { cancelled->store(true); });
+    connect(watcher, &QFutureWatcher<bool>::finished, this,
+            [this, dlg, watcher, cancelled, pending] {
+                dlg->close();
+                gallery_->refresh();   // 重建人物 chips + 计数（聚类标签生效）
+                const bool ok = watcher->result();
+                QMessageBox::information(this,
+                    QCoreApplication::translate("LightAlbum", "智能聚类"),
+                    ok ? QCoreApplication::translate("LightAlbum", "已聚类 %1 张照片为不同人物。").arg(pending)
+                       : QCoreApplication::translate("LightAlbum", "聚类过程中断（可能已部分写入）。"));
+                watcher->deleteLater();
+                delete cancelled;
+                dlg->deleteLater();
+            });
+    const auto prog = [dlg](int done, int, const QString&) {
+        QMetaObject::invokeMethod(dlg, "setValue", Qt::QueuedConnection, Q_ARG(int, done));
+    };
+    const auto cancelPred = [cancelled] { return cancelled->load(); };
+    watcher->setFuture(QtConcurrent::run([this, url, prog, cancelPred, startIndex] {
+        // ① 抽代表脸 embedding 并落库 face_emb（person 为空集）
+        if (!PersonDetector::detectEmbeddings(lib_, url, -1, prog, cancelPred))
+            return false;
+        if (cancelPred()) return false;
+        // ② 读回 embedding 集 → 阈值余弦聚类
+        const QVector<FaceItem> embs = lib_->getFaceEmbeddings();
+        if (embs.isEmpty()) return false;
+        QVector<ClusterInput> items;
+        items.reserve(embs.size());
+        for (const FaceItem& e : embs) items.append({e.path, e.emb});
+        const ClusterResult cr = FaceCluster::cluster(items, 0.4, startIndex);
+        // ③ 簇标签写回 person（不覆盖非空；用户可随后在 chips 右键重命名）
+        QVector<ClusterItem> out;
+        out.reserve(embs.size());
+        for (const ClusterGroup& g : cr.groups)
+            for (const QString& p : g.paths)
+                out.append({p, g.label});
+        lib_->applyClusters(out);
+        return true;
     }));
 }
 
