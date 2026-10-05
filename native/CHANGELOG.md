@@ -3,6 +3,76 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.21.0] - 2026-10-05
+
+### 新增 - release.ps1 首次端到端实跑 + 两条真实缺陷修复（方向 E 第四步）
+
+`release.ps1` 自 2.5.0 起只跑过 `-SelfTest`（沙盒契约自检），**从未真实端到端执行过**。本轮按 §8.4 准入清单（无长期红门 → 查已知债务）实跑，暴露并修复两条**只有在真实产物上才会出现**的缺陷。
+
+**★取证（先测再改）**：首次真实执行 `release.ps1 -SkipGate` 即跑通（EXITCODE=0，11.7s，28.3 MB zip），产物本体健康——zip 31 条目 `testzip` 无损、MANIFEST 的 exe sha256 与字节数**逐字节匹配**真实文件、C1/C3/C4/C5/C6/C7 契约在真实产物上确实成立。但输出里两处信号指向真实缺陷。
+
+### 修复 1 - 过期手册被静默 ship（C2 契约升级为版本一致性）
+
+**现象**：产物内 `USER-MANUAL.md` 是 **2.0.0 版**（7945 字节，2026-09-28），落后当前 20 个版本，且内容自相矛盾——声明「发行物为 `LightAlbum-2.0.0-win64.zip`（约 16.6 MB）」，而实际交付 `LightAlbum-2.20.0-win64.zip` 28.3 MB；2.18/2.19/2.20 的 AI 分类、人脸识别、人物聚类、高 DPI、双语、无障碍**在手册里完全缺失**。
+
+**根因（两层，皆为「保证成功」的陷阱）**：
+1. `Assert-ManualPresent` 只断言「存在且非空」，**不校验内容对应当前版本**；
+2. 更关键的是手册匹配的 fallback——「找不到 `LightAlbum-$Version-*.md` 就退回任意 `LightAlbum-*-*.md`」——**使打包在此处永不失败**，代价是把过期手册静默 ship 出去。**一个永不失败的契约等于没有契约。**
+
+**修复**：
+- C2 升级为「存在 + 非空 + **描述的版本与所打包版本一致**」：扫描手册内所有 `LightAlbum <x.y.z>` 形态，出现与 `$Version` 不同的版本即抛错并列出全部冲突版本；手册完全不提当前版本也抛错（无法确认即不可信）。
+- 移除 fallback，改为**硬失败**并指名 `docs/` 实际有什么、缺什么。docs 目录不存在同样硬失败。
+- `-SelfTest` 沙箱基线手册改为提及当前版本（否则基线会因错误原因变红），并**新增一条过期内容注入**：把手册写成描述 2.0.0 而打包 9.9.9 → 精准捕获。**删除文件的旧注入无法证明版本断言有效，只有过期内容能。**
+
+**★反例非空心（实测打穿）**：临时摘除 C2 的内容断言后重跑 `-SelfTest` → `FAIL reason=inject:C2 defect was NOT caught`，EXITCODE=1；恢复后 `PASS contracts=8 injected=13 caught=13`。同一断言正例实测为绿，故非空心。
+
+**新手册**：`docs/LightAlbum-2.21.0-使用说明书.md`（18 章 207 行），补齐 2.0.0→2.21.0 全部能力（相册聚类维度、相似照片去重、AI 分类、识别人物、智能聚类、隐私库、中英双语、无障碍键盘、高 DPI、iCloud 导入、12 滑杆、撤销栈、轨迹/热力/按年筛选），并新增**附录 A 校验与复现**（教用户用 `MANIFEST.txt` 逐文件 `Get-FileHash` 复核、用 `-SelfTest` 验契约）。手册所有事实性声明均**对照代码核实**（12 滑杆 ↔ 迭代指导书 §8.2 方向 B 取证、端口 8766/8767 ↔ `MainWindow.cpp:1284/1342/1402`、HEIC 可解 ↔ 2.6.0 实测）。
+
+### 修复 2 - 发行包混装 Debug exe（新增 C8 契约）
+
+**现象**：SBOM 诚实记录 `build_type: Debug` 但无人注意。`windeployqt --release` 部署的是 **Release Qt DLL**，而 exe 本身是 **Debug 构建**（47 MB，未优化、断言与调试代码仍在）——**发行包是 Debug exe + Release DLL 的混装产物**。
+
+**根因**：`CMakeLists.txt` 从未设置 `CMAKE_BUILD_TYPE`。单配置生成器下该变量为空串，而空串会让 gcc **不带任何优化/DNDEBUG 标志**；本地 build 目录此前一直停在 Debug。这条缺陷能潜伏至今，正是因为 C1–C7 七条契约**无一条覆盖构建类型**——契约设计是「有即测」，此处是「无即漏」。
+
+**修复**：
+- **C8 契约**：`Assert-ReleaseBuildType` 硬性要求 `CMAKE_BUILD_TYPE=Release`；`Debug`/未设置/CMakeCache 缺失**一律拒绝**（「无法证明是 Release」不得读作「没问题」）。生产路径在 C3 之后立即断言并打印 `C8 ok: build type is Release`。
+- `CMakeLists.txt` 新增：未显式指定时默认 `Release`（多配置生成器不设），显式 `-DCMAKE_BUILD_TYPE=` 仍可覆盖（本地调试用 Debug）。
+- 两条反例注入：`Debug` 值 + `CMAKE_BUILD_TYPE` 未设置。
+
+**★实测收益**：exe **47 MB → 3.4 MB**（13.8 倍瘦身），zip **28.3 MB → 17.4 MB**。此前每个发行包都在白送 44 MB 未优化代码。
+
+**★反例非空心（实测打穿）**：把断言中和为 `if ($false)` 后重跑 → `FAIL reason=inject:C8 defect was NOT caught`，EXITCODE=1。
+
+### 修复 3 - 契约自测报告的数字是硬编码的
+
+`LA_RELEASE_QA PASS contracts=7 injected=10 ... baseline=7` 里的 7/10/7 全是**写死的字面量**（只有 `caught` 是真实的）。加了 C8 与第 13 个注入后，报告仍宣称「7 条契约 / 10 注入」——**一份数字不由计算得来的报告，可以静默地与它所报告的内容不一致**，这正是本文件存在的目的所反对的同类缺陷。
+
+修复：新增 `$contractIds`（契约名册唯一真源），`Get-ContractTags` 探针、基线循环、PASS 报告三处全部由它派生。新增 C8 时只需在名册加一行，报告自动正确。现输出 `contracts=8 injected=13 caught=13 baseline=8`（`caught == injected` 是关键：无一漏网）。
+
+### QA（Release 构建下全量回归）
+
+- **构建类型切换后必须重跑全量**：Release 下 `SUMMARY: PASS=43 FAIL=0 CHECK=0 SKIP=1 KILL=0`（44 门并集），墙钟 **168793ms → 86423ms（近半）**——Release 优化对门禁速度亦有实益。
+- **抽查 Release 下新门正反例仍有效**：`LA_FACE_CLUSTER_QA` 正例 rc=0、`FORCE_BROKEN` 反例 rc=1（断言未被 NDEBUG 优化掉）。
+- **独立复核产物**：zip `testzip` 无损、MANIFEST sha256 + 字节数与真实 exe 逐字节匹配、SBOM 溯源 `git_commit` / `build_type: Release` / `qt_version: 6.8.3` / `compiler_version: MinGW 13.1.0`。
+- `LA_RELEASE_QA PASS contracts=8 injected=13 caught=13 baseline=8`（EXITCODE=0）。
+- `release.ps1` 端到端复跑 `RELEASE OK`、**零 WARN**（旧版 `WARN: no manual for 2.20.0; falling back to...` 已消失）。
+
+### 文档台账校准（防下次迭代被过时描述带偏）
+
+§8.2 两条描述经 `grep` 核实**已过时**，本轮一并校准：
+- ~~清偿 GeoIndex 中文省名债务~~ → **✅ 已于 2.2.2 清偿**（`verifyChinaProvinces()` + 34 省精确名 + `LA_GEO_SMOKE` 断言，见 §7 台账 `P-geo-prov-cn`）。
+- 方向 D 的「缩略图多级缓存、列表虚拟化、批量操作事务化」→ **三项均已完成**（2.13.0 / `EditorialView` / `LA_BATCH_TX_QA`）；真正未落地的是「真实库规模门禁」。
+- **教训：§8.2 的「待办」会随迭代腐化，选方向前必须先 `grep` 核实是否已被后续迭代清偿**——本轮就差点被 GeoIndex 那条带偏。
+
+### 过程
+- `release.ps1`（纯 ASCII 保持，规则 13）：`Assert-ManualPresent` 加 `$expectVersion` 参数 + 内容版本一致性断言；`Assert-ReleaseBuildType` 新增（C8）；手册匹配移除 fallback 改硬失败；`-SelfTest` 沙箱加 `CMakeCache.txt` 存根 + C2 过期内容注入 + C8 两条注入；`$contractIds` 契约名册；`Get-ContractTags` 加 `$cachePath`；生产路径接入 C2 版本实参与 C8 断言。
+- `CMakeLists.txt`：`VERSION 2.20.0 → 2.21.0`；新增未指定时默认 `CMAKE_BUILD_TYPE=Release`。
+- `docs/LightAlbum-2.21.0-使用说明书.md`：新建（替代 2.0.0 版），18 章 + 校验复现附录。
+- `docs/迭代指导书.md`：§7 台账新增 `E-release-end2end` 行；§8.2 方向 E 标记真实闭环 + 两条过时描述校准。
+
+### 范围裁定
+本步只交付**发布链端到端验证 + 真实暴露缺陷的修复**；不涉及安装包签名与自动更新通道（仍留作方向 E 后续候选）。
+
 ## [2.20.0] - 2026-10-05
 
 ### 新增 - 人物自动聚类（方向 C 第五步）
@@ -52,7 +122,7 @@
 ### QA
 - 新门正例 `LA_FACE_CLUSTER_QA PASS rows=6 broken=0 emb=1 conserve=1 group=1 write=1 sync=1 retrieve=1 rename=1`（rc=0）。
 - 新门反例 `LA_FACE_CLUSTER_QA_FORCE_BROKEN=1` → `FAIL ... conserve outputCount=5 inputCount=6`（rc=1）。
-- **★踩坑取证（`QByteArray::resize()` 不零初始化）**：首轮正例即 RED（`groups=5 want=4; biggest=2 want=3`）。加临时诊断打印字节头定位到根因——`unitVec` 用 `b.resize(kDim*4)` 后只写 1 个分量，**其余 511 个 float 是未初始化堆垃圾**（实测 `nonzero=492`、字节头为 `...indexix_pho`），导致 `cosine` 溢出为 `NaN`。修复：改用 `QByteArray b(kDim*4, '\0')` 显式零初始化；生产侧 `toEmbBlob` 同步加固（每元素虽都覆写，仍显式零初始化以防 `arr.size()` 与写入数不一致留下脏字节）。**该坑对任何「resize + 部分写入 + 当数值用」的场景都成立，已写入铁律 19。**
+- **★踩坑取证（`QByteArray::resize()` 不零初始化）**：首轮正例即 RED（`groups=5 want=4; biggest=2 want=3`）。加临时诊断打印字节头定位到根因——`unitVec` 用 `b.resize(kDim*4)` 后只写 1 个分量，**其余 511 个 float 是未初始化堆垃圾**（实测 `nonzero=492`、字节头为 `...indexix_pho`），导致 `cosine` 溢出为 `NaN`。修复：改用 `QByteArray b(kDim*4, '\0')` 显式零初始化；生产侧 `toEmbBlob` 同步加固（每元素虽都覆写，仍显式零初始化以防 `arr.size()` 与写入数不一致留下脏字节）。**该坑对任何「resize + 部分写入 + 当数值用」的场景都成立，已写入铁律 33。**
 - `LA_GATE_MATRIX_QA PASS gates=44 fast=13 full=31 errs=0`，E1–E10 全绿。
 - **全量回归 `qa_runner.ps1`（44 门并集）：`SUMMARY: PASS=43 FAIL=0 CHECK=0 SKIP=1 KILL=0`**，总墙钟 168793ms（SKIP = `LA_SCAN_SMOKE` 需外部 `LA_SCAN_ROOT/LA_SCAN_DB`，非回归）。
 - 隔离复跑 `LA_PERSON_QA` / `LA_CLASSIFY_QA` / `LA_DEDUP_QA` / `LA_I18N_QA` / `LA_BATCH_TX_QA` 全绿，2.19.0/2.18.0 能力无回归。

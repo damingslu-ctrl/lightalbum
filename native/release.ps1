@@ -7,12 +7,13 @@
 #
 # Contracts C1..C7, all enforced inline below AND driven by -SelfTest:
 #   C1 version sync (CHANGELOG <-> CMakeLists <-> requested)
-#   C2 user manual in the dist
+#   C2 user manual in the dist AND it describes the version being packaged
 #   C3 core artifacts present and non-empty
 #   C4 MANIFEST matches reality (sha256 + bytes per file)
 #   C5 zip opens and holds the exe
 #   C6 license: THIRD_PARTY-NOTICE.md ships + derived sources keep SPDX
 #   C7 MANIFEST is reproducible (twice == same bytes) and totally ordered
+#   C8 build type is Release (a Debug artifact must never be shipped)
 # Plus BUILDINFO.txt (SBOM: commit, build type, Qt/compiler versions).
 #
 # Clean approach: copy only the exe, then windeployqt deploys exactly the
@@ -75,11 +76,34 @@ function Assert-VersionSync($want, $cmPath, $clPath) {
   if ($want -and $want -ne $cv) { throw ("C1 requested version=" + $want + " differs from truth " + $cv) }
 }
 
-# C2: the user manual must actually be in the dist, not silently missing.
-function Assert-ManualPresent($staging) {
+# C2: the user manual must actually be in the dist AND describe the version
+# being shipped. Existence alone is not enough -- the file is still NAMED
+# LightAlbum-2.0.0-*.md while the app is 2.20.0, so "found something" has been
+# silently shipping a manual 20 releases stale. A contract that can never fail
+# is not a contract, so this asserts the version the manual CLAIMS as well.
+# $expectVersion: the version being packaged ("" = skip the content check, which
+# is what -SelfTest's sandbox uses when it does not care about that axis).
+function Assert-ManualPresent($staging, $expectVersion = "") {
   $p = Join-Path $staging "USER-MANUAL.md"
   if (-not (Test-Path $p)) { throw "C2 USER-MANUAL.md missing from staging" }
   if ((Get-Item $p).Length -le 0) { throw "C2 USER-MANUAL.md is empty" }
+  if (-not $expectVersion) { return }
+  # Content check: the manual must not advertise a DIFFERENT release line than
+  # the one we are packaging. Scanned as text (the manual is Chinese markdown,
+  # so this is a byte-level search for the "LightAlbum <x.y.z>" title form).
+  $txt = Get-Content $p -Raw -Encoding UTF8
+  $stale = @()
+  foreach ($m in [regex]::Matches($txt, 'LightAlbum\s+(\d+\.\d+\.\d+)')) {
+    $v = $m.Groups[1].Value
+    if ($v -ne $expectVersion) { $stale += $v }
+  }
+  if ($stale.Count -gt 0) {
+    $uniq = (@($stale | Sort-Object -Unique)) -join ","
+    throw ("C2 USER-MANUAL.md describes version(s) " + $uniq + " but " + $expectVersion + " is being packaged (stale manual)")
+  }
+  if ($txt -notmatch [regex]::Escape($expectVersion)) {
+    throw ("C2 USER-MANUAL.md never mentions " + $expectVersion + " (cannot confirm it is current)")
+  }
 }
 
 # C3: the artifacts a fresh machine needs, including the offscreen platform
@@ -308,6 +332,24 @@ function Assert-ManifestReproducible($staging, $name) {
   return $h2
 }
 
+# C8: a RELEASE must be built Release. Found on 2026-10-05, the first time the
+# packager was ever run end to end: SBOM honestly reported "build_type: Debug"
+# and nobody noticed, because the SBOM RECORDS the type while no contract
+# ASSERTS it. The dist then shipped a Debug exe (47 MB, assertions and debug
+# code included) next to Release Qt DLLs deployed by windeployqt -- a mixed
+# artifact. Recording a fact is not enforcing it.
+# $cache: path to CMakeCache.txt; "" or a missing file = unknown = FAIL, because
+# "we cannot prove it is Release" must not read as "it is fine".
+function Assert-ReleaseBuildType($cache) {
+  if (-not $cache) { throw "C8 no CMakeCache.txt given; cannot prove the build is Release" }
+  if (-not (Test-Path $cache)) { throw ("C8 CMakeCache.txt missing: " + $cache + " (cannot prove Release)") }
+  $m = Select-String -Path $cache -Pattern '^CMAKE_BUILD_TYPE:[A-Z]+=(.*)$' | Select-Object -First 1
+  if (-not $m) { throw ("C8 CMAKE_BUILD_TYPE not set in " + $cache + " -- configure with -DCMAKE_BUILD_TYPE=Release") }
+  $t = $m.Matches[0].Groups[1].Value.Trim()
+  if ($t -ne "Release") { throw ("C8 build type is '" + $t + "', not Release -- a Debug artifact must never be shipped") }
+  return $t
+}
+
 # =====================================================================
 # -SelfTest: prove the contracts actually fire.
 #
@@ -317,16 +359,22 @@ function Assert-ManifestReproducible($staging, $name) {
 # injections, which MUST turn the gate red -- otherwise "the contract
 # catches its defect" would be an unfalsifiable claim.
 # =====================================================================
-function Get-ContractTags($want, $cmPath, $clPath, $staging, $manName, $zipPath, $noticeName, $srcRoot, $derivedRel) {
+# The contract roster: single source of truth for how many contracts exist.
+# Adding C8 here is enough -- Get-ContractTags, the baseline loop and the PASS
+# report all count this list instead of repeating a literal.
+$script:contractIds = @("C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8")
+
+function Get-ContractTags($want, $cmPath, $clPath, $staging, $manName, $zipPath, $noticeName, $srcRoot, $derivedRel, $cachePath = "") {
   $tags = @()
   $probes = @(
     @{ t = "C1"; f = { Assert-VersionSync $want $cmPath $clPath } },
-    @{ t = "C2"; f = { Assert-ManualPresent $staging } },
+    @{ t = "C2"; f = { Assert-ManualPresent $staging $want } },
     @{ t = "C3"; f = { Assert-CoreArtifacts $staging } },
     @{ t = "C4"; f = { Assert-ManifestConsistent $staging $manName } },
     @{ t = "C5"; f = { Assert-ZipIntegrity $zipPath } },
     @{ t = "C6"; f = { Assert-LicenseCompliance $staging $noticeName $srcRoot $derivedRel } },
-    @{ t = "C7"; f = { Assert-ManifestReproducible $staging $manName } }
+    @{ t = "C7"; f = { Assert-ManifestReproducible $staging $manName } },
+    @{ t = "C8"; f = { Assert-ReleaseBuildType $cachePath } }
   )
   foreach ($p in $probes) {
     # Assign to $null: several Assert-* return values (entry count, hash)
@@ -343,11 +391,18 @@ function New-Sandbox($dir, $version) {
   New-Item -ItemType Directory -Force -Path (Join-Path $dist "platforms") | Out-Null
   Set-Content -Path (Join-Path $dir "CMakeLists.txt") -Encoding ASCII -Value ("project(LightAlbumNative VERSION " + $version + " LANGUAGES CXX)")
   Set-Content -Path (Join-Path $dir "CHANGELOG.md") -Encoding ASCII -Value ("# CHANGELOG`n`n## [" + $version + "] - 2026-01-01`n")
+  # C8 reads CMAKE_BUILD_TYPE from a CMakeCache.txt. The sandbox CMakeLists is
+  # not a real cache, so the baseline gets a stand-in cache that says Release --
+  # otherwise the baseline would be red for the wrong reason.
+  Set-Content -Path (Join-Path $dir "CMakeCache.txt") -Encoding ASCII -Value "CMAKE_BUILD_TYPE:STRING=Release`n"
   Set-Content -Path (Join-Path $dist "LightAlbum.exe") -Encoding ASCII -Value "fake-exe-payload"
   Set-Content -Path (Join-Path $dist "Qt6Core.dll") -Encoding ASCII -Value "fake-core"
   Set-Content -Path (Join-Path $dist "platforms/qwindows.dll") -Encoding ASCII -Value "fake-win"
   Set-Content -Path (Join-Path $dist "platforms/qoffscreen.dll") -Encoding ASCII -Value "fake-off"
-  Set-Content -Path (Join-Path $dist "USER-MANUAL.md") -Encoding ASCII -Value "# manual"
+  # C2 now also asserts the manual DESCRIBES the version being packaged, so the
+  # sandbox baseline manual has to name it -- otherwise the baseline is red for
+  # the wrong reason and every contract looks broken.
+  Set-Content -Path (Join-Path $dist "USER-MANUAL.md") -Encoding ASCII -Value ("# manual for LightAlbum " + $version)
   # C3 now also requires BUILDINFO.txt; the sandbox writes a stand-in.
   New-BuildInfo $dist $BUILDINFO_NAME $version $dir | Out-Null
   # license half of C6: the notice in the dist, plus a derived source tree
@@ -374,6 +429,9 @@ function Invoke-ReleaseSelfTest($noInject) {
   # C6 looks at derived sources relative to the source root; in the sandbox
   # that root is the sandbox itself, mirroring native/ in production.
   $sandboxDerived = @("src/core/CullEngine.cpp", "src/core/CullEngine.h")
+  # C8 inspects a CMakeCache.txt, which in production is build/CMakeCache.txt but
+  # in the sandbox is this stand-in (the sandbox CMakeLists is not a cache).
+  $sandboxCache = Join-Path $sandbox "CMakeCache.txt"
   $spdxCpp = Join-Path $sandbox "src/core/CullEngine.cpp"
   New-Item -ItemType Directory -Force -Path $sandbox | Out-Null
   $fails = @()
@@ -388,8 +446,8 @@ function Invoke-ReleaseSelfTest($noInject) {
     if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
     [System.IO.Compression.ZipFile]::CreateFromDirectory($dist, $zipPath,
       [System.IO.Compression.CompressionLevel]::Optimal, $false)
-    $base = Get-ContractTags $fakeVer $cmPath $clPath $dist $MANIFEST_NAME $zipPath $NOTICE_NAME $sandbox $sandboxDerived
-    foreach ($t in @("C1", "C2", "C3", "C4", "C5", "C6", "C7")) {
+    $base = Get-ContractTags $fakeVer $cmPath $clPath $dist $MANIFEST_NAME $zipPath $NOTICE_NAME $sandbox $sandboxDerived $sandboxCache
+    foreach ($t in $contractIds) {
       if ($base -notcontains ($t + ":PASS")) { $fails += ("baseline:" + $t + " did not pass on a clean sandbox") }
     }
     $zipEntries = Assert-ZipIntegrity $zipPath
@@ -398,6 +456,13 @@ function Invoke-ReleaseSelfTest($noInject) {
     $injections = @(
       @{ id = "C1"; apply = { Set-Content -Path $clPath -Encoding ASCII -Value "# CHANGELOG`n`n## [8.8.8] - 2026-01-01`n" } },
       @{ id = "C2"; apply = { Remove-Item (Join-Path $dist "USER-MANUAL.md") -Force } },
+      # The defect actually observed in production on 2026-10-05: the manual was
+      # present and non-empty, so the old existence-only C2 stayed green, yet it
+      # described LightAlbum 2.0.0 while 2.20.0 was being packaged. Removing the
+      # file cannot prove the version assertion works; only stale CONTENT can.
+      @{ id = "C2"; apply = {
+          Set-Content -Path (Join-Path $dist "USER-MANUAL.md") -Encoding ASCII -Value "# manual for LightAlbum 2.0.0"
+        } },
       @{ id = "C3"; apply = { Remove-Item (Join-Path $dist "platforms/qoffscreen.dll") -Force } },
       @{ id = "C3"; apply = { Remove-Item (Join-Path $dist $BUILDINFO_NAME) -Force } },
       @{ id = "C4"; apply = {
@@ -433,6 +498,16 @@ function Invoke-ReleaseSelfTest($noInject) {
           for ($i = 0; $i -lt $txt.Count; $i++) { if ($txt[$i] -match '^[0-9a-f]{64}') { $idx = $i; break } }
           $txt = @($txt[0..($idx-1)] + $ent[0] + $txt[$idx..($txt.Count-1)])
           Set-Content -Path $mp -Value $txt -Encoding ASCII
+        } },
+      # The defect actually observed in production on 2026-10-05: SBOM said
+      # "build_type: Debug" and every other contract still passed, because the
+      # SBOM RECORDS the build type while nothing ASSERTED it. Two injections so
+      # neither "unset" nor "wrong value" can slip through.
+      @{ id = "C8"; apply = {
+          Set-Content -Path $sandboxCache -Encoding ASCII -Value "CMAKE_BUILD_TYPE:STRING=Debug`n"
+        } },
+      @{ id = "C8"; apply = {
+          Set-Content -Path $sandboxCache -Encoding ASCII -Value "CMAKE_CXX_COMPILER:FILEPATH=cxx`n"
         } }
     )
     foreach ($inj in $injections) {
@@ -442,7 +517,7 @@ function Invoke-ReleaseSelfTest($noInject) {
       [System.IO.Compression.ZipFile]::CreateFromDirectory($dist, $zipPath,
         [System.IO.Compression.CompressionLevel]::Optimal, $false)
       & $inj.apply
-      $tags = Get-ContractTags $fakeVer $cmPath $clPath $dist $MANIFEST_NAME $zipPath $NOTICE_NAME $sandbox $sandboxDerived
+      $tags = Get-ContractTags $fakeVer $cmPath $clPath $dist $MANIFEST_NAME $zipPath $NOTICE_NAME $sandbox $sandboxDerived $sandboxCache
       if ($tags -contains ($inj.id + ":CAUGHT") -and $tags -notcontains ($inj.id + ":PASS")) {
         $caught++
       } else {
@@ -458,7 +533,8 @@ function Invoke-ReleaseSelfTest($noInject) {
   if ($noInject) {
     # Counter-example: with injections disabled the "contract catches its
     # defect" claim is unproven, so the gate MUST fail.
-    Write-Output ("LA_RELEASE_QA FAIL reason=NOINJECT contracts=7 injected=0 caught=0 -- self-test harness disabled, contract assertions unproven")    $script:SelfTestRc = 1
+    Write-Output "LA_RELEASE_QA FAIL reason=NOINJECT -- self-test harness disabled, contract assertions unproven"
+    $script:SelfTestRc = 1
     return
   }
   if ($fails.Count -gt 0) {
@@ -466,7 +542,14 @@ function Invoke-ReleaseSelfTest($noInject) {
     $script:SelfTestRc = 1
     return
   }
-  Write-Output ("LA_RELEASE_QA PASS contracts=7 injected=10 caught=" + $caught + " baseline=7 zip=" + $zipEntries)
+  # Counts are DERIVED, never typed by hand. They were literals once ("contracts=7
+  # injected=10 baseline=7") and went stale the moment C8 and a third injection
+  # landed -- a report whose numbers are not computed can silently disagree with
+  # what it is reporting on, which is the same class of defect this file exists
+  # to prevent. $contractIds/$injections are the single sources of truth.
+  Write-Output ("LA_RELEASE_QA PASS contracts=" + $contractIds.Count +
+    " injected=" + $injections.Count + " caught=" + $caught +
+    " baseline=" + $contractIds.Count + " zip=" + $zipEntries)
   $script:SelfTestRc = 0
 }
 
@@ -598,24 +681,30 @@ if (-not (Test-Path (Join-Path $staging "platforms"))) { throw "windeployqt left
 # 3) offscreen platform plugin for CI/smoke
 Copy-Item (Join-Path $qtDir "plugins/platforms/qoffscreen.dll") (Join-Path $staging "platforms/qoffscreen.dll") -Force
 
-# 3.5) user manual. Was hardcoded to "LightAlbum-2.0.0-*.md", which only ever
-# matched by accident (the file is still named 2.0.0 while the app is 2.3.0).
-# Now matched against the version being packaged, with any leftover file as a
-# fallback, and a loud WARN if nothing is found -- C2 below turns that into a
-# hard failure anyway, but a warning explains WHY at the right place.
+# 3.5) user manual. Matched against the version being packaged. The previous
+# "fall back to any LightAlbum-*-*.md" behaviour meant packaging could NEVER
+# fail here: with only the 2.0.0 manual in docs/, every release shipped a manual
+# 20 versions stale (it advertised LightAlbum-2.0.0-win64.zip / 16.6 MB while the
+# real artifact was 2.20.0 / 28.3 MB). A fallback that guarantees success is a
+# defect, not a safety net -- so a version mismatch is now a hard error naming
+# both versions, and C2 re-checks the staged copy independently.
 $docsDir = Join-Path $root "..\docs"
 $manual = $null
 if (Test-Path $docsDir) {
   $manual = Get-ChildItem $docsDir -Filter "LightAlbum-$Version-*.md" -File | Select-Object -First 1
   if (-not $manual) {
-    $manual = Get-ChildItem $docsDir -Filter "LightAlbum-*-*.md" -File | Select-Object -First 1
-    if ($manual) { Write-Host ("WARN: no manual for $Version; falling back to " + $manual.Name) }
+    $stale = @(Get-ChildItem $docsDir -Filter "LightAlbum-*-*.md" -File)
+    $names = (@($stale | ForEach-Object { $_.Name }) -join ", ")
+    if ($stale.Count -gt 0) {
+      throw ("user manual for $Version not found; docs/ only has: " + $names +
+             " -- refusing to ship a stale manual (write a current manual first)")
+    }
+    throw ("user manual for $Version not found and no LightAlbum-*-*.md candidate in docs/ -- C2 would fail anyway")
   }
 } else {
-  Write-Host "WARN: docs dir not found: $docsDir"
+  throw ("docs dir not found: " + $docsDir + " -- cannot ship without a user manual")
 }
-if ($manual) { Copy-Item $manual.FullName (Join-Path $staging "USER-MANUAL.md") -Force }
-else { Write-Host "WARN: no user manual found; packaging without USER-MANUAL.md" }
+Copy-Item $manual.FullName (Join-Path $staging "USER-MANUAL.md") -Force
 
 # 3.6) third-party attribution notice. MIT requires the copyright notice to
 # travel with the distribution, and it was NOT copied before -- the dist had
@@ -632,7 +721,7 @@ if (Test-Path $noticeSrc) {
 # C3 is deliberately NOT here: it requires BUILDINFO.txt, which can only be
 # written once the trim is done (the trim changes the file set the SBOM
 # reports on). It runs at 4.7 below.
-Assert-ManualPresent $staging
+Assert-ManualPresent $staging $Version
 Assert-LicenseCompliance $staging $NOTICE_NAME $root $DERIVED_SOURCES
 Write-Host "C2/C6 ok: manual present, license attribution shipped"
 
@@ -656,6 +745,10 @@ Write-Host ("SBOM: " + $BUILDINFO_NAME + " (" + $biLines + " lines)")
 # provenance file must all be present and non-empty.
 Assert-CoreArtifacts $staging
 Write-Host "C3 ok: exe + qoffscreen + qwindows + BUILDINFO all present and non-empty"
+# C8: refuse to ship a non-Release exe. windeployqt deploys Release Qt DLLs, so a
+# Debug exe would make the dist a mixed artifact (bigger, assertions on).
+$null = Assert-ReleaseBuildType (Join-Path $root "build/CMakeCache.txt")
+Write-Host "C8 ok: build type is Release"
 
 # 4.6) MANIFEST (sha256 + bytes + path) so the dist is verifiable and two
 # builds can be diffed. Generated AFTER the trim and after BUILDINFO, so it

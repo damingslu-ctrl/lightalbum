@@ -1,11 +1,20 @@
 cmake_minimum_required(VERSION 3.21)
-project(LightAlbumNative VERSION 2.20.0 LANGUAGES CXX)
+project(LightAlbumNative VERSION 2.21.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
+# 发行构建类型：默认 Release。CMAKE_BUILD_TYPE 对单配置生成器是空串，
+# 而空串会让 gcc 不带任何优化/DNDEBUG 标志（实测 build/CMakeCache.txt 一度
+# 停在 Debug，release.ps1 便把 47MB 的 Debug exe 与 windeployqt 的 Release Qt
+# DLL 混装进同一个发行包）。C8 契约现在会硬性拒绝非 Release 产物。
+# 显式 -DCMAKE_BUILD_TYPE=... 仍可覆盖（本地调试用 Debug 即可）。
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+  set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS Debug Release RelWithDebInfo MinSizeRel)
+endif()
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets Sql Concurrent Network)
 
