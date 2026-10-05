@@ -38,6 +38,7 @@ public:
     void qaFireBatchRating(int rating);
     void qaFireBatchPrivate(bool priv);
     void qaFireClassify();   // 方向 C：等价点「AI 分类」按钮，供端到端断言 signal 载荷
+    void qaFirePersonDetect();   // 方向 C·人脸识别：等价点「识别人物」按钮
 
 signals:
     void photoActivated(const QString& path);   // 点击卡片 → 沉浸式灯箱
@@ -46,6 +47,8 @@ signals:
     void batchPrivateRequested(const QStringList& paths, bool priv);
     void batchMarkRequested(const QStringList& paths, const QString& mark);  // 去重：标记待删
     void classifyRequested();   // 方向 C·智能分类：请求 MainWindow 跑 CLIP 分类（视图不持写能力）
+    void personDetectRequested();   // 方向 C·人脸识别：请求 MainWindow 跑人脸检测（视图不持写能力）
+    void renamePersonRequested(const QString& oldName, const QString& newName);  // 人物 chips 右键重命名
 
 private:
     void buildChips();          // P16：按当前数据 + 隐私门状态重建分类/人物 chips

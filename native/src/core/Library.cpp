@@ -10,6 +10,8 @@
 
 // 方向 C·QA：反例开关（写库但跳过内存同步）
 static bool g_forceCategoryNoSync = false;
+// 方向 C·人脸识别（方案A）·QA：反例开关（写库但跳过内存同步）
+static bool g_forcePersonNoSync = false;
 
 bool Library::open(const QString& dbPath, QString* err)
 {
@@ -240,6 +242,7 @@ bool Library::setMark(const QString& path, const QString& mark)
 }
 
 void Library::setForceCategoryNoSyncForQa(bool on) { g_forceCategoryNoSync = on; }
+void Library::setForcePersonNoSyncForQa(bool on) { g_forcePersonNoSync = on; }
 
 // ---- 方向 C·智能分类：批量写回场景标签（每条 path 各自 label）----
 // 沿用 applyBatch 的「单事务 + COMMIT 后才同步内存」语义，区别在于每条值不同
@@ -293,6 +296,112 @@ BatchResult Library::setCategories(const QVector<CatItem>& items)
             if (Photo* ph = findMutable(it.path)) ph->category = it.label;
     }
     return r;
+}
+
+// ---- 方向 C·人脸识别（方案A）：批量写回人物标签（每条 path 各自 name）----
+// 沿用 setCategories 的「单事务 + COMMIT 后才同步内存」语义，区别在于每条值不同
+// （category/person 都是 per-path），故与 setCategories 并列独立实现。
+BatchResult Library::setPersons(const QVector<PersonItem>& items)
+{
+    BatchResult r;
+    r.total = items.size();
+    if (items.isEmpty()) { r.ok = true; return r; }   // 空批=成功空操作
+
+    QSqlDatabase db = rw();
+    const QString sql = QStringLiteral("UPDATE photos SET person=? WHERE path=?");
+    if (!db.transaction()) {
+        r.error = db.lastError().text();
+        return r;
+    }
+    QSqlQuery q(db);
+    if (!q.prepare(sql)) {
+        r.error = q.lastError().text();
+        db.rollback();
+        return r;
+    }
+    int done = 0;
+    for (int i = 0; i < items.size(); ++i) {
+        const PersonItem& it = items[i];
+        q.addBindValue(it.name);
+        q.addBindValue(it.path);
+        if (!q.exec()) {                                // 任一条失败 → 整体回滚
+            r.error = q.lastError().text();
+            r.failedIndex = i;
+            r.done = 0;
+            db.rollback();
+            return r;
+        }
+        done += q.numRowsAffected();
+    }
+    if (!db.commit()) {
+        r.error = db.lastError().text();
+        r.failedIndex = items.size() - 1;
+        r.done = 0;
+        db.rollback();
+        return r;
+    }
+    r.ok = true;
+    r.done = done;
+
+    // COMMIT 成功后才同步内存副本（保持 DB ↔ 内存一致）；
+    // QA 反例开关打开时故意跳过 → GalleryModel 按内存 person 检索失效（RED）。
+    if (!g_forcePersonNoSync) {
+        for (const PersonItem& it : items)
+            if (Photo* ph = findMutable(it.path)) ph->person = it.name;
+    }
+    return r;
+}
+
+// ---- 方向 C·人脸识别（方案A）：人物重命名（token 级）----
+// 遍历内存副本，对含 oldName（逗号分隔 token，trim 后精确匹配）的照片做替换：
+//   · newName 非空 → 该 token 改为 newName（若与既有 token 重复则 removeDuplicates 合并）；
+//   · newName 为空   → 删除该 token（照片仍保留，仅去掉该标签）。
+// 单事务写回 + COMMIT 后同步内存；oldName 为空或全库无匹配均视为成功（幂等）。
+bool Library::renamePerson(const QString& oldName, const QString& newName)
+{
+    if (oldName.isEmpty()) return false;
+    QVector<QPair<QString, QString>> updates;   // path -> new person 串
+    updates.reserve(photos_.size());
+    for (const Photo& p : photos_) {
+        if (p.person.isEmpty()) continue;
+        const QStringList toks = p.person.split(',', Qt::SkipEmptyParts);
+        bool changed = false;
+        QStringList out;
+        out.reserve(toks.size());
+        for (const QString& t : toks) {
+            const QString tt = t.trimmed();
+            if (tt == oldName) {
+                changed = true;
+                if (!newName.isEmpty()) out.append(newName);   // 空=newName → 删除 token
+            } else {
+                out.append(tt);
+            }
+        }
+        if (changed) {
+            out.removeDuplicates();
+            updates.append({p.path, out.join(QChar(','))});
+        }
+    }
+    if (updates.isEmpty()) return true;          // 无匹配：幂等成功
+
+    QSqlDatabase db = rw();
+    if (!db.transaction()) return false;
+    QSqlQuery q(db);
+    if (!q.prepare(QStringLiteral("UPDATE photos SET person=? WHERE path=?"))) {
+        db.rollback();
+        return false;
+    }
+    for (const auto& u : updates) {
+        q.addBindValue(u.second);
+        q.addBindValue(u.first);
+        if (!q.exec()) { db.rollback(); return false; }
+    }
+    if (!db.commit()) { db.rollback(); return false; }
+
+    // 写回成功后才同步内存副本（保持 DB ↔ 内存一致）。
+    for (const auto& u : updates)
+        if (Photo* ph = findMutable(u.first)) ph->person = u.second;
+    return true;
 }
 
 // ---- D5：path ->下标索引（批量写回去 O(N²)）----

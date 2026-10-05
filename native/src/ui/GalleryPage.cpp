@@ -14,6 +14,7 @@
 #include <QCoreApplication>
 #include <QImage>
 #include <QLineEdit>
+#include <QInputDialog>
 
 // P16 分类固定次序（与 classifier_server.py LABELS 单一事实源一致；空分类不展示）
 static QStringList catOrder()
@@ -124,6 +125,15 @@ GalleryPage::GalleryPage(const QVector<Photo>* photos, const QString& thumbsDir,
         "QPushButton:hover{border-color:#4fc08a;color:#d9e4dc;}"));
     connect(classifyBtn_, &QPushButton::clicked, this, &GalleryPage::classifyRequested);
     clusterLay->addWidget(classifyBtn_);
+    // 方向 C·人脸识别（方案A）：请求 MainWindow 跑人脸检测（视图不持写能力，只发信号）
+    auto* personBtn = new QPushButton(QCoreApplication::translate("LightAlbum", "识别人物"), clusterBar_);
+    personBtn->setCursor(Qt::PointingHandCursor);
+    personBtn->setStyleSheet(QStringLiteral(
+        "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:9px;"
+        "padding:3px 12px;color:#8da996;font-size:12px;}"
+        "QPushButton:hover{border-color:#4fc08a;color:#d9e4dc;}"));
+    connect(personBtn, &QPushButton::clicked, this, &GalleryPage::personDetectRequested);
+    clusterLay->addWidget(personBtn);
     lay->addWidget(clusterBar_);
 
     // 方向 C 第一步：搜索框（地点/时间/评分/关键词过滤，经 applyFilter → GalleryModel::setFilter）
@@ -264,6 +274,7 @@ void GalleryPage::qaClickRow(int row, bool ctrl, bool shift) {
 void GalleryPage::qaFireBatchRating(int rating) { emitBatchRating(rating); }
 void GalleryPage::qaFireBatchPrivate(bool priv) { emitBatchPrivate(priv); }
 void GalleryPage::qaFireClassify() { emit classifyRequested(); }
+void GalleryPage::qaFirePersonDetect() { emit personDetectRequested(); }
 
 // ---- P16 chips：按数据 + 隐私门状态重建（空分类不展示，全空隐藏整条）----
 void GalleryPage::buildChips()
@@ -381,6 +392,19 @@ void GalleryPage::buildChips()
                 model_.setPersonFilter(activePerson_);
                 restyleChips();
                 updateCount();
+            });
+            // 方向 C·人脸识别（方案A）：右键重命名（视图不持写能力，只发信号）
+            b->setContextMenuPolicy(Qt::CustomContextMenu);
+            connect(b, &QPushButton::customContextMenuRequested, this, [this, b] {
+                const QString oldName = b->property("personTag").toString();
+                bool ok = false;
+                const QString newName = QInputDialog::getText(
+                    this,
+                    QCoreApplication::translate("LightAlbum", "重命名人物"),
+                    QCoreApplication::translate("LightAlbum", "将“%1”重命名为：").arg(oldName),
+                    QLineEdit::Normal, oldName, &ok);
+                if (!ok || newName.trimmed().isEmpty() || newName.trimmed() == oldName) return;
+                emit renamePersonRequested(oldName, newName.trimmed());
             });
             personLay->addWidget(b);
             personChips_.append(b);

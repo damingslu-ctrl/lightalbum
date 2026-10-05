@@ -202,6 +202,24 @@ $GateTable = @(
   # on the union anyway, so packaging coverage is NOT weakened.
   # measuredMs=1600 from qa_runner -Timing (rule 13), non-zero for E8.
   @{n="LA_CLASSIFY_QA";    png=$false; measuredMs=1600}
+  # Direction C step 4 (plan A): face detection write-back + retrieval + rename contract.
+  # Face detection is plan A only (no clustering): every detected face shares the
+  # default label "人物1"; the user renames it from the GalleryPage person chips.
+  # Pure offscreen self-exit, no MainWindow, no external env. Calls
+  # PersonDetector::detect() with a synthetic result hook (bypassing the face_server
+  # HTTP service) and asserts: (A) DB person column written; (B) in-memory
+  # Photo.person synced (GalleryModel reads memory); (C) GalleryModel rowCount per
+  # person + "all" correct; (D) total photo count conserved; (E) renamePerson()
+  # token-level rename updates DB + memory + retrieval; (F) default label is "人物1".
+  # Counter-example LA_PERSON_QA_FORCE_BROKEN=1 makes Library write the DB but
+  # skip the in-memory sync, so the GalleryModel retrieval fails -> RED.
+  # Tier: FULL. qa_runner -Timing measured ~496 ms (just UNDER the 500 ms fast
+  # budget). Rule 13: a gate whose real wall-clock sits on the budget boundary is
+  # flaky in the PR layer, so it is deliberately kept in the strict (full) layer
+  # rather than promoted on a 4 ms margin. release.ps1 gates on the union anyway,
+  # so packaging coverage is NOT weakened.
+  # measuredMs=500 from qa_runner -Timing (rule 13), non-zero for E8.
+  @{n="LA_PERSON_QA";     png=$false; measuredMs=500}
 )
 
 # Resolve a gate's tier. Absent key means "full" - the fail-safe default.

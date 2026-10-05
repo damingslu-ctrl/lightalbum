@@ -30,6 +30,13 @@ struct CatItem {
     double  score = 0.0;
 };
 
+// 方向 C·人脸识别（方案A）：单条写回项（path 标识 + 人物名）。
+// 写回 DB 时只持久化 name（与 photos 表 person 列一致，逗号分隔多人物）。
+struct PersonItem {
+    QString path;
+    QString name;
+};
+
 struct Photo {
     QString path, rel, thumbFile;
     // exif_json 字段（与 web 版 PHOTOS 对象一一对应）
@@ -74,6 +81,16 @@ public:
     // 复用 rw() 单事务；COMMIT 成功后才同步内存副本（与 applyBatch 语义一致）。
     // 守恒契约：只改 category 列，不增删照片，row 总数不变。
     BatchResult setCategories(const QVector<CatItem>& items);
+
+    // 方向 C·人脸识别（方案A）：批量写回人物标签（每条 path 各自 name，与 setCategories 并列）。
+    // 复用 rw() 单事务；COMMIT 成功后才同步内存副本。守恒契约：只改 person 列，不增删照片。
+    BatchResult setPersons(const QVector<PersonItem>& items);
+    // 人物重命名（GalleryPage 人物 chips 右键）：将全库 person 字段出现的 oldName
+    // （逗号分隔 token 级）替换为 newName。newName 为空 = 删除该标签。守恒契约：
+    // 只改 person 列、不改其它列、不增删照片行。
+    bool renamePerson(const QString& oldName, const QString& newName);
+    // QA 反例钩子：setPersons 写库但跳过内存同步（使 GalleryModel 按内存 person 检索失效）。
+    static void setForcePersonNoSyncForQa(bool on);
 
     // ---- 方向 C·QA 钩子（反例用）----
     // 打开后 setCategories 故意"写库但跳过内存同步"——使 GalleryModel（读内存

@@ -3,6 +3,51 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.19.0] - 2026-10-05
+
+### 新增 - 人脸识别标注 + 人物重命名（方向 C 第四步）
+
+2.18.0 把「人脸识别（人物聚类）留作后续候选，不在此迭代编造」。本步把人物能力落地为**检测标注 + 用户重命名**两个真实可交付项，**不引入聚类算法**（与方案裁定一致：用户要把默认标签「人物1」改成真名，而非自动聚类归并）。
+
+**★方案裁定（方案A + 重命名 UI）**：接本地 `face_server:8767`（onnxruntime CPU，SCRFD-10GF 检测 + ArcFace w600k_r50 识别），检测人脸写 `Photo.person`；并在 `GalleryPage` 人物 chips 提供右键重命名入口（用户把「人物1」改成真名）。**★范围裁定**：本步只交付「人脸检测标注 + 重命名」，人物自动聚类仍不编造。
+
+**face_server 协议**（对齐 `Classifier` 桥范式）：`GET /health` → `{ok,loaded,det,rec,device}`（仅回环 127.0.0.1/localhost/::1）；`POST /face/detect` 收 `{"path":"<本地绝对路径>"}`（**JSON 而非 multipart**），返回 `{ok,count,faces:[{bbox,score,embedding,kps}]}`；无脸 → `faces:[]` 绝不抛错。
+
+**core 桥 `PersonDetector.{h,cpp}`**（对齐 `Classifier`）：`probe(url)` 回环守卫（`isLocalUrl`）+ `/health` 验 `loaded`；`detect(lib,url,limit,progress,cancel)`：① QA 确定路径（`g_synthetic` 注入 → 直接 `lib->setPersons` 返回）；② 真路径先 `probe` 失败即 false；③ 遍历 `lib->photos()` 仅取 `p.person.isEmpty()` 的待检测（**避免覆盖用户重命名**）；④ 逐张 `POST` JSON `{"path":p->path}` 到 `/face/detect`，`faces` 非空则 `batch.append({p->path, defaultPerson()})`；⑤ 整批 `lib->setPersons(batch)`。`defaultPerson()` 返回 `"人物1"`；`setSyntheticForQa`/`clearSyntheticForQa` 合成 QA 钩子绕过网络。
+
+**★写回 API + 守恒契约（铁律 6）**：`Library::setPersons(const QVector<PersonItem>&)` 单事务 `UPDATE photos SET person=? WHERE path=?`，`COMMIT` 成功后才同步内存（经 `pathIx_` O(1)），失败即 `rollback`；`renamePerson(oldName,newName)` 对 `p.person.split(',', SkipEmptyParts)` 做 token 级精确匹配 `tt==oldName` → 替换为 `newName`（空 `newName` = 删除该 token），单事务写回 + 内存同步；`oldName` 空或全库无匹配返回 `true`（幂等）。`static setForcePersonNoSyncForQa` 反例钩子（`g_forcePersonNoSync`）控制「写库但跳过内存同步」。
+
+**UI（视图不持写能力，铁律 5）**：GalleryPage 聚类条新增「识别人物」按钮 → 只发 `personDetectRequested()` signal；人物 chips 右键 `QInputDialog::getText` → 只发 `renamePersonRequested(old,new)` signal（空/未变忽略）；`MainWindow::runPersonDetect` 镜像 `runClassify`——`probe("http://127.0.0.1:8767")`，统计 `p.person.isEmpty()` 的 pending，`QProgressDialog` + `QFutureWatcher<bool>` + `std::atomic<bool>` 取消 + `QtConcurrent::run`，完成后 `gallery_->refresh()` + 提示「已为 %1 张照片标注人物。」。
+
+### 新增 - LA_PERSON_QA（第 43 门，full 层）
+
+不依赖外部 face_server：用 `PersonDetector::setSyntheticForQa` 注入确定结果，测「写回 + 检索 + 重命名契约」。纯离屏自退，不构造 `MainWindow`。断言覆盖：
+
+- **A 索引自检**：`verifyPathIndex()` 通过。
+- **B ★守恒**：`setPersons` 不增删照片（总数 == 6）。
+- **C DB 写回**：`p0/p1/p2` 落 `人物1`、`p3/p4/p5` 保持无人物（`dbPerson` 读取）。
+- **D 内存同步**：`Photo.person` 与 DB 一致（GalleryModel 读内存）。
+- **E 检索契约**：`GalleryModel::setPersonFilter("人物1").rowCount()==3`、过滤「张三」=0、空=6。
+- **F defaultPerson**：`defaultPerson()=="人物1"`。
+- **G ★重命名契约**：`renamePerson("人物1","张三")` 后 DB / 内存 / 检索全部切换（rowCount("张三")==3）。
+
+**反例（非空心）**：`LA_PERSON_QA_FORCE_BROKEN=1` 经 `Library::setForcePersonNoSyncForQa(true)` 让**真实实现**写库但跳过内存同步 → 主断言 ④(memPerson 未同步) / ⑤(按人物 rowCount 失效) 精准转红（实测 `reason=mem p0=;rowCount(人物1)=0 want=3`，且 `dbPerson(p0)=="人物1"` 证明**只坏同步不坏写回**）。反例注入在真实实现上，断言必然有效。
+
+**★分层实测决定（规则 13）**：实测 **496ms**，紧贴 500ms 快门预算（E6）边界。类比 `LA_CLASSIFY_QA`（1600ms）与 `LA_CLUSTER_QA`（1424ms），**保留 full 层**（不挤占 PR 快门，避免偶发 flaky）；`measuredMs=500`。`release.ps1` 门禁走并集（43 门全跑），打包强度未削弱。`LA_GATE_MATRIX_QA` E6/E8 实测校验通过。
+
+### 修复 / 过程
+- **新增** `src/core/PersonDetector.{h,cpp}`：`probe` / `detect` / `defaultPerson` / `setSyntheticForQa` / `clearSyntheticForQa`；`g_synthetic` 静态钩子；`isLocalUrl` 回环守卫（同 `Classifier`）；`waitReply` 同步超时。
+- `src/core/Library.{h,cpp}`：新增 `PersonItem` 结构；`setPersons` 单事务写回 + 内存同步；`renamePerson` token 级精确匹配 + 单事务写回；`static setForcePersonNoSyncForQa`（`g_forcePersonNoSync`）。
+- `src/ui/GalleryPage.{h,cpp}`：聚类条「识别人物」按钮 → `personDetectRequested()`；人物 chips 右键 `QInputDialog` → `renamePersonRequested()`；`qaFirePersonDetect()`。
+- `src/ui/MainWindow.{h,cpp}`：`runPersonDetect()`（探测 / 提示启动 `face_server` / `QProgressDialog`+`QFutureWatcher`+`std::atomic` 取消 / 完成刷新）；`#include "../core/PersonDetector.h"`；接线 `personDetectRequested` / `renamePersonRequested`。
+- `src/main.cpp`：`runPersonQa()`（A–G 七类断言 + 反例）+ `LA_PERSON_QA` 派发（紧接 `LA_CLASSIFY_QA` 之后）+ `#include "core/PersonDetector.h"`。
+- `gate_matrix.ps1`：新增第 43 门（full 层，`measuredMs=500`）。
+- `CMakeLists.txt`：`VERSION 2.18.0 → 2.19.0`；登记 `PersonDetector.{h,cpp}`（依赖既有 `Qt6::Network`）。
+- i18n：新增 UI 串（识别人物 / 识别人脸服务未就绪 等）以 `translate("LightAlbum", "…")` 字面量直调（铁律 15/16），未跑 `lupdate`（手工直加，沿用既有 `.qm` 嵌入机制）。
+
+### 门数
+43 门（新增 1）。fast 层 13 门不变，full 层 29 → 30 门。
+
 ## [2.18.0] - 2026-10-05
 
 ### 新增 - 智能场景分类检索（方向 C 第三步）

@@ -11,6 +11,7 @@
 #include "../core/ICloudSource.h"
 #include "../core/qaExit.h"      // 2.7.0 门禁自退契约（禁裸调 quit）
 #include "../core/Classifier.h"   // 方向 C·智能分类：CLIP 客户端桥
+#include "../core/PersonDetector.h"  // 方向 C·人脸识别（方案A）：face_server 客户端桥
 #include "../core/MotionPref.h"
 #include "../core/Vault.h"
 #include <QDialog>
@@ -645,6 +646,15 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
             });
     // 方向 C·智能分类：AI 分类按钮 → 探测 CLIP 服务 → 异步跑分类（视图不持写能力，只发信号）
     connect(gallery_, &GalleryPage::classifyRequested, this, [this] { runClassify(); });
+    // 方向 C·人脸识别（方案A）：识别人物按钮 → 探测 face_server → 异步跑检测（视图不持写能力）
+    connect(gallery_, &GalleryPage::personDetectRequested, this, [this] { runPersonDetect(); });
+    // 人物 chips 右键重命名 → 落库重命名 + 重建 chips（视图不持写能力，写回在 MainWindow）
+    connect(gallery_, &GalleryPage::renamePersonRequested, this,
+            [this](const QString& oldName, const QString& newName) {
+                if (!lib_) return;
+                lib_->renamePerson(oldName, newName);
+                gallery_->refresh();   // 重建人物 chips（新名字生效）
+            });
 
     connect(gallery_, &GalleryPage::photoActivated, this,
             [this](const QString& path) { openLightbox(path); });
@@ -1318,6 +1328,63 @@ void MainWindow::runClassify()
     const QString td = thumbsDir_;
     watcher->setFuture(QtConcurrent::run([this, td, url, prog, cancelPred] {
         return Classifier::classify(lib_, td, url, 32, -1, prog, cancelPred);
+    }));
+}
+
+// 方向 C·人脸识别（方案A）：收到图库「识别人物」信号后，探测本地 face_server，
+// 异步跑人脸检测（QtConcurrent 不阻塞 GUI），带进度对话框与取消；完成后重建 chips。
+// 视图不持写能力（规则5）：真正的 lib->setPersons 在 PersonDetector 内、MainWindow 持有的 lib_ 上执行。
+void MainWindow::runPersonDetect()
+{
+    if (!lib_) return;
+    const QString url = QStringLiteral("http://127.0.0.1:8767");   // 仅回环（PersonDetector 守卫）
+    // 1) 探测服务（不可用 → 提示启动，不报错）
+    if (!PersonDetector::probe(url)) {
+        QMessageBox::information(this,
+            QCoreApplication::translate("LightAlbum", "人脸服务未就绪"),
+            QCoreApplication::translate("LightAlbum",
+                "请先启动本地人脸服务（D:\\lightalbum_ai\\face_server.py），"
+                "再点「识别人物」。仅支持本机回环地址，照片不会外传。"));
+        return;
+    }
+    // 2) 统计待检测数（person 为空）
+    int pending = 0;
+    for (const Photo& p : lib_->photos())
+        if (p.person.isEmpty()) ++pending;
+    if (pending == 0) {
+        QMessageBox::information(this,
+            QCoreApplication::translate("LightAlbum", "识别人物"),
+            QCoreApplication::translate("LightAlbum", "库内照片均已标注人物，无需再跑。"));
+        return;
+    }
+    // 3) 进度对话框 + 后台跑
+    auto* dlg = new QProgressDialog(
+        QCoreApplication::translate("LightAlbum", "正在识别人物…"),
+        QCoreApplication::translate("LightAlbum", "取消"), 0, pending, this);
+    dlg->setWindowModality(Qt::WindowModal);
+    dlg->setMinimumDuration(0);
+    auto* watcher = new QFutureWatcher<bool>(this);
+    auto* cancelled = new std::atomic<bool>(false);
+    connect(dlg, &QProgressDialog::canceled, this, [cancelled] { cancelled->store(true); });
+    connect(watcher, &QFutureWatcher<bool>::finished, this,
+            [this, dlg, watcher, cancelled, pending] {
+                dlg->close();
+                gallery_->refresh();   // 重建人物 chips + 计数（新人物生效）
+                const bool ok = watcher->result();
+                QMessageBox::information(this,
+                    QCoreApplication::translate("LightAlbum", "识别人物"),
+                    ok ? QCoreApplication::translate("LightAlbum", "已为 %1 张照片标注人物。").arg(pending)
+                       : QCoreApplication::translate("LightAlbum", "识别过程中断（可能已部分写入）。"));
+                watcher->deleteLater();
+                delete cancelled;
+                dlg->deleteLater();
+            });
+    const auto prog = [dlg](int done, int, const QString&) {
+        QMetaObject::invokeMethod(dlg, "setValue", Qt::QueuedConnection, Q_ARG(int, done));
+    };
+    const auto cancelPred = [cancelled] { return cancelled->load(); };
+    watcher->setFuture(QtConcurrent::run([this, url, prog, cancelPred] {
+        return PersonDetector::detect(lib_, url, -1, prog, cancelPred);
     }));
 }
 
