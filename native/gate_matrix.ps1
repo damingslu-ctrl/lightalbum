@@ -178,7 +178,16 @@ $GateTable = @(
   # Lands in the full tier (no tier key = fail-safe default full): it builds a
   # QWidget and renders offscreen, and 762ms > 500ms fast budget. No external
   # 'need' env dependency.
-  @{n="LA_HIDPI_QA";        png=$false; measuredMs=762}
+  @{n="LA_HIDPI_QA";        png=$false; measuredMs=762},
+  # Direction C step 2: similar-photo deduplication (reuses CullEngine pHash).
+  # Pure offscreen self-exit, no MainWindow, no external env. Calls
+  # PhotoDedup::findGroups() directly and asserts MD5-exact + pHash-near-dup
+  # grouping, uniqueness, missing-thumb safety, keep-highest-resolution, and
+  # CONSERVATION (every legal photo appears exactly once). Counter-example
+  # LA_DEDUP_QA_FORCE_BROKEN=1 injects a real double-count defect (keptPath of
+  # group 0 re-added into group 1's dupPaths) and must go RED on noDouble/dupTotal.
+  # Measured 159-162ms (x3, 2026-10-05) -> fast tier.
+  @{n="LA_DEDUP_QA";       png=$false; tier="fast"; measuredMs=160}
 )
 
 # Resolve a gate's tier. Absent key means "full" - the fail-safe default.

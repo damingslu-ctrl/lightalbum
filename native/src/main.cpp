@@ -25,6 +25,11 @@
 #include "core/LumenAgent.h"
 #include "core/GeoIndex.h"
 #include "core/PhotoCluster.h"
+#include "core/PhotoDedup.h"
+#include <QTemporaryDir>
+#include <QPainter>
+#include <QSet>
+#include <QColor>
 #include "core/RtHistory.h"
 #include "core/Scanner.h"
 #include "core/ICloudSource.h"
@@ -410,6 +415,121 @@ int runClusterQa()
                  pass ? "PASS" : "FAIL", marks, checks, prov.size(), visible, int(broken));
     if (!pass)
         std::fprintf(stderr, "LA_CLUSTER_QA failed: %s\n", qPrintable(failed.join(',')));
+    std::fflush(stderr);
+    return pass ? 0 : 1;
+}
+
+// 方向 C：相似照片去重门禁（LA_DEDUP_QA）。
+// 注入确定性合成缩略图，断言 PhotoDedup 纯函数的性质：
+//   A 精确去重：字节相同的两张图进"完全重复（MD5 相同）"组
+//   B 近重复：感知哈希 Hamming ≤ 阈值的图进"高度相似（感知哈希）"组
+//   C 计数：组数 / 重复张数正确
+//   D 唯一性：完全不相似的图不成组
+//   E 缺失：缩略图缺失的图不入任何组、不崩溃
+//   F 保留最优：每组的保留者分辨率最高
+//   G ★守恒：每张合法照片恰好出现一次（反例令同一张被重复计入 → RED）
+// 反例 LA_DEDUP_QA_FORCE_BROKEN=1 令 findGroups 把第 1 组保留者再塞进第 2 组
+//   dupPaths → 破坏守恒 → RED（打真实实现，非空心）。
+int runDedupQa()
+{
+    const bool broken = !qEnvironmentVariableIsEmpty("LA_DEDUP_QA_FORCE_BROKEN");
+    PhotoDedup::setForceDoubleCountForQa(broken);   // 反例：注入真实实现的重复计入缺陷
+
+    // —— 合成缩略图（QTemporaryDir 自动清理）——
+    QTemporaryDir td;
+    const QString dir = td.path();
+    auto disk = [](int bg, int fg) {
+        QImage im(64, 64, QImage::Format_ARGB32);
+        im.fill(QColor(bg, bg, bg));
+        QPainter p(&im); p.setPen(Qt::NoPen); p.setBrush(QColor(fg, fg, fg));
+        p.drawEllipse(16, 16, 32, 32);
+        return im;
+    };
+    auto checker = [] {
+        QImage im(64, 64, QImage::Format_ARGB32); QPainter p(&im);
+        for (int y = 0; y < 64; y += 8) for (int x = 0; x < 64; x += 8)
+            p.fillRect(x, y, 8, 8, ((x / 8 + y / 8) % 2) ? Qt::white : Qt::black);
+        return im;
+    };
+    QImage a1 = disk(255, 0); a1.save(QDir(dir).filePath(QStringLiteral("a1.png")), "PNG");
+    a1.save(QDir(dir).filePath(QStringLiteral("a2.png")), "PNG");   // 字节相同 → 精确 MD5 对
+    QImage b1 = disk(0, 255);  b1.save(QDir(dir).filePath(QStringLiteral("b1.png")), "PNG");
+    QImage b2 = b1; b2.setPixel(32, 32, qRgb(255, 0, 0));          // 1px 差异 → pHash 不变、MD5 不同
+    b2.save(QDir(dir).filePath(QStringLiteral("b2.png")), "PNG");
+    checker().save(QDir(dir).filePath(QStringLiteral("c1.png")), "PNG");
+    // d1.png 故意不写（缺失）
+
+    auto mk = [](const QString& path, const QString& tf, int w, int h) {
+        DedupPhoto d; d.path = path; d.thumbFile = tf; d.origW = w; d.origH = h; return d;
+    };
+    QVector<DedupPhoto> phs;
+    phs.append(mk(QStringLiteral("C:/p_a1.jpg"), QStringLiteral("a1.png"), 4000, 3000));
+    phs.append(mk(QStringLiteral("C:/p_a2.jpg"), QStringLiteral("a2.png"), 2000, 1500));
+    phs.append(mk(QStringLiteral("C:/p_b1.jpg"), QStringLiteral("b1.png"), 3000, 2000));
+    phs.append(mk(QStringLiteral("C:/p_b2.jpg"), QStringLiteral("b2.png"), 1000, 800));
+    phs.append(mk(QStringLiteral("C:/p_c1.jpg"), QStringLiteral("c1.png"), 5000, 4000));
+    phs.append(mk(QStringLiteral("C:/p_d1.jpg"), QStringLiteral("d1.png"), 1000, 1000)); // 缺失
+
+    int marks = 0, checks = 0;
+    QStringList failed;
+    auto chk = [&](bool ok, const char* tag = "") {
+        ++checks; if (ok) ++marks; else if (tag && *tag) failed << QString::fromLatin1(tag);
+    };
+
+    const QVector<DupGroup> groups = PhotoDedup::findGroups(phs, dir, 8, true);
+    const QString a1p = QStringLiteral("C:/p_a1.jpg"), a2p = QStringLiteral("C:/p_a2.jpg");
+    const QString b1p = QStringLiteral("C:/p_b1.jpg"), b2p = QStringLiteral("C:/p_b2.jpg");
+    const QString c1p = QStringLiteral("C:/p_c1.jpg"), d1p = QStringLiteral("C:/p_d1.jpg");
+
+    const DupGroup* exact = nullptr;
+    const DupGroup* nearGrp = nullptr;
+    for (const DupGroup& g : groups) {
+        if (g.reason == QCoreApplication::translate("LightAlbum", "完全重复（MD5 相同）"))      exact = &g;
+        else if (g.reason == QCoreApplication::translate("LightAlbum", "高度相似（感知哈希）")) nearGrp = &g;
+    }
+
+    // A 精确去重
+    chk(exact != nullptr, "exactExists");
+    chk(exact && exact->dupPaths.contains(a2p), "exactDup");
+    // B 近重复
+    chk(nearGrp != nullptr, "nearExists");
+    chk(nearGrp && nearGrp->dupPaths.contains(b2p), "nearDup");
+    // C 计数
+    chk(groups.size() == 2, "grpSize");
+    int dupTotal = 0; for (const DupGroup& g : groups) dupTotal += g.dupPaths.size();
+    chk(dupTotal == 2, "dupTotal");
+    // D 唯一
+    bool cInAny = false;
+    for (const DupGroup& g : groups) if (g.keptPath == c1p || g.dupPaths.contains(c1p)) cInAny = true;
+    chk(!cInAny, "cUnique");
+    // E 缺失
+    bool dInAny = false;
+    for (const DupGroup& g : groups) if (g.keptPath == d1p || g.dupPaths.contains(d1p)) dInAny = true;
+    chk(!dInAny, "dMissing");
+    // F 保留最优
+    chk(exact && exact->keptPath == a1p, "exactKeep");
+    chk(exact && exact->keptPixels == qint64(4000) * 3000, "exactPixels");
+    chk(nearGrp  && nearGrp->keptPath == b1p, "nearKeep");
+    // G ★守恒：每张合法照片恰好出现一次
+    QSet<QString> seen;
+    bool doubled = false;
+    for (const DupGroup& g : groups) {
+        auto add = [&](const QString& s) { if (seen.contains(s)) doubled = true; seen.insert(s); };
+        add(g.keptPath);
+        for (const QString& d : g.dupPaths) add(d);
+    }
+    chk(!doubled, "noDouble");                                  // 反例触发：a1 被重复计入
+    chk(seen.size() == 4, "seenSize");                          // 恰好 4 张合法照片被分组
+    chk(seen.contains(a1p) && seen.contains(a2p)
+        && seen.contains(b1p) && seen.contains(b2p), "seenSet");
+
+    PhotoDedup::setForceDoubleCountForQa(false);   // 还原（探针不污染环境）
+
+    const bool pass = (checks > 0) && (marks == checks);
+    std::fprintf(stderr, "LA_DEDUP_QA %s marks=%d checks=%d groups=%d dups=%d broken=%d\n",
+                 pass ? "PASS" : "FAIL", marks, checks, groups.size(), dupTotal, int(broken));
+    if (!pass)
+        std::fprintf(stderr, "LA_DEDUP_QA failed: %s\n", qPrintable(failed.join(',')));
     std::fflush(stderr);
     return pass ? 0 : 1;
 }
@@ -2040,6 +2160,10 @@ int main(int argc, char *argv[])
     // 方向 C 第一步：相册聚类断言（PhotoCluster 纯函数直接驱动，纯数据无 UI）
     if (qEnvironmentVariableIsSet("LA_CLUSTER_QA"))
         return runClusterQa();
+
+    // 方向 C：相似照片去重断言（PhotoDedup 纯函数直接驱动，纯数据无 UI）
+    if (qEnvironmentVariableIsSet("LA_DEDUP_QA"))
+        return runDedupQa();
 
     // 方向 D 第一步：真实库回归门禁（规模化与流畅性，默认可跑 6425 张合成 fixture）
     if (qEnvironmentVariableIsSet("LA_SCALE_SMOKE"))

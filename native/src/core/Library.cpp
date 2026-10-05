@@ -24,6 +24,7 @@ bool Library::open(const QString& dbPath, QString* err)
             m.exec(QStringLiteral("ALTER TABLE photos ADD COLUMN person TEXT"));
             m.exec(QStringLiteral(
                 "ALTER TABLE photos ADD COLUMN private INTEGER DEFAULT 0"));
+            m.exec(QStringLiteral("ALTER TABLE photos ADD COLUMN mark TEXT"));
             m.exec(QStringLiteral(
                 "CREATE INDEX IF NOT EXISTS idx_photos_cat ON photos(category)"));
             mig.close();
@@ -47,7 +48,7 @@ bool Library::open(const QString& dbPath, QString* err)
     q.setForwardOnly(true);
     if (!q.exec(QStringLiteral(
             "SELECT path, rel, thumb, missing, exif_json, "
-            "category, person, private, rating FROM photos"))) {
+            "category, person, private, rating, mark FROM photos"))) {
         if (err) *err = q.lastError().text();
         return false;
     }
@@ -93,6 +94,8 @@ bool Library::open(const QString& dbPath, QString* err)
             if (rating <= 0) rating = o.value(QLatin1String("rating")).toInt();
         }
         p.rating = qBound(0, rating, 5);
+        p.mark   = q.value(9).toString();
+        p.mark   = q.value(9).toString();
         if (p.title.isEmpty()) p.title = p.rel;   // 兜底展示名（非编造 EXIF）
         // P10 离线逆地理回填（读时计算，库保持只读）：仅路径推导缺失且真有 GPS 时
         if (p.region.isEmpty() && p.hasGps) {
@@ -149,9 +152,9 @@ BatchResult Library::applyBatch(BatchField field, const QStringList& paths, cons
     if (paths.isEmpty()) { r.ok = true; return r; }      // 空批=成功空操作（非错误）
 
     QSqlDatabase db = rw();
-    const QString sql = (field == BatchField::Rating)
-        ? QStringLiteral("UPDATE photos SET rating=? WHERE path=?")
-        : QStringLiteral("UPDATE photos SET private=? WHERE path=?");
+    const QString sql = (field == BatchField::Rating)  ? QStringLiteral("UPDATE photos SET rating=? WHERE path=?")
+                        : (field == BatchField::Private) ? QStringLiteral("UPDATE photos SET private=? WHERE path=?")
+                                                         : QStringLiteral("UPDATE photos SET mark=? WHERE path=?");
 
     if (!db.transaction()) {
         r.error = db.lastError().text();
@@ -191,10 +194,14 @@ BatchResult Library::applyBatch(BatchField field, const QStringList& paths, cons
         const int rr = value.toInt();
         for (const QString& p : paths)
             if (Photo* ph = findMutable(p)) ph->rating = rr;
-    } else {
+    } else if (field == BatchField::Private) {
         const bool pv = value.toBool();
         for (const QString& p : paths)
             if (Photo* ph = findMutable(p)) ph->priv = pv;
+    } else { // Mark（去重/选片标记；空串=清除）
+        const QString mv = value.toString();
+        for (const QString& p : paths)
+            if (Photo* ph = findMutable(p)) ph->mark = mv;
     }
     return r;
 }
@@ -209,6 +216,11 @@ BatchResult Library::setPrivates(const QStringList& paths, bool priv)
     return applyBatch(BatchField::Private, paths, priv ? 1 : 0);
 }
 
+BatchResult Library::setMarks(const QStringList& paths, const QString& mark)
+{
+    return applyBatch(BatchField::Mark, paths, mark);
+}
+
 bool Library::setRating(const QString& path, int rating)
 {
     return setRatings(QStringList{path}, rating).ok;
@@ -217,6 +229,11 @@ bool Library::setRating(const QString& path, int rating)
 bool Library::setPrivate(const QString& path, bool priv)
 {
     return setPrivates(QStringList{path}, priv).ok;
+}
+
+bool Library::setMark(const QString& path, const QString& mark)
+{
+    return setMarks(QStringList{path}, mark).ok;
 }
 
 // ---- D5：path ->下标索引（批量写回去 O(N²)）----

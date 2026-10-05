@@ -3,6 +3,52 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.17.0] - 2026-10-05
+
+### 新增 - 相似照片去重（方向 C 第二步）
+
+图库此前已有 pHash 去重能力（藏在 `CullEngine` 的 CullPage 对决模式里），但**不可图库级发现、无独立入口、无 QA 门禁保护、无可逆标记**。本步补齐「图库级可发现 + 独立入口 + 门禁保护 + 可逆标记」，**复用既有算法而非重写**。
+
+**★复用算法，零重写去重逻辑**：把 `CullEngine::computePhash` / `hamming` 从 private **提升为 public**，作为 pHash（DCT-II 低频 64-bit 哈希 + Hamming 近重复判定）**唯一真源**。新增 `core/PhotoDedup.{h,cpp}` 纯函数 `findGroups(photos, thumbsDir, phashThreshold=8, exactMd5=true)`：预处理算 MD5+pHash（缩略图缺失/解码失败即放行该张），MD5 完全相同的先聚「完全重复（MD5 相同）」组，pHash Hamming ≤ 阈值的再聚「高度相似（感知哈希）」组，**每组保留 `origW*origH` 最大者**。
+
+**★核心契约 = 守恒**：每张合法照片恰好出现一次（保留者或被标记者）。`core/PhotoDedup` 暴露 QA 钩子 `setForceDoubleCountForQa(bool)`：反例下把第 0 组的保留者再塞进第 1 组的 `dupPaths` → 真实实现产生**重复计入**，守恒被破坏。
+
+**可逆标记（非破坏性删除）**：`Library` 加 `mark` 字段（`Photo.mark`）+ `BatchField::Mark` + `setMark` / `setMarks`（完全镜像既有 `setRating` / `setPrivates` 事务路径）；沿用 app 既有 `skip` 语义做「待删」标记，**规避物理删除风险**。视图不持写能力（铁律 5）：`DedupDialog` 点「标记其余为待删」只发 `markRequested(dupPaths)` → `GalleryPage::batchMarkRequested` → `MainWindow::setMarks`（写库在 MainWindow）。
+
+**UI**：GalleryPage 聚类条右侧新增「相似照片」按钮 → 弹 `DedupDialog`（只读浏览：保留者缩略图 + 原因 + 相似缩略图行 + 「标记其余为待删」）；标记后该组从列表移除。
+
+### 新增 - LA_DEDUP_QA（第 41 门，fast 层）
+
+纯数据门（`png=$false`），直接调用 `PhotoDedup::findGroups()`，不构造 `MainWindow`、不渲染。合成确定性缩略图注入 7 类断言：
+
+- **A 精确去重**：字节相同的两张图进「完全重复（MD5 相同）」组。
+- **B 近重复**：1px 差异的图进「高度相似（感知哈希）」组（Hamming 不变、MD5 不同）。
+- **C 计数**：组数 == 2、重复张数 == 2。
+- **D 唯一**：完全不相似的棋盘格图不成组。
+- **E 缺失**：缩略图缺失的图不入任何组、不崩溃。
+- **F 保留最优**：每组保留者分辨率最高（`a1` 4000×3000、`b1` 3000×2000）。
+- **G ★守恒**：每张合法照片恰好出现一次（`noDouble` + `dupTotal` + `seenSize`/`seenSet` 校验）。
+
+**反例（非空心）**：`LA_DEDUP_QA_FORCE_BROKEN=1` 经 `setForceDoubleCountForQa(true)` 让**真实实现**把第 0 组保留者重复计入第 1 组 → `noDouble`/`dupTotal` 变红（实测 `marks=12/14`，失败清单 `dupTotal,noDouble` 精准对应「照片被双重计数」）。反例注入在真实实现上，断言必然有效。
+
+**★分层实测决定（规则 13）**：该门虽是纯数据运算，但进程仍付 `QApplication` 启动 + offscreen 初始化成本；实测 **159–162ms < 500ms** 快门预算 → 归入 **fast 层**（`LA_CLUSTER_QA` 同类纯数据门 1424ms 被迫留 full 层，二者形成对照）。`LA_GATE_MATRIX_QA` E6 实测校验通过。
+
+### 修复 / 过程
+- **新增** `src/core/PhotoDedup.{h,cpp}`：`DedupPhoto` / `DupGroup` / `findGroups` / `setForceDoubleCountForQa`（含 `g_forceDoubleCount` 反例钩子）。
+- `src/core/CullEngine.h`：`computePhash` / `hamming` 由 private 提升 public（pHash 唯一真源）。
+- `src/core/Library.{h,cpp}`：`Photo.mark` 字段；迁移 `ALTER TABLE photos ADD COLUMN mark TEXT`；SELECT 第 10 列；`BatchField::Mark`；`applyBatch` 三分支；`setMark` / `setMarks`。
+- `src/ui/DedupDialog.{h,cpp}`：只读去重组浏览 + `markRequested` → 父级 `batchMarkRequested`。
+- `src/ui/GalleryPage.{h,cpp}`：聚类条右侧「相似照片」按钮 + `openDedup()` 槽 + `batchMarkRequested` 信号 + `thumbsDir_`。
+- `src/ui/MainWindow.cpp`：`batchMarkRequested` → `lib_->setMarks` 接线（镜像 `batchRatingRequested` / `batchPrivateRequested`）。
+- `src/main.cpp`：`runDedupQa()`（A–G 七类断言 + 守恒反例）+ `LA_DEDUP_QA` 派发 + 新 include。
+- `gate_matrix.ps1`：新增第 41 门（fast 层，measuredMs=160）。
+- `CMakeLists.txt`：`VERSION 2.16.0 → 2.17.0`；登记 `PhotoDedup.{h,cpp}` / `DedupDialog.{h,cpp}`。
+- i18n：手工追加 4 条（相似照片 / 发现 N 组 / 未找到 / 标记其余为待删），`lrelease 270 finished / 0 unfinished`，未跑 `lupdate`。
+
+### 门数
+41 门（新增 1）。fast 层 12 → 13 门，full 层 28 门不变。
+
+
 ## [2.16.0] - 2026-10-05
 
 ### 新增 - 相册聚类（方向 C 第一步）

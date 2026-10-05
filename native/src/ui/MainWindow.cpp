@@ -634,6 +634,14 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
                         .arg(r.ok ? QCoreApplication::translate("LightAlbum", "已原子提交。")
                                   : QCoreApplication::translate("LightAlbum", "失败并已整体回滚：%1").arg(r.error)));
             });
+    // 方向 C：相似照片去重"标记其余为待删" → 可逆 mark 落库（与评分/私密同构）
+    connect(gallery_, &GalleryPage::batchMarkRequested, this,
+            [this](const QStringList& paths, const QString& mark) {
+                if (!lib_ || paths.isEmpty()) return;
+                const BatchResult r = lib_->setMarks(paths, mark);
+                gallery_->refresh();
+                Q_UNUSED(r);
+            });
 
     connect(gallery_, &GalleryPage::photoActivated, this,
             [this](const QString& path) { openLightbox(path); });

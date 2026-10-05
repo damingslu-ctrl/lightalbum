@@ -75,13 +75,14 @@ public:
     static CullReport analyze(const QVector<CullInput>& inputs,
                               const CullOptions& opts = CullOptions(),
                               ProgressFn progress = nullptr);
+    // 复用点：相似照片去重（PhotoDedup）直接调用本算法，保持 pHash 唯一真源。
+    static quint64 computePhash(const QImage& src, int hashSize);
+    static int    hamming(quint64 a, quint64 b);
 private:
     static double blurScore(const QImage& gray);
     static void   exposureStats(const QImage& gray, double& mean, double& under,
                                 double& over, QString& verdict);
-    static quint64 computePhash(const QImage& src, int hashSize);
     static double sharpnessScore(double var);
     static double lightingScore(const QString& verdict);
     static double computeTotal(double sharpness, double lighting, double& coverage);
-    static int    hamming(quint64 a, quint64 b);
 };

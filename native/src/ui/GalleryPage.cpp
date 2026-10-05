@@ -1,6 +1,7 @@
 #include "GalleryPage.h"
 #include "Theme.h"
 #include "../core/PhotoCluster.h"
+#include "DedupDialog.h"
 #include "EditorialView.h"
 #include "GalleryCardPainter.h"
 #include <QVBoxLayout>
@@ -52,7 +53,7 @@ public:
 };
 
 GalleryPage::GalleryPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidget* parent)
-    : QWidget(parent), photos_(photos), cache_(thumbsDir, this)
+    : QWidget(parent), photos_(photos), thumbsDir_(thumbsDir), cache_(thumbsDir, this)
 {
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(0, 0, 0, 0);
@@ -105,6 +106,15 @@ GalleryPage::GalleryPage(const QVector<Photo>* photos, const QString& thumbsDir,
     clusterChipsBar_ = new QWidget(clusterBar_);
     clusterChipsBar_->setStyleSheet(QStringLiteral("background:transparent;"));
     clusterLay->addWidget(clusterChipsBar_, 1);
+    // 方向 C：相似照片去重入口（打开分组浏览对话框）
+    auto* dedupBtn = new QPushButton(QCoreApplication::translate("LightAlbum", "相似照片"), clusterBar_);
+    dedupBtn->setCursor(Qt::PointingHandCursor);
+    dedupBtn->setStyleSheet(QStringLiteral(
+        "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:9px;"
+        "padding:3px 12px;color:#8da996;font-size:12px;}"
+        "QPushButton:hover{border-color:#4fc08a;color:#d9e4dc;}"));
+    connect(dedupBtn, &QPushButton::clicked, this, &GalleryPage::openDedup);
+    clusterLay->addWidget(dedupBtn);
     lay->addWidget(clusterBar_);
 
     // 方向 C 第一步：搜索框（地点/时间/评分/关键词过滤，经 applyFilter → GalleryModel::setFilter）
@@ -455,6 +465,18 @@ void GalleryPage::buildClusterBar()
     // 只有「全部」= 当前维度无任何可分簇数据（如整库都没写省/市）→ 整条隐藏
     clusterBar_->setVisible(clusterChips_.size() > 1);
     restyleClusterChips();
+}
+
+// 方向 C：打开"相似照片"去重对话框。对话框发 markRequested → 本页转发为
+// batchMarkRequested（视图不持写能力，统一交给 MainWindow 落库）。
+void GalleryPage::openDedup()
+{
+    DedupDialog dlg(photos_, thumbsDir_, this);
+    connect(&dlg, &DedupDialog::markRequested, this,
+            [this](const QStringList& paths) {
+                emit batchMarkRequested(paths, QStringLiteral("skip"));
+            });
+    dlg.exec();
 }
 
 void GalleryPage::restyleClusterChips()

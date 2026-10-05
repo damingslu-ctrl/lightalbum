@@ -1379,5 +1379,21 @@ Errors: %1 — %2</translation>
         <source>聚类：%1</source>
         <translation>Cluster: %1</translation>
     </message>
+    <message>
+        <source>相似照片</source>
+        <translation>Similar</translation>
+    </message>
+    <message>
+        <source>发现 %1 组相似照片，共 %2 张可清理</source>
+        <translation>Found %1 similar groups, %2 photos can be cleaned up</translation>
+    </message>
+    <message>
+        <source>未找到相似照片</source>
+        <translation>No similar photos found</translation>
+    </message>
+    <message>
+        <source>标记其余为待删</source>
+        <translation>Mark the rest as to-remove</translation>
+    </message>
 </context>
 </TS>

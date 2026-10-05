@@ -43,6 +43,7 @@ signals:
     // ---- D5b：批量动作上报（视图层不持有写能力，一律 signal 交给 MainWindow 执行）----
     void batchRatingRequested(const QStringList& paths, int rating);
     void batchPrivateRequested(const QStringList& paths, bool priv);
+    void batchMarkRequested(const QStringList& paths, const QString& mark);  // 去重：标记待删
 
 private:
     void buildChips();          // P16：按当前数据 + 隐私门状态重建分类/人物 chips
@@ -52,6 +53,7 @@ private:
     void restyleClusterChips(); // 方向 C：聚类 chip 选中态
 
     const QVector<Photo>* photos_ = nullptr;
+    QString      thumbsDir_;
     GalleryModel model_;
     ThumbCache   cache_;
     EditorialView* view_ = nullptr;  // P23：原 QListView(IconMode) 均匀网格 -> 杂志拼贴
@@ -79,6 +81,7 @@ private:
     QPushButton* privBtn_ = nullptr;
     int          selCount_ = 0;
     void buildBatchBar();
+    void openDedup();       // 方向 C：打开"相似照片"去重对话框
     void onSelectionChanged(int count);
     void emitBatchRating(int rating);
     void emitBatchPrivate(bool priv);

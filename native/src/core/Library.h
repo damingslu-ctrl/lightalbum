@@ -36,6 +36,7 @@ struct Photo {
     QString category;         // CLIP 本地批量分类标签；空 = 未分类
     QString person;           // 人物（逗号分隔）；空 = 无
     bool   priv = false;      // 隐私库标记（native vault：密码门，非破坏）
+    QString mark;              // 去重/选片标记（"skip"/"like"/"lock" 等；空=无）
 };
 
 struct Kpi {
@@ -55,10 +56,12 @@ public:
     // 方向 D5：单条 = 长度为 1 的批量（统一走唯一事务入口，禁旁路直写）
     bool setRating(const QString& path, int rating);     // 1..5（0=清除）
     bool setPrivate(const QString& path, bool priv);     // 隐私库标记
+    bool setMark(const QString& path, const QString& mark);  // 去重/选片标记（空=清除）
 
     // ---- 方向 D5：批量写回（单事务原子；任一失败整体回滚，DB 与内存副本同时不变）----
     BatchResult setRatings(const QStringList& paths, int rating);
     BatchResult setPrivates(const QStringList& paths, bool priv);
+    BatchResult setMarks(const QStringList& paths, const QString& mark);
     // 索引自检（QA 门）：path <-> photos_ 下标双向一致，且大小 == photos_.size()
     bool verifyPathIndex() const;
     // meta 表 KV（隐私库口令 salt/hash 存这里）
@@ -66,7 +69,7 @@ public:
     bool setMetaValue(const QString& key, const QString& value);
 
 private:
-    enum class BatchField { Rating, Private };
+    enum class BatchField { Rating, Private, Mark };
     BatchResult applyBatch(BatchField field, const QStringList& paths, const QVariant& value);
 
     void rebuildPathIndex();                             // photos_ 变动后唯一重建入口
