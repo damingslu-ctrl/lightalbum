@@ -22,6 +22,14 @@ struct BatchResult {
     bool isNoop() const { return total == 0; }
 };
 
+// 方向 C·智能分类：单条写回项（path 标识 + CLIP 场景标签 + 置信度）。
+// score 仅用于分类器侧阈值判定；写回 DB 时只持久化 label（与 photos 表列一致）。
+struct CatItem {
+    QString path;
+    QString label;
+    double  score = 0.0;
+};
+
 struct Photo {
     QString path, rel, thumbFile;
     // exif_json 字段（与 web 版 PHOTOS 对象一一对应）
@@ -62,6 +70,15 @@ public:
     BatchResult setRatings(const QStringList& paths, int rating);
     BatchResult setPrivates(const QStringList& paths, bool priv);
     BatchResult setMarks(const QStringList& paths, const QString& mark);
+    // 方向 C·智能分类：批量写回场景标签（每条 path 各自 label，非统一值）。
+    // 复用 rw() 单事务；COMMIT 成功后才同步内存副本（与 applyBatch 语义一致）。
+    // 守恒契约：只改 category 列，不增删照片，row 总数不变。
+    BatchResult setCategories(const QVector<CatItem>& items);
+
+    // ---- 方向 C·QA 钩子（反例用）----
+    // 打开后 setCategories 故意"写库但跳过内存同步"——使 GalleryModel（读内存
+    // Photo.category）的按类检索失效。门禁检索断言因此变红，证明断言有效（非空心）。
+    static void setForceCategoryNoSyncForQa(bool on);
     // 索引自检（QA 门）：path <-> photos_ 下标双向一致，且大小 == photos_.size()
     bool verifyPathIndex() const;
     // meta 表 KV（隐私库口令 salt/hash 存这里）

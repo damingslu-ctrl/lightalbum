@@ -10,6 +10,7 @@
 #include "../core/Scanner.h"
 #include "../core/ICloudSource.h"
 #include "../core/qaExit.h"      // 2.7.0 门禁自退契约（禁裸调 quit）
+#include "../core/Classifier.h"   // 方向 C·智能分类：CLIP 客户端桥
 #include "../core/MotionPref.h"
 #include "../core/Vault.h"
 #include <QDialog>
@@ -642,6 +643,8 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
                 gallery_->refresh();
                 Q_UNUSED(r);
             });
+    // 方向 C·智能分类：AI 分类按钮 → 探测 CLIP 服务 → 异步跑分类（视图不持写能力，只发信号）
+    connect(gallery_, &GalleryPage::classifyRequested, this, [this] { runClassify(); });
 
     connect(gallery_, &GalleryPage::photoActivated, this,
             [this](const QString& path) { openLightbox(path); });
@@ -1257,6 +1260,64 @@ void MainWindow::runImportInto(const QString& dir, const QString& title)
                 }, Qt::QueuedConnection);
             },
             [cancelled]() { return cancelled->load(); });
+    }));
+}
+
+// 方向 C·智能分类：收到图库「AI 分类」信号后，探测本地 CLIP 服务，
+// 异步跑分类（QtConcurrent 不阻塞 GUI），带进度对话框与取消；完成后重建 chips。
+// 视图不持写能力（规则5）：真正的 lib->setCategories 在 Classifier 内、MainWindow 持有的 lib_ 上执行。
+void MainWindow::runClassify()
+{
+    if (!lib_) return;
+    const QString url = QStringLiteral("http://127.0.0.1:8766");   // 仅回环（Classifier 守卫）
+    // 1) 探测服务（不可用 → 提示启动，不报错）
+    if (!Classifier::probe(url)) {
+        QMessageBox::information(this,
+            QCoreApplication::translate("LightAlbum", "AI 分类服务未就绪"),
+            QCoreApplication::translate("LightAlbum",
+                "请先启动本地 CLIP 分类服务（D:\\lightalbum_ai\\start_classifier.bat），"
+                "再点「AI 分类」。仅支持本机回环地址，照片不会外传。"));
+        return;
+    }
+    // 2) 统计待分类数（未分类且已有缩略图）
+    int pending = 0;
+    for (const Photo& p : lib_->photos())
+        if (p.category.isEmpty() && !p.thumbFile.isEmpty()) ++pending;
+    if (pending == 0) {
+        QMessageBox::information(this,
+            QCoreApplication::translate("LightAlbum", "AI 分类"),
+            QCoreApplication::translate("LightAlbum", "库内照片均已分类，无需再跑。"));
+        return;
+    }
+    // 3) 进度对话框 + 后台跑
+    auto* dlg = new QProgressDialog(
+        QCoreApplication::translate("LightAlbum", "AI 正在分类…"),
+        QCoreApplication::translate("LightAlbum", "取消"), 0, pending, this);
+    dlg->setWindowModality(Qt::WindowModal);
+    dlg->setMinimumDuration(0);
+    auto* watcher = new QFutureWatcher<bool>(this);
+    auto* cancelled = new std::atomic<bool>(false);
+    connect(dlg, &QProgressDialog::canceled, this, [cancelled] { cancelled->store(true); });
+    connect(watcher, &QFutureWatcher<bool>::finished, this,
+            [this, dlg, watcher, cancelled, pending] {
+                dlg->close();
+                gallery_->refresh();   // 重建分类 chips + 计数（新分类生效）
+                const bool ok = watcher->result();
+                QMessageBox::information(this,
+                    QCoreApplication::translate("LightAlbum", "AI 分类"),
+                    ok ? QCoreApplication::translate("LightAlbum", "已为 %1 张照片写入场景分类。").arg(pending)
+                       : QCoreApplication::translate("LightAlbum", "分类过程中断（可能已部分写入）。"));
+                watcher->deleteLater();
+                delete cancelled;
+                dlg->deleteLater();
+            });
+    const auto prog = [dlg](int done, int, const QString&) {
+        QMetaObject::invokeMethod(dlg, "setValue", Qt::QueuedConnection, Q_ARG(int, done));
+    };
+    const auto cancelPred = [cancelled] { return cancelled->load(); };
+    const QString td = thumbsDir_;
+    watcher->setFuture(QtConcurrent::run([this, td, url, prog, cancelPred] {
+        return Classifier::classify(lib_, td, url, 32, -1, prog, cancelPred);
     }));
 }
 

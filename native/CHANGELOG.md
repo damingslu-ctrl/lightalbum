@@ -3,6 +3,49 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.18.0] - 2026-10-05
+
+### 新增 - 智能场景分类检索（方向 C 第三步）
+
+图库此前只能按「分类 / 人物 / 聚类 / 大区 / 省 / 搜索串」浏览，但**分类本身要靠人工选**；本步接入本地 CLIP 场景模型服务，对未分类照片批量推断场景类别并**写回数据库 + 内存**，之后即可用既有的分类筛选做「智能检索」。
+
+**★范围裁定（不编造）**：CLIP 服务仅接**场景模型** → 本步只交付「场景分类 + 按场景检索」。人脸 / 人物识别作为文档化后续（方向 A 已闭环足迹/热力，人物聚类需另行立项），**不在此迭代内伪造**。服务协议对齐历史 `client/lightalbum/core/classifier.py`：`GET {url}/health` 回 `{ok,loaded}`（仅回环 127.0.0.1/localhost/::1）；`POST {url}/classify` 多部件字段名 `files`，返回 `{ok,results:[{i,label,score}],bad:[...]}`（`i`=批内下标）；批量 `BATCH=32`；**只读已存在缩略图、绝不碰原图**。
+
+**core 桥 `Classifier.{h,cpp}`**：`probe(url)` 先回环校验 + `/health` 验 `loaded`；`classify(lib,thumbsDir,url,batch,limit,progress,cancel)` 取「未分类且有缩略图」照片 → `QHttpMultiPart` 批投 `/classify` → 按 `results[i]` 映射 `normalizeLabel` 后 `lib->setCategories` 写回。`normalizeLabel` 把任意原始标签收敛到 8 个固定场景类（人像 / 风光 / 夜景·星空 / 城市·建筑 / 微距·花卉 / 动物 / 美食 / 黑白）+ 英文同义词映射 + 中文子串兜底 + 未知→`其他`。**QA 合成钩子** `setSyntheticForQa` / `clearSyntheticForQa`：门禁注入确定性结果，绕过网络。
+
+**★写回 API + 守恒契约（铁律 6：契约既执行又被测试）**：`Library::setCategories(const QVector<CatItem>&)` 走**单事务原子写回**（`db.transaction()`→逐行 `exec`→`commit()` 成功后才同步内存副本，`findMutable` 经 `pathIx_` O(1)），失败即 `rollback` 返回 `done=0`，杜绝 DB↔内存撕裂。这是与去重/聚类一致的「守恒」不变量：每张照片恰出现一次、分类字段原地更新。
+
+**UI（视图不持写能力，铁律 5）**：GalleryPage 聚类条新增「AI 分类」按钮 → 只发 `classifyRequested()` 信号；MainWindow 接信号跑 `runClassify()`：服务不可用时 `QMessageBox` 提示启动 `D:\lightalbum_ai\start_classifier.bat`；`pending==0` 提示无需跑；否则 `QProgressDialog` + `QFutureWatcher<bool>` + `std::atomic<bool>` 取消 + `QtConcurrent::run` 异步，完成后 `gallery_->refresh()` + 信息框。分类写回后用户即可用既有分类筛选做智能检索。
+
+### 新增 - LA_CLASSIFY_QA（第 42 门，full 层）
+
+不依赖外部 CLIP 服务：用 `Classifier::setSyntheticForQa` 注入确定结果，测「写回 + 检索契约」。纯离屏自退，不构造 `MainWindow`。断言覆盖：
+
+- **A 索引自检**：`verifyPathIndex()` 通过。
+- **B ★守恒**：`setCategories` 不增删照片（总数 == 6）。
+- **C DB 写回**：`风光`/`人像` 落盘正确、`p4/p5` 保持未分类。
+- **D 内存同步**：`Photo.category` 与 DB 一致（GalleryModel 读内存）。
+- **E 检索契约**：`GalleryModel::rowCount` 按 `风光`=3 / `人像`=1 / `kNoCategory`=2 / 全部=6 全对。
+- **F normalizeLabel 确定性**：`portrait→人像` / `landscape→风光` / `夜景→夜景·星空` / 未知→`其他`。
+
+**反例（非空心）**：`LA_CLASSIFY_QA_FORCE_BROKEN=1` 经 `Library::setForceCategoryNoSyncForQa(true)` 让**真实实现**写库但跳过内存同步 → 主断言 ④(memCat 未同步) / ⑤(按类 rowCount 失效) 精准转红（实测 `reason=mem p0=;mem p3=;rowCount(风光)=0 want=3;...`），证明断言非恒真。反例注入在真实实现上，断言必然有效。
+
+**★分层实测决定（规则 13）**：实测 **1161–1607ms**，超过 500ms 快门预算（E6）→ 归入 **full 层**（类比 `LA_CLUSTER_QA` 1424ms 同判），`measuredMs=1600`。`release.ps1` 门禁走并集（42 门全跑），打包强度未削弱。`LA_GATE_MATRIX_QA` E6/E8 实测校验通过。
+
+### 修复 / 过程
+- **新增** `src/core/Classifier.{h,cpp}`：`probe` / `classify` / `normalizeLabel` / `setSyntheticForQa` / `clearSyntheticForQa`；`waitReply` 同步等 reply；仅回环防护。
+- **修复（铁律·Qt 生命周期）**：`classify` 真路径 `QHttpMultiPart` 由**栈对象改为堆对象**（`new` + `mgr.post(req, multi)` 由 reply 接管销毁时自动 `delete`）；`paths` 为空分支（未发请求）手动 `delete multi` 防泄漏。栈对象在异步路径会悬垂（UB）。
+- `src/core/Library.{h,cpp}`：新增 `CatItem` 结构；`setCategories` 单事务写回 + 内存同步；`static setForceCategoryNoSyncForQa` 反例钩子（`g_forceCategoryNoSync`）；`findMutable` 经 `pathIx_` O(1)。
+- `src/ui/GalleryPage.{h,cpp}`：聚类条「AI 分类」按钮 → `classifyRequested()`；`qaFireClassify()`。
+- `src/ui/MainWindow.{h,cpp}`：`runClassify()`（探测 / 提示启动 bat / `QProgressDialog`+`QFutureWatcher`+`std::atomic` 取消 / 完成刷新）；`#include "../core/Classifier.h"`。
+- `src/main.cpp`：`runClassifyQa()`（A–F 六类断言 + 反例）+ `LA_CLASSIFY_QA` 派发 + `#include "core/Classifier.h"`。
+- `gate_matrix.ps1`：新增第 42 门（full 层，`measuredMs=1600`）。
+- `CMakeLists.txt`：`VERSION 2.17.0 → 2.18.0`；登记 `Classifier.{h,cpp}`（依赖既有 `Qt6::Network`）。
+- i18n：新增 UI 串（AI 分类 / AI 分类服务未就绪 等）以 `translate("LightAlbum", "…")` 字面量直调（铁律 15/16），未跑 `lupdate`（手工直加，沿用既有 `.qm` 嵌入机制）。
+
+### 门数
+42 门（新增 1）。fast 层 13 门不变，full 层 28 → 29 门。
+
 ## [2.17.0] - 2026-10-05
 
 ### 新增 - 相似照片去重（方向 C 第二步）

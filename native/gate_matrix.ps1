@@ -187,7 +187,21 @@ $GateTable = @(
   # LA_DEDUP_QA_FORCE_BROKEN=1 injects a real double-count defect (keptPath of
   # group 0 re-added into group 1's dupPaths) and must go RED on noDouble/dupTotal.
   # Measured 159-162ms (x3, 2026-10-05) -> fast tier.
-  @{n="LA_DEDUP_QA";       png=$false; tier="fast"; measuredMs=160}
+  @{n="LA_DEDUP_QA";       png=$false; tier="fast"; measuredMs=160},
+  # Direction C step 3: smart scene classification write-back + retrieval contract.
+  # Pure offscreen self-exit, no MainWindow, no external env. Calls
+  # Classifier::classify() with a synthetic result hook (bypassing the CLIP HTTP
+  # service) and asserts: (A) DB category column written; (B) in-memory
+  # Photo.category synced (GalleryModel reads memory); (C) GalleryModel rowCount
+  # per category + kNoCategory + "all" correct; (D) total photo count conserved;
+  # (E) Classifier::normalizeLabel maps raw labels to the 8 fixed classes.
+  # Counter-example LA_CLASSIFY_QA_FORCE_BROKEN=1 makes Library write the DB but
+  # skip the in-memory sync, so the GalleryModel retrieval fails -> RED.
+  # Tier: FULL. Measured 1161-1607ms (Qt init + real SQLite open) exceeds the
+  # 500ms fast budget (E6), so it stays in the strict layer; release.ps1 gates
+  # on the union anyway, so packaging coverage is NOT weakened.
+  # measuredMs=1600 from qa_runner -Timing (rule 13), non-zero for E8.
+  @{n="LA_CLASSIFY_QA";    png=$false; measuredMs=1600}
 )
 
 # Resolve a gate's tier. Absent key means "full" - the fail-safe default.

@@ -8,6 +8,9 @@
 #include <QSet>
 #include <algorithm>
 
+// 方向 C·QA：反例开关（写库但跳过内存同步）
+static bool g_forceCategoryNoSync = false;
+
 bool Library::open(const QString& dbPath, QString* err)
 {
     dbPath_ = dbPath;
@@ -234,6 +237,62 @@ bool Library::setPrivate(const QString& path, bool priv)
 bool Library::setMark(const QString& path, const QString& mark)
 {
     return setMarks(QStringList{path}, mark).ok;
+}
+
+void Library::setForceCategoryNoSyncForQa(bool on) { g_forceCategoryNoSync = on; }
+
+// ---- 方向 C·智能分类：批量写回场景标签（每条 path 各自 label）----
+// 沿用 applyBatch 的「单事务 + COMMIT 后才同步内存」语义，区别在于每条值不同
+// （rating/priv/mark 是统一值，category 是 per-path），故独立实现而非套用枚举。
+BatchResult Library::setCategories(const QVector<CatItem>& items)
+{
+    BatchResult r;
+    r.total = items.size();
+    if (items.isEmpty()) { r.ok = true; return r; }   // 空批=成功空操作
+
+    QSqlDatabase db = rw();
+    const QString sql = QStringLiteral("UPDATE photos SET category=? WHERE path=?");
+    if (!db.transaction()) {
+        r.error = db.lastError().text();
+        return r;
+    }
+    QSqlQuery q(db);
+    if (!q.prepare(sql)) {
+        r.error = q.lastError().text();
+        db.rollback();
+        return r;
+    }
+    int done = 0;
+    for (int i = 0; i < items.size(); ++i) {
+        const CatItem& it = items[i];
+        q.addBindValue(it.label);
+        q.addBindValue(it.path);
+        if (!q.exec()) {                                // 任一条失败 → 整体回滚
+            r.error = q.lastError().text();
+            r.failedIndex = i;
+            r.done = 0;
+            db.rollback();
+            return r;
+        }
+        done += q.numRowsAffected();
+    }
+    if (!db.commit()) {
+        r.error = db.lastError().text();
+        r.failedIndex = items.size() - 1;
+        r.done = 0;
+        db.rollback();
+        return r;
+    }
+    r.ok = true;
+    r.done = done;
+
+    // COMMIT 成功后才同步内存副本（保持 DB ↔ 内存一致）；
+    // QA 反例开关打开时故意跳过 → GalleryModel 按内存 category 检索失效（RED）。
+    if (!g_forceCategoryNoSync) {
+        for (const CatItem& it : items)
+            if (Photo* ph = findMutable(it.path)) ph->category = it.label;
+    }
+    return r;
 }
 
 // ---- D5：path ->下标索引（批量写回去 O(N²)）----

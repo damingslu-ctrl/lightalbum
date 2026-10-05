@@ -69,6 +69,9 @@ private:
     void onVaultButton();        // 点击行为随状态分流
     void refreshPrivateState();  // 解锁/上锁 → 图库/地图同步可见性
 
+    // 方向 C·智能分类：探测 CLIP 服务 → 异步跑分类（QtConcurrent）+ 进度/取消 → 刷新重建 chips
+    void runClassify();
+
     // P13：全客户端呼吸感 + 导航激活态管理
     bool  uiAnimEnabled() const;            // LA_* 冒烟/截图/系统减弱动效 → 关动画
     void  setupBreathing();                 // 呼吸定时器与受控元素

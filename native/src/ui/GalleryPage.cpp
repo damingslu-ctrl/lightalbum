@@ -115,6 +115,15 @@ GalleryPage::GalleryPage(const QVector<Photo>* photos, const QString& thumbsDir,
         "QPushButton:hover{border-color:#4fc08a;color:#d9e4dc;}"));
     connect(dedupBtn, &QPushButton::clicked, this, &GalleryPage::openDedup);
     clusterLay->addWidget(dedupBtn);
+    // 方向 C·智能分类：请求 MainWindow 跑 CLIP 分类（视图不持写能力，只发信号）
+    classifyBtn_ = new QPushButton(QCoreApplication::translate("LightAlbum", "AI 分类"), clusterBar_);
+    classifyBtn_->setCursor(Qt::PointingHandCursor);
+    classifyBtn_->setStyleSheet(QStringLiteral(
+        "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:9px;"
+        "padding:3px 12px;color:#8da996;font-size:12px;}"
+        "QPushButton:hover{border-color:#4fc08a;color:#d9e4dc;}"));
+    connect(classifyBtn_, &QPushButton::clicked, this, &GalleryPage::classifyRequested);
+    clusterLay->addWidget(classifyBtn_);
     lay->addWidget(clusterBar_);
 
     // 方向 C 第一步：搜索框（地点/时间/评分/关键词过滤，经 applyFilter → GalleryModel::setFilter）
@@ -254,6 +263,7 @@ void GalleryPage::qaClickRow(int row, bool ctrl, bool shift) {
 }
 void GalleryPage::qaFireBatchRating(int rating) { emitBatchRating(rating); }
 void GalleryPage::qaFireBatchPrivate(bool priv) { emitBatchPrivate(priv); }
+void GalleryPage::qaFireClassify() { emit classifyRequested(); }
 
 // ---- P16 chips：按数据 + 隐私门状态重建（空分类不展示，全空隐藏整条）----
 void GalleryPage::buildChips()

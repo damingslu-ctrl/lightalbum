@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(LightAlbumNative VERSION 2.17.0 LANGUAGES CXX)
+project(LightAlbumNative VERSION 2.18.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -76,6 +76,8 @@ set(LA_SOURCES
     src/core/PhotoCluster.cpp
     src/core/PhotoDedup.h
     src/core/PhotoDedup.cpp
+    src/core/Classifier.h
+    src/core/Classifier.cpp
     src/core/EraseBridge.h
     src/core/EraseBridge.cpp
 )

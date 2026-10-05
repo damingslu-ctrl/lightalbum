@@ -26,6 +26,7 @@
 #include "core/GeoIndex.h"
 #include "core/PhotoCluster.h"
 #include "core/PhotoDedup.h"
+#include "core/Classifier.h"   // 方向 C·智能分类：CLIP 客户端桥（QA 门用合成钩子）
 #include <QTemporaryDir>
 #include <QPainter>
 #include <QSet>
@@ -1149,6 +1150,183 @@ int runBatchTxQa()
     return ok ? 0 : 1;
 }
 
+// 方向 C·智能分类门禁（LA_CLASSIFY_QA）。
+// 不依赖外部 CLIP 服务：用 Classifier::setSyntheticForQa 注入确定结果，测
+// 「写回 + 检索契约」。反例 LA_CLASSIFY_QA_FORCE_BROKEN=1 令 Library 写库但
+// 跳过内存同步 → GalleryModel 按内存检索失效 → 变红（非空心）。
+int runClassifyQa()
+{
+    const bool broken = !qEnvironmentVariableIsEmpty("LA_CLASSIFY_QA_FORCE_BROKEN");
+
+    // 临时库：绝不碰真实 library.db
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::TempLocation)
+        + QStringLiteral("/la_classify_qa");
+    QDir(dir).removeRecursively();
+    QDir().mkpath(dir);
+    const QString dbPath = QDir(dir).filePath(QStringLiteral("classify.db"));
+    QFile::remove(dbPath);
+    const QString thumbsDir = dir;   // 合成钩子不读盘，目录仅占位
+
+    // 造库：6 行 photos（字段对齐 Library::open 的 SELECT）
+    const int kRows = 6;
+    {
+        QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"),
+                                                   QStringLiteral("la_clsf_seed"));
+        db.setDatabaseName(dbPath);
+        if (!db.open()) {
+            std::fprintf(stderr, "LA_CLASSIFY_QA FAIL seedopen\n");
+            std::fflush(stderr);
+            return 2;
+        }
+        QSqlQuery q(db);
+        q.exec(QStringLiteral(
+            "CREATE TABLE photos (path TEXT PRIMARY KEY, rel TEXT, thumb TEXT, "
+            "missing INTEGER DEFAULT 0, exif_json TEXT, category TEXT, person TEXT, "
+            "private INTEGER DEFAULT 0, rating INTEGER DEFAULT 0, mark TEXT)"));
+        q.exec(QStringLiteral("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)"));
+        for (int i = 0; i < kRows; ++i) {
+            q.prepare(QStringLiteral(
+                "INSERT INTO photos(path,rel,thumb,missing,exif_json,category,person,private,rating,mark) "
+                "VALUES(?,?,?,0,?,?,?,0,0,?)"));
+            q.addBindValue(QStringLiteral("D:/p%1.jpg").arg(i));
+            q.addBindValue(QStringLiteral("p%1.jpg").arg(i));
+            q.addBindValue(QStringLiteral("t%1.jpg").arg(i));
+            q.addBindValue(QStringLiteral("{}"));
+            q.addBindValue(QStringLiteral(""));      // category 空=未分类
+            q.addBindValue(QStringLiteral(""));      // person
+            q.addBindValue(QStringLiteral(""));      // mark
+            q.exec();
+        }
+        db.close();
+        QSqlDatabase::removeDatabase(QStringLiteral("la_clsf_seed"));
+    }
+
+    QString err;
+    Library lib;
+    if (!lib.open(dbPath, &err)) {
+        std::fprintf(stderr, "LA_CLASSIFY_QA FAIL open=%s\n", qPrintable(err));
+        std::fflush(stderr);
+        return 2;
+    }
+
+    // 反例钩子：写库但跳过内存同步
+    Library::setForceCategoryNoSyncForQa(broken);
+
+    // 合成结果：p0,p1,p2 → 风光；p3 → 人像；p4,p5 保持未分类
+    QVector<CatItem> syn;
+    syn.append({QStringLiteral("D:/p0.jpg"), QStringLiteral("风光"), 0.9});
+    syn.append({QStringLiteral("D:/p1.jpg"), QStringLiteral("风光"), 0.9});
+    syn.append({QStringLiteral("D:/p2.jpg"), QStringLiteral("风光"), 0.9});
+    syn.append({QStringLiteral("D:/p3.jpg"), QStringLiteral("人像"), 0.9});
+    Classifier::setSyntheticForQa(syn);
+
+    QStringList fails;
+    const auto note = [&fails](bool ok, const QString& what) {
+        if (!ok) fails << what;
+    };
+
+    // ① 索引自检
+    note(lib.verifyPathIndex(), QStringLiteral("verifyPathIndex false"));
+    // 守恒：setCategories 不增删照片
+    note(lib.photos().size() == kRows,
+         QStringLiteral("conserve size=%1 want=%2").arg(lib.photos().size()).arg(kRows));
+
+    // ② 跑分类（合成钩子 → 绕过网络，内部调 setCategories 写回）
+    const bool ok = Classifier::classify(&lib, thumbsDir);
+    note(ok, QStringLiteral("classify returned false"));
+
+    // DB / 内存读助手（独立连接读真实落盘值）
+    const auto dbCat = [&dbPath](const QString& p) {
+        QString v;
+        QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"),
+                                                   QStringLiteral("la_clsf_read"));
+        db.setDatabaseName(dbPath);
+        if (db.open()) {
+            QSqlQuery q(db);
+            q.prepare(QStringLiteral("SELECT category FROM photos WHERE path=?"));
+            q.addBindValue(p);
+            if (q.exec() && q.next()) v = q.value(0).toString();
+            db.close();
+        }
+        QSqlDatabase::removeDatabase(QStringLiteral("la_clsf_read"));
+        return v;
+    };
+    const auto memCat = [&lib](const QString& p) {
+        for (const Photo& ph : lib.photos())
+            if (ph.path == p) return ph.category;
+        return QStringLiteral("__missing__");
+    };
+
+    // ③ DB 写回正确
+    note(dbCat(QStringLiteral("D:/p0.jpg")) == QStringLiteral("风光"),
+         QStringLiteral("db p0=%1").arg(dbCat(QStringLiteral("D:/p0.jpg"))));
+    note(dbCat(QStringLiteral("D:/p3.jpg")) == QStringLiteral("人像"),
+         QStringLiteral("db p3=%1").arg(dbCat(QStringLiteral("D:/p3.jpg"))));
+    note(dbCat(QStringLiteral("D:/p4.jpg")).isEmpty(),
+         QStringLiteral("db p4 should stay empty=%1").arg(dbCat(QStringLiteral("D:/p4.jpg"))));
+
+    // ④ 内存同步（非 broken 时与 DB 一致）
+    note(memCat(QStringLiteral("D:/p0.jpg")) == QStringLiteral("风光"),
+         QStringLiteral("mem p0=%1").arg(memCat(QStringLiteral("D:/p0.jpg"))));
+    note(memCat(QStringLiteral("D:/p3.jpg")) == QStringLiteral("人像"),
+         QStringLiteral("mem p3=%1").arg(memCat(QStringLiteral("D:/p3.jpg"))));
+    note(memCat(QStringLiteral("D:/p4.jpg")).isEmpty(),
+         QStringLiteral("mem p4 should stay empty"));
+
+    // ⑤ GalleryModel 检索契约（按内存 category 过滤）
+    GalleryModel model;
+    model.setSource(&lib.photos());
+    model.setCategoryFilter(QStringLiteral("风光"));
+    note(model.rowCount() == 3, QStringLiteral("rowCount(风光)=%1 want=3").arg(model.rowCount()));
+    model.setCategoryFilter(QStringLiteral("人像"));
+    note(model.rowCount() == 1, QStringLiteral("rowCount(人像)=%1 want=1").arg(model.rowCount()));
+    model.setCategoryFilter(GalleryModel::kNoCategory);
+    note(model.rowCount() == 2, QStringLiteral("rowCount(未分类)=%1 want=2").arg(model.rowCount()));
+    model.setCategoryFilter(QString());  // 全部
+    note(model.rowCount() == kRows, QStringLiteral("rowCount(全部)=%1 want=%2").arg(model.rowCount()).arg(kRows));
+
+    // ⑥ normalizeLabel 确定性
+    note(Classifier::normalizeLabel(QStringLiteral("portrait")) == QStringLiteral("人像"),
+         QStringLiteral("norm portrait"));
+    note(Classifier::normalizeLabel(QStringLiteral("landscape")) == QStringLiteral("风光"),
+         QStringLiteral("norm landscape"));
+    note(Classifier::normalizeLabel(QStringLiteral("夜景")) == QStringLiteral("夜景·星空"),
+         QStringLiteral("norm 夜景"));
+    note(Classifier::normalizeLabel(QStringLiteral("zzzunknown")) == QStringLiteral("其他"),
+         QStringLiteral("norm unknown"));
+
+    // 反例：broken 时 DB 已写但内存未同步 → 内存检索失效（行数=0），DB 侧仍有值。
+    // 主断言 ④(memCat==风光) / ⑤(rowCount 按类) 已转红；此处签名化记录缺陷特征，
+    // 并再次确认「只坏同步、不坏写回」，避免反例断言本身失真。
+    if (broken) {
+        model.setCategoryFilter(QStringLiteral("风光"));
+        note(model.rowCount() == 0,
+             QStringLiteral("BROKEN rowCount(风光)=%1 (expected 0: memory not synced)").arg(model.rowCount()));
+        note(memCat(QStringLiteral("D:/p0.jpg")).isEmpty(),
+             QStringLiteral("BROKEN mem p0 empty (intended defect)"));
+        note(dbCat(QStringLiteral("D:/p0.jpg")) == QStringLiteral("风光"),
+             QStringLiteral("BROKEN db p0 still 风光 (write ok, sync broken)"));
+    }
+
+    // 复位静态钩子（避免泄漏到其它门，虽然各门独立进程）
+    Library::setForceCategoryNoSyncForQa(false);
+    Classifier::clearSyntheticForQa();
+    if (!qEnvironmentVariableIsSet("LA_CLASSIFY_QA_KEEP"))
+        QDir(dir).removeRecursively();
+
+    const bool okAll = fails.isEmpty();
+    if (okAll) {
+        std::fprintf(stderr,
+            "LA_CLASSIFY_QA PASS rows=%d broken=%d write=1 sync=1 retrieve=1 conserve=1 norm=1\n",
+            kRows, int(broken));
+    } else {
+        std::fprintf(stderr, "LA_CLASSIFY_QA FAIL broken=%d reason=%s\n",
+                     int(broken), qPrintable(fails.join(QChar(';'))));
+    }
+    std::fflush(stderr);
+    return okAll ? 0 : 1;
+}
+
 
 // 方向 D 第五步 b：图库多选 + 批量工具条门禁（headless，无需真实库）。
 // 断言 ① 工具条初始隐藏；有选中时显示、取消后回隐
@@ -2180,6 +2358,10 @@ int main(int argc, char *argv[])
     // 方向 D 第五步：批量写回事务门禁（原子性 / 回滚 / 索引）
     if (qEnvironmentVariableIsSet("LA_BATCH_TX_QA"))
         return runBatchTxQa();
+
+    // 方向 C 第三步：智能分类写回 + 检索契约门禁（合成钩子绕过 CLIP 服务）
+    if (qEnvironmentVariableIsSet("LA_CLASSIFY_QA"))
+        return runClassifyQa();
 
     // 方向 D 第五步 b：图库多选 + 批量工具条门禁
     if (qEnvironmentVariableIsSet("LA_GALLERY_BATCH_QA"))
