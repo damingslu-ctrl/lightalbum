@@ -29,6 +29,12 @@ public:
     void setProvFilter(const QString& provEn);     // 地理筛选（省，空=清除）
     void setCategoryFilter(const QString& cat);    // P16 分类（空=全部；kNoCategory=未分类）
     void setPersonFilter(const QString& name);     // P16 人物（空=全部）
+    // 方向 C：聚类筛选（与上面各筛选**并存叠加**，互不清除；空=不启用）
+    // dim 同时决定比较用哪个字段；clusterKeyOf(p) 给出该照片在此维度的键。
+    void setClusterFilter(int dim, const QString& key);
+    void clearClusterFilter();
+    int  clusterDim() const { return clusterDim_; }
+    bool hasClusterFilter() const { return !clusterKey_.isEmpty(); }
     void setHidePrivate(bool hide);                // P16 隐私库锁定时隐藏私密照片
     const Photo* photoAt(int row) const;           // 行 → Photo*（供点击跳转修图）
 
@@ -55,5 +61,7 @@ private:
     QString provFilter_;     // 省 en 名（Photo.prov 命中）
     QString categoryFilter_; // P16 分类标签（空=全部）
     QString personFilter_;   // P16 人物名（空=全部）
+    int    clusterDim_  = -1;      // 方向 C：聚类维度（-1=未启用）
+    QString clusterKey_;           // 方向 C：簇键（空=不筛选）
     bool   hidePrivate_ = true;   // P16 锁定时隐藏私密照片（默认锁）
 };

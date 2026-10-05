@@ -1355,5 +1355,29 @@ Errors: %1 — %2</translation>
         <source>绯红</source>
         <translation>Crimson</translation>
     </message>
+    <message>
+        <source>聚类维度：把相册按地点或时间分组浏览</source>
+        <translation>Cluster dimension: browse the album grouped by place or time</translation>
+    </message>
+    <message>
+        <source>按省份</source>
+        <translation>By Province</translation>
+    </message>
+    <message>
+        <source>按城市</source>
+        <translation>By City</translation>
+    </message>
+    <message>
+        <source>按年份</source>
+        <translation>By Year</translation>
+    </message>
+    <message>
+        <source>按月份</source>
+        <translation>By Month</translation>
+    </message>
+    <message>
+        <source>聚类：%1</source>
+        <translation>Cluster: %1</translation>
+    </message>
 </context>
 </TS>

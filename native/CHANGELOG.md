@@ -3,6 +3,61 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.16.0] - 2026-10-05
+
+### 新增 - 相册聚类（方向 C 第一步）
+
+图库此前只能按「分类 / 人物 / 大区 / 省 / 搜索串」筛选，缺少「把相册按地点或时间分组浏览」的能力。本步给出聚类条。
+
+**零模型改动**：`Photo` 早已有 `prov` / `city` / `year` / `date` 字段（`core/Library.h`），本步只读取与分组。
+
+**core 纯函数 `PhotoCluster.{h,cpp}`**：`cluster(photos, dim, hidePrivate)` 支持四个维度（省 / 市 / 年 / 月），返回 `QVector<Cluster>{key, label, count, indices}`。簇排序（`count` 降序 + `label` 升序）与分组规则**全部在 core** —— **UI 不得重写分组逻辑**，否则 UI 与门禁会各算一套。UI 只负责「簇 → chip」呈现，门禁直接调用同一函数。
+
+**★核心契约 = 总数守恒**：键为空的照片（无地点 / 无日期）必须归入 `kUnclustered` 簇，**绝不静默丢弃**。聚类的价值就在于让用户看见那些没被归类的照片；丢了就是骗用户。哨兵值用纯 ASCII `"@@unclustered@@"`（真实省/市/年月值不会出现 `@`），既保证不碰撞又便于 `grep` 核验。
+
+**筛选叠加**：`GalleryModel` 新增**独立**的 `clusterDim_` / `clusterKey_` 字段（**不复用** `setProvFilter` / `setCategoryFilter` 等，避免改变既有筛选语义），`rebuild()` 内与其它筛选**并存叠加**（AND 关系）。`setClusterFilter(dim, key)` 传空 key 即清除，与各 setter 口径一致。
+
+**UI**：GalleryPage 顶栏新增维度下拉（按省份 / 按城市 / 按年份 / 按月份）+ 簇 chips（复用既有 `addChip` 范式：可点选中、再点取消、悬停提示簇名）。切换维度会清空当前簇选择（旧键在新维度无意义）。计数栏加「聚类：X」注记。无任何可分簇数据时（如整库都没写省/市）整条隐藏。簇选择与分类/人物筛选**并存**，计数栏会同时显示各注记。
+
+### 新增 - LA_CLUSTER_QA（第 40 门，full 层）
+
+纯数据门（`png=$false`），直接调用 `PhotoCluster::cluster()`，不构造 `MainWindow`、不渲染。注入 8 张确定性 `Photo`（跨省/市/年月，含 1 张无地点无时间、1 张有省无市、1 张私密），18 条断言覆盖四类性质：
+
+- **A 地点聚类**：按省正确分组（安徽 3 / 北京 2 / 未分类 1）；按市正确分组（黄山市 2 / 合肥市 1 / 北京市 1 / 未分类 2）。
+- **B 时间聚类**：按年（2023 → 3、2024 → 2、未分类 → 1）、按月（2023-05 → 2）。
+- **C ★总数守恒**：各簇 `count` 之和 **== 可见照片数**（含未分类簇）。这是「聚类没骗用户」的核心契约。
+- **D 隐私门**：`hidePrivate=false` 时私密照片参与分簇（总数 == 8，多出「浙江省」一簇）。
+
+**反例（非空心）**：`LA_CLUSTER_QA_FORCE_BROKEN=1` 通过 core 层 QA 钩子 `PhotoCluster::setForceDropUnclusteredForQa(true)` 让**真实实现**丢弃空键照片 → 实测 `marks=8/18`，失败清单 `provSum,provSize,provUnc,citySize,cityUnc,yearSize,yUnc,uncLabel,allSum,allSize` **全部集中在总数守恒与未分类簇**，精准对应缺陷形态。反例注入在真实实现上而非测试侧伪造，故断言必然有效。
+
+**★分层被自身门禁拦下（规则 13 的又一次生效）**：初版按「纯数据、无 UI，同类门 `LA_GALLERY_SEARCH_QA` 仅 56ms」推断应放 fast 层，但 `LA_GATE_MATRIX_QA` 的 E6 实测 `1424ms > 500ms` 预算直接判红 —— 该门虽是纯数据运算，进程仍要付满 `QApplication` 启动 + offscreen 平台初始化成本（这部分才是大头）。已诚实改回 full 层，未靠直觉分层。
+
+### 修复 - LA_LUMEN_SMOKE 稳定 KILL（门禁基建）
+
+**症状**：该门连续 `[KILL]`（runner 25s 超时）。**排查走了两次弯路**：
+
+1. 猜「动态壁纸 `webwallpaper64` 占 CPU」→ 停掉它（系统负载 60% → 30%）后**仍 KILL，假设被证伪**。
+2. 猜「大图逐像素 MAD 慢」→ 实测金样图仅 **0.15 Mpx**；给足 120s 直跑 → `exit=0` + `LA_LUMEN_SMOKE PASS`（90 行输出）；精确计时 **66.6 秒**。
+
+**根因**：该门做 8 张图 × 12 个算子 = **96 次全帧像素对拍**，本就昂贵；而 `gate_matrix.ps1` 记录的 `measuredMs=7431` 与真实值 **66585 差 9 倍**（记录失真且无人复核）→ 固定 25s 预算下必然 KILL。**E8 断言只校验 `measuredMs` 字段存在，不校验它与 runner 预算是否一致**，所以失真一直没被发现。
+
+**修法**：门表新增 `timeoutSec` 字段，`qa_runner.ps1` 支持**门级超时覆盖**（缺省仍用全局 `-Timeout`），该门设 `90`。挂死检测依然有效，只是预算与真实成本相符。KILL 提示文案同步改用实际生效的 `$gateTimeout` 归因。
+
+**★PowerShell 坑（铁律 32）**：门表项是 **hashtable**，`$g.PSObject.Properties.Name -contains "timeoutSec"` **恒为 false** → 门级超时**静默失效**（表现为「配了却不生效」，极易误判为修法无效）。正解 `$g.ContainsKey("timeoutSec")` + `$g["timeoutSec"]`。同类坑：`Where-Object { $_.n -eq ... }` 对 hashtable 也不按 `.n` 匹配。
+
+### 修复 / 过程
+- **新增** `src/core/PhotoCluster.{h,cpp}`：`Dim` 枚举（省/市/年/月）、`kUnclustered` 哨兵、`clusterKey` / `clusterLabel` / `cluster()`、QA 反例钩子 `setForceDropUnclusteredForQa`。
+- `src/ui/GalleryModel.{h,cpp}`：`setClusterFilter` / `clearClusterFilter` / `clusterDim` / `hasClusterFilter`；`clusterDim_` / `clusterKey_` 成员；`rebuild()` 内聚类判定（与其他筛选并存叠加）。
+- `src/ui/GalleryPage.{h,cpp}`：`clusterBar_` / `clusterDimBox_` / `clusterChipsBar_` / `clusterChips_` 成员；`buildClusterBar()` / `restyleClusterChips()`；构造期挂载聚类条；`buildChips()` 末尾触发重建（数据/隐私门变化时自动跟随）；`updateCount()` 加「聚类：X」注记。
+- `src/main.cpp`：`runClusterQa()`（18 断言 + 失败标签诊断输出）；`LA_CLUSTER_QA` 派发；`#include "../core/PhotoCluster.h"`。
+- `qa_runner.ps1`：支持门级 `timeoutSec` 覆盖 + KILL 文案归因。
+- `gate_matrix.ps1`：新增第 40 门（full 层）；`LA_LUMEN_SMOKE` 加 `timeoutSec=90` 且 `measuredMs` 修正为实测 66585。
+- `CMakeLists.txt`：`VERSION 2.15.0 → 2.16.0`；登记 `PhotoCluster.{h,cpp}`。
+- i18n：手工追加 6 条（聚类维度提示 + 4 个维度名 + 聚类注记），`lrelease 266 finished / 0 unfinished`，未跑 `lupdate`。
+
+### 门数
+40 门（新增 1）。fast 层 12 门不变，full 层 27 → 28 门。
+
 ## [2.15.0] - 2026-10-04
 
 ### 新增 - 热力色带按密度分级（方向 A 第四步 · 方向 A 收尾）

@@ -24,6 +24,7 @@
 #include "core/LumenEngine.h"
 #include "core/LumenAgent.h"
 #include "core/GeoIndex.h"
+#include "core/PhotoCluster.h"
 #include "core/RtHistory.h"
 #include "core/Scanner.h"
 #include "core/ICloudSource.h"
@@ -275,6 +276,140 @@ int runGallerySearchQa()
     const bool pass = (checks > 0) && (marks == checks);
     std::fprintf(stderr, "LA_GALLERY_SEARCH_QA %s marks=%d checks=%d\n",
                  pass ? "PASS" : "FAIL", marks, checks);
+    std::fflush(stderr);
+    return pass ? 0 : 1;
+}
+
+// 方向 C 第一步：相册聚类门禁（LA_CLUSTER_QA）。
+// 注入确定性 Photo 列表，断言 PhotoCluster 纯函数的四类性质：
+//   A 地点聚类：按省/市正确分组
+//   B 时间聚类：按年/月正确分组
+//   C ★数据诚实：无地点/无日期的照片必须进「未分类」簇，**绝不丢弃**
+//     （簇总数守恒 = 可见照片数；这是「聚类没骗用户」的核心契约）
+//   D 隐私门：hidePrivate=true 时私密照片不参与分簇
+// 反例 LA_CLUSTER_QA_FORCE_BROKEN=1 令空键照片被直接跳过 → 总数不守恒 → RED。
+// 注意：main() 已构造 QApplication，此处**禁止**再建（双实例退场 SIGSEGV）。
+int runClusterQa()
+{
+    const bool broken = !qEnvironmentVariableIsEmpty("LA_CLUSTER_QA_FORCE_BROKEN");
+    auto mk = [](const QString& prov, const QString& city, int year, const QString& date) {
+        Photo p;
+        p.prov = prov; p.city = city; p.year = year; p.date = date;
+        p.thumbFile = QStringLiteral("t");
+        return p;
+    };
+    QVector<Photo> phs;
+    phs.append(mk(QStringLiteral("安徽省"), QStringLiteral("黄山市"), 2023, QStringLiteral("2023-05-01")));
+    phs.append(mk(QStringLiteral("安徽省"), QStringLiteral("黄山市"), 2023, QStringLiteral("2023-05-02")));
+    phs.append(mk(QStringLiteral("安徽省"), QStringLiteral("合肥市"), 2023, QStringLiteral("2023-07-11")));
+    phs.append(mk(QStringLiteral("北京市"), QStringLiteral("北京市"), 2024, QStringLiteral("2024-01-12")));
+    phs.append(mk(QString(), QString(), 0, QString()));                 // 无地点无时间 → 未分类
+    phs.append(mk(QStringLiteral("北京市"), QString(), 2024, QStringLiteral("2024-03-05"))); // 省市不等 → 两维度各成一簇
+    Photo priv = mk(QStringLiteral("浙江省"), QStringLiteral("杭州市"), 2024, QStringLiteral("2024-02-02"));
+    priv.priv = true;                                                    // 私密：隐私门开启时应被排除
+    phs.append(priv);
+    const int total = phs.size();          // 8
+    const int visible = total - 1;         // 6（私密 1 张在 hidePrivate=true 下不计）
+
+    int marks = 0, checks = 0;
+    QStringList failed;   // 诊断：记下未通过的断言标签，便于定位（不参与判定）
+    auto chk = [&](bool ok, const char* tag = ""){
+        ++checks;
+        if (ok) ++marks;
+        else if (tag && *tag) failed << QString::fromLatin1(tag);
+    };
+    // 反例：在**真实实现**上注入「空键照片被丢弃」缺陷（core 层 QA 钩子），
+    // 让下方 A/B/C/D 全部断言自然变红 —— 这才是非空心门禁。
+    // （铁律 22：期望值恒为规格值，不因 broken 而改变）
+    PhotoCluster::setForceDropUnclusteredForQa(broken);
+
+    // —— A 地点聚类（按省）——
+    const QVector<PhotoCluster::Cluster> prov =
+        PhotoCluster::cluster(phs, PhotoCluster::ByProvince, true);
+    {
+        int sum = 0;
+        for (const PhotoCluster::Cluster& c : prov) sum += c.count;
+        chk(sum == visible, "provSum");
+        chk(prov.size() == 3, "provSize");
+        int unc = 0, bj = 0, ah = 0;
+        for (const PhotoCluster::Cluster& c : prov) {
+            if (c.key == QString::fromLatin1(PhotoCluster::kUnclustered)) unc = c.count;
+            else if (c.key == QStringLiteral("北京市")) bj = c.count;
+            else if (c.key == QStringLiteral("安徽省")) ah = c.count;
+        }
+        chk(unc == 1, "provUnc");
+        chk(bj == 2, "provBj");
+        chk(ah == 3, "provAh");
+    }
+    // 按市：黄山市 2 / 合肥市 1 / 北京市 1 / 未分类 2（两张缺 city）
+    {
+        const QVector<PhotoCluster::Cluster> city =
+            PhotoCluster::cluster(phs, PhotoCluster::ByCity, true);
+        int huangshan = 0, hefei = 0, bj = 0, unc = 0;
+        for (const PhotoCluster::Cluster& c : city) {
+            if (c.key == QStringLiteral("黄山市")) huangshan = c.count;
+            else if (c.key == QStringLiteral("合肥市")) hefei = c.count;
+            else if (c.key == QStringLiteral("北京市")) bj = c.count;
+            else if (c.key == QString::fromLatin1(PhotoCluster::kUnclustered)) unc = c.count;
+        }
+        chk(city.size() == 4, "citySize");
+        chk(huangshan == 2, "cityHs");
+        chk(hefei == 1, "cityHf");
+        chk(bj == 1, "cityBj");
+        chk(unc == 2, "cityUnc");
+    }
+
+    // —— B 时间聚类（按年 / 按月）——
+    {
+        const QVector<PhotoCluster::Cluster> byYear =
+            PhotoCluster::cluster(phs, PhotoCluster::ByYear, true);
+        int y2023 = 0, y2024 = 0, yUnc = 0;
+        for (const PhotoCluster::Cluster& c : byYear) {
+            if (c.key == QLatin1String("2023")) y2023 = c.count;
+            else if (c.key == QLatin1String("2024")) y2024 = c.count;
+            else if (c.key == QString::fromLatin1(PhotoCluster::kUnclustered)) yUnc = c.count;
+        }
+        chk(byYear.size() == 3, "yearSize");
+        chk(y2023 == 3, "y2023");
+        chk(y2024 == 2, "y2024");
+        chk(yUnc == 1, "yUnc");
+
+        const QVector<PhotoCluster::Cluster> byMonth =
+            PhotoCluster::cluster(phs, PhotoCluster::ByMonth, true);
+        int may = 0;
+        for (const PhotoCluster::Cluster& c : byMonth)
+            if (c.key == QLatin1String("2023-05")) may = c.count;
+        chk(may == 2, "may");
+    }
+
+    // —— C 数据诚实：未分类簇必须存在且带可读标签 ——
+    {
+        const QVector<PhotoCluster::Cluster> byYear =
+            PhotoCluster::cluster(phs, PhotoCluster::ByYear, true);
+        bool uncHasLabel = false;
+        for (const PhotoCluster::Cluster& c : byYear)
+            if (c.key == QString::fromLatin1(PhotoCluster::kUnclustered)
+                && c.label == QCoreApplication::translate("LightAlbum", "未分类"))
+                uncHasLabel = true;
+        chk(uncHasLabel, "uncLabel");
+    }
+
+    // —— D 隐私门：hidePrivate=false 时私密照片应参与分簇 ——
+    {
+        const QVector<PhotoCluster::Cluster> all =
+            PhotoCluster::cluster(phs, PhotoCluster::ByProvince, false);
+        int sum = 0;
+        for (const PhotoCluster::Cluster& c : all) sum += c.count;
+        chk(sum == total, "allSum");
+        chk(all.size() == 4, "allSize");
+    }
+    PhotoCluster::setForceDropUnclusteredForQa(false);   // 还原（探针不污染环境）
+
+    const bool pass = (checks > 0) && (marks == checks);
+    std::fprintf(stderr, "LA_CLUSTER_QA %s marks=%d checks=%d clusters=%d visible=%d broken=%d\n",
+                 pass ? "PASS" : "FAIL", marks, checks, prov.size(), visible, int(broken));
+    if (!pass)
+        std::fprintf(stderr, "LA_CLUSTER_QA failed: %s\n", qPrintable(failed.join(',')));
     std::fflush(stderr);
     return pass ? 0 : 1;
 }
@@ -1901,6 +2036,10 @@ int main(int argc, char *argv[])
     // 方向 C 第一步：相册内搜索过滤断言（GalleryModel 直接驱动）
     if (qEnvironmentVariableIsSet("LA_GALLERY_SEARCH_QA"))
         return runGallerySearchQa();
+
+    // 方向 C 第一步：相册聚类断言（PhotoCluster 纯函数直接驱动，纯数据无 UI）
+    if (qEnvironmentVariableIsSet("LA_CLUSTER_QA"))
+        return runClusterQa();
 
     // 方向 D 第一步：真实库回归门禁（规模化与流畅性，默认可跑 6425 张合成 fixture）
     if (qEnvironmentVariableIsSet("LA_SCALE_SMOKE"))

@@ -88,7 +88,12 @@ $GateTable = @(
   # every full-tier gate and far under the 500 ms fast budget.
   @{n="LA_A11Y_CONTRAST_QA"; png=$false; tier="fast"; measuredMs=18},
   @{n="LA_A11Y_KEYBOARD_QA"; png=$false; tier="fast"; measuredMs=17},
-  @{n="LA_LUMEN_SMOKE";     png=$false; measuredMs=7431},
+  # timeoutSec: real cost is 66585 ms (8 images x 12 ops = 96 full-frame pixel
+  # comparisons). The old measuredMs=7431 record was 9x optimistic, so a flat
+  # 25s budget killed a gate that genuinely PASSES (verified: exit=0 +
+  # LA_LUMEN_SMOKE PASS when given 120s). Hangs are still detected, just with a
+  # budget that matches reality.
+  @{n="LA_LUMEN_SMOKE";     png=$false; timeoutSec=90; measuredMs=66585},
   @{n="LA_AGENT_SMOKE";     png=$false; measuredMs=1000},
   @{n="LA_SCAN_SMOKE";      png=$false; need=@("LA_SCAN_ROOT","LA_SCAN_DB"); measuredMs=0},
   @{n="LA_EXIT_QA";         png=$false; measuredMs=5700},
@@ -140,6 +145,22 @@ $GateTable = @(
   # Counter-example LA_MAP_HEAT_RAMP_QA_FORCE_BROKEN=1 pins every point to a
   # single tier -> two tier counts drop to 0 -> RED. Full tier.
   @{n="LA_MAP_HEAT_RAMP_QA"; png=$true; measuredMs=5901},
+  # Direction C step 1: photo clustering (province / city / year / month).
+  # Pure-function gate -- it calls PhotoCluster::cluster() directly, so no
+  # MainWindow is built and no rendering happens.
+  # Key assertion is CONSERVATION: the per-cluster counts must sum to the
+  # number of visible photos, i.e. photos with a missing key still land in the
+  # "unclassified" cluster instead of being silently dropped. Dropping them
+  # would make the gallery lie about what it contains.
+  # Counter-example LA_CLUSTER_QA_FORCE_BROKEN=1 flips a QA hook inside
+  # PhotoCluster so the real implementation skips empty-key photos; the
+  # conservation assertion then goes RED.
+  # fast tier: REJECTED by measurement. The gate is pure data work with no
+  # MainWindow, but the process still pays full QApplication startup plus
+  # offscreen platform init, which dominates: measured 1424 ms > 500 ms budget.
+  # LA_GATE_MATRIX_QA E6 caught this -- keeping the tier="fast" guess would have
+  # shipped a gate that fails its own budget rule on every CI run.
+  @{n="LA_CLUSTER_QA";      png=$false; measuredMs=1424},
   @{n="LA_MAP_CLICK_QA";    png=$false; measuredMs=2553},
   @{n="LA_MAP_PERF";        png=$false; measuredMs=3735},
   @{n="LA_GALLERY_E_QA";    png=$true; measuredMs=2589},

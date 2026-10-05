@@ -1,5 +1,6 @@
 #include "GalleryModel.h"
 #include "ThumbCache.h"
+#include "../core/PhotoCluster.h"
 #include <algorithm>
 
 const QString GalleryModel::kNoCategory = QStringLiteral("\u0001n categor");
@@ -32,6 +33,8 @@ void GalleryModel::rebuild()
         const bool hasProv   = !provFilter_.isEmpty();
         const bool hasCat    = !categoryFilter_.isEmpty();
         const bool hasPerson = !personFilter_.isEmpty();
+        // 方向 C：聚类筛选与其它筛选并存叠加
+        const bool hasCluster = !clusterKey_.isEmpty() && clusterDim_ >= 0;
         const QString region = regionFilter_.toLower();
         const QString prov   = provFilter_.toLower();
         for (int i = 0; i < all_->size(); ++i) {
@@ -49,6 +52,10 @@ void GalleryModel::rebuild()
             if (hasPerson && !p.person.split(',', Qt::SkipEmptyParts)
                                  .contains(personFilter_))      // P16 人物
                 continue;
+            if (hasCluster) {   // 方向 C：簇键比较（真源在 core/PhotoCluster）
+                if (PhotoCluster::clusterKey(p, static_cast<PhotoCluster::Dim>(clusterDim_)) != clusterKey_)
+                    continue;
+            }
             if (!needle.isEmpty()) {
                 // 方向 C 第一步：扩展搜索 haystack（关键词/地点/时间/评分）
                 const QString hay = p.title + QChar(' ') + p.rel + QChar(' ')
@@ -70,6 +77,14 @@ void GalleryModel::setRegionFilter(const QString& r){ regionFilter_ = r; rebuild
 void GalleryModel::setProvFilter(const QString& p) { provFilter_ = p;   rebuild(); }
 void GalleryModel::setCategoryFilter(const QString& c){ categoryFilter_ = c; rebuild(); }
 void GalleryModel::setPersonFilter(const QString& n){ personFilter_ = n; rebuild(); }
+// 方向 C：聚类筛选（key 空串 = 清除，与其余 setter 口径一致）
+void GalleryModel::setClusterFilter(int dim, const QString& key)
+{
+    clusterDim_ = key.isEmpty() ? -1 : dim;
+    clusterKey_ = key;
+    rebuild();
+}
+void GalleryModel::clearClusterFilter() { clusterDim_ = -1; clusterKey_.clear(); rebuild(); }
 void GalleryModel::setHidePrivate(bool hide)       { hidePrivate_ = hide; rebuild(); }
 
 const Photo* GalleryModel::photoAt(int row) const

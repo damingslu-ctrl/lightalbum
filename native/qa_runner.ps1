@@ -121,7 +121,18 @@ foreach ($g in $gates) {
   $proc = New-Object System.Diagnostics.Process
   $proc.StartInfo = $psi
   $proc.Start() | Out-Null
-  $done = $proc.WaitForExit($Timeout*1000)
+  # Per-gate timeout override: a gate may declare timeoutSec in gate_matrix.ps1
+  # when its real cost legitimately exceeds the global -Timeout. Rationale:
+  # LA_LUMEN_SMOKE does 96 full-frame pixel comparisons (8 images x 12 ops) and
+  # was measured at 66585 ms, so a flat 25s budget killed a gate that actually
+  # PASSES. Hanging is still detected, just with a truthful budget.
+  # NOTE: gate entries are hashtables, so PSObject.Properties does NOT list
+  # their keys -- test the key directly via ContainsKey.
+  $gateTimeout = $Timeout
+  if ($g.ContainsKey("timeoutSec") -and $g["timeoutSec"] -gt 0) {
+      $gateTimeout = [int]$g["timeoutSec"]
+  }
+  $done = $proc.WaitForExit($gateTimeout*1000)
   $killed = -not $done
   if ($killed) { try { $proc.Kill() } catch {} }
   $raw = ""
@@ -132,9 +143,9 @@ foreach ($g in $gates) {
   $detail = ""
   if ($verdict -eq "KILLED") {
     if ($g.kind -eq "ps1") {
-      $detail = ("TIMEOUT/KILLED: script gate did not finish within " + $Timeout + "s")
+      $detail = ("TIMEOUT/KILLED: script gate did not finish within " + $gateTimeout + "s")
     } else {
-      $detail = ("TIMEOUT/KILLED: exe did not self-exit within " + $Timeout + "s (console/redirect or hung gate)")
+      $detail = ("TIMEOUT/KILLED: exe did not self-exit within " + $gateTimeout + "s (console/redirect or hung gate)")
     }
   } elseif ($verdict -eq "RED") {
     $detail = (@($lines | Where-Object { $_ -cmatch '\bFAIL\b' } | Select-Object -First 1) -join " ").Trim()

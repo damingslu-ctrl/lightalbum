@@ -1,5 +1,6 @@
 #include "GalleryPage.h"
 #include "Theme.h"
+#include "../core/PhotoCluster.h"
 #include "EditorialView.h"
 #include "GalleryCardPainter.h"
 #include <QVBoxLayout>
@@ -72,6 +73,39 @@ GalleryPage::GalleryPage(const QVector<Photo>* photos, const QString& thumbsDir,
     personLay->setContentsMargins(20, 8, 20, 0);
     personLay->setSpacing(8);
     lay->addWidget(personBar_);
+
+    // 方向 C 第一步：聚类条（维度切换 + 簇 chips）。与分类/人物筛选**并存叠加**。
+    clusterBar_ = new QWidget(this);
+    clusterBar_->setStyleSheet(QStringLiteral("background:#060806;"));
+    auto* clusterLay = new QHBoxLayout(clusterBar_);
+    clusterLay->setContentsMargins(20, 8, 20, 0);
+    clusterLay->setSpacing(8);
+    clusterDimBox_ = new QComboBox(clusterBar_);
+    clusterDimBox_->setCursor(Qt::PointingHandCursor);
+    clusterDimBox_->setToolTip(QCoreApplication::translate(
+        "LightAlbum", "聚类维度：把相册按地点或时间分组浏览"));
+    clusterDimBox_->addItem(QCoreApplication::translate("LightAlbum", "按省份"), 0);
+    clusterDimBox_->addItem(QCoreApplication::translate("LightAlbum", "按城市"), 1);
+    clusterDimBox_->addItem(QCoreApplication::translate("LightAlbum", "按年份"), 2);
+    clusterDimBox_->addItem(QCoreApplication::translate("LightAlbum", "按月份"), 3);
+    clusterDimBox_->setStyleSheet(QStringLiteral(
+        "QComboBox{background:#131a15;border:1px solid #26312a;border-radius:9px;"
+        "padding:3px 8px;color:#8da996;font-size:12px;}"
+        "QComboBox QAbstractItemView{background:#0e130f;color:#d9e4dc;"
+        "selection-background-color:#1d2a22;selection-color:#4fc08a;}"));
+    connect(clusterDimBox_, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int) {
+        clusterDim_ = clusterDimBox_->currentData().toInt();
+        activeClusterKey_.clear();     // 换维度即清簇选择（旧键在新维度无意义）
+        model_.clearClusterFilter();
+        buildClusterBar();
+        updateCount();
+    });
+    clusterLay->addWidget(clusterDimBox_);
+    clusterChipsBar_ = new QWidget(clusterBar_);
+    clusterChipsBar_->setStyleSheet(QStringLiteral("background:transparent;"));
+    clusterLay->addWidget(clusterChipsBar_, 1);
+    lay->addWidget(clusterBar_);
 
     // 方向 C 第一步：搜索框（地点/时间/评分/关键词过滤，经 applyFilter → GalleryModel::setFilter）
     auto* searchBar = new QWidget(this);
@@ -336,6 +370,7 @@ void GalleryPage::buildChips()
     } else {
         personBar_->setVisible(false);
     }
+    buildClusterBar();   // 方向 C：聚类条随数据/隐私门一并重建
     restyleChips();
 }
 
@@ -349,6 +384,83 @@ void GalleryPage::restyleChips()
         const QString tag = b->property("personTag").toString();
         b->setChecked(activePerson_ == tag);
     }
+}
+
+// 方向 C 第一步：按当前维度重建聚类条。
+// 铁律：簇来自 core/PhotoCluster 纯函数（唯一真源），本函数只做「簇 → chip」呈现；
+// 簇的**排序与分组规则不在 UI 层重写**，否则 UI 与门禁会各算一套。
+void GalleryPage::buildClusterBar()
+{
+    if (!clusterChipsBar_ || !photos_) return;
+    for (QPushButton* b : clusterChips_) b->deleteLater();
+    clusterChips_.clear();
+    auto* lay = static_cast<QHBoxLayout*>(clusterChipsBar_->layout());
+    if (!lay) {
+        lay = new QHBoxLayout(clusterChipsBar_);
+        lay->setContentsMargins(0, 0, 0, 0);
+        lay->setSpacing(8);
+    }
+    const QString chipCss = QStringLiteral(
+        "QPushButton{background:#101710;border:1px solid #232d26;border-radius:11px;"
+        "padding:4px 12px;color:#8da996;font-size:12px;}"
+        "QPushButton:hover{border-color:#4fc08a;color:#f4f7f4;}"
+        "QPushButton:checked{background:#d9a94e;border-color:#d9a94e;"
+        "color:#0c100d;font-weight:bold;}");
+
+    const QVector<PhotoCluster::Cluster> cs =
+        PhotoCluster::cluster(*photos_, static_cast<PhotoCluster::Dim>(clusterDim_), hidePrivate_);
+
+    // 「全部」chip
+    {
+        int total = 0;
+        for (const PhotoCluster::Cluster& c : cs) total += c.count;
+        auto* b = new QPushButton(
+            QCoreApplication::translate("LightAlbum", "全部 %1").arg(total), clusterChipsBar_);
+        b->setCheckable(true);
+        b->setCursor(Qt::PointingHandCursor);
+        b->setStyleSheet(chipCss);
+        b->setProperty("clusterKey", QString());
+        connect(b, &QPushButton::clicked, this, [this, b] {
+            activeClusterKey_ = b->property("clusterKey").toString();
+            if (activeClusterKey_.isEmpty()) model_.clearClusterFilter();
+            else model_.setClusterFilter(clusterDim_, activeClusterKey_);
+            restyleClusterChips();
+            updateCount();
+        });
+        lay->addWidget(b);
+        clusterChips_.append(b);
+    }
+    // 各簇（count 降序已在 core 层排好；此处只呈现）
+    for (const PhotoCluster::Cluster& c : cs) {
+        auto* b = new QPushButton(
+            QCoreApplication::translate("LightAlbum", "%1 %2").arg(c.label).arg(c.count),
+            clusterChipsBar_);
+        b->setCheckable(true);
+        b->setCursor(Qt::PointingHandCursor);
+        b->setStyleSheet(chipCss);
+        b->setProperty("clusterKey", c.key);
+        b->setToolTip(c.label);
+        connect(b, &QPushButton::clicked, this, [this, b] {
+            const QString k = b->property("clusterKey").toString();
+            activeClusterKey_ = (activeClusterKey_ == k) ? QString() : k;   // 再点=取消
+            if (activeClusterKey_.isEmpty()) model_.clearClusterFilter();
+            else model_.setClusterFilter(clusterDim_, activeClusterKey_);
+            restyleClusterChips();
+            updateCount();
+        });
+        lay->addWidget(b);
+        clusterChips_.append(b);
+    }
+    lay->addStretch(1);
+    // 只有「全部」= 当前维度无任何可分簇数据（如整库都没写省/市）→ 整条隐藏
+    clusterBar_->setVisible(clusterChips_.size() > 1);
+    restyleClusterChips();
+}
+
+void GalleryPage::restyleClusterChips()
+{
+    for (QPushButton* b : clusterChips_)
+        b->setChecked(activeClusterKey_ == b->property("clusterKey").toString());
 }
 
 void GalleryPage::applyCategoryFilter(const QString& cat)
@@ -385,6 +497,12 @@ void GalleryPage::updateCount()
                       ? QCoreApplication::translate("LightAlbum", "未分类")
                       : QCoreApplication::translate("LightAlbum", "分类：%1").arg(activeCat_));
     if (!activePerson_.isEmpty()) notes << QCoreApplication::translate("LightAlbum", "人物：%1").arg(activePerson_);
+    if (!activeClusterKey_.isEmpty()) {   // 方向 C：聚类注记（用簇标签而非机器键）
+        notes << QCoreApplication::translate("LightAlbum", "聚类：%1").arg(
+            activeClusterKey_ == QLatin1String(PhotoCluster::kUnclustered)
+                ? QCoreApplication::translate("LightAlbum", "未分类")
+                : activeClusterKey_);
+    }
     if (selCount_ > 0) notes << QCoreApplication::translate("LightAlbum", "已选 %1").arg(selCount_);
     const QString suffix = notes.isEmpty()
         ? QString() : QStringLiteral("（%1）").arg(notes.join(QStringLiteral(" · ")));

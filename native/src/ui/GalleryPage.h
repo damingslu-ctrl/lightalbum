@@ -3,6 +3,7 @@
 // P16：分类 chips 条（CLIP 本地批量分类写库后读库筛选）+ 人物筛选条 + 隐私门同步
 #include <QWidget>
 #include "EditorialView.h"  // P23 E 杂志拼贴视图
+#include <QComboBox>
 #include <QLabel>
 #include <QStringList>
 #include <QTimer>
@@ -47,6 +48,8 @@ private:
     void buildChips();          // P16：按当前数据 + 隐私门状态重建分类/人物 chips
     void updateCount();         // 统一计数文案（含各筛选状态注记）
     void restyleChips();        // 选中态高亮当前 chip
+    void buildClusterBar();     // 方向 C：按当前维度重建聚类条（维度切换 + 簇 chips）
+    void restyleClusterChips(); // 方向 C：聚类 chip 选中态
 
     const QVector<Photo>* photos_ = nullptr;
     GalleryModel model_;
@@ -60,6 +63,13 @@ private:
     QVector<QPushButton*> personChips_;
     QString      activeCat_;                  // 当前分类（空=全部；GalleryModel::kNoCategory=未分类）
     QString      activePerson_;
+    // 方向 C：聚类条（维度下拉 + 簇 chips；与分类/人物筛选并存叠加）
+    QWidget*     clusterBar_ = nullptr;
+    QComboBox*   clusterDimBox_ = nullptr;
+    QWidget*     clusterChipsBar_ = nullptr;
+    QVector<QPushButton*> clusterChips_;
+    int          clusterDim_ = 0;             // 对应 PhotoCluster::Dim（默认 ByProvince）
+    QString      activeClusterKey_;           // 当前簇键（空=全部）
     QString      searchText_;                 // 搜索框状态（计数注记用）
     bool         hidePrivate_ = true;
     // ---- D5b：批量工具条（选中非空才显示；★1-5 / 🔒私密 / 取消选择）----
