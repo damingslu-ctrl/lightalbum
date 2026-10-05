@@ -29,6 +29,8 @@
 #include "core/Classifier.h"   // 方向 C·智能分类：CLIP 客户端桥（QA 门用合成钩子）
 #include "core/PersonDetector.h"  // 方向 C·人脸识别（方案A）：face_server 客户端桥（QA 门用合成钩子）
 #include "core/FaceCluster.h"     // 方向 C·人物自动聚类：阈值余弦聚类纯函数（QA 门直调）
+#include "ui/GalleryCardPainter.h"  // 2.22.0 骨架屏纯函数（QA 门直调，铁律 20 同源）
+#include "ui/FullCache.h"           // 2.22.0 灯箱原图 LRU（QA 门直调）
 #include <QTemporaryDir>
 #include <QPainter>
 #include <QSet>
@@ -1566,6 +1568,157 @@ int runFaceClusterQa()
     return okAll ? 0 : 1;
 }
 
+// 2.22.0 客户端体验门禁（LA_TRANSITION_QA）：原图 + 骨架屏 + 动画纯函数。
+//
+// 三条断言线，每条的判别器都必须是「实现一旦退化就变红」的那种：
+//   A 状态机与动画纯函数：三态两两不同；脉冲值域/峰值/周期/减动效终态
+//   B 骨架屏绘制：Loading 与 Ready 的像素必须不同；不同相位像素不同（真在脉动）；
+//     减动效下各相位像素必须一致（不闪）
+//   C 灯箱原图：解码出的原图边长必须 **大于** 512 缩略图档位（判别器），
+//     且 LRU 字节预算 > 0（预算写成 0 会退化成"永不缓存"）
+// 反例 LA_TRANSITION_QA_FORCE_BROKEN=1 经 FullCache::setForceFailForQa
+// 让解码恒失败 → C 组转红（非空心：同一批断言在正例实测为绿）。
+int runTransitionQa()
+{
+    const bool broken = !qEnvironmentVariableIsEmpty("LA_TRANSITION_QA_FORCE_BROKEN");
+
+    QStringList fails;
+    const auto note = [&fails](bool ok, const QString& what) {
+        if (!ok) fails << what;
+    };
+
+    // ---- A 状态机 + 动画纯函数契约（铁律 20：产品与门禁共用同一实现）----
+    note(Lumen::skeletonState(QPixmap(), false) == Lumen::SkeletonState::Loading,
+         QStringLiteral("A state(null,false) should be Loading"));
+    note(Lumen::skeletonState(QPixmap(), true) == Lumen::SkeletonState::Missing,
+         QStringLiteral("A state(null,true) should be Missing"));
+    {
+        QPixmap pm(4, 4);
+        pm.fill(Qt::red);
+        note(Lumen::skeletonState(pm, false) == Lumen::SkeletonState::Ready,
+             QStringLiteral("A state(pm,*) should be Ready"));
+    }
+    {
+        double lo = 9.0, hi = -9.0;
+        for (int i = 0; i <= 100; ++i) {
+            const double v = Lumen::skeletonPulse(i / 100.0, false);
+            lo = qMin(lo, v);
+            hi = qMax(hi, v);
+        }
+        note(lo >= 0.249 && lo <= 0.251,
+             QStringLiteral("A pulse min=%1 want 0.25").arg(lo, 0, 'f', 4));
+        note(qAbs(hi - 1.0) < 1e-9,
+             QStringLiteral("A pulse max=%1 want 1.0").arg(hi, 0, 'f', 4));
+        bool allOne = true;
+        for (int i = 0; i <= 20; ++i)
+            if (qAbs(Lumen::skeletonPulse(i / 20.0, true) - 1.0) > 1e-9) allOne = false;
+        note(allOne, QStringLiteral("A reduceMotion must return terminal 1.0"));
+        note(qAbs(Lumen::skeletonPulse(0.0, false) - Lumen::skeletonPulse(1.0, false)) < 1e-9,
+             QStringLiteral("A pulse must be periodic (phase0==phase1)"));
+    }
+
+    // ---- B 骨架屏绘制：像素级判别 ----
+    const int cardW = 120, cardH = 90;
+    const auto renderCard = [](bool withImage, double phase, bool reduceMotion) {
+        QImage img(cardW, cardH, QImage::Format_ARGB32);
+        img.fill(Qt::black);
+        QPainter p(&img);
+        QPixmap pm;
+        if (withImage) { pm = QPixmap(cardW, cardH); pm.fill(Qt::red); }
+        Lumen::paintGalleryCard(&p, QRectF(0, 0, cardW, cardH),
+                                QStringLiteral("t"), QString(), QString(),
+                                false, 0, pm, false, false, false, phase, reduceMotion);
+        p.end();
+        return img;
+    };
+    const QImage skelImg = renderCard(false, 0.0, false);
+    const QImage readyImg = renderCard(true, 0.0, false);
+    note(skelImg != readyImg,
+         QStringLiteral("B skeleton render must differ from ready render"));
+    {
+        // 骨架必须真的画了脉冲底色（不是纯黑/透明）：中心像素绿色通道 ≥ 0x18
+        const QColor c = skelImg.pixel(cardW / 2, cardH / 2);
+        note(c.green() >= 0x18,
+             QStringLiteral("B skeleton center too dark: g=%1").arg(c.green()));
+    }
+    {
+        const QImage s0 = renderCard(false, 0.0, false);
+        const QImage s5 = renderCard(false, 0.5, false);
+        note(s0 != s5, QStringLiteral("B different phases must render differently"));
+        const QImage r0 = renderCard(false, 0.0, true);
+        const QImage r5 = renderCard(false, 0.5, true);
+        note(r0 == r5, QStringLiteral("B reduceMotion must render identical frames"));
+    }
+
+    // ---- C 灯箱原图：FullCache 预算 + 真实解码 ----
+    note(FullCache::defaultBudgetBytes() > 0,
+         QStringLiteral("C budget must be > 0 (got %1)").arg(FullCache::defaultBudgetBytes()));
+    note(FullCache::maxPixels() > 0,
+         QStringLiteral("C maxPixels must be > 0 (got %1)").arg(FullCache::maxPixels()));
+    {
+        const QString dir = QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation))
+            .filePath(QStringLiteral("la_transition_qa"));
+        QDir(dir).removeRecursively();
+        QDir().mkpath(dir);
+        const QString orig = QDir(dir).filePath(QStringLiteral("orig.png"));
+        {
+            QImage big(1600, 1200, QImage::Format_RGB32);
+            big.fill(QColor(0x20, 0x60, 0x40));
+            big.save(orig);
+        }
+        FullCache::setForceFailForQa(broken);   // 反例：解码恒失败
+        FullCache cache;
+        QImage decoded;
+        cache.request(orig, nullptr, [&decoded](const QImage& im) { decoded = im; });
+        // 后台解码 + QueuedConnection 需事件循环派发，自旋等待其落地
+        for (int i = 0; i < 300; ++i) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+            if (!decoded.isNull() || cache.failureCount() > 0) break;
+            QThread::msleep(5);
+        }
+        // ★期望值恒为规格值，**不随 broken 变**（铁律 22：断言期望值若绑在反例
+        // 开关上 → 反例注入时"期望"也跟着变 → 自证通过、门永不红）。
+        // 反例让解码恒失败，于是这几条**同一批断言**在反例下必须转红。
+        note(!decoded.isNull(), QStringLiteral("C full image decode returned null"));
+        note(decoded.width() == 1600 && decoded.height() == 1200,
+             QStringLiteral("C decoded %1x%2 want 1600x1200")
+                 .arg(decoded.width()).arg(decoded.height()));
+        // ★判别器：原图边长必须超过缩略图档位 512，否则等于没换成原图
+        note(decoded.width() > 512,
+             QStringLiteral("C decoded width %1 must exceed thumb level 512")
+                 .arg(decoded.width()));
+        note(cache.cacheCount() == 1,
+             QStringLiteral("C cache should hold 1, got %1").arg(cache.cacheCount()));
+        note(cache.cacheBytes() > 0,
+             QStringLiteral("C cacheBytes should be > 0 (got %1)").arg(cache.cacheBytes()));
+        // 负缓存：解码失败**确实**应记入负缓存（防重试风暴）——这是正确行为，
+        // 故断言为 isNegative==true。反例下它必须仍为真：证明"原图读不到"时
+        // 降级路径（负缓存 → 调用方回退缩略图）依然健全，不是全盘失效。
+        if (broken) {
+            note(cache.isNegative(orig),
+                 QStringLiteral("BROKEN failed decode should be negative-cached (got false)"));
+            note(cache.failureCount() > 0,
+                 QStringLiteral("BROKEN failureCount should be > 0 (got %1)")
+                     .arg(cache.failureCount()));
+        }
+        FullCache::setForceFailForQa(false);
+        if (!qEnvironmentVariableIsSet("LA_TRANSITION_QA_KEEP"))
+            QDir(dir).removeRecursively();
+    }
+
+    const bool okAll = fails.isEmpty();
+    if (okAll) {
+        std::fprintf(stderr,
+            "LA_TRANSITION_QA PASS broken=%d state=3 pulse=4 render=4 budget=1 full=5\n",
+            int(broken));
+    } else {
+        std::fprintf(stderr, "LA_TRANSITION_QA FAIL broken=%d reason=%s\n",
+                     int(broken), qPrintable(fails.join(QChar(';'))));
+    }
+    std::fflush(stderr);
+    return okAll ? 0 : 1;
+}
+
 // 方向 C·人脸识别（方案A）门禁（LA_PERSON_QA）。
 // 不依赖外部 face_server：用 PersonDetector::setSyntheticForQa 注入确定结果，测
 // 「写回 + 检索契约 + 重命名契约」。反例 LA_PERSON_QA_FORCE_BROKEN=1 令 Library 写库但
@@ -2790,6 +2943,10 @@ int main(int argc, char *argv[])
     // 方向 C·人物自动聚类：embedding 落库 + 阈值余弦聚类 + 守恒契约门禁（合成钩子绕过 face_server）
     if (qEnvironmentVariableIsSet("LA_FACE_CLUSTER_QA"))
         return runFaceClusterQa();
+
+    // 2.22.0 客户端体验：骨架屏纯函数 + 像素判别 + 灯箱原图解码契约
+    if (qEnvironmentVariableIsSet("LA_TRANSITION_QA"))
+        return runTransitionQa();
 
     // 方向 D 第五步 b：图库多选 + 批量工具条门禁
     if (qEnvironmentVariableIsSet("LA_GALLERY_BATCH_QA"))

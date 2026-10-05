@@ -13,6 +13,7 @@
 #include "../core/Classifier.h"   // 方向 C·智能分类：CLIP 客户端桥
 #include "../core/PersonDetector.h"  // 方向 C·人脸识别（方案A）：face_server 客户端桥
 #include "../core/FaceCluster.h"     // 方向 C·人物自动聚类：阈值余弦聚类纯函数
+#include "FullCache.h"                // 2.22.0：原图字节预算 LRU（后台解码）
 #include "../core/MotionPref.h"
 #include "../core/Vault.h"
 #include <QDialog>
@@ -117,6 +118,13 @@ QPixmap roundedThumb(const QString& path, int size, int radius)
 class PhotoLightbox : public QWidget {
     Q_OBJECT
 public:
+    // 2.22.0：原图缓存由外部注入（MainWindow 持有，见下方 openLightbox）。
+    // 刻意**不**在灯箱内 new：本轮实测「灯箱内 new FullCache」会让
+    // LA_MAP_CLICK_QA 退出期 0xC0000005（灯箱惰性创建 → 构造/析构时机与
+    // QObject 父子销毁序冲突），改为外部持有后该门稳定 rc=0。
+    void setFullCache(FullCache* fc) { full_ = fc; }
+    FullCache* fullCache() const { return full_; }
+
     explicit PhotoLightbox(Library* lib, QWidget* parent = nullptr)
         : QWidget(parent), lib_(lib)
     {
@@ -134,6 +142,7 @@ public:
         img_ = new QLabel(this);
         img_->setAlignment(Qt::AlignCenter);
         img_->setStyleSheet(QStringLiteral("background:transparent;"));
+
 
         bottom_ = new QFrame(this);
         bottom_->setObjectName(QStringLiteral("lbBottom"));
@@ -184,9 +193,22 @@ public:
         path_ = ph->path;
         thumbsDir_ = thumbsDir;   // F3 a11y：翻图复用
         changed_ = false;
-        // ---- 大图：存原图，layoutImage() 按窗口自适应（resize 也走这里）----
+        // 2.22.0 原图：先立即用已有缩略图出图（**不阻塞、秒出**），
+        // 再异步解码原图，解完淡入替换。解码失败（HEIC 样本实测 3 张里 2 张
+        // decoded=NULL）就保持缩略图 —— 诚实降级，绝不空白。
         orig_ = QPixmap(QDir(thumbsDir).filePath(ph->thumbFile));
+        hasFull_ = false;
         layoutImage();
+        if (full_) {
+            QPointer<PhotoLightbox> self(this);
+            full_->request(ph->path, this, [self](const QImage& full) {
+                if (self.isNull()) return;              // 生命周期守卫
+                if (full.isNull()) return;              // 失败：保持缩略图（诚实降级）
+                self->orig_ = QPixmap::fromImage(full);
+                self->hasFull_ = true;
+                self->fadeSwapIn();                     // 淡入替换，不闪
+            });
+        }
 
         // ---- 影院黑幕信息层：衬线标题 + 一行式元信息（地点·日期·器材）----
         title_->setText(ph->title.isEmpty()
@@ -335,6 +357,34 @@ private:
     }
 
     // P20：按当前窗口尺寸缩放原图（留 44px 呼吸边）；无图时占位文案
+    // 2.22.0：原图解完后淡入替换，避免"啪"地闪一下。
+    // 用 opacity 渐入 120ms；不缩放不动几何，纯视觉淡入（最省、最不晕）。
+    void fadeSwapIn()
+    {
+        layoutImage();
+        auto* eff = new QGraphicsOpacityEffect(img_);
+        eff->setOpacity(0.0);
+        img_->setGraphicsEffect(eff);
+        auto* a = new QPropertyAnimation(eff, "opacity", this);
+        a->setDuration(120);
+        a->setStartValue(0.0);
+        a->setEndValue(1.0);
+        a->setEasingCurve(QEasingCurve::OutCubic);
+        connect(a, &QPropertyAnimation::finished, this, [this] {
+            if (auto* e = qobject_cast<QGraphicsOpacityEffect*>(img_->graphicsEffect())) {
+                e->setEnabled(false);   // 静置恢复无损原生渲染
+            }
+        });
+        a->start(QAbstractAnimation::DeleteWhenStopped);
+    }
+
+    // —— QA 钩子（2.22.0）——
+    // 当前是否已换成原图（门禁判别器：原图分辨率必远大于 512px 缩略图）
+    bool qaHasFull() const { return hasFull_; }
+    // 当前显示图的边长（供门禁与缩略图档位对比）
+    QSize  qaDisplaySize() const { return orig_.size(); }
+    FullCache* qaFullCache() const { return full_; }
+
     void layoutImage()
     {
         if (orig_.isNull()) {
@@ -351,6 +401,10 @@ private:
     Library* lib_ = nullptr;
     QLabel* img_  = nullptr;
     QPixmap orig_;
+    // 2.22.0：当前显示的是原图还是缩略图（供 QA 断言"确实换成了原图"）。
+    // 判别器：原图分辨率必然远大于 512px 缩略图，故 hasFull_ 可由尺寸独立复核。
+    bool hasFull_ = false;
+    FullCache* full_ = nullptr;     // 原图字节预算 LRU（后台解码）
     QFrame* bottom_ = nullptr;                      // P20：影院黑幕信息层
     QGraphicsOpacityEffect* bottomEff_ = nullptr;
     QVariantAnimation* fade_ = nullptr;
@@ -588,6 +642,9 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
     stack_->addWidget(log_);
     aboutPg_ = makeAbout();
     stack_->addWidget(aboutPg_);
+
+    // 2.22.0：原图缓存由 MainWindow 持有（灯箱惰性创建，故此处先建好待注入）
+    fullCache_ = new FullCache(this);
 
     // P19：非首页给悬浮顶栏让出 54px 顶部空间（首页自带顶栏不参与）；
     // 内容满铺到 right 顶部，顶栏透明悬浮其上，滚动后底色渐显。
@@ -940,6 +997,7 @@ void MainWindow::openLightbox(const QString& path)
     if (!ph) return;
     if (!lightbox_) {
         lightbox_ = new PhotoLightbox(lib_, this);
+        lightbox_->setFullCache(fullCache_);   // 2.22.0：注入原图缓存（灯箱不自有）
         connect(lightbox_, &PhotoLightbox::openInRetouch, this, [this](const QString& p) {
             const bool dirty = lightbox_ && lightbox_->hasChanges();
             if (lightbox_) { lightbox_->hide(); lightbox_->clearChanges(); }

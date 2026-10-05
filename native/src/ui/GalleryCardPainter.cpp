@@ -1,14 +1,89 @@
 #include "GalleryCardPainter.h"
 #include <QPainterPath>
 #include <QLinearGradient>
+#include <QtMath>
 
 namespace Lumen {
+
+// 2.22.0 骨架屏（纯函数 + 绘制分离；铁律 20：产品与门禁共用同一实现）
+double skeletonPulse(double phase, bool reduceMotion)
+{
+    // 减动效：直接呈终态，不做脉冲（避免闪烁困扰敏感用户）。
+    if (reduceMotion) return 1.0;
+    // 相位归一化到 [0,1)，三角波 → 亮度 0..1 平滑往复（比 sin 更"机械"，
+    // 更像"正在加载"的指示而非"在呼吸"的装饰）。
+    double ph = phase - std::floor(phase);       // 负相位也要归一化
+    const double tri = (ph < 0.5) ? (ph * 2.0) : (2.0 - ph * 2.0);   // 0→1→0
+    // 抬到 [0.25,1] 区间：底色永远看得见（不会闪成纯卡片底色），峰值到 1。
+    return 0.25 + 0.75 * tri;
+}
+
+SkeletonState skeletonState(const QPixmap& pm, bool miss)
+{
+    if (!pm.isNull()) return SkeletonState::Ready;
+    return miss ? SkeletonState::Missing : SkeletonState::Loading;
+}
+
+void paintSkeleton(QPainter* p, const QRectF& card, double phase, bool reduceMotion)
+{
+    p->save();
+    p->setRenderHint(QPainter::Antialiasing, true);
+
+    // 圆角裁剪与卡片底一致（否则脉冲会溢出圆角）
+    QPainterPath clipPath;
+    clipPath.addRoundedRect(card, 12, 12);
+    p->setClipPath(clipPath);
+
+    // ① 脉冲底色：基色随相位在 #141a15 ↔ #1d2720 之间往复（暗绿调，贴合主题）
+    const double v = skeletonPulse(phase, reduceMotion);
+    const int r = int(0x14 + (0x1d - 0x14) * v);
+    const int g = int(0x1a + (0x27 - 0x1a) * v);
+    const int b = int(0x15 + (0x20 - 0x15) * v);
+    p->setPen(Qt::NoPen);
+    p->setBrush(QColor(r, g, b));
+    p->drawRoundedRect(card, 12, 12);
+
+    // ② 微光带：45° 斜向扫过时的高光，位置随相位移动（"正在加载"的方向感）
+    if (!reduceMotion) {
+        const double sweep = phase - std::floor(phase);        // 0..1
+        const qreal bandW = card.width() * 0.42;
+        const qreal x0 = card.left() - bandW + (card.width() + bandW) * sweep;
+        QLinearGradient g(x0, card.top(), x0 + bandW, card.bottom());
+        g.setColorAt(0.0, QColor(255, 255, 255, 0));
+        g.setColorAt(0.5, QColor(190, 220, 200, 26));           // 极淡，别喧宾夺主
+        g.setColorAt(1.0, QColor(255, 255, 255, 0));
+        p->setBrush(g);
+        p->drawRect(card);
+    }
+
+    // ③ 中心极小的"加载中"提示（不做满卡文字，保持干净）
+    QFont f = p->font();
+    f.setPointSizeF(9.0);
+    p->setFont(f);
+    p->setPen(QColor(0x6f, 0x83, 0x76));
+    p->drawText(card, Qt::AlignCenter, QStringLiteral("载入中…"));
+
+    p->restore();
+}
 
 void paintGalleryCard(QPainter* p, const QRectF& card,
                       const QString& title, const QString& sub,
                       const QString& orient, bool miss, int rating,
-                      const QPixmap& pm, bool feature, bool hov, bool sel)
+                      const QPixmap& pm, bool feature, bool hov, bool sel,
+                      double skelPhase, bool reduceMotion)
 {
+    // 2.22.0：骨架屏优先——没图且未标 missing = 正在加载。
+    // 画完骨架即返回（不画图片/横竖徽章/标题：骨架期间无内容可写，
+    // 留白比写"载入中"更干净；微光带已在 paintSkeleton 内）。
+    // ★注意 save/restore 必须配对：此分支**不要**补 restore()——
+    //   本函数开头那次 save() 尚未执行，多一次 restore 会使 QPainter 状态栈
+    //   失衡，实测导致退出期 0xC0000005（LA_MAP_CLICK_QA 间歇崩溃）。
+    //   paintSkeleton 内部自带 save/restore 配对，自洽即可。
+    if (skeletonState(pm, miss) == SkeletonState::Loading) {
+        paintSkeleton(p, card, skelPhase, reduceMotion);
+        return;
+    }
+
     p->save();
     p->setRenderHint(QPainter::Antialiasing, true);
 

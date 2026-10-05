@@ -3,6 +3,37 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.22.0] - 2026-10-05
+
+### 新增 - 客户端体验感（方向：灯箱原图 + 缩略图骨架屏 + 动画纯函数）
+
+以「先测再改」取证，确定真实体验缺口（启动性能**不是**短板：实测首帧 55ms / 滚动 5ms，
+排除懒加载方向）。三项改动：
+
+- **灯箱看原图**（最大价值）：灯箱此前显示的是 `thumbFile`（最大 512px 缩略图），放大也看不清细节；
+  `Photo.path` 原图绝对路径一直在库里却未被使用。新增 `FullCache`：先秒出缩略图（不阻塞）→
+  后台线程解码原图 → 淡入 120ms 替换；失败（`Photo.path` 失效 / HEIC 不支持）诚实降级回缩略图绝不空白。
+  **实测依据驱动设计**（Qt 探针，12 张真实库样本）：解码耗时中位 46ms / 最大 175ms（→ 必须异步）；
+  解码后内存 7.9~70 MB/张（→ 按字节预算 LRU，默认 140MB ≈ 3 张，复用 `ThumbCache` 已验证范式，
+  其注释已踩过「按张数计费 → 1.98 GiB」坑）；HEIC 3 张里 2 张 `decoded=NULL`（→ 失败降级是必需路径）；
+  加 40MP 解码炸弹防护（实测最大样本 12.2MP）。
+- **缩略图骨架屏**：`GalleryCardPainter` 此前 `isNull` 就什么都不画 → 灰底空卡片。新增可断言
+  状态机 `SkeletonState{Ready,Loading,Missing}` + 纯函数 `skeletonPulse(phase,reduceMotion)`（铁律 20：
+  产品绘制与门禁断言共用同一实现，杜绝假绿）；脉冲计时器**仅在可见区有未就绪卡片时挂载**，就绪后自停
+  （不常驻空转）；`reduceMotion` 呈终态不闪。
+- **动画纯函数契约**（补铁律 20 缺口）：导航转场 `onNav` 早已实现（淡出 150 + 上滑 260 + 淡入，
+  `animEnabled_` 已是减动效守卫），缺口仅在其几何无可断言实现；本轮把骨架脉冲抽成纯函数并纳入门禁。
+- **第 45 门 `LA_TRANSITION_QA`**（full 层，measuredMs=400）：3 线断言 —— A 动画纯函数契约
+  （值域/端点/单调/减动效终态/周期）、B 骨架屏像素判别（Loading 与 Ready 渲染必不同、不同相位必不同、
+  减动效帧必一致）、C 灯箱原图（FullCache 预算>0 + 真解码 1600×1200 其边长**必须 >512 缩略图档位**，
+  该阈值是判别器）。**反例非空心**：`LA_TRANSITION_QA_FORCE_BROKEN=1` 经 `setForceFailForQa` 让真实
+  解码恒失败 → 同一批 C 断言转红（期望值永不随 broken 切换，铁律 22）。
+- **★关键回归修复**：`FullCache` 析构原未等后台线程池排空，进程 `return 0` 后 worker 仍跑 →
+  回调打到已析构对象 → `LA_MAP_CLICK_QA` 退出期间歇性 0xC0000005（断言本身全绿，纯崩溃）。
+  修复：析构先 `pending_/callbacks_` 清空再 `QThreadPool::globalInstance()->waitForDone()`，
+  并改为由 `MainWindow` 持有注入灯箱（灯箱惰性创建致构造/析构时机与 QObject 父子序冲突）。修复后该门
+  连跑 6 次稳定 rc=0。
+
 ## [2.21.0] - 2026-10-05
 
 ### 新增 - release.ps1 首次端到端实跑 + 两条真实缺陷修复（方向 E 第四步）

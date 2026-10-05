@@ -1,4 +1,18 @@
 #include "EditorialView.h"
+
+// 2.22.0 骨架屏相位：TU 内静态（GalleryTile 是本文件的局部类，无处安放成员）。
+// 只保存"相位"这一个数，绘制仍把它当**显式参数**传给 paintGalleryCard → 可被门禁复现。
+// 减动效时相位不推进（恒 0），配合 skeletonPulse(reduceMotion) 呈终态。
+// 静态函数刻意**不触碰任何实例成员**（门禁可在构造视图前预设），
+// 需要重绘时由 updateSkeletonTimer()/计时器自行 content_->update()。
+static double g_skelPhase = 0.0;
+static bool    g_skelReduceMotion = false;
+void EditorialView::qaSetSkeletonPhase(double ph, bool reduceMotion)
+{
+    g_skelPhase = ph;
+    g_skelReduceMotion = reduceMotion;
+}
+double EditorialView::qaSkeletonPhase() { return g_skelPhase; }
 #include "GalleryModel.h"
 #include "GalleryCardPainter.h"
 #include "Theme.h"
@@ -26,6 +40,7 @@ public:
     QSize sizeHint() const override { return QSize(216, 240); }
     int row() const { return row_; }
     void setRow(int row, bool feature) { row_ = row; feature_ = feature; update(); }
+    bool isFeature() const { return feature_; }   // 2.22.0：骨架探测需按瓦片角色选缓存级
     void setSelected(bool s) { sel_ = s; update(); }
 
 signals:
@@ -44,8 +59,10 @@ protected:
         // 方向 D 第四步：按瓦片角色选缓存级——feature 2×2 走 L2(512px)，普通瓦片走 L1(256px)
         const QPixmap pm = model_->pixmapAt(row_, feature_ ? ThumbCache::kFeature
                                                            : ThumbCache::kTile);
+        // 2.22.0：把骨架相位与减动效显式传入（纯函数在 GalleryCardPainter 内）
         Lumen::paintGalleryCard(&p, QRectF(rect()),
-                                title, sub, orient, miss, rating, pm, feature_, hov_, sel_);
+                                title, sub, orient, miss, rating, pm, feature_, hov_, sel_,
+                                g_skelPhase, g_skelReduceMotion);
         // F3 a11y: 自定义自绘控件需手动绘制焦点环（原生焦点框不显示）
         if (hasFocus()) {
             QPen fp(QColor(0xd9, 0xa9, 0x4e), 2);
@@ -93,6 +110,9 @@ EditorialView::EditorialView(GalleryModel* model, QWidget* parent)
     connect(model_, &QAbstractItemModel::modelReset, this, &EditorialView::rebuild);
     connect(model_, &QAbstractItemModel::dataChanged, this, &EditorialView::onDataChanged);
     connect(verticalScrollBar(), &QAbstractSlider::valueChanged, this, &EditorialView::updateWindow);
+    // 2.22.0：滚停/数据变化后重算"可见区是否有骨架"（决定脉冲计时器启停）
+    connect(verticalScrollBar(), &QAbstractSlider::sliderReleased,
+            this, &EditorialView::updateSkeletonTimer);
 
     total_ = model_->rowCount();
     relayout();
@@ -194,6 +214,24 @@ void EditorialView::recycle(GalleryTile* t)
 }
 
 // 窗口化：将可见（含前后缓冲）模型行映射到池化瓦片（回收不可见、绑定新可见）
+// 2.22.0：可见区里有没有"缩略图未就绪"的卡片？有则挂载脉冲计时器，无则停。
+// 只看当前绑定到瓦片的可见行（bound_），不看全库 —— 全库 6425 张的未就绪数
+// 与用户眼前看到的完全无关，据此启停才是"省电"的正确口径。
+void EditorialView::updateSkeletonTimer()
+{
+    bool any = false;
+    for (auto it = bound_.constBegin(); it != bound_.constEnd() && !any; ++it) {
+        const int row = it.key();
+        const QModelIndex ix = model_->index(row, 0);
+        if (!ix.isValid()) continue;
+        const bool miss = model_->data(ix, GalleryModel::MissingRole).toBool();
+        const QPixmap pm = model_->pixmapAt(row, it.value()->isFeature() ? ThumbCache::kFeature
+                                                                      : ThumbCache::kTile);
+        if (Lumen::skeletonState(pm, miss) == Lumen::SkeletonState::Loading) any = true;
+    }
+    emit skeletonVisibilityChanged(any);
+}
+
 void EditorialView::updateWindow()
 {
     if (!content_ || cellH_ <= 0) return;

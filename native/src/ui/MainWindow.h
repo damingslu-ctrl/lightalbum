@@ -26,6 +26,7 @@ class HomePage;        // P17 沉浸式首页（Quiet Frame）
 class PhotoLightbox;   // P15 沉浸式灯箱（MainWindow.cpp 文件内定义）
 class QPushButton;
 class QVariantAnimation;
+class FullCache;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -131,6 +132,8 @@ private:
     QFrame*                  topShade_ = nullptr;   // 顶栏渐显底色层（QWidget 不画 QSS 背景，必须 QFrame）
     QPushButton*             searchToggle_ = nullptr; // 搜索展开/收起图标钮
     QVariantAnimation*       topSolidAnim_ = nullptr;
+    // 2.22.0：原图字节预算 LRU，由 MainWindow 持有并注入灯箱（灯箱不自有）
+    FullCache*               fullCache_ = nullptr;
     double                   topSolidT_ = 0.0;      // 0 透明 / 1 实底
     bool                     topHover_ = false;
     bool                     topSolidOn_ = false;

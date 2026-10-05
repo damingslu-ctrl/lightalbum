@@ -13,6 +13,7 @@
 #include <QStringList>
 #include <QSet>
 #include <QPoint>
+#include <QTimer>
 
 class GalleryModel;
 class GalleryTile;
@@ -25,9 +26,15 @@ public:
     // 仅预取当前可见（及前后缓冲）卡片缩略图，替代原 QListView indexAt 逻辑
     void prefetchVisible();
     static int qaKeyboardCheck();   // F3 a11y 键盘可达门禁（offscreen）
+    // 2.22.0 骨架屏 QA：设定/读取当前相位与减动效旗标（门禁据此复现不同帧）
+    static void   qaSetSkeletonPhase(double phase, bool reduceMotion);
+    static double qaSkeletonPhase();
 
 signals:
     void photoActivated(const QString& path);   // 点击卡片 → 沉浸式灯箱
+    // 2.22.0 骨架屏：可见区是否存在"未就绪"卡片。视图据此挂载/停用脉冲计时器，
+    // 避免常驻空转（只在真有骨架时才耗 CPU）。
+    void skeletonVisibilityChanged(bool any);
     // D5b：选中集变化（供 GalleryPage 显隐批量工具条 + 更新计数文案）
     void selectionChanged(int count);
 
@@ -53,6 +60,7 @@ public:
     void refreshSelectionVisual();
 
 private slots:
+    void updateSkeletonTimer();
     void onDataChanged(const QModelIndex& top, const QModelIndex& bottom,
                        const QVector<int>& roles);
     void updateWindow();                         // 窗口化：可见行 → 池化瓦片映射
@@ -67,6 +75,7 @@ private:
     QRect        featureRect() const;            // 首图（row0）rect
     QRect        cellRect(int i) const;          // 第 i 张（i>=1）流式 rect
 
+    QTimer* skelTimer_ = nullptr;                // 2.22.0 骨架脉冲计时器（按需启停）
     GalleryModel* model_ = nullptr;
     QWidget*      content_ = nullptr;            // 虚拟内容宿主（固定虚拟尺寸，非布局）
     QVector<GalleryTile*> pool_;                 // 全部曾创建的瓦片（不删除，循环复用）

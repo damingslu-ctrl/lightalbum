@@ -242,8 +242,21 @@ $GateTable = @(
   # release.ps1 gates on the union anyway, so packaging coverage is unaffected.
   # measuredMs=220 from qa_runner -Timing (rule 13), non-zero for E8.
   @{n="LA_FACE_CLUSTER_QA"; png=$false; measuredMs=220}
+  # 2.22.0 client experience: lightbox FULL image + thumbnail skeleton +
+  # animation pure-function contract. Pure offscreen self-exit, no MainWindow,
+  # no external env. Renders cards into QImage and asserts at the PIXEL level:
+  # (A) state machine (Ready/Loading/Missing) plus skeletonPulse value range,
+  # peak, periodicity and the reduce-motion terminal value; (B) skeleton render
+  # must differ from a ready render, different phases must render differently,
+  # and reduce-motion frames must be identical; (C) FullCache budget > 0 and a
+  # real 1600x1200 decode whose width MUST exceed the 512 thumb level -- that
+  # threshold is the discriminator, so "kept showing the thumbnail" goes red.
+  # Counter-example LA_TRANSITION_QA_FORCE_BROKEN=1 forces every decode to fail
+  # via the real FullCache hook, so the SAME C assertions turn red (expected
+  # values never switch on the broken flag -- rule 22).
+  # Tier: FULL. measuredMs=400 from qa_runner -Timing (rule 13), non-zero for E8.
+  @{n="LA_TRANSITION_QA";  png=$false; measuredMs=400}
 )
-
 # Resolve a gate's tier. Absent key means "full" - the fail-safe default.
 function Get-GateTier {
   param($Gate)
