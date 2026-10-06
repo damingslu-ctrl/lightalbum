@@ -144,6 +144,169 @@ int runAgentSmoke()
     std::fflush(stderr);
     return pass ? 0 : 1;
 }
+
+// 方向 B 门禁深化（2.25.0）：LA_AGENT_QA —— LumenAgent 四个纯函数的逐项断言。
+// ★ 取证依据（先测再改）：LA_AGENT_SMOKE 只有 3 个布尔量（real/fb/clamp），
+//   而 parseShutterSeconds（全库零断言）、contextFrom（仅被间接调用）、
+//   decideLocal 的 8 条规则分支（现仅覆盖 3 条）、clampPlan 的 13 键白名单
+//   （现仅测 2 键）**都没有值级断言** —— 属铁律 29「存在即恒真」的高发区。
+// 本门把这四块补成**可断言的值契约**，且全部零网络、亚秒级（QA 门禁铁律：本门不依赖
+// 本机 Ollama 是否在跑，decideLocal/decide 均指向关闭端口或走纯规则）。
+// 反例 LA_AGENT_QA_FORCE_BROKEN=1：LumenAgent::setForceSignFlipForQa(true) 让
+//   decideLocal 把 brightness/saturation 符号取反，精确复现 2.24.0「滑杆方向反向」的
+//   真实缺陷形态 → C 组方向断言必红。期望值（阈值/键数/真值表）**不随 broken 切换**（铁律 22）。
+int runAgentQa()
+{
+    const bool broken = !qEnvironmentVariableIsEmpty("LA_AGENT_QA_FORCE_BROKEN");
+    LumenAgent::setForceSignFlipForQa(broken);
+
+    int checks = 0, fails = 0;
+    auto ck = [&](bool cond, const char* tag) {
+        ++checks; if (!cond) { ++fails; std::fprintf(stderr, "  LA_AGENT_QA FAIL %s\n", tag); }
+    };
+    auto approxEq = [](double a, double b, double eps) { return std::fabs(a - b) <= eps; };
+
+    // ---- A. parseShutterSeconds 真值表（确定性字符串解析，纯函数）----
+    struct PS { const char* in; double want; };
+    static const PS kPs[] = {
+        {"1/125", 1.0/125}, {"1/60", 1.0/60}, {"1/4000", 1.0/4000},
+        {"15s", 15.0}, {"2.5s", 2.5}, {"0.5", 0.5}, {"30", 30.0},
+        {"", 0.0}, {"abc", 0.0}, {"1/0", 0.0}, {"1/", 0.0},   // 防除零/残缺
+    };
+    for (const PS& t : kPs)
+        ck(approxEq(LumenAgent::parseShutterSeconds(QString::fromLatin1(t.in)), t.want, 1e-9),
+           t.in[0] ? t.in : "(empty)");
+
+    // ---- B. clampPlan：13 键白名单 + clamp 边界 ----
+    static const char* kKeys[] = {
+        "brightness","contrast","saturation","warmth","sharpness","denoise",
+        "highlights","shadows","whites","blacks","vibrance","clarity","tint"};
+    QMap<QString,double> all;
+    for (const char* k : kKeys) all.insert(QString::fromLatin1(k), 0.3);
+    all.insert(QStringLiteral("evil"), 1.0);        // 未知键必须丢弃
+    all.insert(QStringLiteral("_intent"), 1.0);     // LLM 元字段必须丢弃
+    const QMap<QString,double> kept = LumenAgent::clampPlan(all);
+    ck(kept.size() == 13, "clamp.size==13");       // 判别器：删白名单实现即红
+    bool allKept = true;
+    for (const char* k : kKeys) allKept = allKept && kept.contains(QString::fromLatin1(k));
+    ck(allKept, "clamp.keeps13");
+    ck(!kept.contains(QStringLiteral("evil")) && !kept.contains(QStringLiteral("_intent")),
+       "clamp.dropsUnknown");
+    QMap<QString,double> dirty;
+    dirty.insert(QStringLiteral("brightness"), 5.0);
+    dirty.insert(QStringLiteral("contrast"), -5.0);
+    dirty.insert(QStringLiteral("tint"), 0.0);
+    const QMap<QString,double> cl = LumenAgent::clampPlan(dirty);
+    ck(approxEq(cl.value(QStringLiteral("brightness")), 1.0, 1e-9), "clamp.hi->1");
+    ck(approxEq(cl.value(QStringLiteral("contrast")), -1.0, 1e-9), "clamp.lo->-1");
+    ck(approxEq(cl.value(QStringLiteral("tint")), 0.0, 1e-9), "clamp.zero");
+
+    // ---- C. decideLocal 方向契约（单参数隔离：每条只动一个测量维度，铁律 27）----
+    // ★ goal 必须用 QStringLiteral（UTF-8 原生）。首版误用 QString::fromLatin1("黑白")，
+    //   中文被逐字节映射成 mojibake → 黑白/人像分支**永不触发** → 门自己假红。
+    //   取证结论：Latin1 按字节映射，UTF-8 汉字变成非中文码点，.contains(中文) 恒 false。
+    auto ctx = [](double lum, double lumStd, double sat, double cast,
+                  int iso, double shutter, const QString& goal) {
+        AgentContext c; c.lum=lum; c.lum_std=lumStd; c.sat=sat; c.cast=cast;
+        c.iso=iso; c.shutter=shutter; c.goal=goal;
+        c.hi=0; c.lo=0; c.haze=0; c.noise=0;   // 隔离：其余维度置中性
+        return c;
+    };
+    // 基准（全中性：lum 0.5 / std 0.2 / sat 0.3 / cast 0 / iso 100 / 快门 0.008）
+    auto base = [&ctx](const QString& g){ return ctx(0.50,0.20,0.30,0.0,100,0.008,g); };
+    const QString kNoGoal = QString();
+    // C1 暗 → 提亮（正）
+    ck(LumenAgent::decideLocal(ctx(0.10,0.20,0.30,0.0,100,0.008,kNoGoal))
+           .params.value(QStringLiteral("brightness")) > 0.0, "dir.dark.brightness+");
+    // C2 亮 → 压高光（负）
+    ck(LumenAgent::decideLocal(ctx(0.90,0.20,0.30,0.0,100,0.008,kNoGoal))
+           .params.value(QStringLiteral("highlights")) < 0.0, "dir.bright.highlights-");
+    // C3 灰（std 低）→ 加对比（正）
+    ck(LumenAgent::decideLocal(ctx(0.50,0.05,0.30,0.0,100,0.008,kNoGoal))
+           .params.value(QStringLiteral("contrast")) > 0.0, "dir.flat.contrast+");
+    // C4 反差过强（std 高）→ 收对比（负）
+    ck(LumenAgent::decideLocal(ctx(0.50,0.40,0.30,0.0,100,0.008,kNoGoal))
+           .params.value(QStringLiteral("contrast")) < 0.0, "dir.highstd.contrast-");
+    // C5 淡（sat 低）→ 加饱和（正）
+    ck(LumenAgent::decideLocal(ctx(0.50,0.20,0.05,0.0,100,0.008,kNoGoal))
+           .params.value(QStringLiteral("saturation")) > 0.0, "dir.lowsat.saturation+");
+    // C6 浓（sat 高）→ 降饱和（负）
+    ck(LumenAgent::decideLocal(ctx(0.50,0.20,0.60,0.0,100,0.008,kNoGoal))
+           .params.value(QStringLiteral("saturation")) < 0.0, "dir.highsat.saturation-");
+    // C7 偏暖（cast 正）→ 负 warmth 拉回
+    ck(LumenAgent::decideLocal(ctx(0.50,0.20,0.30, 0.08,100,0.008,kNoGoal))
+           .params.value(QStringLiteral("warmth")) < 0.0, "dir.warm.warmth-");
+    // C8 偏冷（cast 负）→ 正 warmth 拉回
+    ck(LumenAgent::decideLocal(ctx(0.50,0.20,0.30,-0.08,100,0.008,kNoGoal))
+           .params.value(QStringLiteral("warmth")) > 0.0, "dir.cool.warmth+");
+    // C9 ISO 档位：3200 → denoise==0.30（精确档位值，承铁律 17 数字算出非手写）
+    ck(approxEq(LumenAgent::decideLocal(ctx(0.50,0.20,0.30,0.0,3200,0.008,kNoGoal))
+               .params.value(QStringLiteral("denoise")), 0.30, 1e-9), "iso3200.denoise0.30");
+    ck(approxEq(LumenAgent::decideLocal(ctx(0.50,0.20,0.30,0.0,6400,0.008,kNoGoal))
+               .params.value(QStringLiteral("denoise")), 0.50, 1e-9), "iso6400.denoise0.50");
+    // C10 长曝（4s）→ denoise 在 ISO 档位上叠加 +0.20
+    ck(approxEq(LumenAgent::decideLocal(ctx(0.50,0.20,0.30,0.0,3200,4.0,kNoGoal))
+               .params.value(QStringLiteral("denoise")), 0.50, 1e-9), "longExp.denoiseStack");
+    // C11 sharpness 恒 0.15（出图锐化恒定，不随场景变）
+    ck(approxEq(LumenAgent::decideLocal(base(kNoGoal)).params.value(QStringLiteral("sharpness")), 0.15, 1e-9),
+       "const.sharpness0.15");
+    // C12 目标「黑白」→ saturation 强制去色（-1.0），且 intent 切「黑白」
+    {
+        const AgentPlan bw = LumenAgent::decideLocal(base(QStringLiteral("黑白")));
+        ck(approxEq(bw.params.value(QStringLiteral("saturation")), -1.0, 1e-9), "goal.bw.saturation-1");
+        ck(bw.intent.contains(QStringLiteral("黑白")), "goal.bw.intent");
+    }
+    // C13 目标「人像」→ clarity 相对基准下降（皮肤柔和）
+    ck(LumenAgent::decideLocal(base(QStringLiteral("人像"))).params.value(QStringLiteral("clarity"))
+       < LumenAgent::decideLocal(base(kNoGoal)).params.value(QStringLiteral("clarity")),
+       "goal.portrait.clarityDown");
+    // C14 计划恒合法：ok=true / source=local / 13 键齐全 / 值域 [-1,1]
+    {
+        const AgentPlan p = LumenAgent::decideLocal(base(kNoGoal));
+        ck(p.ok && p.source == QStringLiteral("local"), "plan.okLocal");
+        ck(p.params.size() == 13, "plan.keys13");
+        bool inRange = true;
+        for (auto it = p.params.cbegin(); it != p.params.cend(); ++it)
+            inRange = inRange && it.value() >= -1.0 && it.value() <= 1.0;
+        ck(inRange, "plan.range[-1,1]");
+    }
+
+    // ---- D. contextFrom 测量单调性 + 元数据透传（黑/白/灰/暖极值，非恒真）----
+    auto solid = [](QRgb c, int w = 64) {
+        QImage im(w, w, QImage::Format_RGB32);
+        for (int y = 0; y < w; ++y)
+            reinterpret_cast<QRgb*>(im.scanLine(y))[0] = c;   // 扫描线首像素即全行同色
+        for (int y = 0; y < w; ++y)
+            for (int x = 0; x < w; ++x)
+                reinterpret_cast<QRgb*>(im.scanLine(y))[x] = c;
+        return im;
+    };
+    const AgentContext cBlack = LumenAgent::contextFrom(solid(qRgb(0,0,0)), 100, 0.008, QString());
+    const AgentContext cWhite = LumenAgent::contextFrom(solid(qRgb(255,255,255)), 100, 0.008, QString());
+    const AgentContext cGray  = LumenAgent::contextFrom(solid(qRgb(128,128,128)), 100, 0.008, QString());
+    const AgentContext cWarm  = LumenAgent::contextFrom(solid(qRgb(200,150,110)), 100, 0.008, QString());
+    ck(cBlack.lum < 0.05, "ctx.black.lum<0.05");            // 黑 → 亮度近 0
+    ck(cWhite.lum > 0.95, "ctx.white.lum>0.95");            // 白 → 亮度近 1
+    ck(cBlack.lum < cWhite.lum, "ctx.monoLum");             // 单调性
+    ck(cGray.sat < 0.05, "ctx.gray.sat<0.05");               // 纯灰 → 饱和近 0
+    ck(cWarm.cast > 0.0, "ctx.warm.cast>0");                // 偏暖 → cast 正
+    // 元数据原样透传
+    {
+        const AgentContext m = LumenAgent::contextFrom(solid(qRgb(128,128,128)), 3200, 0.008,
+                                                        QStringLiteral("通透"));
+        ck(m.iso == 3200, "ctx.passthru.iso");
+        ck(approxEq(m.shutter, 0.008, 1e-9), "ctx.passthru.shutter");
+        ck(m.goal == QStringLiteral("通透"), "ctx.passthru.goal");
+    }
+
+    if (fails == 0)
+        std::fprintf(stderr, "LA_AGENT_QA PASS checks=%d broken=%d\n", checks, broken ? 1 : 0);
+    else
+        std::fprintf(stderr, "LA_AGENT_QA FAIL checks=%d failed=%d broken=%d\n",
+                     checks, fails, broken ? 1 : 0);
+    std::fflush(stderr);
+    return fails == 0 ? 0 : 1;
+}
 } // namespace（P9 agent 冒烟）
 
 namespace {
@@ -3615,6 +3778,10 @@ int main(int argc, char *argv[])
     // P9 AI 修图智能体冒烟（测量 → 决策 → retouchWithPlan；不依赖库文件）
     if (qEnvironmentVariableIsSet("LA_AGENT_SMOKE"))
         return runAgentSmoke();
+
+    // 方向 B 门禁深化：LumenAgent 四个纯函数逐项值契约（零网络、亚秒级）
+    if (qEnvironmentVariableIsSet("LA_AGENT_QA"))
+        return runAgentQa();
 
     // P10 离线逆地理冒烟（已知点 + 真库回填统计）
     if (qEnvironmentVariableIsSet("LA_GEO_SMOKE"))

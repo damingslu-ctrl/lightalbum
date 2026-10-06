@@ -102,6 +102,18 @@ $GateTable = @(
   # budget that matches reality.
   @{n="LA_LUMEN_SMOKE";     png=$false; timeoutSec=90; measuredMs=66585},
   @{n="LA_AGENT_SMOKE";     png=$false; measuredMs=1000},
+  # Direction B gate deepening: LumenAgent pure-function value contracts.
+  # Forensics: LA_AGENT_SMOKE asserts only 3 booleans (real/fb/clamp), while
+  # parseShutterSeconds (zero assertions library-wide), contextFrom (only called
+  # indirectly), 8 of decideLocal's rule branches (only 3 covered) and clampPlan's
+  # 13-key whitelist (only 2 keys tested) all lack value-level assertions.
+  # This gate adds: parseShutterSeconds truth table, 13-key whitelist + clamp bounds,
+  # decideLocal direction contracts (single-parameter isolation), contextFrom
+  # monotonicity + metadata passthrough. Zero network, sub-second -> fast tier.
+  # Counter-example LA_AGENT_QA_FORCE_BROKEN=1 flips brightness/saturation signs in
+  # decideLocal (reproduces the 2.24.0 reversed-slider defect) -> direction
+  # assertions must go RED. Expectations never change with the broken flag.
+  @{n="LA_AGENT_QA";        png=$false; tier="fast"; measuredMs=70},
   @{n="LA_SCAN_SMOKE";      png=$false; need=@("LA_SCAN_ROOT","LA_SCAN_DB"); measuredMs=0},
   # D scale (direction D step 3): REAL library scale gate. LA_SCALE_SMOKE/PERF run
   # the committed _scale_fixture.db (6425 rows) whose photo files DO NOT exist on

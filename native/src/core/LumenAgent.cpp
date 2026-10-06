@@ -29,6 +29,10 @@ constexpr int kParamN = int(sizeof(kParamKeys) / sizeof(kParamKeys[0]));
 
 double clamp1(double v) { return std::max(-1.0, std::min(1.0, v)); }
 
+// LA_AGENT_QA 反例注入旗标（默认关）。置 true 时 decideLocal 把 brightness/saturation
+// 符号取反 —— 复现 2.24.0 修图「高光方向反向」那类**符号约定被破坏**的真实缺陷。
+static bool g_qaAgentSignFlip = false;
+
 // 零云端铁律：只允许回环地址（brain.is_local_url 同款）
 bool isLocalUrl(const QString& url)
 {
@@ -270,6 +274,15 @@ AgentPlan LumenAgent::decideLocal(const AgentContext& c)
         why << QStringLiteral("目标「通透」→ 对比 + 清晰度");
     }
 
+    // LA_AGENT_QA 反例注入：brightness/saturation 符号取反（复现 2.24.0「滑杆方向反向」
+    // 那类**符号约定被破坏**的真实缺陷）。默认关闭 → 零开销；期望值不随本开关切换（铁律 22）。
+    // ★ 必须放在 goal 分支**之后**：置前会被「黑白」分支的 saturation=-1.0 覆盖掉，
+    //   导致反例打不中（实测踩过：黑白断言在 broken 下反而变绿 → 反例失效）。
+    if (g_qaAgentSignFlip) {
+        p["brightness"] = -p["brightness"];
+        p["saturation"] = -p["saturation"];
+    }
+
     AgentPlan plan;
     plan.params = p;
     plan.intent = intent;
@@ -295,3 +308,5 @@ AgentPlan LumenAgent::decide(const AgentContext& ctx)
     fb.reason = QStringLiteral("[Ollama 未连接] %1").arg(fb.reason);
     return fb;
 }
+
+void LumenAgent::setForceSignFlipForQa(bool on) { g_qaAgentSignFlip = on; }

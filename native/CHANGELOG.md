@@ -3,6 +3,68 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.25.0] - 2026-10-06
+
+### 新增 - 方向 B 门禁深化：`LA_AGENT_QA`（第 50 门，LumenAgent 纯函数值契约）
+
+- **取证依据（先测再改，路线图 §8.2 方向 B「优先门禁深化」）**：`LA_AGENT_SMOKE` 只有
+  3 个布尔量（`real/fb/clamp`），而 `LumenAgent` 的四个纯函数存在大面积**值级断言缺失**：
+  - `parseShutterSeconds` —— **全库零断言**（仅 `RetouchPage.cpp:783` 一处产品调用）；
+  - `contextFrom` —— 仅被间接调用，无任何直接断言；
+  - `decideLocal` —— 8 条规则分支（暗/亮/灰/反差过强/淡/浓/冷暖/ISO 档 + 长曝叠加）
+    现仅覆盖 3 条，goal 分支（胶片/黑白/人像/通透）**零覆盖**；
+  - `clampPlan` —— 13 键白名单现仅测 2 键。
+  属铁律 29「存在即恒真」的高发区：把这些实现删掉，门不会红。
+- **实施**（纯新增门，零产品行为改动）：`runAgentQa()` 43 条断言，纯函数、零网络、亚秒级。
+  - **A. `parseShutterSeconds` 真值表**（12 条）：`1/125`→0.008、`1/60`、`1/4000`、
+    `15s`→15、`2.5s`、`0.5`、`30`、空串/`abc`→0、**`1/0`→0（防除零）**、`1/`→0。
+  - **B. `clampPlan` 白名单 + clamp 边界**（7 条）：13 键**全保留**（判别器：删白名单即红）、
+    `evil`/`_intent`（LLM 元字段）丢弃、`+5→1.0`/`-5→-1.0`/`0→0`。
+  - **C. `decideLocal` 方向契约**（14 条，**单参数隔离**承铁律 27）：暗→`brightness>0`、
+    亮→`highlights<0`、灰→`contrast>0`、反差过强→`contrast<0`、淡→`saturation>0`、
+    浓→`saturation<0`、偏暖→`warmth<0`、偏冷→`warmth>0`、ISO3200→`denoise==0.30`、
+    ISO6400→`0.50`、长曝 4s→叠加至 `0.50`、`sharpness==0.15` 恒定、
+    目标「黑白」→`saturation==-1.0`+intent、「人像」→clarity 相对基准下降、
+    计划恒合法（`ok`/`source=local`/13 键/值域 [-1,1]）。
+  - **D. `contextFrom` 测量单调性**（10 条）：黑图→`lum<0.05`、白图→`lum>0.95`、
+    灰图→`sat<0.05`、暖图→`cast>0`、ISO/快门/goal **原样透传**。
+- **反例（非空心，实测变红）**：`LA_AGENT_QA_FORCE_BROKEN=1` 经
+  `LumenAgent::setForceSignFlipForQa(true)` 让 `decideLocal` 把 `brightness`/`saturation`
+  符号取反，**精确复现 2.24.0「滑杆方向反向」的真实缺陷形态**。实测
+  正例 `PASS checks=43`（rc=0）→ 反例 `FAIL checks=43 failed=4`（rc=1），
+  变红项 `dir.dark.brightness+` / `dir.lowsat.saturation+` / `dir.highsat.saturation-` /
+  `goal.bw.saturation-1`。**期望值（真值表/键数/阈值）不随 broken 切换**（铁律 22）。
+- **实测分层（铁律 12：依据必须实测）**：runner `-Timing` 实测 **70ms**（纯计算、
+  无网络无磁盘 → 确定性），远低于 500ms fast 预算 → 登记 `tier="fast"`。
+  `gate_matrix -SelfTest` 复核 `gates=49 fast=15 full=34 fails=0`、E8 `missingMeasuredMs=0`。
+
+### ★ 新增铁律 32：注入点必须落在「最终值」之后，且断言数据源须与产品同编码
+
+- **① 注入点位置**：反例旗标首版放在 `p["sharpness"]` 之后、**goal 分支之前**，
+  结果「黑白」分支的 `saturation = -1.0` 把注入结果**覆盖** → `goal.bw` 断言在 broken
+  下反而变绿 → **反例失效**（承铁律 22 反面）。移到 goal 分支之后即修正。
+  **通则：注入要模拟「缺陷发生在哪一步」，就必须插在那一步之后**，否则测的是中间态。
+- **② 编码一致性**：门禁构造中文 goal 时首版用 `QString::fromLatin1("黑白")`，
+  UTF-8 汉字被逐字节映射成 mojibake → `contains("黑白")` 恒 false → 黑白/人像分支
+  **永不触发** → 门禁自己假红 3 条。**凡断言含中文的输入，必须与产品同用
+  `QStringLiteral`**（`RetouchPage` 侧传的是 `Photo.shutter` 原文，UTF-8）。
+  这条与铁律 14（i18n 排除集）同源：**数据侧与 UI 侧的编码假设必须分别取证**。
+
+### 门禁矩阵
+
+- 登记 `LA_AGENT_QA`（`tier="fast"`, `measuredMs=70`），门数 49→**50**（fast 15 / full 34）。
+- **全量回归实测 `PASS=31 FAIL=0 CHECK=0 SKIP=3 KILL=0`（gates=34，~91s）**；
+  fast 层 `PASS=15 FAIL=0`（5.3s）。
+- 版本 2.24.2 → **2.25.0**（MINOR：新增门禁基建），bump 后已重新 configure
+  （`LA_VERSION=\"2.25.0\"` 已确认烘进编译标志）。
+
+### 附：取证纠正 —— `LA_AGENT_SMOKE` 并非空心门
+
+- 本轮曾据 `LA_AGENT_SMOKE PASS real=1 fb=1 clamp=1` 的输出**推断**它是铁律 29 空心门，
+  读源码后**自我纠正**：它实际含真实方向断言（暗样张 `brightness>0`、ISO3200
+  `denoise>=0.30`、goal 通透 `clarity>=0.10`）与 clamp 白名单断言。
+  **教训：不可凭单行摘要给门下判决，须读断言体**（"看起来是恒真"与"确实是恒真"是两件事）。
+
 ## [2.24.2] - 2026-10-06
 
 本迭代同时落地路线图**方向 C（相册管理·智能检索）**与**方向 D（规模化·流畅性）**的

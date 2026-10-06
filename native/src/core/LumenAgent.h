@@ -49,4 +49,9 @@ public:
 
     // "1/125" → 0.008；"15s" → 15.0；"2.5s" → 2.5；无法解析 → 0
     static double parseShutterSeconds(const QString& sh);
+
+    // LA_AGENT_QA 反例注入：置 true 时 decideLocal 把 brightness/saturation 符号取反，
+    // 精确复现 2.24.0「滑杆方向反向」的真实缺陷形态（反例须实测变红，铁律 22/23）。
+    // 默认 false → 零开销；期望值不随本开关切换。
+    static void setForceSignFlipForQa(bool on);
 };
