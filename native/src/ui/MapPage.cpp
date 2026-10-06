@@ -1,4 +1,5 @@
 #include "MapPage.h"
+#include "../core/GeoHotspot.h"   // 方向 C·联动：热点聚合（与渲染/门禁同源）
 #include <QCoreApplication>
 #include "Theme.h"
 #include <QPointF>
@@ -231,8 +232,10 @@ MapPage::MapPage(const QVector<Photo>* photos, const QString& thumbsDir,
             lastCountryPaths_.clear();          // 回世界层：清理国家视图上下文
             playBtn_->setEnabled(false);
         }
+        syncGeoHotspots();                       // 方向 C·联动：层级切换后重算热点层
     });
     connect(view_, &MapView::picked, this, &MapPage::onPicked);
+    connect(view_, &MapView::hotspotActivated, this, &MapPage::onHotspotActivated);
     connect(view_, &MapView::burstRequested, this, &MapPage::onBurstRequest);
     connect(view_, &MapView::openPhotoRequested, this, &MapPage::requestLightbox);
     connect(view_, &MapView::countryPicked, this, &MapPage::onCountryPicked);
@@ -264,6 +267,27 @@ void MapPage::syncFootData()
     view_->setGpsPaths(gpsPaths);
     view_->setGpsDates(gpsDates);
     view_->setFootYearFilter(footYear_);
+    syncGeoHotspots();                          // 方向 C·联动：足迹集合变化 → 热点同步刷新
+}
+
+// 方向 C·联动：依据当前层级 + 隐私门重算地理热点并回灌 MapView。
+// World=按 region（国家热点）；Region=按 prov（省热点，限定当前大区）。
+void MapPage::syncGeoHotspots()
+{
+    if (!photos_) { view_->setGeoHotspots({}); return; }
+    const MapView::Level lvl = view_->level();
+    const QString rid = (lvl == MapView::Region) ? view_->currentRegionId() : QString();
+    view_->setGeoHotspots(GeoHotspot::compute(*photos_, hidePrivate_,
+                                               static_cast<GeoHotspot::Level>(lvl), rid));
+}
+
+// 方向 C·联动：地图热点点击 → 直接进入图库并应用地理筛选（一键联动）。
+void MapPage::onHotspotActivated(const QString& key, const QString& label, bool isProvince)
+{
+    // 记录用于统计（与 onPicked 口径一致），并更新 lastRegion_/lastProv_
+    onPicked(key, label, isProvince);
+    // 一键联动：region 热点 → setRegionFilter；province 热点 → setProvFilter
+    emit requestGallery(isProvince ? QString() : key, isProvince ? key : QString());
 }
 
 // P16.1 真实 GPS 足迹数：hasGps 为真且未被隐私门屏蔽的照片计数（诚实，不编造）。

@@ -3,6 +3,68 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.24.2] - 2026-10-06
+
+本迭代同时落地路线图**方向 C（相册管理·智能检索）**与**方向 D（规模化·流畅性）**的
+§8.2 待办：地图地理热点联动 + 真实库性能回归门。两者均**纯门禁 + 纯新增**，不改既有交互语义。
+
+### 新增 - 方向 C：地图地理热点聚合 + 一键联动图库（`GeoHotspot` + `LA_GEO_LINK_QA`）
+
+- **动机（取证）**：地图此前只有**单个** GPS 光点（`drawGpsDots`），没有"按国家/省聚合"的
+  热点层；`MapPage` 也无法从地图一键把图库筛到某个国家/省。§8.2 记为"未落地"。
+- **实现**：新增自包含聚合器 `core/GeoHotspot.{h,cpp}`（`GeoHotspot::compute`）：
+  - `Level::World` → 按 `Photo.region` 聚合（key 落 `GalleryModel::setRegionFilter`）；
+  - `Level::Region` → 按 `Photo.prov` 聚合（key 落 `setProvFilter`）；
+  - 质心 = 该组有 GPS 照片的经纬度均值（预投影空间），`count` = 照片数；尊重隐私门。
+  - `GeoHotspot.h` **自包含**（自带 `Level` 枚举 + `MAP_W/MAP_H`），避免 core↔ui 头循环。
+- **渲染/交互**：`MapView` 新增热点徽章层（半径随 count 对数增长 7→24px，翡翠绿 + 计数），
+  World/Region 两级绘制；点击徽章 → `hotspotActivated` → `MapPage::onHotspotActivated`
+  → 复用既有 `requestGallery` 管道 → `MainWindow` → `gallery_->applyGeoFilter`（**不新增写库路径**）。
+- **门禁 `LA_GEO_LINK_QA`（第 48 门，非空心）**：
+  - 正例实测 `PASS marks=26 checks=26 hotspots=3`；断言含**核心契约**：
+    对每个热点 `h`，`GalleryModel.setRegionFilter(h.key).rowCount() == h.count`
+    （World）/ `setProvFilter(...)`（Region）——即"点热点恰好筛出该子集"，非"存在即恒真"。
+  - 反例 `LA_GEO_LINK_QA_FORCE_BROKEN=1`（World 层误按 `prov` 聚合）实测 `FAIL marks=14 checks=22
+    hotspots=4`，期望值**不随 broken 切换**（铁律 22）。
+
+### 修复 - 联动徽章吞掉「点国家下钻」命中区（`LA_MAP_CLICK_QA` 由红转绿）
+
+- **症状**：C 联动上线后 `LA_MAP_CLICK_QA` 的 `anchor=FAIL(level=0)`、`all=FAIL(8/10 bad:china;japan)`。
+- **根因（实测非猜测）**：徽章质心 = 该国**全部照片 GPS 均值**（中国 5140 张 → r=24px），
+  随个人库数据漂移，恰好压住大区锚点（金点，10px 命中区）→ 徽章命中 disc（r+6=30px）吞掉锚点，
+  "点国家下钻"这一**既有**交互被联动徽章抢走。
+- **修法（三处同源，铁律 4）**：
+  1. `hotspotPrePos()`：World 级徽章定位到**稳定的** `RegionInfo::proj`（大区锚点）而非质心；
+  2. `hotspotLift() = r + 8`：徽章上抬，`r+8 > r+6` **证明**不与锚点 10px 命中区重叠；
+  3. `mousePressEvent` 锚点优先豁免：命中任一锚点 10px 内时让位下钻（兜住质心回退分支）。
+  绘制 / 命中 / QA 探针三处统一用同一 lift，**杜绝"看得见点不着"**。
+- **验证**：`LA_MAP_CLICK_QA` 全项 OK（`anchor=OK`、`all=OK(10/10)`），`LA_GEO_LINK_QA` 仍 PASS。
+
+### 新增 - 方向 D：真实库性能回归门 `LA_SCALE_REAL_PERF_QA`（第 49 门）
+
+- **动机（取证）**：`LA_SCALE_PERF` 跑的是仓库内合成 fixture（6425 行，**文件在磁盘全不存在**），
+  其首屏/滚动只验了"虚拟网格"绘制成本，**从未触碰真实规模下**缩略图取盘/混合格式这些
+  真实才贵、且随个人库变化的路径——属"以合成假绿掩盖真实风险"（承接铁律 24/25）。
+- **实现**：`runScaleRealPerfQa()` 复用 `runScalePerf` 同一套 `GalleryPage` 首屏 + 滚动跳变帧
+  量化，但**强制跑真实库**（`need=LA_SCALE_REAL_DB`，CI 优雅 SKIP，不自造 CHECK 警告态，铁律 26）。
+  断言卡"成分"：① 首屏 ② 滚动单帧 paint 预算（默认 15s / 50ms，env 可覆盖）。
+- **反例（one-shot 注入，踩坑后修正）**：`LA_SCALE_REAL_PERF_QA_FORCE_BROKEN=1` 经
+  `EditorialView::qaSetPaintLagMsForQa(300)` 在**滚动测量前**布防一次 +300ms 绘制延迟。
+  - ★ 首版按"逐帧注入"实现 → 一个滚动帧重绘十余瓦片，20 跳累计数十秒，**撞上 qaExit 看门狗
+    20s 预算**误报 `no-exit-request`（`EXIT=3`）。改为 **one-shot**（只污染一个 paint 事件，
+    总开销与瓦片数无关）后修复。
+  - ★ 注入点必须在**滚动阶段**布防：若在首屏前布防，注入会落进 `firstMs`（15s 预算）被吞掉、
+    门误绿（铁律 22 的反面：反例该红却绿）。
+  - 实测：正例 `PASS firstMs=273 scrollMaxMs=18`；反例 `FAIL scrollMaxMs=311>budget=50`（`EXIT=1`）。
+- **实测基线（真实库 6526 行）**：`firstMs≈273 / scrollAvgMs≈9 / scrollMaxMs≈18`。
+
+### 门禁矩阵
+
+- `gate_matrix.ps1` 登记 `LA_GEO_LINK_QA`、`LA_SCALE_REAL_PERF_QA`（后者 `need=LA_SCALE_REAL_DB`，
+  `tier` 缺省=full）。**全量回归实测 `PASS=31 FAIL=0 CHECK=0 SKIP=3 KILL=0`（gates=34，~90s）**。
+- 个人数据门（`LA_SCALE_REAL_QA` / `LA_SCALE_REAL_PERF_QA` / `LA_SCAN_SMOKE`）在无
+  `LA_SCALE_REAL_DB` 时**声明式 SKIP**，个人库绝不进 CI/仓库。
+
 ## [2.24.1] - 2026-10-06
 
 ### 工具链 - pre-commit 自动门禁从「空转」变「真拦截」

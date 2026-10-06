@@ -28,6 +28,7 @@ private slots:
     void onPlayAll();    // 「▶ 播放本区作品」：省/大区/国家三层级通用的爆炸弹层
     void onCountryPicked(const QString& name, const QStringList& paths);   // 国家视图统计
     void onCountryBurst(const QString& name, const QStringList& paths);    // 国家视图爆炸弹层
+    void onHotspotActivated(const QString& key, const QString& label, bool isProvince); // 方向 C·联动：热点→图库
 
 private:
     int computeGpsCount() const;   // P16.1 真实 GPS 足迹计数（尊重隐私门）
@@ -38,6 +39,8 @@ private:
     // 铁律：任何改变可见足迹集合的操作（年份切换 / 隐私门）都必须走这里，
     // 否则三者的下标对齐与缓存失效会各自漂移。
     void syncFootData();
+    // 方向 C·联动：依据当前层级 + 隐私门重算地理热点并回灌 MapView（与足迹同源刷新）
+    void syncGeoHotspots();
 
 private:
     MapView* view_ = nullptr;

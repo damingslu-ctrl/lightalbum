@@ -28,6 +28,7 @@
 #include "core/GeoIndex.h"
 #include "core/PhotoCluster.h"
 #include "core/PhotoDedup.h"
+#include "core/GeoHotspot.h"     // 方向 C·联动：地理热点聚合（与渲染/筛选同源）
 #include "core/Classifier.h"   // 方向 C·智能分类：CLIP 客户端桥（QA 门用合成钩子）
 #include "core/PersonDetector.h"  // 方向 C·人脸识别（方案A）：face_server 客户端桥（QA 门用合成钩子）
 #include "core/FaceCluster.h"     // 方向 C·人物自动聚类：阈值余弦聚类纯函数（QA 门直调）
@@ -59,6 +60,7 @@
 #include <QRegularExpression>
 #include <QScrollArea>
 #include <QScrollBar>
+#include <QMouseEvent>            // 方向 C·联动：LA_GEO_LINK_QA 离屏合成鼠标事件
 #include <QPixmap>
 #include <QElapsedTimer>
 #include <QByteArray>
@@ -765,6 +767,137 @@ int runClusterQa()
     return pass ? 0 : 1;
 }
 
+// 方向 C·联动：地图地理热点门禁（LA_GEO_LINK_QA）。
+// 断言 GeoHotspot::compute 纯函数的三层性质，并验证「热点 key 过滤图库 == hotspot.count」
+// 这一核心联动契约（绘制/筛选/门禁同源）。另含离屏点击链路：热点徽章点击 → hotspotActivated
+// 带正确 key。反例 LA_GEO_LINK_QA_FORCE_BROKEN=1 令 World 级误按 prov 聚合（key 不再是
+// region id）→ 上述断言自然变红（铁律 22：期望值恒为规格值）。
+int runGeoLinkQa()
+{
+    const bool broken = !qEnvironmentVariableIsEmpty("LA_GEO_LINK_QA_FORCE_BROKEN");
+    GeoHotspot::setForceMisaggregateForQa(broken);
+
+    auto mk = [](const QString& region, const QString& prov, const QString& city,
+                 double la, double lo, bool priv = false) {
+        Photo p;
+        p.region = region; p.prov = prov; p.city = city;
+        p.hasGps = (la != 0.0 || lo != 0.0);
+        p.la = la; p.lo = lo; p.priv = priv;
+        p.thumbFile = QStringLiteral("t");
+        return p;
+    };
+    QVector<Photo> phs;
+    // china：安徽 2 + 北京 1 = 3；japan 1；iceland 1（共 5，无私密）
+    phs.append(mk(QStringLiteral("china"),  QStringLiteral("安徽省"), QStringLiteral("黄山"),   29.7,  118.3));
+    phs.append(mk(QStringLiteral("china"),  QStringLiteral("安徽省"), QStringLiteral("合肥"),   31.8,  117.2));
+    phs.append(mk(QStringLiteral("china"),  QStringLiteral("北京市"), QStringLiteral("北京"),   39.9,  116.4));
+    phs.append(mk(QStringLiteral("japan"),  QStringLiteral("Tokyo"),  QStringLiteral("东京"),   35.7,  139.7));
+    phs.append(mk(QStringLiteral("iceland"),QStringLiteral("Capital Region"), QStringLiteral("雷克雅未克"), 64.1, -21.9));
+
+    const int total = phs.size();   // 5
+
+    int marks = 0, checks = 0;
+    QStringList failed;
+    auto chk = [&](bool ok, const char* tag = "") {
+        ++checks; if (ok) ++marks; else if (tag && *tag) failed << QString::fromLatin1(tag);
+    };
+
+    // —— 1. World 级聚合（按 region）——
+    const QVector<GeoHotspot> world = GeoHotspot::compute(phs, true, GeoHotspot::Level::World);
+    {
+        // 独立期望（不依赖 GeoHotspot）：直接按 Photo.region 计数
+        QHash<QString, int> exp;
+        for (const Photo& p : phs) if (!p.priv) exp[p.region.toLower()]++;
+        int sum = 0; for (const GeoHotspot& h : world) sum += h.count;
+        chk(sum == total, "worldSum");                 // 全可见（无私密）
+        chk(world.size() == exp.size(), "worldSize");  // 3 个 region
+        for (auto it = exp.constBegin(); it != exp.constEnd(); ++it) {
+            const GeoHotspot* h = nullptr;
+            for (const GeoHotspot& x : world) if (x.key.toLower() == it.key()) { h = &x; break; }
+            chk(h != nullptr, ("worldKey_" + it.key()).toLatin1().constData());
+            if (h) {
+                chk(h->count == it.value(), ("worldCnt_" + it.key()).toLatin1().constData());
+                chk(!h->isProvince, "worldIsRegion");
+            }
+        }
+        // 核心联动契约：key 过滤图库 == hotspot.count（world 走 setRegionFilter）
+        {
+            GalleryModel m; m.setSource(&phs);
+            for (const GeoHotspot& h : world) {
+                m.setRegionFilter(h.key);
+                const int got = m.rowCount();
+                m.setRegionFilter(QString());
+                chk(got == h.count, ("worldLink_" + h.key).toLatin1().constData());
+            }
+        }
+        // centroid 合理（有 GPS 必不为 (0,0) 退化）
+        for (const GeoHotspot& h : world)
+            chk(h.centroid.x() > 0 && h.centroid.y() > 0, "worldCentroid");
+    }
+
+    // —— 2. Region 级聚合（按 prov，限定 china）——
+    const QVector<GeoHotspot> region = GeoHotspot::compute(phs, true, GeoHotspot::Level::Region, QStringLiteral("china"));
+    {
+        int sum = 0; for (const GeoHotspot& h : region) sum += h.count;
+        chk(sum == 3, "regionSum");          // 仅 china 内：安徽 2 + 北京 1
+        chk(region.size() == 2, "regionSize");
+        for (const GeoHotspot& h : region) chk(h.isProvince, "regionIsProv");
+        // 核心联动契约：prov 走 setProvFilter
+        {
+            GalleryModel m; m.setSource(&phs);
+            for (const GeoHotspot& h : region) {
+                m.setProvFilter(h.key);
+                const int got = m.rowCount();
+                m.setProvFilter(QString());
+                chk(got == h.count, ("regionLink_" + h.key).toLatin1().constData());
+            }
+        }
+    }
+
+    // —— 3. 离屏点击链路：World 热点徽章点击 → hotspotActivated 带正确 key ——
+    {
+        MapView* v = new MapView();
+        v->resize(1000, 600);
+        v->setGeoHotspots(world);
+        QVector<QPointF> pts;
+        for (const Photo& p : phs) if (p.hasGps)
+            pts.append(QPointF((p.lo + 180.0) / 360.0 * MapView::MAP_W,
+                               (90.0 - p.la) / 180.0 * MapView::MAP_H));
+        v->setGpsPoints(pts);
+        v->show();
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 200);
+
+        QString gotKey; bool gotProv = false; bool fired = false;
+        const QMetaObject::Connection conn = QObject::connect(
+            v, &MapView::hotspotActivated,
+            [&](const QString& k, const QString&, bool ip) { fired = true; gotKey = k; gotProv = ip; });
+
+        const QPoint pos = v->qaHotspotWidgetPos(0).toPoint();
+        QMouseEvent ev(QEvent::MouseButtonPress, pos, Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+        QApplication::sendEvent(v, &ev);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+
+        chk(fired, "clickFired");
+        if (fired) {
+            chk(gotKey == world.at(0).key, "clickKey");
+            chk(gotProv == false, "clickIsRegion");
+        }
+        QObject::disconnect(conn);
+        delete v;
+    }
+
+    GeoHotspot::setForceMisaggregateForQa(false);   // 还原（探针不污染环境）
+
+    const bool pass = (checks > 0) && (marks == checks);
+    std::fprintf(stderr,
+        "LA_GEO_LINK_QA %s marks=%d checks=%d hotspots=%d broken=%d\n",
+        pass ? "PASS" : "FAIL", marks, checks, world.size(), int(broken));
+    if (!pass)
+        std::fprintf(stderr, "LA_GEO_LINK_QA failed: %s\n", qPrintable(failed.join(',')));
+    std::fflush(stderr);
+    return pass ? 0 : 1;
+}
+
 // 方向 C：相似照片去重门禁（LA_DEDUP_QA）。
 // 注入确定性合成缩略图，断言 PhotoDedup 纯函数的性质：
 //   A 精确去重：字节相同的两张图进"完全重复（MD5 相同）"组
@@ -1210,6 +1343,102 @@ int runScaleRealQa()
                      qPrintable(fails.join(QChar(';'))), n, exts.size());
     }
     std::fprintf(stderr, "  decodeByExt %s\n", qPrintable(extDetail.join(QChar(' '))));
+    std::fflush(stderr);
+    return ok ? 0 : 1;
+}
+
+// 方向 D 第六步（2.24.x）：真实库性能回归门禁 LA_SCALE_REAL_PERF_QA。
+// 与 runScalePerf 同源（同一套 GalleryPage 首屏 + 滚动跳变帧量化），
+// 但**强制跑真实库**（need=LA_SCALE_REAL_DB，CI 优雅 SKIP，绝不自造 CHECK 警告态），
+// 守护真实规模（6526 行）下的流畅性回归：① 首屏（构造→首绘）② 滚动跳变帧 paint 预算。
+// ★ 取证依据（先测再改，禁猜）：runScalePerf 跑的是仓库内合成 fixture（6425 行，
+//   文件在磁盘全不存在），其首屏/滚动只验了"虚拟网格"的绘制成本，从未触碰真实规模下
+//   缩略图取盘/混合格式这些真实才贵、且**随个人库变化**的路径——属"以合成假绿掩盖真实风险"。
+//   本门把同一套量化锚定到真实库，断言卡"成分（首屏/单帧预算）"而非"比例"。
+// 反例 LA_SCALE_REAL_PERF_QA_FORCE_BROKEN=1：在**滚动测量前**布防一次性 +300ms 绘制延迟
+//   （EditorialView::qaSetPaintLagMsForQa，one-shot 只污染一个 paint 事件，总开销与瓦片数
+//   无关、不会撞 20s 看门狗），精确复现"绘制退化" → 某个滚动帧 dt 必 > 50ms 预算 → 必红。
+//   期望值（预算阈值）**不随 broken 切换**（铁律 22）。
+int runScaleRealPerfQa()
+{
+    const bool broken = !qEnvironmentVariableIsEmpty("LA_SCALE_REAL_PERF_QA_FORCE_BROKEN");
+    QString db = qEnvironmentVariable("LA_SCALE_REAL_DB");
+    if (db.isEmpty()) db = QStringLiteral("D:/lightalbum/library.db");
+
+    const qint64 firstBudgetMs  = qEnvironmentVariable("LA_SCALE_REAL_PERF_FIRST",  QStringLiteral("15000")).toLongLong();
+    const qint64 scrollBudgetMs = qEnvironmentVariable("LA_SCALE_REAL_PERF_SCROLL", QStringLiteral("50")).toLongLong();
+    const int    jumps          = qEnvironmentVariable("LA_SCALE_REAL_PERF_JUMPS",  QStringLiteral("20")).toInt();
+    const int    minRows        = qEnvironmentVariable("LA_SCALE_REAL_MIN",          QStringLiteral("2000")).toInt();
+
+    // 反例注入在**首屏测量之后、滚动测量之前**才布防（见下），此处确保干净起步。
+    EditorialView::qaSetPaintLagMsForQa(0);
+
+    QString err;
+    Library lib;
+    if (!lib.open(db, &err)) {
+        std::fprintf(stderr, "LA_SCALE_REAL_PERF_QA FAIL open=%s (%s)\n",
+                     qPrintable(db), qPrintable(err));
+        std::fflush(stderr);
+        return 2;
+    }
+    const auto& phs = lib.photos();
+    const int n = int(phs.size());
+
+    int ctrls = -1;
+    qint64 firstMs = -1, scrollAvgMs = -1, scrollMaxMs = -1;
+    {
+        const qint64 tA = QDateTime::currentMSecsSinceEpoch();
+        GalleryPage page(&phs, QString(), nullptr);
+        page.setHidePrivate(false);
+        page.resize(1200, 800);
+        page.show();
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 400); // 首屏 + 布局 + 可见区预取
+        const qint64 tB = QDateTime::currentMSecsSinceEpoch();
+        firstMs = tB - tA;
+        ctrls = page.findChildren<QWidget*>().size();
+
+        // 滚动跳变帧 paint 测量：设 scrollbar 值 → update → 短 processEvents
+        // （隔离纯 paint，不触发缩略图预取）。
+        // ★ 反例在**此刻**才布防：one-shot 注入只污染接下来的**一个** paint 事件，
+        //   该事件必落在滚动帧内 → scrollMaxMs 必 > 50ms 预算（门红）；
+        //   若在首屏前布防，注入会落进 firstMs（15s 预算）而被吞掉、门误绿。
+        if (broken) EditorialView::qaSetPaintLagMsForQa(300);
+        QScrollBar* sb = page.qaScrollBar();
+        if (sb && sb->maximum() > 0 && jumps > 0) {
+            qint64 sum = 0, mx = 0;
+            for (int j = 1; j <= jumps; ++j) {
+                const int v = int(sb->maximum() * j / (jumps + 1));
+                const qint64 t0 = QDateTime::currentMSecsSinceEpoch();
+                sb->setValue(v);
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 30);
+                const qint64 dt = QDateTime::currentMSecsSinceEpoch() - t0;
+                sum += dt; if (dt > mx) mx = dt;
+            }
+            scrollAvgMs = sum / jumps;
+            scrollMaxMs = mx;
+        } else {
+            scrollAvgMs = 0; scrollMaxMs = 0;   // 内容未超出视口：无需滚动，成本记 0
+        }
+        std::fprintf(stderr,
+            "LA_SCALE_REAL_PERF_QA firstMs=%lld scrollAvgMs=%lld scrollMaxMs=%lld ctrls=%d jumps=%d broken=%d\n",
+            firstMs, scrollAvgMs, scrollMaxMs, ctrls, jumps, broken ? 1 : 0);
+        std::fflush(stderr);
+    }
+
+    bool ok = true; QStringList fails;
+    if (n < minRows)    { ok = false; fails << QStringLiteral("photos=%1<min=%2").arg(n).arg(minRows); }
+    if (ctrls <= 0)     { ok = false; fails << QStringLiteral("galleryCtrls=%1").arg(ctrls); }
+    if (firstMs < 0 || firstMs > firstBudgetMs) { ok = false; fails << QStringLiteral("firstMs=%1>budget=%2").arg(firstMs).arg(firstBudgetMs); }
+    if (scrollMaxMs < 0 || scrollMaxMs > scrollBudgetMs) { ok = false; fails << QStringLiteral("scrollMaxMs=%1>budget=%2").arg(scrollMaxMs).arg(scrollBudgetMs); }
+
+    if (ok) {
+        std::fprintf(stderr,
+            "LA_SCALE_REAL_PERF_QA PASS photos=%d firstMs=%lld scrollAvgMs=%lld scrollMaxMs=%lld ctrls=%d broken=%d db=%s\n",
+            n, firstMs, scrollAvgMs, scrollMaxMs, ctrls, broken ? 1 : 0, qPrintable(QFileInfo(db).fileName()));
+    } else {
+        std::fprintf(stderr, "LA_SCALE_REAL_PERF_QA FAIL reason=%s photos=%d broken=%d\n",
+                     qPrintable(fails.join(QChar(';'))), n, broken ? 1 : 0);
+    }
     std::fflush(stderr);
     return ok ? 0 : 1;
 }
@@ -3407,6 +3636,10 @@ int main(int argc, char *argv[])
     if (qEnvironmentVariableIsSet("LA_CLUSTER_QA"))
         return runClusterQa();
 
+    // 方向 C·联动：地图地理热点聚合 + 一键联动门禁（GeoHotspot 纯函数 + MapView 点击链路）
+    if (qEnvironmentVariableIsSet("LA_GEO_LINK_QA"))
+        return runGeoLinkQa();
+
     // 方向 C：相似照片去重断言（PhotoDedup 纯函数直接驱动，纯数据无 UI）
     if (qEnvironmentVariableIsSet("LA_DEDUP_QA"))
         return runDedupQa();
@@ -3420,6 +3653,9 @@ int main(int argc, char *argv[])
         return runScalePerf();
     if (qEnvironmentVariableIsSet("LA_SCALE_REAL_QA"))
         return runScaleRealQa();
+    // 方向 D 第六步：真实库性能回归门禁（首屏 + 滚动帧预算），CI 经 need SKIP
+    if (qEnvironmentVariableIsSet("LA_SCALE_REAL_PERF_QA"))
+        return runScaleRealPerfQa();
 
     // 方向 D 第四步：缩略图多级缓存门禁（两级派生 / 字节预算 / 负缓存 / 跨级回落）
     if (qEnvironmentVariableIsSet("LA_THUMB_CACHE_QA"))

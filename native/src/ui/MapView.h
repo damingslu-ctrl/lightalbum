@@ -14,6 +14,7 @@
 #include <QPainter>
 #include <QKeyEvent>
 #include <QDate>
+#include "../core/GeoHotspot.h"   // 方向 C·联动：热点聚合（自包含头，无 core↔ui 耦合环）
 
 // 预投影坐标系：所有环/省/经纬都落在 [0,MAP_W]x[0,MAP_H] 的等距圆柱平面
 struct Ring { QVector<QPointF> pts; };
@@ -133,6 +134,13 @@ public:
     void setGpsPaths(const QStringList& paths) { gpsPaths_ = paths; }
     void resetWorldView();   // 回到默认视角：缩放归 1 + 中国居中（顶部「⌂ 回到中国」用）
 
+    // 方向 C·联动：注入地理热点层（World=国家热点 / Region=省热点），点击 → 图库筛选
+    void setGeoHotspots(const QVector<GeoHotspot>& h) { geoHotspots_ = h; update(); }
+    // QA 探针：返回第 i 个热点在 widget 空间的圆心（与渲染/命中同源变换）
+    QPointF qaHotspotWidgetPos(int i) const;
+    // 当前大区 id（Region 级热点聚合的 regionId 来源）
+    QString currentRegionId() const { return curRegionId_; }
+
 signals:
     void breadcrumbChanged(const QString& text);
     void picked(const QString& key, const QString& label, bool isProvince); // 区域/省点击
@@ -144,6 +152,8 @@ signals:
     void countryPicked(const QString& name, const QStringList& paths);
     // 国家视图点击国内 → 请求该国爆炸弹层
     void countryBurstRequested(const QString& name, const QStringList& paths);
+    // 方向 C·联动：热点点击 → 请求在图库查看该地理桶（key 走 region/prov 筛选）
+    void hotspotActivated(const QString& key, const QString& label, bool isProvince);
 
 protected:
     void paintEvent(QPaintEvent*) override;
@@ -165,6 +175,19 @@ private:
     void renderProvinceStatic(QPainter& p, const QRectF& dst) const; // 静态部分（轮廓/网格/标签/足迹点）
     // P16.4 在大区/省视图按拟合变换投影真实 GPS 足迹点（裁剪到 dst）
     void drawGpsDots(QPainter& p, const QRectF& bbox, const QRectF& dst) const;
+    // 方向 C·联动：绘制单个地理热点徽章（圆 + 计数），World/Region 渲染共用
+    void drawHotspot(QPainter& p, const QPointF& pos, const GeoHotspot& h) const;
+    // 热点半径（随 count 对数增长，绘制与命中同源，避免「看得见点不着」）
+    double hotspotRadius(int count) const;
+    // 徽章相对质心的「上抬」像素：把徽章抬到锚点金点上方，避免大徽章（r 达 24px）
+    // 吞掉下方 10px 的国家/大区锚点命中区（实测：china 5140 张 → r=24 → LA_MAP_CLICK_QA
+    // 的 anchor/all 变红，下钻失效）。绘制 / 命中 / QA 探针三处必须用同一 lift（铁律 4）。
+    double hotspotLift(int count) const { return hotspotRadius(count) + 8.0; }
+    // World 级徽章锚点：命中大区则用 RegionInfo::proj（稳定），否则回退照片质心。
+    // 质心随个人库漂移会压住锚点金点导致下钻失效（实测），故优先用锚点。
+    QPointF hotspotPrePos(const GeoHotspot& h) const;
+    // 命中测试：返回 pos 命中的热点下标（-1=无），World/Region 各自变换
+    int hotspotHitIndex(const QPoint& pos) const;
     // P16.4.2 金色航线：以基点连向每处 GPS 足迹（二次贝塞尔向上拱起，短路径过接缝）
     void drawArcs(QPainter& p, const QRectF& bbox, const QRectF& dst) const;
     // P16.4.2 航线目标集 = GPS 足迹点 ∪ 有作品大区的中心点（预投影空间）
@@ -207,6 +230,7 @@ private:
 
     // 数据
     static constexpr double DRIFT_SPEED = 4.5;   // px/s（预投影空间）
+    QVector<GeoHotspot> geoHotspots_;            // 方向 C·联动：当前层级地理热点层
     QVector<WorldFeature> worldFeatures_;     // 高精度世界（Natural Earth 50m）
     QVector<RegionInfo> regions_;
     QJsonObject         provJson_;              // region -> [ [name,ring,cx,cy], ... ]

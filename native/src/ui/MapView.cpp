@@ -1,5 +1,6 @@
 #include "MapView.h"
 #include "../core/MotionPref.h"
+#include "../core/GeoHotspot.h"   // 方向 C·联动：热点聚合（与渲染/门禁同源）
 #include <QPainter>
 #include <QFile>
 #include <QImage>
@@ -416,6 +417,99 @@ double MapView::worldOffYClamped() const
     return qBound(0.0, worldOffY_, qMax(0.0, MAP_H * scale - dst.height()));
 }
 
+// —— 方向 C·联动：热点半径 / 绘制 / 命中 ——
+double MapView::hotspotRadius(int count) const
+{
+    return qBound(7.0, 7.0 + 2.4 * std::log(double(count) + 1.0), 24.0);
+}
+
+// World 级徽章的预投影锚点：命中大区锚点（金点）时用 RegionInfo::proj（稳定已知点），
+// 否则回退照片质心。理由（实测 LA_MAP_CLICK_QA 红）：质心 = 全部该国照片 GPS 均值，
+// 随个人库数据漂移，可能正好压在大区锚点上 → 大徽章（r=24）吞掉锚点 10px 命中区 →
+// 「点国家下钻」失效。锚点是固定点，抬升 r+8 后与锚点命中区**证明不重叠**（r+8 > r+6）。
+QPointF MapView::hotspotPrePos(const GeoHotspot& h) const
+{
+    if (level_ == World) {
+        for (const RegionInfo& ri : regions_)
+            if (ri.id.compare(h.key, Qt::CaseInsensitive) == 0) return ri.proj;
+    }
+    return h.centroid;
+}
+
+void MapView::drawHotspot(QPainter& p, const QPointF& pos, const GeoHotspot& h) const
+{
+    const double r = hotspotRadius(h.count);
+    // 外光晕（翡翠绿，与暗色弹层选中色一致）
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(0x4f, 0xc0, 0x8a, 60));
+    p.drawEllipse(pos, r + 4.0, r + 4.0);
+    // 主体
+    p.setBrush(QColor(0x4f, 0xc0, 0x8a));
+    p.setPen(QPen(QColor(0x0e, 0x13, 0x0f), 1.2));
+    p.drawEllipse(pos, r, r);
+    // 计数文本（暗底亮字，WCAG 比对）
+    p.setPen(QColor(0x0e, 0x13, 0x0f));
+    p.setBrush(Qt::NoBrush);
+    QFont f = p.font(); f.setBold(true); f.setPointSizeF(qMax(8.0, r * 0.9));
+    p.setFont(f);
+    p.drawText(QRectF(pos.x() - r, pos.y() - r, 2.0 * r, 2.0 * r),
+               Qt::AlignCenter, QString::number(h.count));
+}
+
+QPointF MapView::qaHotspotWidgetPos(int i) const
+{
+    if (i < 0 || i >= geoHotspots_.size()) return QPointF();
+    const GeoHotspot& h = geoHotspots_.at(i);
+    const QRectF dst = rect().adjusted(8, 8, -8, -8);
+    if (level_ == World) {
+        const double scale = dst.height() / MAP_H * worldZoom_;
+        const double offY = worldOffYClamped();
+        const double span = MAP_W * scale;
+        QPointF w = preToWidget(hotspotPrePos(h), dst, scale, -driftPx_);
+        double wx = dst.x() + fmod(w.x() - dst.x(), span);
+        if (wx < dst.x()) wx += span;
+        return QPointF(wx, w.y() - offY - hotspotLift(h.count));
+    } else if (level_ == Region && !curProvinces_.isEmpty()) {
+        QRectF bbox; bool first = true;
+        for (const ProvinceInfo& pv : curProvinces_) {
+            if (first) { bbox = pv.bbox; first = false; } else bbox |= pv.bbox;
+        }
+        double scale = 1; const QPointF vo = viewOrigin(bbox, dst, scale);
+        return vo + h.centroid * scale;
+    }
+    return QPointF();
+}
+
+int MapView::hotspotHitIndex(const QPoint& pos) const
+{
+    const QRectF dst = rect().adjusted(8, 8, -8, -8);
+    if (level_ == World) {
+        const double scale = dst.height() / MAP_H * worldZoom_;
+        const double offY = worldOffYClamped();
+        const double span = MAP_W * scale;
+        for (int i = 0; i < geoHotspots_.size(); ++i) {
+            QPointF w = preToWidget(hotspotPrePos(geoHotspots_[i]), dst, scale, -driftPx_);
+            double wx = dst.x() + fmod(w.x() - dst.x(), span);
+            if (wx < dst.x()) wx += span;
+            const QPointF p(wx, w.y() - offY - hotspotLift(geoHotspots_[i].count));
+            const double r = hotspotRadius(geoHotspots_[i].count) + 6.0;   // 命中容差
+            if (std::hypot(p.x() - pos.x(), p.y() - pos.y()) <= r) return i;
+        }
+    } else if (level_ == Region && !curProvinces_.isEmpty()) {
+        QRectF bbox; bool first = true;
+        for (const ProvinceInfo& pv : curProvinces_) {
+            if (first) { bbox = pv.bbox; first = false; } else bbox |= pv.bbox;
+        }
+        double scale = 1; const QPointF vo = viewOrigin(bbox, dst, scale);
+        for (int i = 0; i < geoHotspots_.size(); ++i) {
+            const QPointF p = vo + geoHotspots_[i].centroid * scale;
+            const double r = hotspotRadius(geoHotspots_[i].count) + 6.0;
+            if (std::hypot(p.x() - pos.x(), p.y() - pos.y()) <= r) return i;
+        }
+    }
+    return -1;
+}
+
 // 默认视口中心：中国大区锚点（数据缺失时回退 105°E）
 double MapView::defaultCenterX() const
 {
@@ -475,6 +569,14 @@ void MapView::renderWorldInto(QPainter& p, const QRectF& dst) const
         p.drawEllipse(pos, 3.2, 3.2);
         p.setBrush(Qt::NoBrush);
         drawLabel(p, pos + QPointF(6, 4), ri.name, QColor(0xe8, 0xe2, 0xd4));
+    }
+    // 方向 C·联动：地理热点层（World=国家/大区），点击 → 图库筛选
+    for (const GeoHotspot& h : geoHotspots_) {
+        QPointF w = preToWidget(hotspotPrePos(h), dst, scale, -driftPx_);
+        double wx = dst.x() + fmod(w.x() - dst.x(), mapWpx);
+        if (wx < dst.x()) wx += mapWpx;
+        const QPointF pos(wx, w.y() - offY - hotspotLift(h.count));   // 上抬让锚点可点
+        drawHotspot(p, pos, h);
     }
 }
 
@@ -547,6 +649,14 @@ void MapView::renderRegionStatic(QPainter& p, const QRectF& dst) const
         drawLabel(p, c + QPointF(4, 4), pv.zh.isEmpty() ? pv.name : pv.zh, QColor(0xe8, 0xe2, 0xd4));
     }
     drawGpsDots(p, bbox, dst);   // P16.4
+    // 方向 C·联动：省热点层（Region=省），点击 → 图库按省筛选
+    {
+        const QPointF o = viewOrigin(bbox, dst, scale);
+        for (const GeoHotspot& h : geoHotspots_) {
+            const QPointF pos = o + h.centroid * scale;
+            drawHotspot(p, pos, h);
+        }
+    }
     // A 方向：轨迹/热力（默认光点，零回归）
     if (footLayer_ == FL_Track && gpsPts_.size() >= 2) drawTrajectory(p, bbox, dst);
     else if (footLayer_ == FL_Heat && !gpsPts_.isEmpty()) drawHeat(p, bbox, dst);
@@ -2297,6 +2407,15 @@ void MapView::mouseMoveEvent(QMouseEvent* e)
         }
         if (!hoverHint_.isEmpty()) { hoverHint_.clear(); setCursor(Qt::ArrowCursor); update(); }
     } else if (level_ == Region) {
+        // 方向 C·联动：省热点优先命中（徽章绘于省面之上，点徽章即按省联动图库，不抢下钻）
+        {
+            const int hi = hotspotHitIndex(e->pos());
+            if (hi >= 0) {
+                const GeoHotspot& h = geoHotspots_.at(hi);
+                emit hotspotActivated(h.key, h.label, h.isProvince);
+                return;
+            }
+        }
         double scale = 1;
         QRectF bbox; bool first = true;
         for (const ProvinceInfo& pv : curProvinces_) { if (first){bbox=pv.bbox;first=false;} else bbox|=pv.bbox; }
@@ -2328,6 +2447,29 @@ void MapView::mousePressEvent(QMouseEvent* e)
         const double scale = dst.height() / MAP_H * worldZoom_;
         const double offY = worldOffYClamped();
         const double span = MAP_W * scale;
+        // 方向 C·联动：热点优先命中（徽章绘于国/区之上，点徽章即联动图库，不抢下方下钻）
+        // ★ 锚点优先豁免：徽章已上抬 r+8，理论上不压锚点；但质心回退分支（无 RegionInfo 的
+        //   国家）仍可能偶然靠近某锚点。故先判「是否点在任一锚点 10px 内」——是则让位给下钻，
+        //   保证「点国家下钻」这一既有交互永不被联动徽章吞掉（LA_MAP_CLICK_QA anchor/all）。
+        {
+            bool onAnchor = false;
+            for (const RegionInfo& ri : regions_) {
+                QPointF aw = preToWidget(ri.proj, dst, scale, -driftPx_);
+                double awx = dst.x() + fmod(aw.x() - dst.x(), span);
+                if (awx < dst.x()) awx += span;
+                if (std::hypot(awx - e->pos().x(), (aw.y() - offY) - e->pos().y()) < 10) {
+                    onAnchor = true; break;
+                }
+            }
+            if (!onAnchor) {
+                const int hi = hotspotHitIndex(e->pos());
+                if (hi >= 0) {
+                    const GeoHotspot& h = geoHotspots_.at(hi);
+                    emit hotspotActivated(h.key, h.label, h.isProvince);
+                    return;
+                }
+            }
+        }
         // ① 国家轮廓命中（优先）：点任意国家即下钻——
         //    有专辑的 10 大区 → 省级下钻；其余国家 → 国家视图（轮廓 + 该国 GPS 作品）
         const QPointF pre = widgetToPre(e->pos(), dst, scale, wrapX(driftPx_), offY);

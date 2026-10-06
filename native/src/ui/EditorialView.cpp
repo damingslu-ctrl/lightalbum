@@ -10,6 +10,13 @@ static bool    g_skelReduceMotion = false;
 // 缺陷①回归：门禁反例注入点——置 true 时 updateWindow 对已绑定瓦片跳过几何回填，
 // 精确复现修复前的空白缺陷（反例须实测变红，铁律）。
 static bool    g_qaNoReflow = false;
+// 方向 D 第六步：性能回归反例注入点——**一次性**每帧绘制额外睡眠毫秒数。
+// ★ 必须 one-shot：若逐帧生效，单个滚动帧会重绘十余张瓦片，20 跳 × N 瓦片 × 延时
+//   累加成数十秒，直接撞上 qaExit 看门狗 20s 预算而误报 no-exit-request（实测踩过）。
+//   一次性注入只污染**单个** paint 事件：总开销恒为 g_qaPaintLagMs，与瓦片数/跳数无关，
+//   既能让该帧 dt 越过滚动预算（门必红），又不干扰看门狗时序。
+static int     g_qaPaintLagMs = 0;
+static int     g_qaPaintLagLeft = 0;
 void EditorialView::qaSetSkeletonPhase(double ph, bool reduceMotion)
 {
     g_skelPhase = ph;
@@ -17,10 +24,16 @@ void EditorialView::qaSetSkeletonPhase(double ph, bool reduceMotion)
 }
 double EditorialView::qaSkeletonPhase() { return g_skelPhase; }
 void EditorialView::qaSetNoReflow(bool v) { g_qaNoReflow = v; }
+void EditorialView::qaSetPaintLagMsForQa(int ms)
+{
+    g_qaPaintLagMs = ms;
+    g_qaPaintLagLeft = (ms > 0) ? 1 : 0;   // 一次性：只在下一个 paint 事件生效
+}
 #include "GalleryModel.h"
 #include "GalleryCardPainter.h"
 #include "Theme.h"
 #include <QTimer>
+#include <QThread>
 #include <QMouseEvent>
 #include <QEnterEvent>
 #include <QScrollBar>
@@ -73,6 +86,13 @@ protected:
             p.setPen(fp);
             p.setBrush(Qt::NoBrush);
             p.drawRoundedRect(rect().adjusted(1, 1, -1, -1), 6, 6);
+        }
+        // 方向 D 第六步：性能回归反例注入——单次额外睡眠（默认 0，broken 时 300ms）。
+        // 模拟"绘制退化"，使**一个**滚动帧 paint 成本越过预算 → 门禁必红。
+        // one-shot：消费即清零，避免逐帧累加撞看门狗（见文件头注释）。
+        if (g_qaPaintLagLeft > 0 && g_qaPaintLagMs > 0) {
+            --g_qaPaintLagLeft;
+            QThread::msleep(static_cast<unsigned long>(g_qaPaintLagMs));
         }
     }
     void mousePressEvent(QMouseEvent* e) override {

@@ -114,6 +114,19 @@ $GateTable = @(
   # Counter-example LA_SCALE_REAL_QA_FORCE_BROKEN=1 rewrites every path to a
   # nonexistent file (reproducing the lying fixture) and must go RED.
   @{n="LA_SCALE_REAL_QA"; png=$false; need=@("LA_SCALE_REAL_DB"); measuredMs=734},
+  # D scale (direction D step 6): REAL library PERFORMANCE regression gate.
+  # runScalePerf only exercises the committed synthetic fixture (6425 rows whose
+  # files do NOT exist on disk), so its first-paint/scroll numbers never touch the
+  # real-scale paths (thumbnail disk fetch, mixed formats). This gate forces the
+  # REAL library and reuses the same GalleryPage first-paint + scroll-frame budget
+  # measurement, guarding regression under true 6526-row scale.
+  # need=LA_SCALE_REAL_DB: personal data (cannot be committed or shipped to CI),
+  # so CI SKIPs cleanly instead of scoring a CHECK warning.
+  # Counter-example LA_SCALE_REAL_PERF_QA_FORCE_BROKEN=1 arms a ONE-SHOT +300ms paint
+  # lag (EditorialView::qaSetPaintLagMsForQa) inside the scroll phase, so exactly one
+  # scroll frame blows the 50ms budget -> gate RED without tripping the 20s watchdog.
+  # measuredMs≈8000. tier defaults to full (fail-safe).
+  @{n="LA_SCALE_REAL_PERF_QA"; png=$false; need=@("LA_SCALE_REAL_DB"); measuredMs=8000},
   @{n="LA_EXIT_QA";         png=$false; measuredMs=5700},
   @{n="LA_RW_SMOKE";        png=$false; measuredMs=1017},
   @{n="LA_CULL_SMOKE";      png=$false; measuredMs=3210},
@@ -179,6 +192,15 @@ $GateTable = @(
   # LA_GATE_MATRIX_QA E6 caught this -- keeping the tier="fast" guess would have
   # shipped a gate that fails its own budget rule on every CI run.
   @{n="LA_CLUSTER_QA";      png=$false; measuredMs=1424},
+  # 方向 C·联动：地图地理热点聚合 + 一键联动门禁（LA_GEO_LINK_QA）。
+  # 断言 GeoHotspot::compute 纯函数（World=按 region / Region=按 prov）的守恒与
+  # 「热点 key 过滤图库 == hotspot.count」联动契约，并离屏验证热点徽章点击 →
+  # hotspotActivated 带正确 key。Counter-example LA_GEO_LINK_QA_FORCE_BROKEN=1 令
+  # World 级误按 prov 聚合（key 不再是 region id）→ 上述断言变红（非空心）。
+  # tier 缺省=full（fail-safe）：进程同样支付 QApplication + offscreen 启动，且构造
+  # MapView 会 loadData 解析 mapdata.json，实测 >500ms，故不进 fast 层。
+  # measuredMs 待 -Timing 实测回填（初估 ~1450，与 LA_CLUSTER_QA 同量级）。
+  @{n="LA_GEO_LINK_QA";    png=$false; measuredMs=1450},
   @{n="LA_MAP_CLICK_QA";    png=$false; measuredMs=2553},
   @{n="LA_MAP_PERF";        png=$false; measuredMs=3735},
   @{n="LA_GALLERY_E_QA";    png=$true; measuredMs=2589},

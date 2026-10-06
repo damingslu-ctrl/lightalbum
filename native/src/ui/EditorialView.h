@@ -31,6 +31,9 @@ public:
     static double qaSkeletonPhase();
     // 缺陷①回归：反例注入（模拟修复前 updateWindow 不重绑几何）+ 几何一致性断言
     static void   qaSetNoReflow(bool v);
+    // 方向 D 第六步：性能回归反例注入——置 >0 时每帧绘制额外睡眠该毫秒数，
+    // 精确复现"绘制退化"；runScaleRealPerfQa 的 LA_SCALE_REAL_PERF_QA_FORCE_BROKEN 调用。
+    static void   qaSetPaintLagMsForQa(int ms);
     int           qaReflowCheck() const;
 
 signals:

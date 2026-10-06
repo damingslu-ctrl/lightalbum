@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(LightAlbumNative VERSION 2.24.1 LANGUAGES CXX)
+project(LightAlbumNative VERSION 2.24.2 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -36,6 +36,8 @@ set(LA_SOURCES
     src/core/LumenAgent.cpp
     src/core/GeoIndex.h
     src/core/GeoIndex.cpp
+    src/core/GeoHotspot.h
+    src/core/GeoHotspot.cpp
     src/core/Vault.h
     src/core/Vault.cpp
     src/ui/DarkPalette.h
