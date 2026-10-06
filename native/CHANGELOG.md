@@ -3,6 +3,31 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.24.1] - 2026-10-06
+
+### 工具链 - pre-commit 自动门禁从「空转」变「真拦截」
+
+- **问题**：`native/hooks/pre-commit.ps1` 在 `[Console]::IsOutputRedirected`
+  （git 永远重定向 stdout）时直接 `exit 0` 跳过——三个迭代的真门禁**从未在提交时被自动跑过**，
+  自动保护链是空的。注释里写的原因是「exe 自退需真实控制台，管道下会挂」。
+- **取证澄清（关键）**：项目铁律 11 的「stdout 重定向不自退」只针对**直接在 Git Bash 里
+  `./exe > f 2>&1`**——那种情况下 exe 的 stdout 管道无人抽取，确实不自退（0 字节假阴性）。
+  但 `qa_runner.ps1` 是用 `System.Diagnostics.Process` + `RedirectStandardOutput`
+  + `ReadToEnd()` 启动 exe 的，**管道始终被抽取**，与 CI 用的机制完全一致。
+  实测：在 git 管道下（stdout 被重定向到文件）直接委托 `qa_runner` 跑 fast 层，
+  exe **正常自退**、JSON 正确生成（`PASS=14 FAIL=0`，无 KILL）。故 hook 的 bail 是**过度保守**。
+- **修法**：移除 bail，改为真正委托 `qa_runner -Tier fast -Result <TEMP json>`，
+  从 JSON 读 `summary.fail` 拦截（`fail>0` → exit 1）。结果走文件、与 stdout 完全解耦，
+  不受管道影响。fast 层 ~4s，覆盖回归关键门；CI push 仍跑 full 层。
+- **新增过期拦截**：若 `native/build/LightAlbum.exe` 的 mtime 早于任一已暂存的 native 源文件，
+  hook **直接 BLOCKED**（提示先重建）——杜绝「改了源码没编译」导致的 stale false-green。
+  这是质量门禁比「温柔提醒」更有价值的防线。
+- 仍保留 fail-open 兜底：工具链故障时 qa_runner 产不出 JSON（rc 异常）则**告警放行**而非锁死每个提交。
+- **端到端验证（三种场景全过）**：
+  - 绿灯（exe 最新，门全绿）→ `GREEN` exit 0
+  - 过期 exe（源比 exe 新）→ `BLOCKED. exe is OLDER than staged source` exit 1
+  - 红门（注入 `LA_RETOUCH_OP_QA_FORCE_BROKEN=1`，22 条变红）→ `BLOCKED. Red gate(s) detected` exit 1
+
 ## [2.24.0] - 2026-10-06
 
 ### 修复 - 「高光」滑杆方向与 12 算子中的唯一反向约定（用户拖右反而压暗）

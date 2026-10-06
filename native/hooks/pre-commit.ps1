@@ -19,17 +19,15 @@ if ($nativeSrc.Count -eq 0) {
 }
 Write-Host ("pre-commit gate: {0} native source file(s) changed" -f $nativeSrc.Count)
 
-# The gate runner (qa_runner.ps1) needs a real console for the native exe to
-# self-exit; under git's piped hook stdout it would hang ~25s per gate
-# (minutes total) or die. So we only RUN the gate when stdout is a console.
-# Under git's pipe we skip fast (fail-open) and point to the reliable gates:
-# CI workflow (runs iterate.ps1) and release.ps1 (gates before packaging).
-if ([Console]::IsOutputRedirected) {
-  Write-Host "pre-commit gate: stdout is redirected (git pipe) - cannot run console-dependent gates here."
-  Write-Host "  Verify manually:  powershell -File native\qa_runner.ps1   (or: native\iterate.ps1 -NoBuild)"
-  Write-Host "  Reliable auto-gate: CI runs iterate.ps1; release.ps1 gates before packaging."
-  exit 0
-}
+# Console-dependency note (verified 2.24.0): the exe's self-exit depends on a
+# DRAINED stdout pipe, NOT on a real console. Running the exe directly under
+# Git Bash (`./exe > f 2>&1`) starves the pipe and it never self-exits (0-byte
+# false negative). But qa_runner.ps1 launches the exe via System.Diagnostics.
+# Process with RedirectStandardOutput and ReadToEnd(), which keeps the pipe
+# drained -- exactly what CI uses, and empirically it self-exits fine even when
+# OUR stdout is a git pipe. So we CAN delegate here instead of bailing.
+# We run the fast (PR) tier -- ~5s, covers the regression-critical gates; the
+# CI push pipeline still enforces the full tier.
 
 $exe = Join-Path $root "native\build\LightAlbum.exe"
 if (-not (Test-Path $exe)) {
@@ -39,13 +37,32 @@ if (-not (Test-Path $exe)) {
   exit 1
 }
 
+# Stale-exe guard: a built exe older than any staged native source would let a
+# RED gate pass silently (false green). A quality gate that trusts a stale exe
+# is worse than a reminder to rebuild. Block with a clear, actionable message.
+$exeMtime = (Get-Item $exe).LastWriteTime
+$stale = $false
+foreach ($f in $nativeSrc) {
+  $fp = Join-Path $root $f
+  if (Test-Path $fp) {
+    $m = (Get-Item $fp).LastWriteTime
+    if ($m -gt $exeMtime) { $stale = $true; break }
+  }
+}
+if ($stale) {
+  Write-Host "pre-commit gate: BLOCKED. native/build/LightAlbum.exe is OLDER than staged source."
+  Write-Host "  Rebuild first: cmake --build native/build --target LightAlbum -j 8"
+  Write-Host "  (or bypass with: git commit --no-verify)"
+  exit 1
+}
+
 $qaRunner = Join-Path $root "native\qa_runner.ps1"
 $gateJson = Join-Path $env:TEMP ("precommit_gate_" + (Get-Date -Format "yyyyMMdd_HHmmss") + ".json")
-& powershell -ExecutionPolicy Bypass -File $qaRunner -Exe $exe -Result $gateJson
+& powershell -ExecutionPolicy Bypass -File $qaRunner -Exe $exe -Result $gateJson -Tier fast
 $gateRc = $LASTEXITCODE
 if (-not (Test-Path $gateJson)) {
-  # Runner could not produce a result (crashed/no console) - fail OPEN so a
-  # tooling hiccup never locks every native commit. Warn loudly instead.
+  # Runner could not produce a result (crashed) - fail OPEN so a tooling hiccup
+  # never locks every native commit. Warn loudly instead.
   Write-Host "pre-commit gate: WARN - qa_runner produced no result (rc=$gateRc); gates NOT verified."
   Write-Host "  Run manually: powershell -File native\qa_runner.ps1 ; or git commit --no-verify to bypass."
   exit 0
