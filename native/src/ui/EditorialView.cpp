@@ -7,12 +7,16 @@
 // 需要重绘时由 updateSkeletonTimer()/计时器自行 content_->update()。
 static double g_skelPhase = 0.0;
 static bool    g_skelReduceMotion = false;
+// 缺陷①回归：门禁反例注入点——置 true 时 updateWindow 对已绑定瓦片跳过几何回填，
+// 精确复现修复前的空白缺陷（反例须实测变红，铁律）。
+static bool    g_qaNoReflow = false;
 void EditorialView::qaSetSkeletonPhase(double ph, bool reduceMotion)
 {
     g_skelPhase = ph;
     g_skelReduceMotion = reduceMotion;
 }
 double EditorialView::qaSkeletonPhase() { return g_skelPhase; }
+void EditorialView::qaSetNoReflow(bool v) { g_qaNoReflow = v; }
 #include "GalleryModel.h"
 #include "GalleryCardPainter.h"
 #include "Theme.h"
@@ -175,6 +179,19 @@ GalleryTile* EditorialView::acquire()
     return t;
 }
 
+// 缺陷①回归断言：每个已绑定瓦片几何必须等于当前布局（featureRect/cellRect）。
+// 修复前 updateWindow 对已绑定瓦片跳过回填 → 几何残留旧宽度 → 此处返回 1。
+// 必须定义在 GalleryTile 完整类型之后（要用 QWidget::geometry()）。
+int EditorialView::qaReflowCheck() const
+{
+    bool consistent = true;
+    for (auto it = bound_.constBegin(); it != bound_.constEnd(); ++it) {
+        const QRect expected = (it.key() == 0) ? featureRect() : cellRect(it.key());
+        if (it.value()->geometry() != expected) consistent = false;
+    }
+    return consistent ? 0 : 1;
+}
+
 int EditorialView::qaKeyboardCheck()
 {
     // F3 a11y: 无模型即可测键盘路径（keyEvent 不触发 paint，model 可空）
@@ -248,7 +265,17 @@ void EditorialView::updateWindow()
     // 回收已不可见的绑定瓦片
     for (auto it = bound_.begin(); it != bound_.end(); ) {
         if (!need.contains(it.key())) { recycle(it.value()); it = bound_.erase(it); }
-        else ++it;
+        else {
+            // 缺陷①修复：窗口尺寸/列数变化时，已绑定且仍可见的瓦片必须实时回填几何。
+            // 旧逻辑只回收不可见、只为"新进入"行绑定几何，导致可见瓦片残留旧(小)几何
+            // —— 左上角迷你瓦片 + 宽视口溢出右缘 + 中间大片空白。
+            GalleryTile* t = it.value();
+            if (!g_qaNoReflow) {   // 反例注入：g_qaNoReflow 时模拟修复前行为（跳过回填）
+                t->setGeometry(it.key() == 0 ? featureRect() : cellRect(it.key()));
+                t->update();
+            }
+            ++it;
+        }
     }
     // 绑定新进入可见区的行
     for (int row : need) {

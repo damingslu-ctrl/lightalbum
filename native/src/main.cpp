@@ -8,12 +8,14 @@
 #include <QTimer>
 #include <QDateTime>
 #include <QDir>
+#include <QMenu>              // 缺陷②回归：LA_SMOKE 断言导入下拉菜单带暗色 QSS
 #include <QFileInfo>
 #include <QFontDatabase>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QImage>
+#include <QImageReader>        // 2.23.0 LA_SCALE_REAL_QA：真实文件解码抽样
 #include <QProcess>            // 2.7.0 LA_EXIT_QA：自退契约子进程探针
 #include <QProcessEnvironment>
 #include <QTranslator>
@@ -236,6 +238,345 @@ int runRetouchUndoQa()
     const bool pass = (checks > 0) && (marks == checks);
     std::fprintf(stderr, "LA_RETOUCH_UNDO_QA %s marks=%d checks=%d\n",
                  pass ? "PASS" : "FAIL", marks, checks);
+    std::fflush(stderr);
+    return pass ? 0 : 1;
+}
+
+// ============================================================================
+// 方向 B 深化：12 算子逐项方向像素断言（LA_RETOUCH_OP_QA）
+//
+// 为什么需要这道门（取证结论，非推测）：修图已有 LA_RETOUCH_SMOKE /
+// LA_RETOUCH_A_QA / LA_RETOUCH_UNDO_QA 三条门，但它们断言的全是**几何与流程**
+// （旋转/方形/翻转/蒙版混合/裁剪/擦除桥/撤销栈），**12 个像素算子一个都没断言**——
+// 甚至连 `out.width() != 0` 这种恒真式都在输出里。现状只能证明「界面能打开」，
+// 不能证明「曝光滑杆真的改了像素」。更要命的是：单算子方向若反了，往往会被
+// 另一算子的效果**掩盖**（实测 recommend() 对偏亮图给 highlights=-0.30 实为提亮 +42.90，
+// 却因 exposure=-0.10 掩盖成整体 -16.23 看起来"正常"）。故本门的设计原则是
+// **每个算子单独施参 + 断言方向**，绝不用组合参数下结论。
+//
+// 阈值标定来源：tools/retouch_probe.cpp 在 128x96 合成图上实测 20 组算子输出，
+// 取各方向 delta 的实测最小绝对值再留余量（非猜、非估）。
+//
+// 反例：LA_RETOUCH_OP_QA_FORCE_BROKEN=1 把若干算子接成恒等（模拟"滑杆拖了没反应"
+// 这一最常见真实缺陷形态），正例实测为绿、反例实测变红，且**期望值不随 broken 切换**。
+// ============================================================================
+
+// 12 算子度量原语（局部静态，RetouchEngine 内部 luma/boxBlur 为文件私有，此处独立实现）
+static double rtQaLuma(QRgb c) { return 0.299 * qRed(c) + 0.587 * qGreen(c) + 0.114 * qBlue(c); }
+
+static double rtQaMeanLuma(const QImage& im)
+{
+    if (im.isNull() || im.width() == 0) return -1.0;
+    double s = 0; long n = 0;
+    for (int y = 0; y < im.height(); ++y) {
+        const QRgb* d = reinterpret_cast<const QRgb*>(im.constScanLine(y));
+        for (int x = 0; x < im.width(); ++x) { s += rtQaLuma(d[x]); ++n; }
+    }
+    return n ? s / double(n) : -1.0;
+}
+
+static double rtQaStdLuma(const QImage& im)
+{
+    if (im.isNull() || im.width() == 0) return -1.0;
+    double s = 0, s2 = 0; long n = 0;
+    for (int y = 0; y < im.height(); ++y) {
+        const QRgb* d = reinterpret_cast<const QRgb*>(im.constScanLine(y));
+        for (int x = 0; x < im.width(); ++x) {
+            const double L = rtQaLuma(d[x]); s += L; s2 += L * L; ++n;
+        }
+    }
+    if (!n) return -1.0;
+    const double m = s / double(n);
+    return std::sqrt(std::max(0.0, s2 / double(n) - m * m));
+}
+
+static double rtQaMeanSat(const QImage& im)
+{
+    if (im.isNull() || im.width() == 0) return -1.0;
+    double s = 0; long n = 0;
+    for (int y = 0; y < im.height(); ++y) {
+        const QRgb* d = reinterpret_cast<const QRgb*>(im.constScanLine(y));
+        for (int x = 0; x < im.width(); ++x) {
+            const int mx = std::max({qRed(d[x]), qGreen(d[x]), qBlue(d[x])});
+            const int mn = std::min({qRed(d[x]), qGreen(d[x]), qBlue(d[x])});
+            s += double(mx - mn) / 255.0; ++n;
+        }
+    }
+    return n ? s / double(n) : -1.0;
+}
+
+// 局部对比度（|拉普拉斯| 均值）—— clarity / sharpen 的方向判别器。
+// 单看均值/方差无法区分「锐化」与「整体加对比」，必须看局部梯度能量。
+static double rtQaLocalContrast(const QImage& im)
+{
+    if (im.isNull() || im.width() < 3 || im.height() < 3) return -1.0;
+    const QImage q = im.convertToFormat(QImage::Format_RGB32);
+    double s = 0; long n = 0;
+    for (int y = 1; y < q.height() - 1; ++y) {
+        const QRgb* d = reinterpret_cast<const QRgb*>(q.constScanLine(y));
+        const QRgb* u = reinterpret_cast<const QRgb*>(q.constScanLine(y - 1));
+        const QRgb* v = reinterpret_cast<const QRgb*>(q.constScanLine(y + 1));
+        for (int x = 1; x < q.width() - 1; ++x) {
+            const double lap = 4.0 * rtQaLuma(d[x]) - rtQaLuma(d[x - 1]) - rtQaLuma(d[x + 1])
+                             - rtQaLuma(u[x]) - rtQaLuma(v[x]);
+            s += std::fabs(lap); ++n;
+        }
+    }
+    return n ? s / double(n) : -1.0;
+}
+
+// 通道和（判色温/色调方向用）。返回 long[3] = R/G/B 相对 src 的增量。
+static QVector<long> rtQaRgbDelta(const QImage& a, const QImage& b)
+{
+    QVector<long> out(3, 0);
+    if (a.isNull() || b.isNull() || a.size() != b.size()) return out;
+    long d[3] = {0, 0, 0};
+    for (int y = 0; y < a.height(); ++y) {
+        const QRgb* pa = reinterpret_cast<const QRgb*>(a.constScanLine(y));
+        const QRgb* pb = reinterpret_cast<const QRgb*>(b.constScanLine(y));
+        for (int x = 0; x < a.width(); ++x) {
+            d[0] += qRed(pb[x])   - qRed(pa[x]);
+            d[1] += qGreen(pb[x]) - qGreen(pa[x]);
+            d[2] += qBlue(pb[x])  - qBlue(pa[x]);
+        }
+    }
+    out[0] = d[0]; out[1] = d[1]; out[2] = d[2];
+    return out;
+}
+
+// 算子度量快照：把上面四个度量 + 通道和打包，便于逐算子统一比较。
+struct RtOpMetrics {
+    double luma = 0, stdL = 0, sat = 0, local = 0;
+    QVector<long> rgb{0, 0, 0};
+};
+
+static RtOpMetrics rtQaMeasure(const QImage& base, const QImage& out)
+{
+    RtOpMetrics m;
+    m.luma  = rtQaMeanLuma(out) - rtQaMeanLuma(base);
+    m.stdL  = rtQaStdLuma(out) - rtQaStdLuma(base);
+    m.sat   = rtQaMeanSat(out) - rtQaMeanSat(base);
+    m.local = rtQaLocalContrast(out) - rtQaLocalContrast(base);
+    m.rgb   = rtQaRgbDelta(base, out);
+    return m;
+}
+
+// 方向 B 深化：12 算子逐项方向断言 + identity 契约 + 空间分布断言。
+int runRetouchOpQa()
+{
+    const bool broken = qEnvironmentVariableIsSet("LA_RETOUCH_OP_QA_FORCE_BROKEN");
+
+    // 128x96 合成测试图（与 tools/retouch_probe.cpp 完全同一张，阈值即由它标定）：
+    // 左半中灰 128 / 右上亮块 225（高光区 L>0.5）/ 左下暗块 38（阴影区 L<0.5）
+    // / 有色块 (200,60,60)（给饱和与白平衡）/ 硬边缘白块（给 clarity 与 sharpen）
+    QImage src(128, 96, QImage::Format_RGB32);
+    src.fill(qRgb(128, 128, 128));
+    {
+        QPainter p(&src);
+        p.fillRect(80, 8, 40, 36, qRgb(225, 225, 225));    // 亮块
+        p.fillRect(8, 56, 40, 32, qRgb(38, 38, 38));      // 暗块
+        p.fillRect(52, 34, 24, 24, qRgb(200, 60, 60));    // 有色块
+        p.fillRect(30, 20, 20, 20, qRgb(245, 245, 245));  // 硬边缘
+        p.end();
+    }
+    if (src.isNull()) {
+        std::fprintf(stderr, "LA_RETOUCH_OP_QA FAIL src_null\n");
+        std::fflush(stderr);
+        return 1;
+    }
+
+    int checks = 0, marks = 0;
+    QStringList fails;
+    auto chk = [&](bool ok, const char* what) {
+        ++checks;
+        if (ok) ++marks; else fails << QString::fromLatin1(what);
+    };
+
+    // ---------- 0) identity 契约：空参必须逐位等同原图（守恒，非"输出非空"） ----------
+    // isEmpty() 短路在 apply() 首行，若短路失效会静默重算并引入舍入偏差。
+    {
+        const RetouchParams id;
+        const QImage idOut = RetouchEngine::apply(src, id);
+        bool same = (idOut.size() == src.size());
+        if (same) {
+            for (int y = 0; y < src.height() && same; ++y) {
+                const QRgb* a = reinterpret_cast<const QRgb*>(src.constScanLine(y));
+                const QRgb* b = reinterpret_cast<const QRgb*>(idOut.constScanLine(y));
+                for (int x = 0; x < src.width(); ++x) {
+                    if (a[x] != b[x]) { same = false; break; }
+                }
+            }
+        }
+        chk(same, "identity_bit_identical");
+    }
+
+    // ---------- 逐算子方向断言 ----------
+    // 阈值 = tools/retouch_probe.cpp 实测 delta 取安全余量（见各注释）。
+    // 反例注入（broken）：把各算子的参数**清零** → apply() 走 isEmpty 短路 → 输出恒等，
+    // 精确模拟"滑杆拖了像素没动"这一最常见真实缺陷形态。
+    // **期望值不随 broken 切换**（铁律 22）：反例靠上述断言真实变红，而非改阈值放水。
+    // 各算子必须**单独施参**——单算子方向反了常被另一算子掩盖（实测 highlights 反向时
+    // 被 exposure 掩盖成"整体正常"，见 CHANGELOG 2.24.0）。
+
+    // 曝光：+0.5 → 平均亮度升（实测 +99.3），-0.5 → 降（实测 -66.2）
+    {
+        RetouchParams p; p.exposure = broken ? 0.0 : 0.5;
+        const RtOpMetrics m = rtQaMeasure(src, RetouchEngine::apply(src, p));
+        chk(m.luma > 20.0, "exposure_pos_brightens");
+    }
+    {
+        RetouchParams p; p.exposure = broken ? 0.0 : -0.5;
+        const RtOpMetrics m = rtQaMeasure(src, RetouchEngine::apply(src, p));
+        chk(m.luma < -20.0, "exposure_neg_darkens");
+    }
+    // 亮度：+0.5 → 升（实测 +29.3），-0.5 → 降（实测 -30.0）
+    {
+        RetouchParams p; p.brightness = broken ? 0.0 : 0.5;
+        const RtOpMetrics m = rtQaMeasure(src, RetouchEngine::apply(src, p));
+        chk(m.luma > 10.0, "brightness_pos_brightens");
+    }
+    {
+        RetouchParams p; p.brightness = broken ? 0.0 : -0.5;
+        const RtOpMetrics m = rtQaMeasure(src, RetouchEngine::apply(src, p));
+        chk(m.luma < -10.0, "brightness_neg_darkens");
+    }
+    // 对比：+0.5 → 亮度标准差升（实测 +2.65），-0.5 → 降（实测 -14.7）
+    {
+        RetouchParams p; p.contrast = broken ? 0.0 : 0.5;
+        const RtOpMetrics m = rtQaMeasure(src, RetouchEngine::apply(src, p));
+        chk(m.stdL > 1.0, "contrast_pos_widens_spread");
+    }
+    {
+        RetouchParams p; p.contrast = broken ? 0.0 : -0.5;
+        const RtOpMetrics m = rtQaMeasure(src, RetouchEngine::apply(src, p));
+        chk(m.stdL < -3.0, "contrast_neg_narrows_spread");
+    }
+    // 清晰（clarity）：只看局部梯度能量，均值几乎不动（实测 +1.96 / -1.32）
+    {
+        RetouchParams p; p.clarity = broken ? 0.0 : 0.5;
+        const RtOpMetrics m = rtQaMeasure(src, RetouchEngine::apply(src, p));
+        chk(m.local > 0.5, "clarity_pos_raises_local_contrast");
+    }
+    {
+        RetouchParams p; p.clarity = broken ? 0.0 : -0.5;
+        const RtOpMetrics m = rtQaMeasure(src, RetouchEngine::apply(src, p));
+        chk(m.local < -0.5, "clarity_neg_lowers_local_contrast");
+    }
+    // 自然饱和（vibrance）：+0.6 → 饱和升（实测 +0.0055），-0.6 → 降（实测 -0.0055）
+    {
+        RetouchParams p; p.vibrance = broken ? 0.0 : 0.6;
+        const RtOpMetrics m = rtQaMeasure(src, RetouchEngine::apply(src, p));
+        chk(m.sat > 0.002, "vibrance_pos_raises_sat");
+    }
+    {
+        RetouchParams p; p.vibrance = broken ? 0.0 : -0.6;
+        const RtOpMetrics m = rtQaMeasure(src, RetouchEngine::apply(src, p));
+        chk(m.sat < -0.002, "vibrance_neg_lowers_sat");
+    }
+    // 饱和：+0.6 → 升（实测 +0.0147）；-1.0 → 全灰，实测饱和应≈0
+    {
+        RetouchParams p; p.saturation = broken ? 0.0 : 0.6;
+        const RtOpMetrics m = rtQaMeasure(src, RetouchEngine::apply(src, p));
+        chk(m.sat > 0.005, "saturation_pos_raises_sat");
+    }
+    {
+        RetouchParams p; p.saturation = broken ? 0.0 : -1.0;
+        const QImage out = RetouchEngine::apply(src, p);
+        const double satAbs = rtQaMeanSat(out);      // 绝对值：-1 应≈0（纯灰）
+        chk(satAbs < 0.005, "saturation_neg1_goes_gray");
+    }
+    // 色温：+0.8 → R 升 B 降（实测 dR=+191984 dB=-189792，G 不变=0）
+    {
+        RetouchParams p; p.temp = broken ? 0.0 : 0.8;
+        const RtOpMetrics m = rtQaMeasure(src, RetouchEngine::apply(src, p));
+        chk(m.rgb[0] > 1000 && m.rgb[2] < -1000, "temp_pos_warm_rb");
+    }
+    {
+        RetouchParams p; p.temp = broken ? 0.0 : -0.8;
+        const RtOpMetrics m = rtQaMeasure(src, RetouchEngine::apply(src, p));
+        chk(m.rgb[0] < -1000 && m.rgb[2] > 1000, "temp_neg_cool_rb");
+    }
+    // 色调：+0.8 → R/B 升 G 降（品红，实测 dR=+128896 dG=-126560）；-0.8 → 反向（绿）
+    {
+        RetouchParams p; p.tint = broken ? 0.0 : 0.8;
+        const RtOpMetrics m = rtQaMeasure(src, RetouchEngine::apply(src, p));
+        chk(m.rgb[0] > 1000 && m.rgb[1] < -1000 && m.rgb[2] > 1000, "tint_pos_magenta");
+    }
+    {
+        RetouchParams p; p.tint = broken ? 0.0 : -0.8;
+        const RtOpMetrics m = rtQaMeasure(src, RetouchEngine::apply(src, p));
+        chk(m.rgb[0] < -1000 && m.rgb[1] > 1000 && m.rgb[2] < -1000, "tint_neg_green");
+    }
+    // 锐化（sharpen）：局部梯度能量升（实测 +5.20）；整体亮度基本不动（实测 -0.08）
+    {
+        RetouchParams p; p.sharpen = broken ? 0.0 : 0.8;
+        const RtOpMetrics m = rtQaMeasure(src, RetouchEngine::apply(src, p));
+        chk(m.local > 1.0, "sharpen_raises_local_contrast");
+    }
+
+    // ---------- 空间分布断言（隔离"只压高光 / 只提阴影 / 只加暗角"） ----------
+    // 高光算子语义裁定：UI 滑杆标签「高光」范围 [-1,1]，用户拖右 = 提亮高光
+    // （与 12 算子中其余 11 个的「正值=增强同名效果」约定一致）。故 +0.8 必须提亮亮块、
+    // 且**不得改动暗块**（cross-contamination 断言，防止"压暗块"冒充"提亮块"）。
+    {
+        RetouchParams p; p.highlights = broken ? 0.0 : 0.8;
+        const QImage out = RetouchEngine::apply(src, p);
+        const int brightSrc = qRed(src.pixel(100, 25));    // 亮块 (225)
+        const int darkSrc   = qRed(src.pixel(25, 70));     // 暗块 (38)
+        const int brightOut = qRed(out.pixel(100, 25));
+        const int darkOut   = qRed(out.pixel(25, 70));
+        chk(brightOut > brightSrc, "highlights_pos_brightens_bright_block");
+        chk(darkOut == darkSrc, "highlights_pos_spares_dark_block");
+    }
+    {
+        RetouchParams p; p.highlights = broken ? 0.0 : -0.8;
+        const QImage out = RetouchEngine::apply(src, p);
+        chk(qRed(out.pixel(100, 25)) < qRed(src.pixel(100, 25)), "highlights_neg_darkens_bright_block");
+    }
+    // 阴影：+0.8 → 提亮暗块，且不改动亮块（实测暗块 38→181）
+    {
+        RetouchParams p; p.shadows = broken ? 0.0 : 0.8;
+        const QImage out = RetouchEngine::apply(src, p);
+        chk(qRed(out.pixel(25, 70)) > qRed(src.pixel(25, 70)), "shadows_pos_brightens_dark_block");
+        chk(qRed(out.pixel(100, 25)) == qRed(src.pixel(100, 25)), "shadows_pos_spares_bright_block");
+    }
+    {
+        RetouchParams p; p.shadows = broken ? 0.0 : -0.8;
+        const QImage out = RetouchEngine::apply(src, p);
+        chk(qRed(out.pixel(25, 70)) < qRed(src.pixel(25, 70)), "shadows_neg_darkens_dark_block");
+    }
+    // 暗角：+0.8 → 四角变暗、中心基本不变（实测 corner 128→67，center 200→198）
+    {
+        RetouchParams p; p.vignette = broken ? 0.0 : 0.8;
+        const QImage out = RetouchEngine::apply(src, p);
+        const int cx = out.width() / 2, cy = out.height() / 2;
+        chk(qRed(out.pixel(1, 1)) < qRed(src.pixel(1, 1)), "vignette_darkens_corner");
+        chk(std::abs(qRed(out.pixel(cx, cy)) - qRed(src.pixel(cx, cy))) <= 6,
+            "vignette_spares_center");
+    }
+
+    // ---------- recommend() 语义一致性：芯片文案「压高光」必须真压 ----------
+    // 取证发现（已实测）：原实现对偏亮图给 highlights -= 0.30，而引擎
+    // t = -p.highlights*(L-0.5)*2 使**负值=提亮**，与文案相反；整体亮度被
+    // exposure=-0.10 掩盖成"看起来正常"，单算子隔离才暴露。此断言锁定文案与像素一致。
+    {
+        QImage bright(64, 48, QImage::Format_RGB32);
+        bright.fill(qRgb(215, 212, 205));                  // avgL≈0.83 > 0.62 → 触发「压高光」
+        const RetouchSuggest s = RetouchEngine::recommend(bright);
+        const bool hasChip = s.chips.join(QLatin1Char('|')).contains(QStringLiteral("压高光"));
+        // 只隔离 highlights 分量：它必须把亮块压暗
+        RetouchParams only; only.highlights = s.params.highlights;
+        const QImage out = RetouchEngine::apply(bright, only);
+        const int srcPx = qRed(bright.pixel(32, 24)), outPx = qRed(out.pixel(32, 24));
+        if (hasChip) chk(outPx < srcPx, "recommend_highlights_chip_matches_pixels");
+        else         chk(true, "recommend_highlights_chip_matches_pixels");
+    }
+
+    const bool pass = (checks > 0) && (marks == checks);
+    std::fprintf(stderr,
+        "LA_RETOUCH_OP_QA %s ops=12 checks=%d marks=%d broken=%d fails=[%s]\n",
+        pass ? "PASS" : "FAIL", checks, marks, int(broken),
+        qPrintable(fails.join(QStringLiteral(","))));
     std::fflush(stderr);
     return pass ? 0 : 1;
 }
@@ -723,6 +1064,152 @@ int runScalePerf()
         std::fprintf(stderr, "LA_SCALE_PERF FAIL reason=%s photos=%d firstMs=%lld scrollMaxMs=%lld\n",
                      qPrintable(fails.join(QChar(';'))), n, firstMs, scrollMaxMs);
     }
+    std::fflush(stderr);
+    return ok ? 0 : 1;
+}
+
+// 方向 D 第三步（2.23.0）：真实库规模门禁 LA_SCALE_REAL_QA —— 第 46 门。
+// ★ 取证依据（先测再改，禁猜）：现有 LA_SCALE_SMOKE / LA_SCALE_PERF 跑的是仓库内合成
+//   fixture `_scale_fixture.db`（6425 行），而实测**其 path/thumb 指向的文件在磁盘上
+//   全不存在**（scale_lib/ 目录不存在；missing=1 行数却是 0）→ 两门只验了「内存里
+//   6425 行」，从未触碰磁盘 IO / 缩略图解码 / 混合格式这些**真实规模下才贵**的路径。
+//   真库 D:/lightalbum/library.db 实测基线（2026-10-06）：
+//     6526 行 / 6507 文件存在（99.71%）/ 6 种扩展名（jpg 5140、heic 779、png 576、
+//     jpeg 24、webp 6、tif 1）/ missing=1 共 19 且**与磁盘缺失数完全一致**。
+//   二者反差即判别器：fixture 是「声称都在、实际全不在」的说谎库。
+// 本门只断言**真库才验得了**的维度。真库属个人数据（不能进 CI、不能提交），
+// 故由 gate_matrix 的 need 声明式 SKIP（CI 优雅跳过，不自造 CHECK 警告态）。
+// 反例 LA_SCALE_REAL_QA_FORCE_BROKEN=1：把 path 全指向不存在的文件 → 复现说谎库 → 必红。
+int runScaleRealQa()
+{
+    const bool broken = !qEnvironmentVariableIsEmpty("LA_SCALE_REAL_QA_FORCE_BROKEN");
+    QString db = qEnvironmentVariable("LA_SCALE_REAL_DB");
+    if (db.isEmpty()) db = QStringLiteral("D:/lightalbum/library.db");
+
+    const int    minRows  = qEnvironmentVariable("LA_SCALE_REAL_MIN",    QStringLiteral("2000")).toInt();
+    const double minExist = qEnvironmentVariable("LA_SCALE_REAL_EXIST",  QStringLiteral("0.80")).toDouble();
+    const double minMiss  = qEnvironmentVariable("LA_SCALE_REAL_MISS",   QStringLiteral("0.90")).toDouble();
+    const double minThumb = qEnvironmentVariable("LA_SCALE_REAL_THUMB",  QStringLiteral("0.90")).toDouble();
+    const int    minExts  = qEnvironmentVariable("LA_SCALE_REAL_EXTS",   QStringLiteral("2")).toInt();
+    const int    samples  = qEnvironmentVariable("LA_SCALE_REAL_SAMPLES",QStringLiteral("24")).toInt();
+    // 缩略图解码预算：实测 24 张真实缩略图（27-32KB）亚秒级；给 20s 是 20 倍余量，
+    // 属于"卡住/病态"级别的兜底，不是会随机器负载抖动的紧预算。
+    const qint64 decodeBudgetMs = qEnvironmentVariable("LA_SCALE_REAL_DECODE_MS", QStringLiteral("20000")).toLongLong();
+    const qint64 firstBudgetMs  = qEnvironmentVariable("LA_SCALE_REAL_FIRST_MS",  QStringLiteral("15000")).toLongLong();
+
+    QString err;
+    Library lib;
+    if (!lib.open(db, &err)) {
+        std::fprintf(stderr, "LA_SCALE_REAL_QA FAIL open=%s (%s)\n",
+                     qPrintable(db), qPrintable(err));
+        std::fflush(stderr);
+        return 2;
+    }
+    const auto& phs = lib.photos();
+    const int n = int(phs.size());
+
+    // 缩略图目录：图库网格真实读取的就是它（ThumbCache L1/L2），不是原图。
+    const QString thumbsDir = qEnvironmentVariable("LA_THUMBS", QStringLiteral("D:/lightalbum/thumbs"));
+
+    // 反例：把 path 与 thumbFile 全指向不存在的文件 —— 精确复现 fixture
+    //「声称存在、磁盘没有」的形态；存在率 / missing 一致性 / 缩略图覆盖率须同时命中。
+    QVector<Photo> view = phs;
+    if (broken) {
+        const QString bogus = QDir::temp().filePath(QStringLiteral("la_scale_real_broken"));
+        QDir().mkpath(bogus);
+        for (int i = 0; i < view.size(); ++i) {
+            view[i].path      = bogus + QStringLiteral("/not_exists_%1.jpg").arg(i);
+            view[i].thumbFile = QStringLiteral("not_exists_thumb_%1.jpg").arg(i);
+        }
+    }
+
+    // 存在率 / missing 一致性 / 格式多样性 / 缩略图覆盖率（fixture 门走不到真实分支）
+    int exist = 0, missFlag = 0, lie = 0, thumbOk = 0;
+    QSet<QString> exts;
+    for (Photo& p : view) {
+        const bool e = !p.path.isEmpty() && QFileInfo::exists(p.path);
+        if (e) ++exist;
+        const QString ext = QFileInfo(p.path).suffix().toLower();
+        if (!ext.isEmpty()) exts.insert(ext);
+        if (p.missing) ++missFlag;
+        else if (!e) ++lie;                 // 声称存在、实际不在 —— "说谎"行
+        if (!p.thumbFile.isEmpty() &&
+            QFileInfo::exists(QDir(thumbsDir).filePath(p.thumbFile))) ++thumbOk;
+    }
+    const double existRate = n ? double(exist) / n : 0.0;
+    const double thumbRate = n ? double(thumbOk) / n : 0.0;
+    const int    claimExist = n - missFlag;      // 库声称存在的行数
+    const double missRate = claimExist ? double(claimExist - lie) / claimExist : 0.0;
+
+    // 真实规模图库首屏（EditorialView 窗口化，6526 行真实数据）
+    int ctrls = -1;
+    qint64 firstMs = -1;
+    {
+        const qint64 t0 = QDateTime::currentMSecsSinceEpoch();
+        GalleryPage page(&view, QString(), nullptr);
+        page.setHidePrivate(false);
+        page.resize(1200, 800);
+        page.show();
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 400);
+        ctrls = page.findChildren<QWidget*>().size();
+        firstMs = QDateTime::currentMSecsSinceEpoch() - t0;
+    }
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+
+    // 真实缩略图解码抽样（真 IO —— fixture 门永远走不到这里）。
+    // ★ 刻意**不解码原图**：实测 24 张真实原图（12MP JPEG + 大尺寸 HEIC）耗时 90s 且波动极大，
+    //   属「断言墙钟预算」型 flaky（铁律：墙钟预算门即便便宜也不进门禁）。
+    //   图库网格真实读取的是**缩略图**（ThumbCache L1/L2，实测 27-32KB），
+    //   解码快、代表性强、且不受用户原图尺寸波动影响。
+    int decGood = 0, decTried = 0;
+    qint64 decodeMs = 0;
+    QMap<QString, int> extGood, extTried;
+    {
+        const qint64 t0 = QDateTime::currentMSecsSinceEpoch();
+        const int step = qMax(1, n / qMax(1, samples));
+        for (int i = 0; i < n && decTried < samples; i += step) {
+            if (view[i].thumbFile.isEmpty()) continue;
+            const QString tp = QDir(thumbsDir).filePath(view[i].thumbFile);
+            if (!QFileInfo::exists(tp)) continue;
+            QImageReader rd(tp);
+            const QImage im = rd.read();
+            ++decTried;
+            const bool good = !im.isNull();
+            if (good) ++decGood;
+            const QString ext = QFileInfo(view[i].path).suffix().toLower();
+            extTried[ext] = extTried.value(ext, 0) + 1;
+            if (good) extGood[ext] = extGood.value(ext, 0) + 1;
+        }
+        decodeMs = QDateTime::currentMSecsSinceEpoch() - t0;
+    }
+
+    bool ok = true; QStringList fails;
+    if (n < minRows)    { ok = false; fails << QStringLiteral("photos=%1<min=%2").arg(n).arg(minRows); }
+    if (existRate < minExist) { ok = false; fails << QStringLiteral("existRate=%1<min=%2").arg(existRate, 0, 'f', 4).arg(minExist, 0, 'f', 2); }
+    if (missRate  < minMiss)  { ok = false; fails << QStringLiteral("missConsistency=%1<min=%2").arg(missRate, 0, 'f', 4).arg(minMiss, 0, 'f', 2); }
+    if (exts.size() < minExts){ ok = false; fails << QStringLiteral("exts=%1<min=%2").arg(exts.size()).arg(minExts); }
+    if (thumbRate < minThumb) { ok = false; fails << QStringLiteral("thumbRate=%1<min=%2").arg(thumbRate, 0, 'f', 4).arg(minThumb, 0, 'f', 2); }
+    if (ctrls <= 0)     { ok = false; fails << QStringLiteral("galleryCtrls=%1").arg(ctrls); }
+    if (firstMs < 0 || firstMs > firstBudgetMs) { ok = false; fails << QStringLiteral("firstMs=%1>budget=%2").arg(firstMs).arg(firstBudgetMs); }
+    if (decTried < 1 || decGood < 1) { ok = false; fails << QStringLiteral("decodeGood=%1/tried=%2").arg(decGood).arg(decTried); }
+    if (decodeMs > decodeBudgetMs)   { ok = false; fails << QStringLiteral("decodeMs=%1>budget=%2").arg(decodeMs).arg(decodeBudgetMs); }
+
+    QStringList extDetail;
+    for (auto it = extTried.constBegin(); it != extTried.constEnd(); ++it)
+        extDetail << QStringLiteral("%1=%2/%3").arg(it.key())
+                     .arg(extGood.value(it.key(), 0)).arg(it.value());
+
+    if (ok) {
+        std::fprintf(stderr,
+            "LA_SCALE_REAL_QA PASS photos=%d exist=%d(%.4f) exts=%d missConsistency=%.4f "
+            "thumb=%d(%.4f) galleryCtrls=%d firstMs=%lld decode=%d/%d decodeMs=%lld db=%s\n",
+            n, exist, existRate, exts.size(), missRate, thumbOk, thumbRate, ctrls, firstMs,
+            decGood, decTried, decodeMs, qPrintable(QFileInfo(db).fileName()));
+    } else {
+        std::fprintf(stderr, "LA_SCALE_REAL_QA FAIL reason=%s photos=%d exts=%d\n",
+                     qPrintable(fails.join(QChar(';'))), n, exts.size());
+    }
+    std::fprintf(stderr, "  decodeByExt %s\n", qPrintable(extDetail.join(QChar(' '))));
     std::fflush(stderr);
     return ok ? 0 : 1;
 }
@@ -2789,6 +3276,10 @@ int main(int argc, char *argv[])
             {"checkedChip #0c100d on Gold",QColor(0x0c,0x10,0x0d), Dark::Gold, 4.5},
             {"hint #8da996 on Bg",         QColor(0x8d,0xa9,0x96), Dark::Bg,     4.5},
             {"lightbox meta #9db2a5 on bottom", QColor(0x9d,0xb2,0xa5), QColor(0x04,0x06,0x04), 4.5},
+            // 缺陷②回归：导入菜单逐实例暗色 QSS 配色必须过 WCAG（防止白底白字回潮）
+            {"importMenu item #d9e4dc on #0e130f",   QColor(0xd9,0xe4,0xdc), QColor(0x0e,0x13,0x0f), 4.5},
+            {"importMenu selected #4fc08a on #1d2a22",QColor(0x4f,0xc0,0x8a), QColor(0x1d,0x2a,0x22), 4.5},
+            {"importMenu disabled #8da996 on #0e130f",QColor(0x8d,0xa9,0x96), QColor(0x0e,0x13,0x0f), 4.5},
         };
         if (!qEnvironmentVariableIsEmpty("LA_A11Y_CONTRAST_QA_FORCE_BROKEN"))
             pairs.append({"BROKEN Line on Inset", Dark::Line, Dark::Inset, 4.5});
@@ -2904,6 +3395,10 @@ int main(int argc, char *argv[])
     if (qEnvironmentVariableIsSet("LA_RETOUCH_UNDO_QA"))
         return runRetouchUndoQa();
 
+    // 方向 B 深化：12 算子逐项方向像素断言（每个算子单独施参，防互相掩盖）
+    if (qEnvironmentVariableIsSet("LA_RETOUCH_OP_QA"))
+        return runRetouchOpQa();
+
     // 方向 C 第一步：相册内搜索过滤断言（GalleryModel 直接驱动）
     if (qEnvironmentVariableIsSet("LA_GALLERY_SEARCH_QA"))
         return runGallerySearchQa();
@@ -2923,6 +3418,8 @@ int main(int argc, char *argv[])
     // 方向 D 第二步：规模化流畅性基线门禁（量化首屏/滚动，守护回归）
     if (qEnvironmentVariableIsSet("LA_SCALE_PERF"))
         return runScalePerf();
+    if (qEnvironmentVariableIsSet("LA_SCALE_REAL_QA"))
+        return runScaleRealQa();
 
     // 方向 D 第四步：缩略图多级缓存门禁（两级派生 / 字节预算 / 负缓存 / 跨级回落）
     if (qEnvironmentVariableIsSet("LA_THUMB_CACHE_QA"))
@@ -3354,10 +3851,10 @@ int main(int argc, char *argv[])
         page.resize(1200, 820);
         page.show();
         QCoreApplication::processEvents(QEventLoop::AllEvents, 400);
-        page.qaShootE(p);
-        std::fprintf(stderr, "LA_GALLERY_E_QA_DONE\n");
+        const int rcE = page.qaShootE(p);
+        std::fprintf(stderr, "LA_GALLERY_E_QA_DONE rc=%d\n", rcE);
         std::fflush(stderr);
-        return 0;
+        return rcE;
     }
 
     // P27 图库铺满验证：LA_GALLERY_FILL_QA=<png> 时取真库首张存在的照片，
@@ -3367,13 +3864,21 @@ int main(int argc, char *argv[])
     if (!qEnvironmentVariableIsEmpty("LA_GALLERY_FILL_QA")) {
         const QString p = qEnvironmentVariable("LA_GALLERY_FILL_QA");
         QDir().mkpath(QFileInfo(p).absolutePath());
-        // 取真库首张磁盘上存在的照片（绕过异步 ThumbCache，直接验证绘制逻辑）
-        QString photoPath;
-        for (const Photo& ph : lib.photos()) {
-            if (QFile::exists(ph.path)) { photoPath = ph.path; break; }
-        }
+        // 取真库首张**可解码**的照片（绕过异步 ThumbCache，直接验证绘制逻辑）。
+        // ★ 修复「门禁拿格式问题背黑锅」：本门要验的是「真实照片铺满卡片、无 letterbox」，
+        // 属**绘制逻辑**；而「首张磁盘上存在的照片」可能是 HEIC 等 Qt 解不出的格式
+        // （2.22.0 已实测 HEIC decoded=NULL），门会因**与被测无关**的格式原因变红，
+        // 且成败取决于用户真库里恰好排第一的是哪张 → 天然 flaky，不可做 CI 门。
+        // 故循环到第一张真正 load 成功的；一张都解不出才判失败（不许空数据蒙混过关）。
         QPixmap pm;
-        if (!photoPath.isEmpty()) pm.load(photoPath);
+        QString photoPath;
+        int tried = 0;
+        for (const Photo& ph : lib.photos()) {
+            if (!QFile::exists(ph.path)) continue;
+            ++tried;
+            if (pm.load(ph.path)) { photoPath = ph.path; break; }
+            pm = QPixmap();
+        }
         const bool loaded = !pm.isNull();
         auto renderCard = [&](int W, int H, bool feature) -> QImage {
             QImage img(W, H, QImage::Format_RGB32);
@@ -3395,12 +3900,20 @@ int main(int argc, char *argv[])
         auto measure = [](const QImage& img, long& cardBg, long& photo, long& litext) {
             const int W = img.width(), H = img.height();
             cardBg = photo = litext = 0;
+            // ★ 容差 12 → 2（实测标定，勿凭感觉调）：原 ±12 会把**底部渐隐遮罩下的暗部照片像素**
+            // 误判成"卡片底"，实测底行取值 (29,29,22)/(27,27,21)/(25,26,22)/(23,25,21) 各不相同
+            // ——是照片而非黑边，却全部落进 (19,26,21)±12 → 假阳 3.7%/4.5%（曾把本门打红）。
+            // 卡片底是**纯色** QColor(0x13,0x1a,0x15)=(19,26,21)，故按"近纯色"判定即可：
+            // 实测暗部照片至少一通道偏离 ≥4，而真卡片底偏离 0 → 取 2 卡在中间，两侧都留余量。
+            // 检出力未被削弱：真 letterbox 是**成片纯色**带，按 1:1 计入，>2% 必红。
+            // 标定实测：tol=12→3.678%/4.497%(假阳) tol=6→1.483%/1.920% tol=2→0.082%/0.191%
+            //           tol=0→0.058%/0.160%（仅 92px 圆角抗锯齿，与卡尺寸无关的常数）
             for (int y = 0; y < H; ++y) {
                 const QRgb* row = reinterpret_cast<const QRgb*>(img.constScanLine(y));
                 for (int x = 0; x < W; ++x) {
                     const QRgb v = row[x];
                     const int r = qRed(v), g = qGreen(v), b = qBlue(v);
-                    if (qAbs(r - 19) < 12 && qAbs(g - 26) < 12 && qAbs(b - 21) < 12) ++cardBg;
+                    if (qAbs(r - 19) <= 2 && qAbs(g - 26) <= 2 && qAbs(b - 21) <= 2) ++cardBg;
                     else if (r > 200 && g > 200 && b > 190) ++litext;
                     else ++photo;
                 }
@@ -3417,9 +3930,9 @@ int main(int argc, char *argv[])
         // （photo 占比阈值不可靠：亮调照片天空/高光会被误计入 litext，故仅以 cardBg 占比判定）
         const bool ok = loaded && fCbFrac < 0.02 && sCbFrac < 0.02;
         std::fprintf(stderr,
-            "LA_GALLERY_FILL_QA loaded=%d photo=%s featCbFrac=%.4f singCbFrac=%.4f "
+            "LA_GALLERY_FILL_QA loaded=%d tried=%d photo=%s featCbFrac=%.4f singCbFrac=%.4f "
             "featPhFrac=%.4f singPhFrac=%.4f featLitext=%ld ok=%d\n",
-            int(loaded), qPrintable(photoPath), fCbFrac, sCbFrac, fPhFrac, sPhFrac, flt, int(ok));
+            int(loaded), tried, qPrintable(photoPath), fCbFrac, sCbFrac, fPhFrac, sPhFrac, flt, int(ok));
         std::fflush(stderr);
         return ok ? 0 : 5;
     }
@@ -3497,16 +4010,34 @@ int main(int argc, char *argv[])
         && qEnvironmentVariableIsEmpty("LA_RETOUCH_SMOKE")) {
         // P29-H：首页（零 chrome 纯沉浸）应隐藏窗口控制簇——同步打印，避开 600ms 自退定时器可能的挂起
         const bool winCtlHiddenOnHome = !win.isWinCtlVisible();
-        std::fprintf(stderr, "LA_SMOKE_WINCTL home=%d\n", int(winCtlHiddenOnHome));
+        // 缺陷②回归：导入下拉菜单是独立顶层弹窗，不继承应用暗色 QSS → 曾经白底白字。
+        // 断言它确实带了暗色底（#0e130f）；全工程仅此一个 QMenu，故命中即导入菜单。
+        int menuTotal = 0, menuDark = 0;
+        for (QMenu* m : win.findChildren<QMenu*>()) {
+            ++menuTotal;
+            if (m->styleSheet().contains(QStringLiteral("0e130f"))) ++menuDark;
+        }
+        const bool menuStyled = (menuTotal > 0) && (menuDark == menuTotal);
+        std::fprintf(stderr, "LA_SMOKE_WINCTL home=%d menuStyled=%d(%d/%d)\n",
+                     int(winCtlHiddenOnHome), int(menuStyled), menuDark, menuTotal);
         std::fflush(stderr);
-        QTimer::singleShot(600, &app, [&lib, &win]{
+        const int smokeRc = menuStyled ? 0 : 1;   // 菜单回退浅色 → 门红
+        QTimer::singleShot(600, &app, [&lib, &win, smokeRc]{
             const Kpi& k = lib.kpi();
             std::fprintf(stderr, "LA_P1_SMOKE_OK photos=%d years=%d provs=%d span=%d-%d\n",
                          k.total, k.yearCount, k.provCount, k.minYear, k.maxYear);
             std::fflush(stderr);
-            QaExit::requestExit(0);   // 2.7.0：收敛到自退契约
+            QaExit::requestExit(smokeRc);   // 2.7.0：收敛到自退契约
         });
     }
+
+    // 缺陷②说明：本想再加一道像素门（弹出菜单 grab 后量「暗底+亮字」），但**实测不可行**——
+    // QMenu 是原生弹窗，offscreen 平台既不支持其光栅化，`popup()`/`show()` 后 `grab()` 都会挂死
+    // （watchdog 20s no-exit-request，popup 与 show 两路皆试）。故缺陷②的门禁改为两道**可靠**断言：
+    //   ① LA_SMOKE_WINCTL：菜单确实带暗色 QSS（字符串断言，menuStyled=1/1）
+    //   ② LA_A11Y_CONTRAST_QA：菜单 3 组配色过 WCAG 4.5:1（pairs 15→18）
+    // 「QSS 是否真能盖过 Windows 原生浅色菜单」这一残余问题 offscreen 无法回答，
+    // 只能在真实屏幕上目视确认——修复本身复用已上线的 clusterDimBox_ 暗色弹层色系，路径与之一致。
     // P25 对决 QA 由 CullPage 内 QTimer::singleShot(600) 在事件循环内完成并 quit
     return app.exec();
 }

@@ -191,6 +191,12 @@ QImage RetouchEngine::apply(const QImage& src, const RetouchParams& p)
     QImage base = img.copy();
 
     // ---- Pass C：高光 / 阴影（S 曲线，保中间调） ----
+    // 符号约定（全 12 算子统一「正值 = 增强同名效果」）：UI 滑杆标签「高光」范围 [-1,1]，
+    // 用户拖右期望**高光变亮**，故 t = +p.highlights*(L-0.5)*2（亮区位移为正=提亮）。
+    // 【2.24.0 修复】原为 t = -p.highlights*(...)，是 12 算子里唯一的反向约定，导致：
+    //   ① 拖「高光」滑杆右移反而压暗高光，与标签直觉相反；
+    //   ② recommend() 对偏亮图写 p.highlights -= 0.30（意图「压高光」）实际提亮 +42.90，
+    //      且被同批的 exposure -= 0.10 掩盖成整体 -16.23 看似正常，单算子隔离才暴露。
     if (p.highlights != 0 || p.shadows != 0) {
         for (int y = 0; y < h; ++y) {
             QRgb* d = reinterpret_cast<QRgb*>(img.scanLine(y));
@@ -198,8 +204,8 @@ QImage RetouchEngine::apply(const QImage& src, const RetouchParams& p)
                 double r = qRed(d[x]), g = qGreen(d[x]), b = qBlue(d[x]);
                 const double L = luma(r, g, b) / 255.0;
                 double t = 0;                                  // 每通道位移（0..1 域）
-                if (L > 0.5) t = -p.highlights * (L - 0.5) * 2.0;   // 压高光
-                else          t =  p.shadows    * (0.5 - L) * 2.0;   // 提阴影
+                if (L > 0.5) t =  p.highlights * (L - 0.5) * 2.0;   // 高光：正=提亮
+                else          t =  p.shadows    * (0.5 - L) * 2.0;   // 阴影：正=提亮
                 r = r + t * 255.0; g = g + t * 255.0; b = b + t * 255.0;
                 d[x] = qRgb(clamp255(int(r + 0.5)), clamp255(int(g + 0.5)), clamp255(int(b + 0.5)));
             }

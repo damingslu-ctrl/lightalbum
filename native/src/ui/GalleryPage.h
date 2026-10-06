@@ -22,7 +22,7 @@ public:
     void applyCategoryFilter(const QString& cat);                        // P16 分类 chips
     void setHidePrivate(bool hide);                                      // P16 隐私门（重建 chips 计数）
     void refresh();                                                      // 灯箱改评分/私密后刷新
-    void qaShootE(const QString& png);                                   // P23 E 像素/几何自测（offscreen）
+    int  qaShootE(const QString& png);   // P23 E 像素/几何 + 缺陷① reflow 自测（offscreen），返回 0=绿
     QScrollBar* qaScrollBar() const;   // 方向 D2：offscreen 性能门访问 EditorialView 滚动条
     bool hidePrivate() const { return hidePrivate_; }   // D5b：批量私密后据此重跑隐私过滤
     // ---- D5b QA 入口（批量多选门用；等价于用户 Ctrl/Shift 点击）----

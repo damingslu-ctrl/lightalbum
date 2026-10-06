@@ -603,8 +603,11 @@ void GalleryPage::prefetch()
 
 // P23 E 杂志拼贴 像素/几何自测（offscreen）：合成照片驱动 EditorialView，
 // 验证 feature 首图占 2×2 且卡片真实绘制（颜色校验铁律：必须实测不许猜）。
-void GalleryPage::qaShootE(const QString& png)
+// 缺陷①回归（2.22.0 修复）：改视口宽度迫使列数变化后，断言已绑定瓦片几何随之 reflow。
+int GalleryPage::qaShootE(const QString& png)
 {
+    // 反例注入：FORCE_BROKEN 时 updateWindow 跳过几何回填（复现修复前空白缺陷）
+    EditorialView::qaSetNoReflow(!qEnvironmentVariableIsEmpty("LA_GALLERY_E_QA_FORCE_BROKEN"));
     view_->relayout();                       // 强制重排（offscreen 下确保几何就位）
     QCoreApplication::processEvents(QEventLoop::AllEvents, 200);
 
@@ -636,12 +639,33 @@ void GalleryPage::qaShootE(const QString& png)
     const QString s0 = model_.data(model_.index(0, 0), GalleryModel::SubRole).toString();
     std::fprintf(stderr, "  t0=[%s] s0=[%s]\n", qPrintable(t0), qPrintable(s0));
     img.save(png);
+
+    // ---- 缺陷①回归：改视口宽度迫使布局重算，断言已绑定瓦片几何随之 reflow ----
+    // 复现路径与用户现场一致：小视口期绑定的迷你瓦片，在窗口放大后若不回填几何，
+    // 就会挤在左上角、宽瓦片溢出右缘、中间留大片空白。
+    // ★ 必须**直接改视图宽度**并**同步** relayout()，不能改 this->resize() 等父布局传播：
+    //   首版这么写，独立跑 cols 5→3 绿，但在 qa_runner 里父布局未把新宽度传给视图，
+    //   列数原地不动 → 门误红（自造 flaky，违反「门禁必可靠」）。宽度是唯一真源，直接动它。
+    const int w0 = view_->viewport()->width();
+    const int newW = (w0 > 1000) ? (w0 - 300) : (w0 + 300);
+    const int wBefore = view_->featureGeometry().width();
+    view_->resize(newW, view_->height());
+    view_->relayout();                                  // 同步重排，此刻宽度必为 newW
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 200);
+    const int wAfter = view_->featureGeometry().width();
+    const int reflow  = view_->qaReflowCheck();
+    // 非空心保证：feature 宽必须真的变了（几何事实），否则本门在"宽度没变"上空转
+    const bool reflowOK = (reflow == 0) && (wAfter != wBefore);
+
+    const bool ok = featureOK && reflowOK;
     std::fprintf(stderr,
-        "LA_GALLERY_E_QA n=%d cols=%d featureW=%d featureH=%d singleW=%d singleH=%d "
-        "cardBg=%ld lightTxt=%ld featureOK=%d png=%s\n",
-        n, cols, fg.width(), fg.height(), singleW, singleH, cardBg, lightTxt,
-        int(featureOK), qPrintable(png));
+        "LA_GALLERY_E_QA %s n=%d cols=%d->%d featW=%d->%d singleW=%d singleH=%d "
+        "cardBg=%ld lightTxt=%ld featureOK=%d reflowOK=%d png=%s\n",
+        ok ? "PASS" : "FAIL",
+        n, cols, view_->columnCount(), wBefore, wAfter, singleW, singleH, cardBg, lightTxt,
+        int(featureOK), int(reflowOK), qPrintable(png));
     std::fflush(stderr);
+    return ok ? 0 : 1;
 }
 
 QScrollBar* GalleryPage::qaScrollBar() const

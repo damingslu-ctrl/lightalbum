@@ -63,6 +63,13 @@ $GateTable = @(
   @{n="LA_LOG_SMOKE";       png=$false; tier="fast"; measuredMs=120},
   @{n="LA_HOME_SMOKE";      png=$false; tier="fast"; measuredMs=194},
   @{n="LA_RETOUCH_UNDO_QA"; png=$false; tier="fast"; measuredMs=71},
+  # Direction B deepening (2.24.0): per-operator direction pixel assertions for all
+  # 12 RetouchEngine operators. Pure pixel math on a 128x96 synthetic image, no UI and
+  # no library -> fast layer. Measured 142/145/146ms, well under the 350ms fast budget.
+  # Each operator is applied ALONE on purpose: a wrong sign on one operator can be
+  # masked by another (measured: recommend() gave highlights=-0.30 = +42.90 BRIGHTER
+  # yet the overall image darkened by -16.23 via exposure, so it looked fine).
+  @{n="LA_RETOUCH_OP_QA";   png=$false; tier="fast"; measuredMs=145},
   @{n="LA_GALLERY_SEARCH_QA"; png=$false; tier="fast"; measuredMs=56},
   @{n="LA_THUMB_CACHE_QA";  png=$false; tier="fast"; measuredMs=201},
   @{n="LA_GALLERY_BATCH_QA"; png=$false; tier="fast"; measuredMs=135},
@@ -96,6 +103,17 @@ $GateTable = @(
   @{n="LA_LUMEN_SMOKE";     png=$false; timeoutSec=90; measuredMs=66585},
   @{n="LA_AGENT_SMOKE";     png=$false; measuredMs=1000},
   @{n="LA_SCAN_SMOKE";      png=$false; need=@("LA_SCAN_ROOT","LA_SCAN_DB"); measuredMs=0},
+  # D scale (direction D step 3): REAL library scale gate. LA_SCALE_SMOKE/PERF run
+  # the committed _scale_fixture.db (6425 rows) whose photo files DO NOT exist on
+  # disk, so they only exercise "6425 rows in memory" and never touch disk IO,
+  # thumbnail decode or mixed formats. This gate points at the real library and
+  # asserts only what a real library can: file existence rate, missing-flag
+  # consistency, format diversity, grid first paint and real decode sampling.
+  # need=LA_SCALE_REAL_DB: the real library is personal data (cannot be committed
+  # or shipped to CI), so CI SKIPs cleanly instead of scoring a CHECK warning.
+  # Counter-example LA_SCALE_REAL_QA_FORCE_BROKEN=1 rewrites every path to a
+  # nonexistent file (reproducing the lying fixture) and must go RED.
+  @{n="LA_SCALE_REAL_QA"; png=$false; need=@("LA_SCALE_REAL_DB"); measuredMs=734},
   @{n="LA_EXIT_QA";         png=$false; measuredMs=5700},
   @{n="LA_RW_SMOKE";        png=$false; measuredMs=1017},
   @{n="LA_CULL_SMOKE";      png=$false; measuredMs=3210},

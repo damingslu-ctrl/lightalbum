@@ -29,6 +29,9 @@ public:
     // 2.22.0 骨架屏 QA：设定/读取当前相位与减动效旗标（门禁据此复现不同帧）
     static void   qaSetSkeletonPhase(double phase, bool reduceMotion);
     static double qaSkeletonPhase();
+    // 缺陷①回归：反例注入（模拟修复前 updateWindow 不重绑几何）+ 几何一致性断言
+    static void   qaSetNoReflow(bool v);
+    int           qaReflowCheck() const;
 
 signals:
     void photoActivated(const QString& path);   // 点击卡片 → 沉浸式灯箱
