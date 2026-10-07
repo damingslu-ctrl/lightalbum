@@ -3,6 +3,36 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.27.0] - 2026-10-07
+
+### 新增 - 方向 A·地图「国家层深化」三件套
+
+- **① `footYear` 贯通国家层**：`setFootYearFilter` 在「已进入国层」时（
+  `countryFeature_ >= 0` 且 `gpsPts_/gpsPaths_` 下标对齐）实时重算 `countryPts_/
+  countryPaths_/countryDates_` 快照并 `invalidateViewCache()`。国层内切换年份 /
+  切换图库，点击命中集与相册载荷不再滞留进入国层那一刻的年份。抽出 `recomputeCountryPts()`
+  承载原 `enterCountry` 的几何 pip 过滤（外环 pip + 湖泊 inHole 排除 + <3 单位离岸容差），
+  并同步快照 `countryDates_`。
+- **② 国层相册按年分桶聚类**：新增 `countryAlbumGroups()`，按 `countryDates_` 的年份降序
+  分桶（0 置底），供 `onCountryPicked` 展示与相册聚类门禁断言。
+- **③ 热力分档临界点可调**：`heatRamp` 改走 `heatTierOf(dens)`（默认 `heatTierLo_=3` /
+  `heatTierHi_=8`）；新增 `setHeatTiers(lo, hi)`（`qBound` 钳制后 `buildWorldPixmap()` +
+  `invalidateViewCache()` 双烘焙），UI 灵敏度滑块可直接调档。
+
+### 测试 - 方向 A·国家层深化门禁簇（2.27.0 新增）
+
+- `LA_MAP_COUNTRY_YEAR_QA`：`enterCountry` 注入同国跨年 6 点 → 改年筛选 →
+  断言 `countryPts_` 实时收敛（全量 6 / 2024=4 / 2023=2 / 全部 6）。
+- `LA_MAP_COUNTRY_ALBUM_QA`：断言 `countryAlbumGroups()` 给出正确逐年分组（2024 单年 4 张）。
+- `LA_MAP_HEAT_TIER_QA`：默认 `dens=5 → tier1`；`setHeatTiers(2,3)` 后 `→ tier2`。
+- 三道均带 `FORCE_BROKEN` 反例（期望值不随 broken 变，铁律 22/32），反例正确转红。
+
+### 修复 - 门禁派发连通性
+
+- `main.cpp` 开场动画门控 `animOk` 排除清单补入上述三个新门禁 env（`LA_MAP_COUNTRY_YEAR_QA` /
+  `LA_MAP_COUNTRY_ALBUM_QA` / `LA_MAP_HEAT_TIER_QA`）。此前遗漏导致这三道门进入开场动画分支、
+  永不抵达派发块、被看门狗 20s 判 `no-exit-request` 误杀（铁律 11 指纹）。
+
 ## [2.26.0] - 2026-10-07
 
 ### 优化 - 方向 A·地图世界层「显示分辨率 + 1:1 blit」

@@ -9,6 +9,7 @@
 #include <QString>
 #include <QStringList>
 #include <QPointF>
+#include <QPair>
 #include <QHash>
 #include <QColor>
 #include <QPainter>
@@ -53,6 +54,8 @@ public:
     void enterRegion(const QString& id);
     void enterProvince(const QString& name);
     void enterCountry(int featureIndex);   // 无专辑国家 → 国家视图（国界轮廓 + 该国 GPS 作品）
+    void recomputeCountryPts();            // 国层快照重算（footYear 实时刷新核心）
+    QVector<QPair<int, QStringList>> countryAlbumGroups() const; // 国层相册按年分桶
     void goUp();
     Level level() const { return level_; }
     QString breadcrumb() const;
@@ -81,6 +84,8 @@ public:
     enum HeatRamp { HR_Warm = 0, HR_Jade = 1, HR_Crimson = 2 };
     void setHeatRamp(int rampId);
     int  heatRamp() const { return heatRamp_; }
+    void setHeatTiers(int lo, int hi);       // 热力分档临界点可调
+    int  heatTierOf(int dens) const;         // 当前阈值下的密度档位（0/1/2）
 
     // A 方向第二步：轨迹播放（沿线按日期依次飞过播放头）
     void startTrackPlayback();          // 起播（已在播放则重置重来）
@@ -92,6 +97,10 @@ public:
     void qaShootYear(const QString& path);
     // A 方向第四步：热力色带分级自测（三档色相各存在 + 切换后像素变化）
     void qaShootHeatRamp(const QString& path);
+    // A 国家层深化三项 QA 探针（2.27.0）：footYear 贯通 / 相册聚类 / 热力分档可调
+    void qaCountryYearFilter();
+    void qaCountryAlbum();
+    void qaHeatTier();
 
     // P16.4.2 金色航线基点（「我的位置」，经纬度，默认上海）。设置后重新烘焙世界层。
     void setHomePoint(double lon, double lat);
@@ -261,6 +270,11 @@ private:
     QVector<QDate>     gpsDates_;              // A 方向：与 gpsPts_ 逐点对齐的拍摄日期
     int                footLayer_ = FL_Dots;   // A 方向：足迹层模式（默认光点，零回归）
     int                footYearFilter_ = 0;    // A 方向第三步：按年筛选（0=全部年份）
+    int                heatTierLo_ = 3;        // 热力分档下阈值（密度≥此=中档），可调
+    int                heatTierHi_ = 8;        // 热力分档上阈值（密度≥此=高档），可调
+    bool               heatTierForceBroken_ = false; // QA 反例：setHeatTiers 失效
+    bool               countryYearForceBroken_ = false; // QA 反例：setFootYearFilter 跳过重算
+    bool               albumForceBroken_ = false;      // QA 反例：相册分组忽略年份
     int                heatRamp_ = HR_Warm;    // A 方向第四步：热力色带（默认暖橙=2.12 基线）
     int                heatRampForceTier_ = -1; // QA 反例：>=0 时强制单档（抹掉密度分级）
 
@@ -289,6 +303,7 @@ private:
     int         countryFeature_ = -1;            // 当前国家视图对应的世界要素
     QStringList countryPaths_;                   // 该国 GPS 照片路径（enterCountry 时算好）
     QVector<QPointF> countryPts_;                // 与 countryPaths_ 对应的预投影点（点击命中用）
+    QVector<QDate>  countryDates_;               // 与 countryPts_ 对齐的拍摄日期（相册按年分桶）
     QStringList gpsPaths_;                       // 与 gpsPts_ 一一对应的照片路径
     void focusGeometry(QRectF& bbox, QPointF& ctr) const;   // 爆炸焦点（省=省bbox/中心，国家=国bbox/中心）
 

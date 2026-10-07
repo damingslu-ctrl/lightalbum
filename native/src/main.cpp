@@ -4026,6 +4026,9 @@ int main(int argc, char *argv[])
         && !qEnvironmentVariableIsSet("LA_MAP_TRACK_ANIM_QA")
         && !qEnvironmentVariableIsSet("LA_MAP_YEAR_QA")
         && !qEnvironmentVariableIsSet("LA_MAP_HEAT_RAMP_QA")
+        && !qEnvironmentVariableIsSet("LA_MAP_COUNTRY_YEAR_QA")
+        && !qEnvironmentVariableIsSet("LA_MAP_COUNTRY_ALBUM_QA")
+        && !qEnvironmentVariableIsSet("LA_MAP_HEAT_TIER_QA")
         && !qEnvironmentVariableIsSet("LA_GALLERY_E_QA")
         && !qEnvironmentVariableIsSet("LA_CULL_DUEL_QA")
         && !qEnvironmentVariableIsSet("LA_GALLERY_FILL_QA")
@@ -4231,6 +4234,34 @@ int main(int argc, char *argv[])
         QDir().mkpath(QFileInfo(p).absolutePath());
         if (MapView* mv = win.mapView()) mv->qaShootHeatRamp(p);
         std::fprintf(stderr, "LA_MAP_HEAT_RAMP_QA_DONE\n");
+        std::fflush(stderr);
+        return 0;
+    }
+
+    // A 国家层深化（2.27.0）· footYear 贯通国层：注入同国跨年份点，模拟改年全链路，
+    // 断言国层 countryPts_/countryPaths_ 实时收敛到筛选年。
+    // FORCE_BROKEN 跳过 setFootYearFilter 内重算 → 快照不缩 → RED。
+    if (!qEnvironmentVariableIsEmpty("LA_MAP_COUNTRY_YEAR_QA")) {
+        if (MapView* mv = win.mapView()) mv->qaCountryYearFilter();
+        std::fprintf(stderr, "LA_MAP_COUNTRY_YEAR_QA_DONE\n");
+        std::fflush(stderr);
+        return 0;
+    }
+
+    // A 国家层深化（2.27.0）· 相册按年分桶聚类：注入跨年点 → 进入国层 → 改年筛选后，
+    // 断言 countryAlbumGroups() 给出正确逐年分组。FORCE_BROKEN 忽略年份 → RED。
+    if (!qEnvironmentVariableIsEmpty("LA_MAP_COUNTRY_ALBUM_QA")) {
+        if (MapView* mv = win.mapView()) mv->qaCountryAlbum();
+        std::fprintf(stderr, "LA_MAP_COUNTRY_ALBUM_QA_DONE\n");
+        std::fflush(stderr);
+        return 0;
+    }
+
+    // A 国家层深化（2.27.0）· 热力分档临界点可调：默认 3/8 → setHeatTiers(2,3) 后
+    // dens=5 档位由 1→2。FORCE_BROKEN 使 setHeatTiers 失效 → 档位不变 → RED。
+    if (!qEnvironmentVariableIsEmpty("LA_MAP_HEAT_TIER_QA")) {
+        if (MapView* mv = win.mapView()) mv->qaHeatTier();
+        std::fprintf(stderr, "LA_MAP_HEAT_TIER_QA_DONE\n");
         std::fflush(stderr);
         return 0;
     }

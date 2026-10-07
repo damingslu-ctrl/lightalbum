@@ -372,7 +372,14 @@ void MapView::setGpsDates(const QVector<QDate>& dates)
 // 与门禁断言；重复设置同一年不重烘焙（幂等）。
 void MapView::setFootYearFilter(int year)
 {
-    if (footYearFilter_ == year) return;
+    // A 国家层深化：国层内改年/改库必须实时刷新快照，否则点击命中集与相册载荷
+    // 停留进入国层那一刻的年份（footYear 未贯通 country 层的真实形态）。
+    if (!countryYearForceBroken_
+        && countryFeature_ >= 0 && gpsPts_.size() == gpsPaths_.size()) {
+        recomputeCountryPts();
+        invalidateViewCache();
+    }
+    if (footYearFilter_ == year) { update(); return; }
     footYearFilter_ = year;
     update();
 }
@@ -1205,6 +1212,139 @@ void MapView::qaShootHeatRamp(const QString& path)
                  cLow.red(), cMid.red(), cHigh.red());
     std::fflush(stderr);
 }
+
+// A 国家层深化（2.27.0）：footYear 贯通国层。注入同国跨年份点，模拟「改年 → gpsPts_
+// 重新注入年过滤集 → setFootYearFilter」全链路，断言国层 countryPts_/countryPaths_
+// 实时收敛到筛选年。FORCE_BROKEN 跳过 setFootYearFilter 内的重算 → 快照不缩 → RED。
+// 期望值恒为 expectKept，不随 broken 变（铁律22/32）。
+void MapView::qaCountryYearFilter()
+{
+    const bool broken = !qEnvironmentVariableIsEmpty("LA_MAP_COUNTRY_YEAR_QA_FORCE_BROKEN");
+    countryYearForceBroken_ = broken;
+    int fi = -1;
+    for (int i = 0; i < worldNames_.size(); ++i)
+        if (worldNames_[i] == QStringLiteral("India")) { fi = i; break; }
+    if (fi < 0) {
+        std::fprintf(stderr, "LA_MAP_COUNTRY_YEAR_QA name=India NOT_FOUND\n");
+        std::fflush(stderr);
+        return;
+    }
+    const QRectF& bb = featureBbox_[fi];
+    const double cx = (bb.left() + bb.right()) / 2, cy = (bb.top() + bb.bottom()) / 2;
+    const int years[6] = {2024, 2024, 2024, 2024, 2023, 2023};
+    QVector<QPointF> allPts; QStringList allPaths; QVector<QDate> allDates;
+    for (int i = 0; i < 6; ++i) {
+        allPts.append(QPointF(cx + (i - 2.5) * 0.8, cy));
+        allPaths.append(QStringLiteral("synthetic/c%1.jpg").arg(i));
+        allDates.append(QDate(years[i], 6, 1));
+    }
+    auto refilter = [&](int year) {
+        gpsPts_.clear(); gpsPaths_.clear(); gpsDates_.clear();
+        for (int i = 0; i < allPts.size(); ++i) {
+            if (year > 0 && allDates[i].year() != year) continue;
+            gpsPts_.append(allPts[i]); gpsPaths_.append(allPaths[i]); gpsDates_.append(allDates[i]);
+        }
+    };
+    refilter(0); enterCountry(fi);                 // 进入：全量 6 点
+    const int n0 = countryPts_.size();
+    refilter(2024); setFootYearFilter(2024);       // 改年：gpsPts_ 重注入 2024 → 应缩到 4
+    const int n1 = countryPts_.size();
+    const int p1 = countryPaths_.size();
+    refilter(2023); setFootYearFilter(2023);
+    const int n2 = countryPts_.size();
+    refilter(0);    setFootYearFilter(0);           // 真"全部"
+    const int nAll = countryPts_.size();
+
+    const bool ok0   = (n0 == 6);
+    const bool ok1   = (n1 == 4) && (p1 == n1);    // 2024：4 点且 paths 对齐
+    const bool ok2   = (n2 == 2);
+    const bool okAll = (nAll == 6);
+    if (!ok0 || !ok1 || !ok2 || !okAll) {
+        std::fprintf(stderr,
+            "LA_MAP_COUNTRY_YEAR_QA FAIL n0=%d n1=%d p1=%d n2=%d nAll=%d broken=%d\n",
+            n0, n1, p1, n2, nAll, int(broken));
+        std::fflush(stderr);
+        return;
+    }
+    std::fprintf(stderr,
+        "LA_MAP_COUNTRY_YEAR_QA PASS n0=%d n1=%d n2=%d nAll=%d broken=%d\n",
+        n0, n1, n2, nAll, int(broken));
+    std::fflush(stderr);
+}
+
+// A 国家层深化（2.27.0）：国层相册按年分桶聚类。注入跨年点 → 进入国层 → 改年筛选后，
+// countryAlbumGroups() 须给出正确的逐年分组（2024 单年、4 张）。
+// FORCE_BROKEN：分组忽略年份（全归一组）→ 组数/年数不符 → RED。
+void MapView::qaCountryAlbum()
+{
+    const bool broken = !qEnvironmentVariableIsEmpty("LA_MAP_COUNTRY_ALBUM_QA_FORCE_BROKEN");
+    albumForceBroken_ = broken;
+    int fi = -1;
+    for (int i = 0; i < worldNames_.size(); ++i)
+        if (worldNames_[i] == QStringLiteral("India")) { fi = i; break; }
+    if (fi < 0) {
+        std::fprintf(stderr, "LA_MAP_COUNTRY_ALBUM_QA name=India NOT_FOUND\n");
+        std::fflush(stderr);
+        return;
+    }
+    const QRectF& bb = featureBbox_[fi];
+    const double cx = (bb.left() + bb.right()) / 2, cy = (bb.top() + bb.bottom()) / 2;
+    const int years[6] = {2024, 2024, 2024, 2024, 2023, 2023};
+    QVector<QPointF> allPts; QStringList allPaths; QVector<QDate> allDates;
+    for (int i = 0; i < 6; ++i) {
+        allPts.append(QPointF(cx + (i - 2.5) * 0.8, cy));
+        allPaths.append(QStringLiteral("synthetic/a%1.jpg").arg(i));
+        allDates.append(QDate(years[i], 6, 1));
+    }
+    auto refilter = [&](int year) {
+        gpsPts_.clear(); gpsPaths_.clear(); gpsDates_.clear();
+        for (int i = 0; i < allPts.size(); ++i) {
+            if (year > 0 && allDates[i].year() != year) continue;
+            gpsPts_.append(allPts[i]); gpsPaths_.append(allPaths[i]); gpsDates_.append(allDates[i]);
+        }
+    };
+    refilter(0); enterCountry(fi);
+    refilter(2024); setFootYearFilter(2024);
+    const QVector<QPair<int, QStringList>> groups = countryAlbumGroups();
+    int totalPaths = 0, nYears = 0;
+    for (const auto& g : groups) { totalPaths += g.second.size(); if (g.first != 0) ++nYears; }
+    const bool okTotal = (totalPaths == 4);        // 2024 筛选后 4 张
+    const bool okYears = (nYears == 1) && !groups.isEmpty() && (groups.first().first == 2024);
+    if (!okTotal || !okYears) {
+        std::fprintf(stderr,
+            "LA_MAP_COUNTRY_ALBUM_QA FAIL total=%d years=%d groups=%d broken=%d\n",
+            totalPaths, nYears, groups.size(), int(broken));
+        std::fflush(stderr);
+        return;
+    }
+    std::fprintf(stderr,
+        "LA_MAP_COUNTRY_ALBUM_QA PASS total=%d years=%d broken=%d\n",
+        totalPaths, nYears, int(broken));
+    std::fflush(stderr);
+}
+
+// A 国家层深化（2.27.0）：热力分档临界点可调。默认 3/8：dens=5 → tier1；
+// setHeatTiers(2,3) 后 dens=5 → tier2。FORCE_BROKEN：setHeatTiers 失效 + heatTierOf
+// 回退硬编码 → 档位不变 → RED。期望值（tier 由 1→2）不随 broken 变（铁律22/32）。
+void MapView::qaHeatTier()
+{
+    const bool broken = !qEnvironmentVariableIsEmpty("LA_MAP_HEAT_TIER_QA_FORCE_BROKEN");
+    heatTierForceBroken_ = broken;
+    const int t0 = heatTierOf(5);            // 默认 3/8：5>=3 → tier1
+    setHeatTiers(2, 3);
+    const int t1 = heatTierOf(5);            // 2/3：5>=3 → tier2
+    const bool ok = (t0 == 1) && (t1 == 2) && (t0 != t1);
+    if (!ok) {
+        std::fprintf(stderr,
+            "LA_MAP_HEAT_TIER_QA FAIL t0=%d t1=%d broken=%d\n", t0, t1, int(broken));
+        std::fflush(stderr);
+        return;
+    }
+    std::fprintf(stderr,
+        "LA_MAP_HEAT_TIER_QA PASS t0=%d t1=%d broken=%d\n", t0, t1, int(broken));
+    std::fflush(stderr);
+}
+
 // 国家视图像素自测：按国家名 enterCountry → 离屏渲染国界轮廓 + 石板色统计
 // （颜色校验铁律：国界轮廓真实绘制必须实测）
 void MapView::qaShootCountry(const QString& path, const QString& name)
@@ -2026,14 +2166,37 @@ MapView::HeatColors MapView::heatRampOf(int rampId, int tier) const
     return { k[tier][0], k[tier][1], k[tier][2] };
 }
 
-// 按密度取当前色带的对应档位
+// 按密度取当前色带的对应档位（分档临界点可调：heatTierLo_/heatTierHi_）
 MapView::HeatColors MapView::heatRamp(int dens) const
 {
     if (heatRampForceTier_ >= 0)   // QA 反例：强制单档，抹掉密度分级
         return heatRampOf(heatRamp_, heatRampForceTier_);
+    return heatRampOf(heatRamp_, heatTierOf(dens));
+}
+
+// A 国家层深化（2.27.0）：当前可调阈值下的密度档位（0=低 1=中 2=高）。
+// 与绘制共用同一阈值，杜绝门禁与实现漂移。heatTierForceBroken_ 反例下
+// 回退硬编码 3/8，使 setHeatTiers 的改动不可见 → 门禁 RED。
+int MapView::heatTierOf(int dens) const
+{
     const int d = std::max(0, dens);
-    const int tier = (d >= 8) ? 2 : (d >= 3 ? 1 : 0);
-    return heatRampOf(heatRamp_, tier);
+    if (heatTierForceBroken_)
+        return (d >= 8) ? 2 : (d >= 3 ? 1 : 0);   // 回退硬编码（反例）
+    return (d >= heatTierHi_) ? 2 : (d >= heatTierLo_ ? 1 : 0);
+}
+
+// A 国家层深化（2.27.0）：热力分档临界点可调。
+void MapView::setHeatTiers(int lo, int hi)
+{
+    if (heatTierForceBroken_) return;   // QA 反例：setHeatTiers 失效 → 阈值不变
+    const int l = qBound(1, lo, 100);
+    const int h = qBound(l + 1, hi, 200);
+    if (l == heatTierLo_ && h == heatTierHi_) return;
+    heatTierLo_ = l;
+    heatTierHi_ = h;
+    buildWorldPixmap();         // 急切实调（热力在静态层内，保持 qaShoot* 探针契约）
+    invalidateViewCache();      // 下钻静态层重烘焙
+    update();
 }
 
 void MapView::setHeatRamp(int rampId)
@@ -2703,21 +2866,20 @@ static QVector<QPointF> parseProvinceRing(const QJsonValue& v)
 
 // 进入国家视图（无省级数据的国家）：国界轮廓 + 该国 GPS 足迹/航线。
 // 复用 Region 层级（curProvinces_ 为空 + countryFeature_ 生效），返回键/面包屑自然兼容。
-void MapView::enterCountry(int fi)
+// A 国家层深化（2.27.0）：国层快照重算。从当前 gpsPts_/gpsPaths_/gpsDates_ 按几何 pip
+// 重新筛选属于当前国家的点，刷新 countryPts_/countryPaths_/countryDates_。
+// 关键：footYear 过滤已在 MapPage::computeGpsPoints 注入 gpsPts_ 时完成，
+// 此处只做「几何归属 + 快照」，故改年/改库后只要 gpsPts_ 变化并触发本函数，
+// 国层的点击命中集与相册聚类载荷即与显示点（drawGpsDots 用 gpsPts_）保持一致。
+void MapView::recomputeCountryPts()
 {
-    if (fi < 0 || fi >= worldFeatures_.size()) return;
-    countryFeature_ = fi;
-    curRegionId_.clear();
-    curRegionName_ = worldNames_.value(fi);
-    curProvinces_.clear();
-    hasCurProvince_ = false;
-    level_ = Region;
-    // 该国 GPS 照片路径（pip 于外环；离岸容差：距国界顶点 <3 预投影单位 ≈1°，
-    // 顶点距离 ≥ 真实边界距离 → 判定方向保守）。湖泊内环中的点不接受容差。
+    if (countryFeature_ < 0) return;
+    if (gpsPts_.size() != gpsPaths_.size()) return;  // 对齐守卫：gpsPaths_ 未就绪不重算
     countryPaths_.clear();
     countryPts_.clear();
-    const WorldFeature& wf = worldFeatures_[fi];
-    const QRectF& bb = featureBbox_[fi];
+    countryDates_.clear();
+    const WorldFeature& wf = worldFeatures_[countryFeature_];
+    const QRectF& bb = featureBbox_[countryFeature_];
     for (int i = 0; i < gpsPts_.size(); ++i) {
         const QPointF& pt = gpsPts_[i];
         if (!bb.contains(pt)) continue;
@@ -2736,10 +2898,50 @@ void MapView::enterCountry(int fi)
             ok = (best < 9.0);
         }
         if (!ok) continue;
-        if (i < gpsPaths_.size()) countryPaths_.append(gpsPaths_[i]);
+        countryPaths_.append(gpsPaths_[i]);
         countryPts_.append(pt);
+        if (i < gpsDates_.size()) countryDates_.append(gpsDates_[i]);
     }
-    curViewBbox_ = bb;
+}
+
+// A 国家层深化（2.27.0）：国层相册按年分桶。footYear 已在 gpsPts_ 注入时过滤，
+// 故此处分组即「当前筛选年下的逐年聚类」，供 onCountryPicked 展示与相册聚类门禁断言。
+// albumForceBroken_：反例下忽略年份，全部归为 year=0 一组（抹掉分桶）。
+QVector<QPair<int, QStringList>> MapView::countryAlbumGroups() const
+{
+    QVector<QPair<int, QStringList>> out;
+    for (int i = 0; i < countryPaths_.size(); ++i) {
+        const int y = albumForceBroken_ ? 0
+                      : (i < countryDates_.size() && countryDates_[i].isValid())
+                        ? countryDates_[i].year() : 0;
+        int g = -1;
+        for (int k = 0; k < out.size(); ++k) if (out[k].first == y) { g = k; break; }
+        if (g < 0) { out.append(QPair<int, QStringList>(y, QStringList())); g = out.size() - 1; }
+        out[g].second.append(countryPaths_[i]);
+    }
+    // 年份降序；0（无日期/全部）置底
+    std::stable_sort(out.begin(), out.end(), [](const QPair<int, QStringList>& a,
+                                                const QPair<int, QStringList>& b) {
+        if (a.first == 0) return false;
+        if (b.first == 0) return true;
+        return a.first > b.first;
+    });
+    return out;
+}
+
+void MapView::enterCountry(int fi)
+{
+    if (fi < 0 || fi >= worldFeatures_.size()) return;
+    countryFeature_ = fi;
+    curRegionId_.clear();
+    curRegionName_ = worldNames_.value(fi);
+    curProvinces_.clear();
+    hasCurProvince_ = false;
+    level_ = Region;
+    // 该国 GPS 照片路径（pip 于外环；离岸容差：距国界顶点 <3 预投影单位 ≈1°，
+    // 顶点距离 ≥ 真实边界距离 → 判定方向保守）。湖泊内环中的点不接受容差。
+    recomputeCountryPts();   // A 国家层深化：抽出的几何 pip 过滤（含 countryDates_ 快照）
+    curViewBbox_ = featureBbox_[countryFeature_];
     resetViewZoom();
     invalidateViewCache();
     update();

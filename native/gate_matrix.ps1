@@ -188,6 +188,26 @@ $GateTable = @(
   # Counter-example LA_MAP_HEAT_RAMP_QA_FORCE_BROKEN=1 pins every point to a
   # single tier -> two tier counts drop to 0 -> RED. Full tier.
   @{n="LA_MAP_HEAT_RAMP_QA"; png=$true; measuredMs=5901},
+  # A direction step 4b (2.27.0): footYear wired into the country view.
+  # Injects same-country cross-year GPS points, simulates the year-change
+  # full chain (re-inject year-filtered gpsPts_ then setFootYearFilter) and
+  # asserts the country snapshot (countryPts_/countryPaths_) converges to the
+  # filtered year. Counter-example LA_MAP_COUNTRY_YEAR_QA_FORCE_BROKEN=1 skips
+  # the recompute inside setFootYearFilter -> snapshot does not shrink -> RED.
+  # png=$false (pure data-contract gate). Full tier.
+  @{n="LA_MAP_COUNTRY_YEAR_QA"; png=$false; measuredMs=3000},
+  # A direction step 4c (2.27.0): country album clustered by capture year.
+  # After entering a country and filtering to 2024, countryAlbumGroups() must
+  # return exactly one year group (2024) with the right photo count.
+  # Counter-example LA_MAP_COUNTRY_ALBUM_QA_FORCE_BROKEN=1 makes the grouping
+  # ignore years (all into one group) -> year count wrong -> RED. Full tier.
+  @{n="LA_MAP_COUNTRY_ALBUM_QA"; png=$false; measuredMs=3000},
+  # A direction step 4d (2.27.0): heat density tier thresholds are adjustable.
+  # With defaults 3/8 a density of 5 is tier 1; after setHeatTiers(2,3) the same
+  # density is tier 2. Counter-example LA_MAP_HEAT_TIER_QA_FORCE_BROKEN=1 makes
+  # setHeatTiers a no-op and heatTierOf fall back to hardcoded 3/8 -> tier
+  # unchanged -> RED. png=$false (pure engine-contract gate). Full tier.
+  @{n="LA_MAP_HEAT_TIER_QA"; png=$false; measuredMs=2500},
   # Direction C step 1: photo clustering (province / city / year / month).
   # Pure-function gate -- it calls PhotoCluster::cluster() directly, so no
   # MainWindow is built and no rendering happens.
