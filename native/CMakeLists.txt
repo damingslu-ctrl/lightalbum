@@ -34,6 +34,8 @@ set(LA_SOURCES
     src/core/ImageLoad.cpp
     src/core/VideoDecoder.h
     src/core/VideoDecoder.cpp
+    src/core/AudioPlayer.h
+    src/core/AudioPlayer.cpp
     src/core/Scanner.h
     src/core/Scanner.cpp
     src/core/ICloudSource.h
@@ -120,7 +122,7 @@ set(LA_RESOURCES
 add_executable(LightAlbum WIN32 ${LA_SOURCES} ${LA_RESOURCES})
 # P9 起 LumenAgent 走本地 Ollama（仅回环）→ Qt6Network 回归（release.ps1 不再 -TrimNetwork）
 # P16 vault 口令学走 Windows BCrypt（PBKDF2-SHA256 + GenRandom）
-target_link_libraries(LightAlbum PRIVATE Qt6::Widgets Qt6::Sql Qt6::Concurrent Qt6::Network bcrypt)
+target_link_libraries(LightAlbum PRIVATE Qt6::Widgets Qt6::Sql Qt6::Concurrent Qt6::Network bcrypt winmm)
 # 注入版本号（来自 project(VERSION)），供 main.cpp 在标题/关于中展示
 target_compile_definitions(LightAlbum PRIVATE LA_VERSION="${PROJECT_VERSION}")
 

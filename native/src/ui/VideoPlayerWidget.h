@@ -16,6 +16,7 @@
 #include <QWidget>
 
 class VideoDecoder;
+class AudioPlayer;
 class QPushButton;
 class QSlider;
 class QLabel;
@@ -56,6 +57,7 @@ private slots:
 
 private:
     VideoDecoder* m_dec = nullptr;
+    AudioPlayer*  m_audio = nullptr;
     QPushButton*  m_playBtn = nullptr;
     QSlider*      m_seek = nullptr;
     QLabel*       m_timeLbl = nullptr;

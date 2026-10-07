@@ -1,5 +1,6 @@
 #include "VideoPlayerWidget.h"
 
+#include "../core/AudioPlayer.h"
 #include "../core/VideoDecode.h"
 #include "../core/VideoDecoder.h"
 
@@ -38,6 +39,11 @@ VideoPlayerWidget::VideoPlayerWidget(QWidget* parent) : QWidget(parent)
     connect(m_dec, &VideoDecoder::frameDecoded, this, &VideoPlayerWidget::onFrame);
     connect(m_dec, &VideoDecoder::finished,    this, &VideoPlayerWidget::onFinished);
     connect(m_dec, &VideoDecoder::decodeError, this, &VideoPlayerWidget::onError);
+
+    // ★音频不接 finished/error 到 onFinished —— 视频流结束才是权威收尾。
+    //   若音频先耗尽或设备报错就调onFinished，会把视频一起停掉；正确行为是
+    //   优雅降级为「静音播放」，画面照常（音频是可选增强，非必需）。
+    m_audio = new AudioPlayer(this);
 
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(0, 0, 0, 0);
@@ -139,6 +145,12 @@ void VideoPlayerWidget::play()
 
     m_dec->configure(m_path, dw, dh, m_fps, m_startSec, /*realtime=*/true);
     m_dec->start();
+    // ★音频与视频同启：两路 ffmpeg 都带 -re 按原速率跑，故天然 1x 同步启动。
+    //   无音轨的视频不启动音频（诚实：不凭空造声）。视频结束后由任一路 finished 收尾。
+    if (m_audio && AudioPlayer::hasAudioTrack(m_path)) {
+        m_audio->configure(m_path, m_startSec);
+        m_audio->play();
+    }
     m_playing = true;
     m_timer->start();
     if (m_playBtn) m_playBtn->setText(QStringLiteral("⏸"));
@@ -151,6 +163,7 @@ void VideoPlayerWidget::pause()
     m_playing = false;
     m_timer->stop();
     if (m_dec) m_dec->stop();
+    if (m_audio) m_audio->stop();      // 音画同停
     if (m_playBtn) m_playBtn->setText(QStringLiteral("▶"));
     update();
 }
@@ -161,6 +174,7 @@ void VideoPlayerWidget::seekTo(double sec)
     const double target = qBound(0.0, sec, qMax(0.0, m_durSec - 0.05));
     const bool wasPlaying = m_playing;
     if (m_dec) m_dec->stop();          // 停-重起（-ss 定位，轻量）
+    if (m_audio) m_audio->stop();      // 音频同步跳转（否则声画错位）
     m_startSec = target;
     m_curFrame = QImage();
     m_frameCount = 0;

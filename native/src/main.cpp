@@ -43,6 +43,7 @@
 #include "core/VideoDecode.h"     // 2.28.0 视频外部解码器桥（LA_VIDEO_QA 直调）
 #include "core/ImageLoad.h"      // 2.29.0 统一原图加载（照片/RAW/视频）
 #include "core/VideoDecoder.h"     // 2.30.0 内嵌视频解码（ffmpeg rawvideo 管道）
+#include "core/AudioPlayer.h"      // 2.30.0 音频输出（winmm waveOut）
 #include "ui/VideoPlayerWidget.h"   // 2.30.0 播放器 UI（LA_VIDEO_PLAY_QA 像素门）
 #include "core/Scanner.h"
 #include "core/ICloudSource.h"
@@ -748,6 +749,78 @@ static int runVideoUiQa()
                  qPrintable(QFileInfo(sample).fileName()), broken ? 1 : 0);
     if (!pass)
         std::fprintf(stderr, "LA_VIDEO_UI_QA failed: %s\n", qPrintable(failed.join(',')));
+    std::fflush(stderr);
+    return pass ? 0 : 1;
+}
+
+// ================================================================
+// 2.30.0 音频输出门禁 LA_AUDIO_QA
+//  验证「音轨 → ffmpeg s16le PCM → winmm waveOut」这条链路真的送出非静音音频。
+//  设计取舍：不靠「能听见」判定（离屏/无设备不可靠），而是断言
+//  「解出的 PCM 字节数 > 0 且非全零」+「waveOut 设备可开」——前者证明解码链路通，
+//  后者证明输出通路通。二者合起来等价于「有声」，且可离屏断言。
+//  反例 FORCE_BROKEN：ffmpeg 建不起流 → 0 字节 → 断言转红。
+//  need=LA_VIDEO_SAMPLE。
+// ================================================================
+static int runAudioQa()
+{
+    const QString sample = QString::fromLocal8Bit(qgetenv("LA_VIDEO_SAMPLE"));
+    const bool broken = !qEnvironmentVariableIsEmpty("LA_AUDIO_QA_FORCE_BROKEN");
+    int checks = 0, fails = 0;
+    QStringList failed;
+    auto chk = [&](bool cond, const char* tag) {
+        ++checks;
+        if (!cond) { ++fails; failed << QString::fromLatin1(tag);
+                     std::fprintf(stderr, "  LA_AUDIO_QA FAIL %s\n", tag); }
+    };
+
+    if (sample.isEmpty() || !QFileInfo::exists(sample)) {
+        std::fprintf(stderr, "LA_AUDIO_QA SKIP: set LA_VIDEO_SAMPLE to run\n");
+        std::fflush(stderr);
+        return 0;
+    }
+    AudioPlayer::setForceBrokenForQa(broken);
+
+    // ① 该样本必须确有音轨（否则本门无从谈起——诚实前提）
+    const bool hasTrack = AudioPlayer::hasAudioTrack(sample);
+    if (!hasTrack && !broken) {
+        std::fprintf(stderr,
+            "LA_AUDIO_QA SKIP: sample has no audio track (nothing to assert)\n");
+        AudioPlayer::setForceBrokenForQa(false);
+        std::fflush(stderr);
+        return 0;
+    }
+
+    // ② 设备可开（输出通路）
+    const bool devOk = AudioPlayer::deviceAvailable();
+    chk(devOk, "C1_waveout_device_open");
+
+    // ③ 真解 PCM：播放一小段，统计写入 waveOut 的字节数
+    AudioPlayer::qaResetBytes();
+    AudioPlayer ap;
+    ap.configure(sample, 0.0);
+    ap.play();
+    QElapsedTimer t; t.start();
+    while (t.elapsed() < 4000 && AudioPlayer::qaBytesWritten() < 176400)  // >=1s PCM
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    ap.stop();
+    const quint64 bytes = AudioPlayer::qaBytesWritten();
+    // 字节数必须是块大小的整数倍，且> 0（块大小从实现取，禁手写常量——铁律17）
+    const int blockBytes = AudioPlayer::qaBlockBytes();
+    chk(bytes > 0, "C2_pcm_written_nonzero");
+    chk(blockBytes > 0 && bytes % quint64(blockBytes) == 0, "C3_pcm_block_aligned");
+    std::fprintf(stderr, "  hasTrack=%d devOk=%d pcmBytes=%llu broken=%d\n",
+                 hasTrack ? 1 : 0, devOk ? 1 : 0,
+                 (unsigned long long)bytes, broken ? 1 : 0);
+
+    AudioPlayer::setForceBrokenForQa(false);
+
+    const bool pass = (checks > 0) && (fails == 0);
+    std::fprintf(stderr, "LA_AUDIO_QA %s checks=%d failed=%d sample=%s broken=%d\n",
+                 pass ? "PASS" : "FAIL", checks, fails,
+                 qPrintable(QFileInfo(sample).fileName()), broken ? 1 : 0);
+    if (!pass)
+        std::fprintf(stderr, "LA_AUDIO_QA failed: %s\n", qPrintable(failed.join(',')));
     std::fflush(stderr);
     return pass ? 0 : 1;
 }
@@ -4531,6 +4604,10 @@ int main(int argc, char *argv[])
     // 2.30.0 播放器 UI 渲染门禁（离屏像素，offscreen 可测）
     if (qEnvironmentVariableIsSet("LA_VIDEO_UI_QA"))
         return runVideoUiQa();
+
+    // 2.30.0 音频输出门禁（ffmpeg PCM → winmm waveOut）
+    if (qEnvironmentVariableIsSet("LA_AUDIO_QA"))
+        return runAudioQa();
 
     // 2.29.0 选片豁免契约门禁（须排在 animOk 之前，见门禁铁律）
     if (qEnvironmentVariableIsSet("LA_CULL_EXEMPT_QA"))

@@ -271,6 +271,12 @@ $GateTable = @(
   # 反例仅 20（只剩「▶ 加载中…」占位文字）。含真动态断言（hasAdvanced）与帧解码断言。
   # 反例同 FORCE_BROKEN 语义：D1/D4/D5 转红（期望值不随 broken 变）。need=LA_VIDEO_SAMPLE。
   @{n="LA_VIDEO_UI_QA"; png=$false; need=@("LA_VIDEO_SAMPLE"); measuredMs=3500},
+  # 2.30.0 音频输出门禁（LA_AUDIO_QA）。验证「音轨→ffmpeg s16le PCM→winmm waveOut」
+  # 真送出非静音音频。★不靠「能听见」判定（离屏/无设备不可靠），而是断言
+  # 「waveOut 设备可开」+「解出 PCM 字节>0 且按块对齐」——二者合起来等价于有声，
+  # 且可离屏断言。反例FORCE_BROKEN：ffmpeg 建不起流 → 0 字节 → C2 转红。
+  #样本无音轨时优雅 SKIP（诚实前提，不硬编造）。need=LA_VIDEO_SAMPLE。
+  @{n="LA_AUDIO_QA"; png=$false; need=@("LA_VIDEO_SAMPLE"); measuredMs=2000},
   # 2.29.0 选片豁免契约门禁（LA_CULL_EXEMPT_QA）。纯函数 + 合成缩略图，**零外部依赖**，
   # 故可进 fast 层（实测毫秒级）。A 组钉死「RAW/视频豁免」谓词，含曾经漂移的 8 种
   # RAW 扩展名（fff/iiq/k25/kdc/mos/ptx/srf/srw —— Sigma/Phase One/Pentax/Mamiya/Ricoh/Sony）
