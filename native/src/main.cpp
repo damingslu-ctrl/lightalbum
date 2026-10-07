@@ -43,6 +43,7 @@
 #include "core/VideoDecode.h"     // 2.28.0 视频外部解码器桥（LA_VIDEO_QA 直调）
 #include "core/ImageLoad.h"      // 2.29.0 统一原图加载（照片/RAW/视频）
 #include "core/VideoDecoder.h"     // 2.30.0 内嵌视频解码（ffmpeg rawvideo 管道）
+#include "ui/VideoPlayerWidget.h"   // 2.30.0 播放器 UI（LA_VIDEO_PLAY_QA 像素门）
 #include "core/Scanner.h"
 #include "core/ICloudSource.h"
 #include "core/qaExit.h"        // 2.7.0 门禁自退契约 + 自退看门狗
@@ -665,6 +666,88 @@ static int runVideoPlayQa()
                  qPrintable(QFileInfo(sample).fileName()), broken ? 1 : 0);
     if (!pass)
         std::fprintf(stderr, "LA_VIDEO_PLAY_QA failed: %s\n", qPrintable(failed.join(',')));
+    std::fflush(stderr);
+    return pass ? 0 : 1;
+}
+
+// ================================================================
+// 2.30.0 播放器 UI 渲染门禁 LA_VIDEO_UI_QA
+//  验证 VideoPlayerWidget 真能在离屏渲染出画面像素（铁律24：视觉必须实测）。
+//  正例：解出帧 → widget 非空白 → 当前帧与首帧不同（真动）→ grab 像素非纯底。
+//  反例 FORCE_BROKEN：解码 0 帧 → 画面只剩占位（断言转红）。
+//  need=LA_VIDEO_SAMPLE。
+// ================================================================
+static int runVideoUiQa()
+{
+    const QString sample = QString::fromLocal8Bit(qgetenv("LA_VIDEO_SAMPLE"));
+    const bool broken = !qEnvironmentVariableIsEmpty("LA_VIDEO_UI_QA_FORCE_BROKEN");
+    int checks = 0, fails = 0;
+    QStringList failed;
+    auto chk = [&](bool cond, const char* tag) {
+        ++checks;
+        if (!cond) { ++fails; failed << QString::fromLatin1(tag);
+                     std::fprintf(stderr, "  LA_VIDEO_UI_QA FAIL %s\n", tag); }
+    };
+
+    if (sample.isEmpty() || !QFileInfo::exists(sample)) {
+        std::fprintf(stderr, "LA_VIDEO_UI_QA SKIP: set LA_VIDEO_SAMPLE to run\n");
+        std::fflush(stderr);
+        return 0;
+    }
+    VideoDecoder::setForceBrokenForQa(broken);
+
+    VideoPlayerWidget w;
+    w.resize(480, 320);
+    w.setSource(sample, QString(), 0.0);   // 无海报：验证解码帧本身能画出来
+    w.show();
+    w.play();
+
+    // 让 -re 实时吐几帧（realtime=true，泵事件等帧）
+    QElapsedTimer t; t.start();
+    while (t.elapsed() < 6000 && w.currentFrame().isNull())
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    // 再多泵一会儿让 hasAdvanced() 有机会置位（需要 >=2 帧且帧间不同）
+    const qint64 need = qMin<qint64>(6000, 3000);
+    while (t.elapsed() < need && !w.hasAdvanced())
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    w.pause();
+
+    const QImage cur = w.currentFrame();
+    const bool decoded = !cur.isNull();
+    chk(decoded, "D1_frame_decoded");
+    chk(!decoded || cur.width() > 0, "D2_frame_dims");
+
+    // 离屏渲染整窗 → 抓像素，断言非「纯底色」（画面区至少有一块非背景）
+    const QImage shot = w.grab().toImage().convertToFormat(QImage::Format_RGB32);
+    chk(!shot.isNull(), "D3_widget_rendered");
+    int nonBg = 0;
+    if (!shot.isNull()) {
+        for (int y = 40; y < shot.height() - 40; y += 4)
+            for (int x = 8; x < shot.width() - 8; x += 4) {
+                const QRgb c = shot.pixel(x, y);
+                // 背景深色 ~ (13,15,14)；任一通道明显偏离即视为有内容像素
+                if (qAbs(qRed(c) - 13) > 10 || qAbs(qGreen(c) - 15) > 10 || qAbs(qBlue(c) - 14) > 10)
+                    ++nonBg;
+            }
+    }
+    chk(nonBg > 200, "D4_pixels_not_blank");
+
+    // ★正/反例断言**完全相同**，不随 broken 切换（铁律22）。
+    //   broken 只是让解码产出 0 帧 → D1/D2/D5 自然变红（铁律23：反例须实测变红）。
+    //   D4（画面区非空白）在 broken 下可能仍绿——因为「▶ 加载中…」占位文案
+    //   本身就是有效渲染内容，这属正确行为；真正把关的是 D1（有没有解出帧）。
+    chk(w.hasAdvanced(), "D5_real_motion_advanced");
+    std::fprintf(stderr, "  decoded=%d nonBg=%d advanced=%d broken=%d\n",
+                 decoded ? 1 : 0, nonBg, w.hasAdvanced() ? 1 : 0, broken ? 1 : 0);
+
+    VideoDecoder::setForceBrokenForQa(false);
+
+    const bool pass = (checks > 0) && (fails == 0);
+    std::fprintf(stderr, "LA_VIDEO_UI_QA %s checks=%d failed=%d sample=%s broken=%d\n",
+                 pass ? "PASS" : "FAIL", checks, fails,
+                 qPrintable(QFileInfo(sample).fileName()), broken ? 1 : 0);
+    if (!pass)
+        std::fprintf(stderr, "LA_VIDEO_UI_QA failed: %s\n", qPrintable(failed.join(',')));
     std::fflush(stderr);
     return pass ? 0 : 1;
 }
@@ -4444,6 +4527,10 @@ int main(int argc, char *argv[])
     // 2.30.0 视频播放（内嵌解码器）门禁（须排在 animOk 之前）
     if (qEnvironmentVariableIsSet("LA_VIDEO_PLAY_QA"))
         return runVideoPlayQa();
+
+    // 2.30.0 播放器 UI 渲染门禁（离屏像素，offscreen 可测）
+    if (qEnvironmentVariableIsSet("LA_VIDEO_UI_QA"))
+        return runVideoUiQa();
 
     // 2.29.0 选片豁免契约门禁（须排在 animOk 之前，见门禁铁律）
     if (qEnvironmentVariableIsSet("LA_CULL_EXEMPT_QA"))

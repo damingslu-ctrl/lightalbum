@@ -40,7 +40,10 @@ public:
 
     /// 设定解码参数。outW/outH 为输出像素尺寸（建议按显示区缩放，控制解码开销），
     /// fps 为输出帧率（由 VideoDecode::probe 取源帧率传入；未知时传 25）。
-    void configure(const QString& videoPath, int outW, int outH, double fps);
+    /// startSec > 0 时从该秒开始（跳转，实测 -ss 在 -i 之前，快且准）。
+    /// realtime=true 时插入 -re 让 ffmpeg 按原速率吐帧（播放用；门禁取帧设 false 走最快）。
+    void configure(const QString& videoPath, int outW, int outH, double fps,
+                   double startSec = 0.0, bool realtime = false);
 
     /// 启动解码（幂等：已在跑则忽略）。
     void start();
@@ -70,6 +73,8 @@ private:
     int     m_outW = 0;
     int     m_outH = 0;
     double  m_fps  = 25.0;
+    double  m_startSec = 0.0;
+    bool    m_realtime = false;
 
     QThread*           m_thread = nullptr;
     VideoDecoderWorker* m_worker = nullptr;

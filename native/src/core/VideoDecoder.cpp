@@ -25,6 +25,8 @@ public:
     int     outW = 0;
     int     outH = 0;
     double  fps  = 25.0;
+    double  startSec = 0.0;
+    bool    realtime = false;
     std::atomic<bool> abortFlag{false};
 
 public slots:
@@ -44,8 +46,18 @@ public slots:
         }
 
         QStringList args;
-        args << QStringLiteral("-loglevel") << QStringLiteral("error")
-             << QStringLiteral("-i") << path;
+        args << QStringLiteral("-loglevel") << QStringLiteral("error");
+        if (realtime)
+            args << QStringLiteral("-re");       // 按原速率吐帧（播放节奏）
+        if (startSec > 0.01) {
+            // ★-ss 必须放在 -i 之前：走关键帧定位，比放在之后快且准（实测 5s→125 帧）。
+            const qint64 ms = qint64(startSec * 1000.0);
+            args << QStringLiteral("-ss")
+                 << QStringLiteral("%1:%2:%3.%4")
+                        .arg(ms / 3600000).arg((ms / 60000) % 60)
+                        .arg((ms / 1000) % 60).arg(ms % 1000, 3, 10, QLatin1Char('0'));
+        }
+        args << QStringLiteral("-i") << path;
         if (g_forceBroken) {
             // 反例：塞一个不存在的第二输入 → ffmpeg 建不起输出流，静默 0 帧退出。
             // 这正是「解码失败却看起来一切正常」的真实缺陷形态。
@@ -126,12 +138,15 @@ VideoDecoder::~VideoDecoder()
 void VideoDecoder::setForceBrokenForQa(bool on) { g_forceBroken = on; }
 bool VideoDecoder::forceBrokenForQa() { return g_forceBroken; }
 
-void VideoDecoder::configure(const QString& videoPath, int outW, int outH, double fps)
+void VideoDecoder::configure(const QString& videoPath, int outW, int outH, double fps,
+                             double startSec, bool realtime)
 {
     m_path = videoPath;
     m_outW = outW > 0 ? outW : 1;
     m_outH = outH > 0 ? outH : 1;
     m_fps  = fps > 0.1 ? fps : 25.0;
+    m_startSec = startSec > 0.0 ? startSec : 0.0;
+    m_realtime = realtime;
 }
 
 void VideoDecoder::start()
@@ -146,6 +161,8 @@ void VideoDecoder::start()
     m_worker->outW = m_outW;
     m_worker->outH = m_outH;
     m_worker->fps  = m_fps;
+    m_worker->startSec = m_startSec;
+    m_worker->realtime = m_realtime;
     m_worker->moveToThread(m_thread);
 
     connect(m_thread, &QThread::finished, m_worker, &QObject::deleteLater);

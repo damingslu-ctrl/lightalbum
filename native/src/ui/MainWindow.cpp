@@ -7,6 +7,7 @@
 #include "LogPage.h"
 #include "CullPage.h"
 #include "RetouchPage.h"
+#include "VideoLightbox.h"
 #include "../core/Scanner.h"
 #include "../core/ICloudSource.h"
 #include "../core/qaExit.h"      // 2.7.0 门禁自退契约（禁裸调 quit）
@@ -995,6 +996,15 @@ void MainWindow::openLightbox(const QString& path)
     for (const Photo& p : lib_->photos())
         if (p.path == path) { ph = &p; break; }
     if (!ph) return;
+    // ★2.30.0 视频走内嵌解码播放器（VideoLightbox）；照片仍走原 PhotoLightbox。
+    //   复用同一 openLightbox 入口，故首页/图库/地图三处打开视频都自动生效。
+    if (ph->mediaType == QLatin1String("video")) {
+        if (!videoLightbox_) videoLightbox_ = new VideoLightbox(this);
+        const QString poster = ph->thumbFile.isEmpty()
+            ? QString() : QDir(thumbsDir_).filePath(ph->thumbFile);
+        videoLightbox_->openVideo(ph->path, poster, ph->durSec);
+        return;
+    }
     if (!lightbox_) {
         lightbox_ = new PhotoLightbox(lib_, this);
         lightbox_->setFullCache(fullCache_);   // 2.22.0：注入原图缓存（灯箱不自有）

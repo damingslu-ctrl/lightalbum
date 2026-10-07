@@ -59,6 +59,10 @@ set(LA_SOURCES
     src/ui/DedupDialog.cpp
     src/ui/GalleryCardPainter.h
     src/ui/GalleryCardPainter.cpp
+    src/ui/VideoPlayerWidget.h
+    src/ui/VideoPlayerWidget.cpp
+    src/ui/VideoLightbox.h
+    src/ui/VideoLightbox.cpp
     src/ui/EditorialView.h
     src/ui/EditorialView.cpp
     src/ui/MapView.h

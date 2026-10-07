@@ -33,6 +33,7 @@ struct VideoProbe {
     double durationSec = 0;      // 秒；0 = 未知
     int    width = 0;            // 0 = 未知
     int    height = 0;
+    double fps = 0;              // 平均帧率；0 = 未知（ffprobe avg_frame_rate 形如 "25/1"）
     QString codec;               // 如 "h264"；空 = 未知
     bool   valid() const { return durationSec > 0 || width > 0 || height > 0; }
 };

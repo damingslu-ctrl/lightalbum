@@ -89,7 +89,7 @@ VideoProbe probe(const QString& videoPath, int timeoutMs)
     p.setArguments({ QStringLiteral("-v"), QStringLiteral("error"),
                      QStringLiteral("-select_streams"), QStringLiteral("v:0"),
                      QStringLiteral("-show_entries"),
-                     QStringLiteral("stream=width,height,codec_name,duration"),
+                     QStringLiteral("stream=width,height,codec_name,duration,avg_frame_rate"),
                      QStringLiteral("-show_entries"), QStringLiteral("format=duration"),
                      QStringLiteral("-of"), QStringLiteral("json"),
                      videoPath });
@@ -124,6 +124,18 @@ VideoProbe probe(const QString& videoPath, int timeoutMs)
         out.width  = s.value(QStringLiteral("width")).toInt();
         out.height = s.value(QStringLiteral("height")).toInt();
         out.codec  = s.value(QStringLiteral("codec_name")).toString();
+        // ★帧率形态是**分数字符串**如 "25/1" 或 "30000/1001"，不是数字 ——
+        //   故不能用 numOf（那会因 toDouble 失败返回 0）。必须按 '/' 拆分子母。
+        //   "0/0" 表示未知（容器未声明），此时留 0，由调用方回退默认 25。
+        const QString afr = s.value(QStringLiteral("avg_frame_rate")).toString();
+        const int slash = afr.indexOf(QLatin1Char('/'));
+        if (slash > 0) {
+            bool okN = false, okD = false;
+            const double n = afr.left(slash).toDouble(&okN);
+            const double d = afr.mid(slash + 1).toDouble(&okD);
+            if (okN && okD && d > 0.0)
+                out.fps = n / d;
+        }
     }
     // 时长优先取 format（更可靠），回退 stream
     double dur = numOf(root.value(QStringLiteral("format")).toObject()

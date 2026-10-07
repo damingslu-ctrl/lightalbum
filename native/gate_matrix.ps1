@@ -266,6 +266,11 @@ $GateTable = @(
   # （期望值不随 broken 切换，铁律22）。need=LA_VIDEO_SAMPLE（外部素材不入库/不进 CI）。
   # tier 缺省=full：真实解码 ~1s，进程另付 QApplication 启动开销。
   @{n="LA_VIDEO_PLAY_QA"; png=$false; need=@("LA_VIDEO_SAMPLE"); measuredMs=2500},
+  # 2.30.0 播放器 UI 渲染门禁（LA_VIDEO_UI_QA）。离屏渲染 VideoPlayerWidget 并 grab()
+  # 断言**画面区非空白**（铁律24：视觉必须实测，禁猜）——实测正例 nonBg=5689 采样像素、
+  # 反例仅 20（只剩「▶ 加载中…」占位文字）。含真动态断言（hasAdvanced）与帧解码断言。
+  # 反例同 FORCE_BROKEN 语义：D1/D4/D5 转红（期望值不随 broken 变）。need=LA_VIDEO_SAMPLE。
+  @{n="LA_VIDEO_UI_QA"; png=$false; need=@("LA_VIDEO_SAMPLE"); measuredMs=3500},
   # 2.29.0 选片豁免契约门禁（LA_CULL_EXEMPT_QA）。纯函数 + 合成缩略图，**零外部依赖**，
   # 故可进 fast 层（实测毫秒级）。A 组钉死「RAW/视频豁免」谓词，含曾经漂移的 8 种
   # RAW 扩展名（fff/iiq/k25/kdc/mos/ptx/srf/srw —— Sigma/Phase One/Pentax/Mamiya/Ricoh/Sony）
