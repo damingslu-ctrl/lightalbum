@@ -3,6 +3,43 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.26.0] - 2026-10-07
+
+### 优化 - 方向 A·地图世界层「显示分辨率 + 1:1 blit」
+
+- **取证（先测再改）**：`LA_MAP_PERF` 实测 World 层每帧 ~2.30ms（原因为每帧在 `paintMap` 的 World 分支
+  全量重栅格化世界层）。用户决策三项：① 世界层采用「显示分辨率烘焙 + 每帧 1:1 平移 blit」（推荐）；
+  ② `LA_MAP_PERF` 采用**证据化宽松门槛**（world≤1.2ms、其余层级 ≤1.5ms）；③ 临时取证探针转常驻 QA 钩子。
+- **实施**：`worldPix_` 按显示分辨率烘焙（`size × DPR × worldZoom_`），仅 `buildWorldPixmap()` 一次栅格化；
+  每帧 `paintMap` 世界分支仅做 **1:1 平移 blit**（`ensureWorldPix()` 惰性自校验：逻辑尺寸 / zoom 任一变化才重烘焙）。
+  命中/绘制继续共用 `viewOrigin()` 变换（铁律 4）。
+- **★回归修复（TRACK/HEAT/TRANIM 空世界层）**：5 个内容触发 setter
+  （`setGpsPoints`/`setFootLayerMode`/`setHomePoint`/`setArcRegionIds`/`setHeatRamp`）曾被误改为惰性
+  `worldDirty_=true`，导致 `qaShootTrack/Heat/TrackAnim` 绘制到空 `worldPix_`。还原为急切实调
+  `buildWorldPixmap()`（保持 QA 探针契约）。新增 `qaFixedBake_` 标志使 QA 探针下固定 3× 超采样
+  （3000×1500），复现方向 A 之前的确定性像素计数（避免显示分辨率烘焙在 offscreen 下尺寸不定导致像素门 flaky）：
+  实测 TRACK=trackPx=268、HEAT=warmPx=42、TRANIM=arrow=59（均与原基线完全一致）。
+
+### ★回归修复（GEO 偶发挂死 rc=3 no-exit，我引入）
+
+- **证据化定位**：`git stash` 对照 2.25.0 基线，GEO **4/4 稳定 PASS（marks=26）**；我的版本偶发 `rc=3`
+  （watchdog `no-exit-request`）。确证是我引入的 race，非 pre-existing。
+- **根因**：`ensureWorldPix()` 新增 `!qFuzzyCompare(worldPixDpr_, dpr)` 比较，而 offscreen 平台
+  `devicePixelRatioF()` **不稳定**（项目记忆确证）；dpr 微差使该检查失败 → 在 GEO 嵌套 `processEvents`
+  的 paint 期间触发**重型 `buildWorldPixmap()` 冷重建** → 死锁并撞 20s watchdog。
+- **修复**：移除 `worldPixDpr_` 成员与浮点比较，惰性重烘焙仅依据**逻辑尺寸 + zoom**（世界层 1:1 blit
+  只需二者一致）；同时移除 `main.cpp` 我加入的 7 处 `DBG_GEO`/`LA_DBG` 调试标记（避免污染正常门禁输出）。
+- **验证**：GEO **连跑 8/8 rc=0**（marks=26）；全量地图簇无回退。
+
+### 门禁矩阵
+
+- `LA_MAP_PERF` 实测 world=**1.05ms**（原 ~2.30ms，↓约 54%）、region=0.30ms、province=0.30ms、
+  country=0.25ms（其余 ≤0.3ms，远低于证据化宽松门槛 world≤1.2 / 其它≤1.5），rc=0 无 FAIL。
+- 全量地图簇（A / TRACK / HEAT / TRACK_ANIM / HEAT_RAMP / REGION / BURST / COUNTRY / YEAR / CLICK / GEO / PERF）
+  正例全绿；TRACK/HEAT/TRACK_ANIM 的 FORCE_BROKEN 反例均正确转红（非空心）。
+- 版本 2.25.0 → **2.26.0**（MINOR：地图渲染性能优化），bump 后已重新 configure
+  （`LA_VERSION="2.26.0"` 已确认烘进编译标志）。
+
 ## [2.25.0] - 2026-10-06
 
 ### 新增 - 方向 B 门禁深化：`LA_AGENT_QA`（第 50 门，LumenAgent 纯函数值契约）

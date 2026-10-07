@@ -4158,10 +4158,11 @@ int main(int argc, char *argv[])
 
     // A 帧耗时自测：LA_MAP_PERF=1 时逐层级渲染 20 帧打印平均毫秒/帧。
     if (!qEnvironmentVariableIsEmpty("LA_MAP_PERF")) {
-        if (MapView* mv = win.mapView()) mv->qaPerf();
+        int rc = 0;
+        if (MapView* mv = win.mapView()) rc = mv->qaPerf();
         std::fprintf(stderr, "LA_MAP_PERF_DONE\n");
         std::fflush(stderr);
-        return 0;
+        return rc;
     }
 
     // A 国家视图像素自测：LA_MAP_COUNTRY_QA=<png>[,<国家名>] 时 enterCountry →

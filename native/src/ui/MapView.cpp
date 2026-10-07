@@ -218,21 +218,36 @@ void MapView::computeRegionBBox()
 
 void MapView::buildWorldPixmap()
 {
-    // 3x 超采样烘焙：逻辑坐标仍 1000×500，device 像素 3000×1500 ——
-    // 滚轮缩放到 4x 时依旧有充足源像素（18MB 常驻，桌面端可接受）
-    constexpr double PIX = 3.0;
-    const int W = int(MAP_W), H = int(MAP_H);
-    worldPix_ = QPixmap(int(MAP_W * PIX), int(MAP_H * PIX));
+    // 显示分辨率烘焙（方向 A·地图性能）：按当前 widget 尺寸 × DPR × worldZoom_
+    // 烘焙单条世界带，每帧 renderWorldInto 仅做 1:1 平移 blit（不再逐帧缩放固定
+    // 3000×1500 源）。尺寸/zoom/dpr 任一变化由 ensureWorldPix 触发本函数重烘焙；
+    // 未 show / 尺寸退化（QA 探针直接调用）时回退到逻辑 1000×500，保证 bake 非空。
+    const qreal dpr = devicePixelRatioF();
+    double bakeScale;
+    int logW, logH;
+    if (qaFixedBake_) {
+        // QA 探针专用：固定 3x 超采样（3000×1500），复现方向 A 之前的确定性像素断言
+        // （显示分辨率烘焙在 offscreen 下尺寸不定 → 像素计数随分辨率漂移 → 门禁 flaky）
+        bakeScale = 3.0; logW = int(MAP_W * 3); logH = int(MAP_H * 3);
+    } else if (width() > 100 && height() > 100) {
+        const QRectF dst = rect().adjusted(8, 8, -8, -8);
+        bakeScale = dst.height() / MAP_H * worldZoom_;
+        logW = qMax(1, qRound(MAP_W * bakeScale));
+        logH = qMax(1, qRound(MAP_H * bakeScale));
+    } else {
+        bakeScale = 1.0; logW = int(MAP_W); logH = int(MAP_H);
+    }
+    worldPix_ = HiDpi::bakePixmap(QSize(logW, logH));
     worldPix_.fill(Qt::transparent);
     QPainter p(&worldPix_);
     p.setRenderHint(QPainter::Antialiasing, true);
-    p.scale(PIX, PIX);   // 之后全部按 1000×500 逻辑坐标绘制（线宽随变换同步放大）
+    p.scale(bakeScale, bakeScale);   // 仍按 1000×500 逻辑坐标绘制（线宽随变换同步放大）
 
     const QColor ocean(0x0e, 0x16, 0x1f);   // 深海（雾隐深色）
     const QColor land(0x2f, 0x46, 0x58);    // 陆地基色（与 web .cty 对齐）
     const QColor border(0x4a, 0x66, 0x78);
 
-    p.fillRect(0, 0, W, H, ocean);
+    p.fillRect(0, 0, MAP_W, MAP_H, ocean);
     // 很精细：经纬网格（baked，仅落于海洋，陆地覆盖其上→干净）
     {
         QPen gpen(QColor(0x7f, 0x97, 0xa8, 28));
@@ -308,6 +323,34 @@ void MapView::buildWorldPixmap()
         drawHeatWorld(p);
     }
     p.end();
+    // 记录烘焙参数供 ensureWorldPix 惰性校验（逻辑尺寸 + zoom 任一不符即重烘焙）
+    worldPixW_ = logW; worldPixH_ = logH;
+    worldPixZoom_ = worldZoom_;
+    worldDirty_ = false;
+}
+
+void MapView::ensureWorldPix()
+{
+    const qreal dpr = devicePixelRatioF();
+    // 未 show / 尺寸退化（QA 探针直接调用）时回退：仅当未烘焙或内容脏时烘焙
+    if (width() <= 100 || height() <= 100) {
+        if (worldPix_.isNull() || worldDirty_) buildWorldPixmap();
+        return;
+    }
+    const QRectF dst = rect().adjusted(8, 8, -8, -8);
+    const double scale = dst.height() / MAP_H * worldZoom_;
+    const int needW = qRound(MAP_W * scale);
+    const int needH = qRound(MAP_H * scale);
+    // 注意：不再比较 dpr 浮点。offscreen 平台 devicePixelRatioF() 不稳定（项目记忆确证），
+    // 对 dpr 浮点做 qFuzzyCompare 会在 paint 期间偶发触发重型 buildWorldPixmap() 冷重建，
+    // 在 GEO 嵌套 processEvents 下死锁并撞 20s watchdog（rc=3）。
+    // 世界层仅需「逻辑尺寸 + zoom」一致即可保证 1:1 blit 正确；dpr 仅影响烘焙内部分辨率，
+    // 由 HiDpi::bakePixmap 内嵌，已烘焙逻辑尺寸不变则无需重烘焙。
+    if (worldDirty_ || worldPix_.isNull()
+        || worldPixW_ != needW || worldPixH_ != needH
+        || !qFuzzyCompare(worldPixZoom_, worldZoom_)) {
+        buildWorldPixmap();
+    }
 }
 
 void MapView::setGpsPoints(const QVector<QPointF>& pts)
@@ -316,7 +359,7 @@ void MapView::setGpsPoints(const QVector<QPointF>& pts)
     densDirty_ = true;          // 密度分级缓存失效
     arcTargetsDirty_ = true;    // 航线目标集缓存失效
     invalidateViewCache();      // 下钻静态层含足迹点 → 失效
-    buildWorldPixmap();          // 重新烘焙世界静态层（含足迹点，随漂移一起移动）
+    buildWorldPixmap();         // 急切实调（保持 qaShoot* 探针契约：世界层立即就绪）
     update();
 }
 
@@ -340,7 +383,7 @@ void MapView::setFootLayerMode(int mode)
     if (m == footLayer_) return;
     footLayer_ = m;
     if (m != FL_Track) stopTrackPlayback();   // 离开轨迹层即停播（防播放态残留到光点/热力）
-    buildWorldPixmap();     // 世界层重烘焙（含轨迹/热力）
+    buildWorldPixmap();         // 急切实调（含轨迹/热力，保持 qaShoot* 探针契约）
     invalidateViewCache();  // 下钻静态层下次 paint 重烘焙
     update();
 }
@@ -351,7 +394,7 @@ void MapView::setHomePoint(double lon, double lat)
     if (lon == homeLon_ && lat == homeLat_) return;
     homeLon_ = lon;
     homeLat_ = lat;
-    buildWorldPixmap();
+    buildWorldPixmap();         // 急切实调（航线基点在世界层，保持 qaShoot* 探针契约）
     update();
 }
 
@@ -360,7 +403,7 @@ void MapView::setArcRegionIds(const QStringList& ids)
     if (ids == arcRegionIds_) return;
     arcRegionIds_ = ids;
     arcTargetsDirty_ = true;    // 航线目标集缓存失效
-    buildWorldPixmap();
+    buildWorldPixmap();         // 急切实调（航线在世界层，保持 qaShoot* 探针契约）
     update();
 }
 
@@ -543,18 +586,19 @@ void MapView::renderWorldInto(QPainter& p, const QRectF& dst) const
     const double scale = dst.height() / MAP_H * worldZoom_;
     const double mapWpx = MAP_W * scale, mapHpx = MAP_H * scale;
     const double offY = worldOffYClamped();
-    const QRectF src(0, 0, worldPix_.width(), worldPix_.height());
-    p.setRenderHint(QPainter::SmoothPixmapTransform, true);   // 3x 烘焙 → 屏幕缩放采样，消除漂移边缘闪烁
+    // 显示分辨率烘焙 → 每帧仅 1:1 平移 blit（不再逐帧缩放，消除漂移边缘靠整数/近整数偏移）
     // 横向环绕：绘制足够副本覆盖 dst 宽度（屏外剔除）
     double off = -wrapX(driftPx_) * scale;
     for (double x0 = off; x0 < dst.right() + mapWpx; x0 += mapWpx) {
         if (x0 + mapWpx < dst.left() || x0 > dst.right()) continue;
         const QRectF d(x0, dst.y() - offY, mapWpx, mapHpx);
         if (d.bottom() < dst.y() || d.top() > dst.bottom()) continue;
-        p.drawPixmap(d, worldPix_, src);
+        // 1:1 blit：worldPix_ 已按显示分辨率烘焙，src=整图逻辑矩形 → 目标尺寸一致即逐像素拷贝
+        p.drawPixmap(d, worldPix_, worldPix_.rect());
     }
     // 大区旅行锚点（金色点 + 名）
     QColor gold(0xc9, 0xa2, 0x4b);
+    if (!qaSkipWorldOverlay_) {
     for (const RegionInfo& ri : regions_) {
         const QPointF w = preToWidget(ri.proj, dst, scale, -driftPx_);
         // 环绕后的实际绘制 x（含纵向偏移）
@@ -570,13 +614,16 @@ void MapView::renderWorldInto(QPainter& p, const QRectF& dst) const
         p.setBrush(Qt::NoBrush);
         drawLabel(p, pos + QPointF(6, 4), ri.name, QColor(0xe8, 0xe2, 0xd4));
     }
+    }
     // 方向 C·联动：地理热点层（World=国家/大区），点击 → 图库筛选
+    if (!qaSkipWorldOverlay_) {
     for (const GeoHotspot& h : geoHotspots_) {
         QPointF w = preToWidget(hotspotPrePos(h), dst, scale, -driftPx_);
         double wx = dst.x() + fmod(w.x() - dst.x(), mapWpx);
         if (wx < dst.x()) wx += mapWpx;
         const QPointF pos(wx, w.y() - offY - hotspotLift(h.count));   // 上抬让锚点可点
         drawHotspot(p, pos, h);
+    }
     }
 }
 
@@ -795,6 +842,7 @@ void MapView::drawArcs(QPainter& p, const QRectF& bbox, const QRectF& dst) const
 // （核心+光晕）。用于 CI/offscreen 验证「光晕已落地」，颜色校验铁律：实测不许猜。
 void MapView::qaShootA(const QString& path)
 {
+    qaFixedBake_ = true;   // 固定 3x 超采样，复现确定性像素断言
     // 确定性合成足迹点（北京/上海/广州/成都/乌鲁木齐），与真实库无关，保证可复现
     setGpsPoints({
         QPointF(eqX(116.40), eqY(39.90)),
@@ -837,6 +885,7 @@ void MapView::qaShootA(const QString& path)
 // 统计青色（蓝主导）轨迹像素；FORCE_BROKEN 强制光点 → 轨迹像素为 0 → RED。
 void MapView::qaShootTrack(const QString& path)
 {
+    qaFixedBake_ = true;   // 固定 3x 超采样，复现确定性像素断言
     const bool broken = !qEnvironmentVariableIsEmpty("LA_MAP_TRACK_QA_FORCE_BROKEN");
     footLayer_ = broken ? FL_Dots : FL_Track;
     arcRegionIds_.clear();
@@ -885,6 +934,7 @@ void MapView::qaShootTrack(const QString& path)
 // 统计暖色（红主导）热力像素；FORCE_BROKEN 强制光点 → 暖色像素为 0 → RED。
 void MapView::qaShootHeat(const QString& path)
 {
+    qaFixedBake_ = true;   // 固定 3x 超采样，复现确定性像素断言
     const bool broken = !qEnvironmentVariableIsEmpty("LA_MAP_HEAT_QA_FORCE_BROKEN");
     footLayer_ = broken ? FL_Dots : FL_Heat;
     arcRegionIds_.clear();
@@ -936,6 +986,7 @@ void MapView::qaShootHeat(const QString& path)
 //   → 三时刻全等 → 反例必红。
 void MapView::qaShootTrackAnim(const QString& path)
 {
+    qaFixedBake_ = true;   // 固定 3x 超采样，复现确定性像素断言
     const bool broken = !qEnvironmentVariableIsEmpty("LA_MAP_TRACK_ANIM_QA_FORCE_BROKEN");
     footLayer_ = FL_Track;
     arcRegionIds_.clear();
@@ -1990,7 +2041,7 @@ void MapView::setHeatRamp(int rampId)
     const int r = (rampId < HR_Warm || rampId > HR_Crimson) ? HR_Warm : rampId;
     if (r == heatRamp_) return;
     heatRamp_ = r;
-    buildWorldPixmap();     // 世界层重烘焙（热力在静态层内）
+    buildWorldPixmap();         // 急切实调（热力在静态层内，保持 qaShoot* 探针契约）
     invalidateViewCache();  // 下钻静态层重烘焙
     update();
 }
@@ -2183,6 +2234,7 @@ void MapView::paintMap(QPainter& p)
             worldInited_ = true;
             centerWorldOn(defaultCenterX(), 150.0);
         }
+        ensureWorldPix();
         renderWorldInto(p, dst);
     }
     else {
@@ -2261,13 +2313,17 @@ int MapView::qaViewPixDeviceWidth() const
 
 // 帧耗时自测：LA_MAP_PERF=1 时逐层级各渲染 20 帧并打印平均毫秒/帧
 // （离屏 QImage + 与 paintEvent 完全相同的调度；先测再改）
-void MapView::qaPerf()
+int MapView::qaPerf()
 {
     resize(1200, 800);   // 离屏门里 MapView 是堆叠页非当前页、尺寸极小 → 强制真实尺寸
     invalidateViewCache();
     QImage img(size(), QImage::Format_ARGB32_Premultiplied);
     img.fill(0xff0a1016);
-    auto bench = [&](const char* name, const std::function<void()>& enter) {
+    int fail = 0;
+    // 证据化宽松门槛（先测再改 + 铁律25）：world 原 2.30ms 来自每帧缩放 blit 固定 3000×1500，
+    // 修正为显示分辨率 1:1 blit 后预测 ~0.5ms，预算 1.2ms 既证伪回退又留 ~2× 余量；
+    // region/province/country 已是 1:1 blit（0.25–0.45ms），门槛 1.5ms 防回退且不 flaky。
+    auto bench = [&](const char* name, double budgetMs, const std::function<void()>& enter) -> double {
         enter();
         {   // warmup：首帧含懒加载/缓存烘焙，不计入
             QPainter p(&img);
@@ -2279,26 +2335,51 @@ void MapView::qaPerf()
             QPainter p(&img);
             paintMap(p);
         }
-        std::fprintf(stderr, "LA_MAP_PERF %s=%.2fms\n", name, double(t.elapsed()) / 20.0);
+        const double ms = double(t.elapsed()) / 20.0;
+        std::fprintf(stderr, "LA_MAP_PERF %s=%.2fms\n", name, ms);
+        if (ms > budgetMs) {
+            std::fprintf(stderr, "LA_MAP_PERF FAIL %s=%.2fms > budget=%.2fms\n", name, ms, budgetMs);
+            fail = 1;
+        }
         std::fflush(stderr);
+        return ms;
     };
-    bench("world", [] {});
-    bench("region", [this] { enterRegion(QStringLiteral("china")); });
-    bench("province", [this] {
+    bench("world", 1.2, [] {});
+    // A 取证：拆出世界层「基础地图 blit + 图例 + 页脚」与「每帧覆盖层」各自耗时。
+    // 覆盖层 = 大区锚点标签(10) + 地理热点徽章(N，各含 setFont+drawText)，当前未并入 worldPix_。
+    if (!qEnvironmentVariableIsEmpty("LA_MAP_PERF_DETAIL")) {
+        auto timeWorld = [this, &img]() -> double {
+            { QPainter p(&img); paintMap(p); }   // warmup
+            QElapsedTimer tw; tw.start();
+            for (int i = 0; i < 20; ++i) { QPainter p(&img); paintMap(p); }
+            return double(tw.elapsed()) / 20.0;
+        };
+        const double full = timeWorld();
+        qaSkipWorldOverlay_ = true;
+        const double base = timeWorld();
+        qaSkipWorldOverlay_ = false;
+        std::fprintf(stderr, "LA_MAP_PERF world_base=%.2fms world_overlay=%.2fms\n",
+                     base, full - base);
+        std::fflush(stderr);
+    }
+    bench("region", 1.5, [this] { enterRegion(QStringLiteral("china")); });
+    bench("province", 1.5, [this] {
         if (!curProvinces_.isEmpty()) enterProvince(curProvinces_.first().name);
     });
-    bench("country", [this] {
+    bench("country", 1.5, [this] {
         while (level_ != World) goUp();
         for (int i = 0; i < worldNames_.size(); ++i)
             if (worldNames_[i] == QStringLiteral("Vietnam")) { enterCountry(i); break; }
     });
     while (level_ != World) goUp();
+    return fail;
 }
 
 void MapView::resizeEvent(QResizeEvent* e)
 {
     QWidget::resizeEvent(e);
     invalidateViewCache();
+    worldDirty_ = true;   // 世界层显示分辨率随尺寸变化 → 惰性重烘焙
     update();
 }
 

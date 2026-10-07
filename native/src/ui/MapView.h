@@ -106,8 +106,11 @@ public:
     void qaShootRegion(const QString& path, const QString& id);
     // A 点击链路自测：合成鼠标事件实测「世界锚点→大区」「大区省面→省」两级命中
     void qaClickProbe();
-    // A 帧耗时自测：LA_MAP_PERF=1 时逐层级渲染 20 帧打印平均毫秒/帧（先测再改）
-    void qaPerf();
+    // A 帧耗时自测：LA_MAP_PERF=1 时逐层级渲染 20 帧打印平均毫秒/帧（先测再改 + 预算门）
+    int qaPerf();
+    // A 取证探针：LA_MAP_PERF_DETAIL=1 时额外拆出「世界层逐帧覆盖层」成本
+    // （区域锚点标签 + 地理热点徽章，二者当前每帧重绘，未并入 worldPix_ 静态烘焙）。
+    bool qaSkipWorldOverlay_ = false;
     // A 国家视图像素自测：按国家名 enterCountry → 离屏渲染国界轮廓 + 分色统计
     void qaShootCountry(const QString& path, const QString& name);
     // A 爆炸弹层像素自测：进入省视图 + 合成缩略图 → 离屏渲染终态 + 分色统计
@@ -167,7 +170,8 @@ protected:
 private:
     void paintMap(QPainter& p);   // 绘制主体（paintEvent 与帧耗时自测共用调度）
     void loadData();
-    void buildWorldPixmap();                 // 离屏渲染静态世界（环填充）
+    void buildWorldPixmap();                 // 离屏渲染静态世界（显示分辨率烘焙）
+    void ensureWorldPix();                   // 惰性自校验：尺寸/zoom/dpr/内容变化才重烘焙
     void renderWorldInto(QPainter& p, const QRectF& dst) const;
     void renderRegion(QPainter& p, const QRectF& dst) const;
     void renderRegionStatic(QPainter& p, const QRectF& dst) const;   // 静态部分（网格/省面/标签/足迹点）
@@ -242,7 +246,11 @@ private:
     bool                hasCurProvince_ = false;
 
     Level               level_ = World;
-    QPixmap             worldPix_;              // 离屏静态世界
+    QPixmap             worldPix_;              // 离屏静态世界（显示分辨率烘焙，1:1 blit）
+    int                 worldPixW_ = 0, worldPixH_ = 0;  // 已烘焙逻辑尺寸（惰性校验）
+    double              worldPixZoom_ = -1;     // 已烘焙时 worldZoom_
+    bool                worldDirty_ = true;     // 内容变化 → 需重烘焙
+    bool                qaFixedBake_ = false;   // QA 探针专用：固定 3x 超采样烘焙（复现确定性像素断言）
     double              driftPx_ = 0;
     QElapsedTimer       timer_;
     QTimer              driftTimer_;

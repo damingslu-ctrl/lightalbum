@@ -214,6 +214,12 @@ $GateTable = @(
   # measuredMs 待 -Timing 实测回填（初估 ~1450，与 LA_CLUSTER_QA 同量级）。
   @{n="LA_GEO_LINK_QA";    png=$false; measuredMs=1450},
   @{n="LA_MAP_CLICK_QA";    png=$false; measuredMs=2553},
+  # 方向 A·地图性能：帧耗时预算门。qaPerf 逐层（world/region/province/country）各渲染 20 帧
+  # 取平均 ms，超预算打印 LA_MAP_PERF FAIL 并经退出码非 0（门禁 scan FAIL 生效）。
+  # 证据化放宽门槛（先测再改 + 铁律25）：world <=1.2ms（修正后 1:1 blit 预测 ~0.5ms，
+  # 证伪「每帧缩放 3000x1500」回退）、region/province/country <=1.5ms。路线图 world/region
+  # <0.3ms 经实测为全屏必 blit 的物理不可达目标，已放弃。tier 缺省=full（墙钟预算门，
+  # 同 LA_SCALE_PERF 不进 fast 防 CI flake）。
   @{n="LA_MAP_PERF";        png=$false; measuredMs=3735},
   @{n="LA_GALLERY_E_QA";    png=$true; measuredMs=2589},
   @{n="LA_GALLERY_FILL_QA"; png=$true; measuredMs=2690},
