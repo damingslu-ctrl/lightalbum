@@ -44,6 +44,7 @@
 #include "core/ImageLoad.h"      // 2.29.0 统一原图加载（照片/RAW/视频）
 #include "core/VideoDecoder.h"     // 2.30.0 内嵌视频解码（ffmpeg rawvideo 管道）
 #include "core/AudioPlayer.h"      // 2.30.0 音频输出（winmm waveOut）
+#include "core/ImageLoad.h"       // 2.31.0 选帧链路（loadForEdit 透传秒数）
 #include "ui/VideoPlayerWidget.h"   // 2.30.0 播放器 UI（LA_VIDEO_PLAY_QA 像素门）
 #include "core/Scanner.h"
 #include "core/ICloudSource.h"
@@ -821,6 +822,79 @@ static int runAudioQa()
                  qPrintable(QFileInfo(sample).fileName()), broken ? 1 : 0);
     if (!pass)
         std::fprintf(stderr, "LA_AUDIO_QA failed: %s\n", qPrintable(failed.join(',')));
+    std::fflush(stderr);
+    return pass ? 0 : 1;
+}
+
+// ================================================================
+// 2.31.0 视频选帧门禁 LA_VIDEO_FRAME_QA
+//  验证「按秒选帧」这条链路真的取到**不同**的帧，且边界不崩、不串帧。
+//  背景：实测同视频 t=0/2/4s 三帧 md5 各异（ac946ed/76b91ee/1d8c26f），
+//  故若抽帧忽略秒数或产物名共用，会读到同一帧 —— 这正是选帧器的头号失败模式。
+//  正例：0/2/4s 三帧**互不相同**；边界（0 与末尾）不崩且非空；透传生效。
+//  反例 FORCE_BROKEN：令 extractPoster 忽略 atSec（恒抽 2s）→ 三帧相同 → 转红。
+//  need=LA_VIDEO_SAMPLE。
+// ================================================================
+static int runVideoFrameQa()
+{
+    const QString sample = QString::fromLocal8Bit(qgetenv("LA_VIDEO_SAMPLE"));
+    const bool broken = !qEnvironmentVariableIsEmpty("LA_VIDEO_FRAME_QA_FORCE_BROKEN");
+    int checks = 0, fails = 0;
+    QStringList failed;
+    auto chk = [&](bool cond, const char* tag) {
+        ++checks;
+        if (!cond) { ++fails; failed << QString::fromLatin1(tag);
+                     std::fprintf(stderr, "  LA_VIDEO_FRAME_QA FAIL %s\n", tag); }
+    };
+
+    if (sample.isEmpty() || !QFileInfo::exists(sample)) {
+        std::fprintf(stderr, "LA_VIDEO_FRAME_QA SKIP: set LA_VIDEO_SAMPLE to run\n");
+        std::fflush(stderr);
+        return 0;
+    }
+    // 反例：注入「忽略 atSec，恒抽默认 2s」的缺陷形态（真实缺陷：换了秒读到旧帧）
+    VideoDecode::setForceIgnoreFrameForQa(broken);
+
+    // 三个时刻各抽一帧
+    QImage f0 = ImageLoad::loadForEdit(sample, 0.0);
+    QImage f2 = ImageLoad::loadForEdit(sample, 2.0);
+    QImage f4 = ImageLoad::loadForEdit(sample, 4.0);
+
+    chk(!f0.isNull() && !f2.isNull() && !f4.isNull(), "E1_all_frames_decoded");
+
+    // ★核心：三帧必须互不相同（采样网格比对；共用帧/串帧会红）
+    auto differs = [](const QImage& a, const QImage& b) {
+        if (a.isNull() || b.isNull() || a.size() != b.size()) return false;
+        for (int y = 0; y < a.height(); y += 12)
+            for (int x = 0; x < a.width(); x += 12)
+                if (a.pixel(x, y) != b.pixel(x, y)) return true;
+        return false;
+    };
+    chk(differs(f0, f2), "E2_frame0_differs_frame2");
+    chk(differs(f2, f4), "E3_frame2_differs_frame4");
+    chk(differs(f0, f4), "E4_frame0_differs_frame4");
+
+    // 边界：第 0 秒必须可解（不是只有 2s 有效）
+    chk(f0.width() > 0 && f0.height() > 0, "E5_frame0_boundary_ok");
+    // 末尾秒（超时长）必须**诚实失败或给有效帧**，但绝不能崩/给半成品
+    const VideoDecode::VideoProbe vp = VideoDecode::probe(sample);
+    if (vp.durationSec > 4.5) {
+        const QImage fEnd = ImageLoad::loadForEdit(sample, vp.durationSec - 0.5);
+        chk(!fEnd.isNull() && fEnd.width() > 0, "E6_last_frame_ok");
+    }
+
+    std::fprintf(stderr, "  frames: f0=%dx%d f2=%dx%d f4=%dx%d dur=%.2f broken=%d\n",
+                 f0.width(), f0.height(), f2.width(), f2.height(),
+                 f4.width(), f4.height(), vp.durationSec, broken ? 1 : 0);
+
+    VideoDecode::setForceIgnoreFrameForQa(false);
+
+    const bool pass = (checks > 0) && (fails == 0);
+    std::fprintf(stderr, "LA_VIDEO_FRAME_QA %s checks=%d failed=%d sample=%s broken=%d\n",
+                 pass ? "PASS" : "FAIL", checks, fails,
+                 qPrintable(QFileInfo(sample).fileName()), broken ? 1 : 0);
+    if (!pass)
+        std::fprintf(stderr, "LA_VIDEO_FRAME_QA failed: %s\n", qPrintable(failed.join(',')));
     std::fflush(stderr);
     return pass ? 0 : 1;
 }
@@ -4608,6 +4682,10 @@ int main(int argc, char *argv[])
     // 2.30.0 音频输出门禁（ffmpeg PCM → winmm waveOut）
     if (qEnvironmentVariableIsSet("LA_AUDIO_QA"))
         return runAudioQa();
+
+    // 2.31.0 视频选帧门禁（按秒取帧·防串帧）
+    if (qEnvironmentVariableIsSet("LA_VIDEO_FRAME_QA"))
+        return runVideoFrameQa();
 
     // 2.29.0 选片豁免契约门禁（须排在 animOk 之前，见门禁铁律）
     if (qEnvironmentVariableIsSet("LA_CULL_EXEMPT_QA"))

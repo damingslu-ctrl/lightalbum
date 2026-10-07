@@ -32,7 +32,7 @@ bool needsExternal(const QString& path)
     return RawDecode::isRawExt(path) || VideoDecode::isVideoExt(path);
 }
 
-QImage loadForEdit(const QString& path)
+QImage loadForEdit(const QString& path, double videoFrameSec)
 {
     if (path.isEmpty()) return QImage();
 
@@ -41,8 +41,8 @@ QImage loadForEdit(const QString& path)
         return loadAndCleanup(RawDecode::decodeToTempPpm(path));
     }
     if (VideoDecode::isVideoExt(path)) {
-        // 视频：抽帧封面即可用于编辑预览（本项目不播放，也无逐帧修图能力）
-        return loadAndCleanup(VideoDecode::extractPoster(path));
+        // 视频：抽指定时刻的一帧用于编辑（选帧器可改秒数；默认 2.0 沿用既有行为）。
+        return loadAndCleanup(VideoDecode::extractPoster(path, videoFrameSec));
     }
     // 普通照片 + QA 反例下的 RAW：行为与旧的 QImage(path) 一致（含 autoTransform 方向摆正）
     QImageReader r(path);

@@ -27,6 +27,10 @@ namespace VideoDecode {
 bool g_trustExitCodeForQa = false;
 void setForceTrustExitCodeForQa(bool on) { g_trustExitCodeForQa = on; }
 
+// 2.31.0 选帧反例：置 true 后忽略 atSec，恒抽第2 秒（复现「换秒读到同一帧」）
+bool g_ignoreFrameForQa = false;
+void setForceIgnoreFrameForQa(bool on) { g_ignoreFrameForQa = on; }
+
 bool isVideoExt(const QString& fileName)
 {
     const int dot = int(fileName.lastIndexOf(QLatin1Char('.')));
@@ -146,20 +150,29 @@ VideoProbe probe(const QString& videoPath, int timeoutMs)
     return out;
 }
 
-QString extractPoster(const QString& videoPath, int timeoutMs)
+QString extractPoster(const QString& videoPath, double atSec, int timeoutMs)
 {
     const QString dir = toolDir();
     if (dir.isEmpty()) return QString();
 
     const QString base = QFileInfo(videoPath).completeBaseName();
-    const QString jpg = workPath(base, ".jpg");
+    // ★产物名带秒数：同一视频抽多个时刻必须互不覆盖，否则选帧器换了秒
+    //   却读到上一帧的残留图（实测 t=0/2/4 三帧内容确实不同，见门禁）。
+    const double effSec = g_ignoreFrameForQa ? 2.0 : atSec;
+    const QString jpg = workPath(QStringLiteral("%1_t%2")
+                                     .arg(base)
+                                     .arg(effSec, 0, 'f', 2), ".jpg");
 
     QProcess p;
     p.setWorkingDirectory(dir);
     p.setProgram(dir + QStringLiteral("/ffmpeg.exe"));
     // -ss 放 -i 前 = 快进关键帧定位（更快）；-frames:v 1 取单帧；
-    // -q:v 2 高质量 JPEG；-y 覆盖。抽 2 秒避开首帧黑场（见头文件说明）。
-    p.setArguments({ QStringLiteral("-y"), QStringLiteral("-ss"), QStringLiteral("00:00:02"),
+    // -q:v 2 高质量 JPEG；-y 覆盖。默认 2 秒避开首帧黑场（见头文件说明）。
+    const qint64 ms = qint64(qMax(0.0, g_ignoreFrameForQa ? 2.0 : atSec) * 1000.0);
+    const QString ss = QStringLiteral("%1:%2:%3.%4")
+        .arg(ms / 3600000).arg((ms / 60000) % 60)
+        .arg((ms / 1000) % 60).arg(ms % 1000, 3, 10, QLatin1Char('0'));
+    p.setArguments({ QStringLiteral("-y"), QStringLiteral("-ss"), ss,
                      QStringLiteral("-i"), videoPath,
                      QStringLiteral("-frames:v"), QStringLiteral("1"),
                      QStringLiteral("-q:v"), QStringLiteral("2"),

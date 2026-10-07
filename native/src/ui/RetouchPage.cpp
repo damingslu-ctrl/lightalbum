@@ -1,5 +1,6 @@
 #include "RetouchPage.h"
 #include "../core/ImageLoad.h"   // 2.29.0 统一原图加载（照片/RAW/视频）
+#include "../core/VideoDecode.h"// 2.31.0 视频选帧（探测时长）
 #include "../core/qaExit.h"   // 2.7.0 门禁自退契约（禁裸调 quit）
 #include "MaskCanvas.h"
 #include "CropCanvas.h"
@@ -276,6 +277,43 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
     badge_->setStyleSheet("color:#8da396;");
     fl->addWidget(prog_, 1);
     fl->addWidget(badge_);
+
+    // ---- 2.31.0 视频选帧控件（默认隐藏，仅视频时显示；铁律30：不碰既有命中区）----
+    m_vBadge = new QLabel(QCoreApplication::translate("LightAlbum",
+        "正在编辑视频的一帧 · 导出为图片"), foot);
+    m_vBadge->setStyleSheet("color:#c8a86a;");
+    m_vBadge->setVisible(false);
+    fl->addWidget(m_vBadge);
+
+    auto* vrow = new QWidget(foot);
+    vrow->setObjectName(QStringLiteral("videoFrameRow"));
+    auto* vl = new QHBoxLayout(vrow);
+    vl->setContentsMargins(0, 0, 0, 0);
+    m_vPrev = new QPushButton(QStringLiteral("◀"), vrow);
+    m_vPrev->setToolTip(QCoreApplication::translate("LightAlbum", "上一帧"));
+    m_vPrev->setFixedSize(28, 24);
+    m_vSeek = new QSlider(Qt::Horizontal, vrow);
+    m_vSeek->setRange(0, 0);
+    m_vLabel = new QLabel(QStringLiteral("-"), vrow);
+    m_vNext = new QPushButton(QStringLiteral("▶"), vrow);
+    m_vNext->setToolTip(QCoreApplication::translate("LightAlbum", "下一帧"));
+    m_vNext->setFixedSize(28, 24);
+    vl->addWidget(m_vPrev);
+    vl->addWidget(m_vSeek, 1);
+    vl->addWidget(m_vLabel);
+    vl->addWidget(m_vNext);
+    vrow->setVisible(false);
+    fl->addWidget(vrow);
+    //★滑块在拖动过程中连续抽帧会狂拉ffmpeg，故仅在松手时触发（sliderReleased）。
+    connect(m_vSeek, &QSlider::sliderReleased, this, [this] {
+        onVideoFrameChanged(m_vSeek->value());
+    });
+    connect(m_vPrev, &QPushButton::clicked, this, [this] {
+        onVideoFrameChanged(qMax(0, (m_vSeek ? m_vSeek->value() : 0) - 1));
+    });
+    connect(m_vNext, &QPushButton::clicked, this, [this] {
+        onVideoFrameChanged(m_vSeek ? m_vSeek->value() + 1 : 0);
+    });
     root->addWidget(foot);
 
     // ---- 动作条（智能增强 / AI / 重置 / 导出）----
@@ -1027,7 +1065,9 @@ void RetouchPage::onExport()
     // 优先用原始全分辨率文件（仍零云端，纯本地）：先几何后修调，与预览同序
     // 2.29.0：统一走 ImageLoad::loadForEdit（照片/RAW/视频三条路径收口）。
     // 旧代码用 QImage(ph.path)，实测对 RAW 返回 **0x0 null=1** → RAW 无法进入修图页。
-    QImage full = ImageLoad::loadForEdit(ph.path);
+    // ★2.31.0视频必须透传**当前选中的秒数**——否则导出的是默认第2秒，
+    //   而画布是用户选的那一帧 → 预览所见≠导出所得（选帧器的必备配套）。
+    QImage full = ImageLoad::loadForEdit(ph.path, m_isVideo ? m_videoSec : 2.0);
     QImage work = full.isNull() ? geoSrc_ : full;
     if (work.width() > kMaxExport || work.height() > kMaxExport)
         work = work.scaled(kMaxExport, kMaxExport, Qt::KeepAspectRatio, Qt::SmoothTransformation);
@@ -1071,10 +1111,72 @@ void RetouchPage::setParams(const RetouchParams& p)
     }
 }
 
+void RetouchPage::setupVideoFrameBar(const Photo& ph)
+{
+    // 由 mediaType 驱动（不靠扩展名二次判定，铁律6）；老行/照片恒为image。
+    m_isVideo = (ph.mediaType == QLatin1String("video"));
+    if (!m_isVideo) {
+        if (m_vBadge) m_vBadge->setVisible(false);
+        if (m_vSeek)  m_vSeek->parentWidget()->setVisible(false);
+        return;
+    }
+    // 时长：库里已落库则直接用，否则现探（诚实空值兜底）。
+    m_videoDur = ph.durSec > 0.0 ? ph.durSec
+                                 : VideoDecode::probe(ph.path).durationSec;
+    m_videoSec = 2.0;
+    if (m_videoDur > 3.0 && m_videoSec > m_videoDur - 0.05)
+        m_videoSec = qMax(0.0, m_videoDur - 1.0);   // 短片别落在片尾外
+
+    if (m_vBadge) m_vBadge->setVisible(true);
+    if (m_vSeek) {
+        m_vSeek->parentWidget()->setVisible(true);
+        m_vSeek->setRange(0, int(qMax(0.0, m_videoDur)));
+        m_vSeek->setValue(int(m_videoSec));
+    }
+    if (m_vLabel) {
+        m_vLabel->setText(m_videoDur > 0.0
+            ? QCoreApplication::translate("LightAlbum", "第 %1 秒 / 共 %2 秒")
+                  .arg(m_videoSec, 0, 'f', 1).arg(m_videoDur, 0, 'f', 1)
+            : QStringLiteral("-"));
+    }
+}
+
+void RetouchPage::onVideoFrameChanged(int sec)
+{
+    if (!m_isVideo || !photos_) return;
+    const int idx = usableIdx_.value(photoCombo_->currentIndex(), -1);
+    if (idx < 0 || idx >= photos_->size()) return;
+    const Photo& ph = (*photos_)[idx];
+    const double target = qBound(0.0, double(sec), qMax(0.0, m_videoDur));
+    if (qAbs(target - m_videoSec) < 0.01) return;      // 未变则不重抽（省一次 ffmpeg）
+
+    //按新时刻重抽帧并重载画布。
+    m_videoSec = target;
+    const QImage frame = ImageLoad::loadForEdit(ph.path, m_videoSec);
+    if (frame.isNull()) return;                        // 抽帧失败：保持当前帧，不清空画布
+    QImage img = frame;
+    if (img.width() > kMaxSrc || img.height() > kMaxSrc)
+        img = img.scaled(kMaxSrc, kMaxSrc, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    restoring_ = true;                // 换帧重建不计入撤销历史（不是「编辑动作」）
+    geoSrc_ = img;
+    rebuildGeo();
+    refreshGallery();
+    restoring_ = false;
+    resetHistory();
+    updateUndoRedoButtons();
+    if (m_vLabel) {
+        m_vLabel->setText(m_videoDur > 0.0
+            ? QCoreApplication::translate("LightAlbum", "第 %1 秒 / 共 %2 秒")
+                  .arg(m_videoSec, 0, 'f', 1).arg(m_videoDur, 0, 'f', 1)
+            : QStringLiteral("-"));
+    }
+}
+
 void RetouchPage::loadPhoto(int idx)
 {
     if (idx < 0 || idx >= photos_->size()) return;
     const Photo& ph = (*photos_)[idx];
+    setupVideoFrameBar(ph);          // 2.31.0：按媒体类型显示/隐藏选帧控件
     const QString path = QDir(thumbsDir_).filePath(ph.thumbFile);
     QImage img(path);
     if (img.isNull()) {

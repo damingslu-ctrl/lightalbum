@@ -22,7 +22,7 @@ namespace ImageLoad {
 
 // 加载「原图」用于编辑/预览：照片走 QImageReader，RAW 走 LibRaw，视频走抽帧封面。
 // 返回 null QImage 表示失败（非 RAW 且 QImage 打不开、或解码器缺失/超时）。
-QImage loadForEdit(const QString& path);
+QImage loadForEdit(const QString& path, double videoFrameSec = 2.0);
 
 // 该文件是否需要外部解码器才能加载（供 UI 决定是否显示「解码中」提示）。
 bool needsExternal(const QString& path);

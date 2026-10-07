@@ -42,13 +42,20 @@ struct VideoProbe {
 // 解析 JSON 而非正则扫文本：ffprobe 的 `-of json` 输出结构稳定，抗版本漂移。
 VideoProbe probe(const QString& videoPath, int timeoutMs = 20000);
 
-// 抽封面帧到临时 JPEG，返回路径（调用方负责删除）；失败返回空串。
+// 抽一帧到临时 JPEG，返回路径（调用方负责删除）；失败返回空串。
+// atSec = 抽帧时刻（秒）。默认 2.0 避开开场黑场（既有行为，保持兼容）。
+// ★ 产物名带秒数：同一视频抽多个时刻互不覆盖——实测 t=0/2/4s 三帧内容确实不同
+//   （md5各异），若共用产物名，选帧器换秒后会读到上一帧残留图。
 // ★ 与 RAW 同款铁律：成败**只能**看产物是否存在且可读，绝不信 exit code。
-QString extractPoster(const QString& videoPath, int timeoutMs = 30000);
+QString extractPoster(const QString& videoPath, double atSec = 2.0, int timeoutMs = 30000);
 
 // QA 钩子（2.28.0）：置 true 后 extractPoster 改走缺陷形态 ——
 // 「rc==0 即认为成功，且产物名按 completeBaseName 猜测」，跳过产物校验。
 // 与 RawDecode::setForceArtifactBlindForQa 同构；期望值不随本开关改变（铁律 22）。
 void setForceTrustExitCodeForQa(bool on);
+
+// QA 钩子（2.31.0）：置 true 后 extractPoster **忽略 atSec**，恒抽默认第 2 秒 ——
+// 精确复现「换了秒却读到同一帧」的选帧器头号缺陷形态。期望值不随本开关改变（铁律 22）。
+void setForceIgnoreFrameForQa(bool on);
 
 } // namespace VideoDecode

@@ -277,6 +277,12 @@ $GateTable = @(
   # 且可离屏断言。反例FORCE_BROKEN：ffmpeg 建不起流 → 0 字节 → C2 转红。
   #样本无音轨时优雅 SKIP（诚实前提，不硬编造）。need=LA_VIDEO_SAMPLE。
   @{n="LA_AUDIO_QA"; png=$false; need=@("LA_VIDEO_SAMPLE"); measuredMs=2000},
+  # 2.31.0 视频选帧门禁（LA_VIDEO_FRAME_QA）。验证「按秒选帧」真取到**不同**帧。
+  # 背景：实测同视频 t=0/2/4s 三帧 md5 各异，故若抽帧忽略秒数或产物名共用就会
+  # 读到同一帧——这正是选帧器头号失败模式。正例断言三帧互不相同 + 第0秒边界可解；
+  # 反例 FORCE_BROKEN令 extractPoster 忽略 atSec（恒抽2s）→ E2/E3/E4 转红。
+  # need=LA_VIDEO_SAMPLE。tier 缺省=full（三次抽帧各起一次 ffmpeg，~1.5s）。
+  @{n="LA_VIDEO_FRAME_QA"; png=$false; need=@("LA_VIDEO_SAMPLE"); measuredMs=2500},
   # 2.29.0 选片豁免契约门禁（LA_CULL_EXEMPT_QA）。纯函数 + 合成缩略图，**零外部依赖**，
   # 故可进 fast 层（实测毫秒级）。A 组钉死「RAW/视频豁免」谓词，含曾经漂移的 8 种
   # RAW 扩展名（fff/iiq/k25/kdc/mos/ptx/srf/srw —— Sigma/Phase One/Pentax/Mamiya/Ricoh/Sony）

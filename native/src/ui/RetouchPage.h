@@ -111,11 +111,23 @@ private:
     RtEditState captureState() const;         // 抓取当前全部编辑状态
     void applyState(const RtEditState& s);    // 套用快照（undo/redo 路径）
     void updateUndoRedoButtons();             // 同步按钮可用态
+    // 2.31.0 视频选帧：仅当当前是视频时启用；换秒重抽帧并重载画布
+    void setupVideoFrameBar(const Photo& ph);  // 按媒体类型显示/隐藏选帧控件
+    void onVideoFrameChanged(int sec);         // 滑块或步进 → 按该秒重抽帧
 
     const QVector<Photo>* photos_ = nullptr;
     QString thumbsDir_;
     QVector<int>  usableIdx_;                 // 有 thumbFile 的照片下标
-    QImage        geoSrc_;                    // 几何源（载入的缩略图，不被修改）
+        // 2.31.0 视频选帧状态（照片恒false，不显示控件）
+    bool          m_isVideo = false;           // 当前编辑对象是否为视频
+    double        m_videoSec = 2.0;            // 当前选中的帧时刻（秒）
+    double        m_videoDur = 0.0;            // 视频总时长（秒，0=未知）
+    QSlider*      m_vSeek = nullptr;           // 选帧时间轴
+    QLabel*       m_vLabel = nullptr;          // 「第 N 秒 / 共 M 秒」+帧标识
+    QLabel*       m_vBadge = nullptr;          // 顶部「正在编辑视频帧」提示
+    QPushButton*  m_vPrev = nullptr;           // 上一帧
+    QPushButton*  m_vNext = nullptr;           // 下一帧
+QImage        geoSrc_;                    // 几何源（载入的缩略图，不被修改）
     QImage        geoImg_;                    // 几何变换后的当前图（修调 tone 的输入）
     QPixmap       srcPm_;
 
