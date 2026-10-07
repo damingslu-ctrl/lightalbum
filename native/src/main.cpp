@@ -587,6 +587,136 @@ static int runVideoQa()
 } // namespace（视频门禁）
 
 namespace {
+
+// 选片豁免契约门禁（LA_CULL_EXEMPT_QA，2.29.0）。
+//
+// 背景：2.28.0 接入 RAW/视频后，选片链路仍按「纯 JPEG 照片」判格式，且
+// **另立了一份扩展名表**（CullPage::isRawSuffix 16 种 vs RawDecode 24 种，漂移 8 种：
+// fff/iiq/k25/kdc/mos/ptx/srf/srw）。后果不是理论问题 —— RAW 豁免存在的理由正是
+// 「缩略图是 JPEG、暗部 Laplacian 系统性失真」，故这些 RAW **必然被误杀**。
+//
+// 断言：
+//   A1 exemptFromQualityCull：isRaw / isVideo 各自与组合均为真；普通照片为假
+//   A2 ★ 8 种漂移扩展名必须被 isRawExt 认（钉死 CullPage 删表后的行为）
+//   A3 非 RAW/非视频必须为假（含此前 ICloud 内联表漏掉的 10 种视频）
+//   B  真实引擎行为：构造 RAW/视频输入 → 断言**只查分辨率**、不因模糊/曝光被淘汰
+// 反例 LA_CULL_EXEMPT_QA_FORCE_BROKEN=1：令 exemptFromQualityCull 恒返回 false
+//   （模拟「删掉豁免」这一真实缺陷形态）→ B 组转红而 A 组仍绿
+//   （期望值不随 broken 变，铁律 22；且 A 组是纯函数契约，本就不该被注入影响）。
+static int runCullExemptQa()
+{
+    const bool broken = !qEnvironmentVariableIsEmpty("LA_CULL_EXEMPT_QA_FORCE_BROKEN");
+    int checks = 0, fails = 0;
+    QStringList failed;
+    auto chk = [&](bool cond, const char* tag) {
+        ++checks;
+        if (!cond) { ++fails; failed << QString::fromLatin1(tag);
+                     std::fprintf(stderr, "  LA_CULL_EXEMPT_QA FAIL %s\n", tag); }
+    };
+
+    // ================= A 纯函数契约 =================
+    {
+        CullInput ci;
+        ci.isRaw = true;
+        chk(ci.exemptFromQualityCull(), "A1a_raw_exempt");
+        ci.isRaw = false; ci.isVideo = true;
+        chk(ci.exemptFromQualityCull(), "A1b_video_exempt");
+        ci.isVideo = true;                       // 组合亦为真
+        chk(ci.exemptFromQualityCull(), "A1c_both_exempt");
+        ci.isRaw = false; ci.isVideo = false;
+        chk(!ci.exemptFromQualityCull(), "A1d_photo_not_exempt");
+    }
+    // A2 ★ 曾经漂移的 8 种 RAW 扩展名（这是本门禁存在的核心理由）
+    {
+        static const char* const kDrifted[] = {
+            "a.fff", "a.iiq", "a.k25", "a.kdc",
+            "a.mos", "a.ptx", "a.srf", "a.srw" };
+        for (const char* n : kDrifted)
+            chk(RawDecode::isRawExt(QString::fromLatin1(n)), n);
+    }
+    // A3 非 RAW / 非视频必须为假
+    {
+        static const char* const kNot[] = {
+            "a.jpg", "a.png", "a.json", "a.ini", "a.aae", "a.icloud" };
+        for (const char* n : kNot)
+            chk(!RawDecode::isRawExt(QString::fromLatin1(n)), n);
+        // 曾经被 ICloudSource 内联 4 项表漏掉的视频扩展名
+        static const char* const kVid[] = {
+            "a.mkv", "a.avi", "a.webm", "a.wmv", "a.flv",
+            "a.mpg", "a.mpeg", "a.m2ts", "a.3gp", "a.mts" };
+        for (const char* n : kVid) {
+            chk(VideoDecode::isVideoExt(QString::fromLatin1(n)), n);
+            chk(!RawDecode::isRawExt(QString::fromLatin1(n)), n);
+        }
+    }
+
+    // ================= B 真实引擎行为 =================
+    // 构造一张**故意极暗**的缩略图（若走完整淘汰必被判欠曝而 rejected），
+    // 分辨率给足（确保淘汰原因只可能来自质量维度），对比 RAW 与普通照片两条路径。
+    {
+        QTemporaryDir td;
+        auto writeImg = [&](const QString& name, int v) {
+            QImage im(160, 120, QImage::Format_RGB32);
+            im.fill(QColor(v, v, v));
+            const QString p = td.filePath(name);
+            im.save(p, "JPEG", 90);
+            return p;
+        };
+
+        if (!td.isValid()) {
+            std::fprintf(stderr, "  LA_CULL_EXEMPT_QA SKIP b (tmpdir)\n");
+        } else {
+            const QString dark = writeImg("dark.jpg", 6);   // 极暗 → 曝光判定必为欠曝
+
+            CullOptions opts;
+            opts.dedupThreshold = -1;                        // 关闭相似去重（本门只测质量维度）
+
+            CullInput inRaw;
+            inRaw.thumbPath = dark;
+            inRaw.origW = 4000; inRaw.origH = 3000;          // 160x120 < minDim 会因分辨率被拒，
+                                                              // 故此处用 4000x3000 表达原图分辨率
+            inRaw.isRaw = true;
+            if (broken) inRaw.isRaw = false;                 // ★ 反例：模拟「豁免失效」
+            const CullReport rRaw = CullEngine::analyze(QVector<CullInput>{inRaw}, opts);
+            std::fprintf(stderr, "  LA_CULL_EXEMPT_QA raw: cand=%d rej=%d exposure=%d\n",
+                         rRaw.candidateCount, rRaw.rejectedCount, rRaw.exposureCount);
+            chk(rRaw.candidateCount == 1 && rRaw.rejectedCount == 0,
+                "B1_raw_dark_not_rejected");
+
+            // 反向：同图作为普通照片必被欠曝淘汰 —— 证明 B1 不是恒真（铁律 16）
+            CullInput inPhoto;
+            inPhoto.thumbPath = dark;
+            inPhoto.origW = 4000; inPhoto.origH = 3000;
+            const CullReport rPhoto = CullEngine::analyze(QVector<CullInput>{inPhoto}, opts);
+            std::fprintf(stderr, "  LA_CULL_EXEMPT_QA photo: cand=%d rej=%d exposure=%d\n",
+                         rPhoto.candidateCount, rPhoto.rejectedCount, rPhoto.exposureCount);
+            chk(rPhoto.rejectedCount == 1, "B2_photo_dark_rejected");
+
+            // 视频与 RAW 同享豁免
+            CullInput inVid;
+            inVid.thumbPath = dark;
+            inVid.origW = 4000; inVid.origH = 3000;
+            inVid.isVideo = true;
+            const CullReport rVid = CullEngine::analyze(QVector<CullInput>{inVid}, opts);
+            std::fprintf(stderr, "  LA_CULL_EXEMPT_QA video: cand=%d rej=%d\n",
+                         rVid.candidateCount, rVid.rejectedCount);
+            chk(rVid.candidateCount == 1 && rVid.rejectedCount == 0,
+                "B3_video_dark_not_rejected");
+        }
+    }
+
+    const bool pass = (checks > 0) && (fails == 0);
+    std::fprintf(stderr, "LA_CULL_EXEMPT_QA %s checks=%d failed=%d broken=%d\n",
+                 pass ? "PASS" : "FAIL", checks, fails, broken ? 1 : 0);
+    if (!pass)
+        std::fprintf(stderr, "LA_CULL_EXEMPT_QA failed: %s\n", qPrintable(failed.join(',')));
+    std::fflush(stderr);
+    return pass ? 0 : 1;
+}
+
+} // namespace（选片豁免门禁）
+
+namespace {
 // P10 离线逆地理编码冒烟：已知点断言（pip / 城市兜底 / 海上诚实空）+ 真库回填统计。
 int runGeoSmoke()
 {
@@ -4078,6 +4208,10 @@ int main(int argc, char *argv[])
     if (qEnvironmentVariableIsSet("LA_VIDEO_QA"))
         return runVideoQa();
 
+    // 2.29.0 选片豁免契约门禁（须排在 animOk 之前，见门禁铁律）
+    if (qEnvironmentVariableIsSet("LA_CULL_EXEMPT_QA"))
+        return runCullExemptQa();
+
     // P10 离线逆地理冒烟（已知点 + 真库回填统计）
     if (qEnvironmentVariableIsSet("LA_GEO_SMOKE"))
         return runGeoSmoke();
@@ -4332,6 +4466,7 @@ int main(int argc, char *argv[])
         && !qEnvironmentVariableIsSet("LA_BATCH_TX_QA")
         && !qEnvironmentVariableIsSet("LA_RAW_QA")
         && !qEnvironmentVariableIsSet("LA_VIDEO_QA")
+        && !qEnvironmentVariableIsSet("LA_CULL_EXEMPT_QA")
         && !qEnvironmentVariableIsSet("LA_GALLERY_BATCH_QA")
         ;
 

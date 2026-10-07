@@ -1,6 +1,7 @@
 // 导入 iCloud 相册：候选根探测（实现）。见 ICloudSource.h 的实测背景。
 #include "ICloudSource.h"
 #include "PathGuess.h"
+#include "VideoDecode.h"   // 2.29.0 视频判据唯一真源（原先内联 4 项表，漂移 10 种）
 
 #include <QDir>
 #include <QFileInfo>
@@ -30,10 +31,10 @@ bool hasMediaFile(const QString& dir)
     int n = 0;
     for (const QFileInfo& fi : fs) {
         if (PathGuess::isPhoto(fi.fileName())) return true;
-        const QString ext = fi.suffix().toLower();
-        if (ext == QLatin1String("mp4") || ext == QLatin1String("mov")
-            || ext == QLatin1String("hevc") || ext == QLatin1String("m4v"))
-            return true;
+        // 2.29.0：原先此处内联一份 4 项视频表（mp4/mov/hevc/m4v），与
+        // VideoDecode::kVideoExt[]（14 种）漂移 10 种 —— mkv/avi/webm/wmv/flv/
+        // mpg/mpeg/m2ts/3gp/mts 会被误判为「空壳目录」。收敛到唯一真源（铁律 6）。
+        if (VideoDecode::isVideoExt(fi.fileName())) return true;
         if (++n >= 200) break;                  // 200 个非媒体文件即判空壳，止损
     }
     return false;

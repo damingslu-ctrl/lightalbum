@@ -320,8 +320,9 @@ CullReport CullEngine::analyze(const QVector<CullInput>& inputs,
     for (int i = 0; i < items.size(); ++i) {
         CullItem& it = items[i];
         if (it.status == QStringLiteral("rejected")) continue;
-        if (inputs[i].isRaw) {
-            // RAW 豁免：只查分辨率
+        if (inputs[i].exemptFromQualityCull()) {
+            // RAW / 视频豁免：只查分辨率
+            // （2.29.0：isVideo 与 isRaw 共享本分支，判据收敛到 CullInput 单一口径）
             if (!it.resolutionOk) {
                 it.status = QStringLiteral("rejected");
                 it.rejectReason = QCoreApplication::translate("LightAlbum", "分辨率过低");

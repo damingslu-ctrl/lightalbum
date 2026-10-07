@@ -6,7 +6,11 @@
 // 设计铁律（平移自 Python 版 + 原生约束）：
 //  - 零云端：只算本地可测维度（清晰度/光影），其余维度不编造、权重重归一化。
 //  - 基于本地缩略图分析（D:\lightalbum\thumbs\<hash>.jpg 恒存在），不依赖可能缺失的原图。
-//  - RAW 豁免：原生缩略图都是 jpg，故 isRaw 仅由原名扩展名决定，RAW 不走模糊/曝光淘汰。
+//  - RAW / 视频豁免：原生缩略图都是 jpg（RAW 由 LibRaw 解码、视频由 ffmpeg 抽帧），
+//    其暗部 Laplacian 与曝光统计**系统性失真**且语义上不适用于视频，
+//    故二者只查分辨率、不走模糊/曝光淘汰。判据统一由 CullInput::exemptFromQualityCull()
+//    给出（isRaw 由 RawDecode::isRawExt 驱动、isVideo 由 Photo::mediaType 驱动），
+//    **禁止在 UI 层另立扩展名表**（2.29.0 修：原 isRawSuffix 漂移 8 种 RAW）。
 //  - 失败即放行：缩略图解码失败 → 模糊记 999（不判模糊）、曝光判未知，宁多留不误杀。
 #include <QString>
 #include <QVector>
@@ -17,7 +21,16 @@ struct CullInput {
     QString thumbPath;          // 本地缩略图绝对路径
     int     origW = 0, origH = 0;
     bool    isRaw = false;       // 原图扩展名是否 RAW（仅影响淘汰策略）
+    // 2.29.0 视频：与 RAW 同享「只查分辨率」豁免。理由同样是**缩略图不是真实画质** ——
+    // 视频缩略图是抽帧封面，拿它的 Laplacian/曝光去淘汰视频在语义上不成立
+    // （与「视频无 EXIF 不编造」同源的一致性要求）。
+    bool    isVideo = false;
     QString category;           // CLIP 场景分类标签（空 = 未分类），供选片页筛选
+
+    // 2.29.0：RAW / 视频是否豁免质量淘汰（只查分辨率）。
+    // ★ 唯一真源：UI 层不得再另立扩展名表（原 isRawSuffix 16 种 vs RawDecode 24 种，
+    //   漂移 8 种导致 SRW/IIQ/FFF/KDC/K25/MOS/PXT/SRF 的 RAW 被误杀 —— 铁律 6）。
+    bool exemptFromQualityCull() const { return isRaw || isVideo; }
 };
 
 struct CullItem {

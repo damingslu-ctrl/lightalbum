@@ -1,5 +1,6 @@
 #include "CullPage.h"
 #include "../core/qaExit.h"   // 2.7.0 门禁自退契约（禁裸调 quit）
+#include "../core/RawDecode.h"  // 2.29.0 RAW 判据唯一真源（禁在本文件另立表）
 #include "Theme.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -32,13 +33,12 @@
 namespace {
 constexpr double PI = 3.14159265358979323846;
 
-static bool isRawSuffix(const QString& s)
-{
-    static const QStringList raw = {
-        "raw","cr2","cr3","nef","arw","dng","raf","orf","rw2","pef",
-        "sr2","x3f","3fr","mef","mrw","nrw"};
-    return raw.contains(s, Qt::CaseInsensitive);
-}
+// 2.29.0：原先此处有一份**独立的** RAW 扩展名表（16 种），与
+// core/RawDecode.cpp 的 kRawExt[]（24 种）漂移 8 种 —— fff/iiq/k25/kdc/mos/ptx/srf/srw
+// （Sigma / Phase One / Pentax / Mamiya / Ricoh / Sony）拿不到 RAW 豁免，
+// 会被当普通照片走 Laplacian+曝光淘汰；而 RAW 豁免存在的理由正是「缩略图是 JPEG、
+// 暗部 Laplacian 系统性失真」，故这些 RAW **必然被误杀**。
+// 现统一走 RawDecode::isRawExt() 唯一真源（铁律 6）。视频判定由 mediaType 驱动。
 
 static void parseDim(const QString& dim, int& w, int& h)
 {
@@ -889,7 +889,9 @@ void CullPage::onAnalyze()
         CullInput in;
         in.thumbPath = QDir(thumbsDir_).filePath(ph.thumbFile);
         parseDim(ph.dim, in.origW, in.origH);
-        in.isRaw = isRawSuffix(QFileInfo(ph.path).suffix());
+        // 2.29.0：isRaw 走唯一真源；isVideo 由 mediaType 驱动（不靠扩展名二次判定）
+        in.isRaw   = RawDecode::isRawExt(ph.path);
+        in.isVideo = (ph.mediaType == QLatin1String("video"));
         in.category = ph.category;
         inputs.append(in);
     }
@@ -919,7 +921,9 @@ void CullPage::autoRun(int cap)
         CullInput in;
         in.thumbPath = QDir(thumbsDir_).filePath(ph.thumbFile);
         parseDim(ph.dim, in.origW, in.origH);
-        in.isRaw = isRawSuffix(QFileInfo(ph.path).suffix());
+        // 2.29.0：isRaw 走唯一真源；isVideo 由 mediaType 驱动（不靠扩展名二次判定）
+        in.isRaw   = RawDecode::isRawExt(ph.path);
+        in.isVideo = (ph.mediaType == QLatin1String("video"));
         in.category = ph.category;
         inputs.append(in);
     }

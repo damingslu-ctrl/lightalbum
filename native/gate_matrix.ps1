@@ -259,6 +259,13 @@ $GateTable = @(
   # -> B2b 转红；徽标像素门不受影响（证明反例只打解码判定，不是一刀切）。
   # tier 缺省=full：真实抽帧实测 ~0.3-0.8s，进程另付 QApplication 启动开销。
   @{n="LA_VIDEO_QA"; png=$false; need=@("LA_VIDEO_SAMPLE"); measuredMs=1600},
+  # 2.29.0 选片豁免契约门禁（LA_CULL_EXEMPT_QA）。纯函数 + 合成缩略图，**零外部依赖**，
+  # 故可进 fast 层（实测毫秒级）。A 组钉死「RAW/视频豁免」谓词，含曾经漂移的 8 种
+  # RAW 扩展名（fff/iiq/k25/kdc/mos/ptx/srf/srw —— Sigma/Phase One/Pentax/Mamiya/Ricoh/Sony）
+  # 与曾经漏掉的 10 种视频扩展名；B 组用**极暗合成图**对比 RAW/视频/普通照片三条路径：
+  # RAW 与视频必须 candidate（豁免生效），普通照片必须 rejected（证明非恒真，铁律 16）。
+  # 反例 LA_CULL_EXEMPT_QA_FORCE_BROKEN=1 令 RAW 豁免失效 -> B1 转红而 A 组仍绿。
+  @{n="LA_CULL_EXEMPT_QA"; png=$false; tier="fast"; measuredMs=120},
   @{n="LA_GALLERY_FILL_QA"; png=$true; measuredMs=2690},
   @{n="LA_RETOUCH_A_QA";    png=$true; measuredMs=2707},
   @{n="LA_SCALE_SMOKE";     png=$false; measuredMs=3351},
