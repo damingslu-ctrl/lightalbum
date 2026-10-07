@@ -51,6 +51,45 @@
 
 ---
 
+## FFmpeg（视频格式支持，2.28.0 起）
+
+- 项目：**FFmpeg**
+- 地址：https://ffmpeg.org / 构建来源 https://www.gyan.dev/ffmpeg/builds/
+- 取用形式：官方预编译 Windows 产物 `ffmpeg-release-essentials.zip`
+  （实测版本串 `9.0.2-essentials_build`，由 MSYS2 gcc 16.2.0 构建）
+- 许可：**GNU General Public License version 3（GPL-3.0）**
+  —— 实测该构建的 `configuration` 含 `--enable-gpl --enable-version3 --enable-libx264`，
+  **是 GPL-3.0，不是 LGPL**。许可证全文随附于 `3rdparty/ffmpeg/LICENSE`。
+- 版权：Copyright (c) 2000-2026 the FFmpeg developers
+
+### 重要：本项目自身的授权
+
+本项目此前以 MIT 方式声明归属（部分源文件带 `SPDX-License-Identifier: MIT`）。
+引入 GPL-3.0 的 FFmpeg 后，经审慎评估采取以下立场：
+
+- **本项目的源代码许可不变**（仍为 MIT）。理由：FFmpeg 是以**独立进程**方式调用的
+  （见 `native/src/core/VideoDecode.cpp`，经 `QProcess` 调 `ffmpeg.exe` / `ffprobe.exe`），
+  与 `LightAlbum.exe` **不构成同一可执行映像、不存在链接或重链接关系**。
+  在 GPL 术语下这属于 *mere aggregation*（简单聚合），FFmpeg 的 copyleft **不传染**
+  到本项目源代码。此点与下方 LibRaw 的论证结构相同。
+- **但我们不隐瞒**：发布包内**确实包含** GPL-3.0 程序的完整副本。因此：
+  - 完整的 GPL-3.0 文本随包分发（`3rdparty/ffmpeg/LICENSE`），由 `release.ps1`
+    在缺失时**直接 throw 中止打包**；
+  - 本文件同时说明该组件的来源、版本与许可，便于接收方行使 GPL 赋予的
+    重新分发与获取源码的权利（FFmpeg 源码：https://github.com/FFmpeg/FFmpeg）。
+- 若未来需要**将 FFmpeg 链入本 exe**（而非独立进程调用），则上述「不传染」结论
+  **不再成立**，必须重新评估本项目整体许可。
+
+### 刻意未使用的能力（减小体积与许可面）
+
+- **`ffplay.exe` 不随包分发**（约 107MB）：本项目只抽帧与读元数据，**从不播放视频**。
+- 只用到「抽 1 帧 JPEG」与「读容器/视频流元数据」两项能力；
+  构建期链接的 `libx264` 等编码器对本项目**完全无用**（属上游通用构建的固定配置）。
+- 随包仅 `ffmpeg.exe` + `ffprobe.exe`（各约 100MB，**全静态、无 DLL**），
+  故发布包体积增加约 200MB —— 这是已知并被接受的取舍。
+
+---
+
 ## LibRaw（RAW 格式解码，2.28.0 起）
 
 - 项目：**LibRaw**

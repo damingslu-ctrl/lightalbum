@@ -66,6 +66,10 @@ struct Photo {
     QString person;           // 人物（逗号分隔）；空 = 无
     bool   priv = false;      // 隐私库标记（native vault：密码门，非破坏）
     QString mark;              // 去重/选片标记（"skip"/"like"/"lock" 等；空=无）
+    // 2.28.0 视频：mediaType = "image" | "video"（老行/照片恒 image）；
+    // durSec = 时长（秒，0 = 未知）。取自 ffprobe，随列一并读出。
+    QString mediaType = QStringLiteral("image");
+    double  durSec = 0;
 };
 
 struct Kpi {

@@ -48,8 +48,13 @@ public:
         const bool sel = (opt.state & QStyle::State_Selected) != 0;
         const int  rating = ix.data(GalleryModel::RatingRole).toInt();
         // 统一卡片绘制（P23 抽出，EditorialView 共用）
+        // 2.28.0 视频徽标：数据取自 GalleryModel 角色（唯一真源，不在此处转算）
+        const bool isVideo =
+            ix.data(GalleryModel::MediaTypeRole).toString() == QLatin1String("video");
+        const double durSec = ix.data(GalleryModel::DurRole).toDouble();
         Lumen::paintGalleryCard(p, QRectF(opt.rect).adjusted(8, 8, -8, -8),
-                                title, sub, orient, miss, rating, pm, false, hov, sel);
+                                title, sub, orient, miss, rating, pm, false, hov, sel,
+                                0.0, false, isVideo, durSec);
     }
 };
 

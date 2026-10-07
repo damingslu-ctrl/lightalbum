@@ -77,9 +77,13 @@ protected:
         const QPixmap pm = model_->pixmapAt(row_, feature_ ? ThumbCache::kFeature
                                                            : ThumbCache::kTile);
         // 2.22.0：把骨架相位与减动效显式传入（纯函数在 GalleryCardPainter 内）
+        // 2.28.0 视频徽标（与 GalleryPage 同一数据真源）
+        const bool isVideo =
+            model_->data(ix, GalleryModel::MediaTypeRole).toString() == QLatin1String("video");
+        const double durSec = model_->data(ix, GalleryModel::DurRole).toDouble();
         Lumen::paintGalleryCard(&p, QRectF(rect()),
                                 title, sub, orient, miss, rating, pm, feature_, hov_, sel_,
-                                g_skelPhase, g_skelReduceMotion);
+                                g_skelPhase, g_skelReduceMotion, isVideo, durSec);
         // F3 a11y: 自定义自绘控件需手动绘制焦点环（原生焦点框不显示）
         if (hasFocus()) {
             QPen fp(QColor(0xd9, 0xa9, 0x4e), 2);

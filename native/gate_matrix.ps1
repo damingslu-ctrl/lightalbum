@@ -251,6 +251,14 @@ $GateTable = @(
   # exit code 不携带信息，产物校验是唯一判据）。期望值不随 broken 变（铁律 22）。
   # tier 缺省=full：真实解码实测 ~0.6s/张，进程另付 QApplication 启动开销。
   @{n="LA_RAW_QA"; png=$false; need=@("LA_RAW_SAMPLE"); measuredMs=1400},
+  # 2.28.0 视频支持门禁（LA_VIDEO_QA）。A 组纯函数契约零依赖恒可跑（含与 RAW 同款的
+  # needsExternalDecode 边界负向断言）；B 组真实抽帧/探测需 FFmpeg + 视频样本；
+  # C 组徽标像素门（离屏渲染 isVideo true/false 两卡，断言左上角有/无徽标差异）。
+  # need= 声明式依赖（铁律 26）：缺 FFmpeg 或样本即优雅 SKIP，样本绝不入库/进 CI。
+  # 反例 LA_VIDEO_QA_FORCE_BROKEN=1 令 extractPoster 改用「rc==0 即成功 + 猜错产物名」
+  # -> B2b 转红；徽标像素门不受影响（证明反例只打解码判定，不是一刀切）。
+  # tier 缺省=full：真实抽帧实测 ~0.3-0.8s，进程另付 QApplication 启动开销。
+  @{n="LA_VIDEO_QA"; png=$false; need=@("LA_VIDEO_SAMPLE"); measuredMs=1600},
   @{n="LA_GALLERY_FILL_QA"; png=$true; measuredMs=2690},
   @{n="LA_RETOUCH_A_QA";    png=$true; measuredMs=2707},
   @{n="LA_SCALE_SMOKE";     png=$false; measuredMs=3351},

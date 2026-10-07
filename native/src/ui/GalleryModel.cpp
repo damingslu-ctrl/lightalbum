@@ -112,6 +112,8 @@ QVariant GalleryModel::data(const QModelIndex& index, int role) const
     case DimRole:     return p.dim;
     case PrivRole:    return p.priv;
     case CategoryRole:return p.category;
+    case MediaTypeRole:return p.mediaType;
+    case DurRole:      return p.durSec;
     default:          return QVariant();
     }
 }

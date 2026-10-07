@@ -36,7 +36,11 @@ void paintGalleryCard(QPainter* p, const QRectF& card,
                       const QString& title, const QString& sub,
                       const QString& orient, bool miss, int rating,
                       const QPixmap& pm, bool feature, bool hov, bool sel,
-                      double skelPhase = 0.0, bool reduceMotion = false);
+                      double skelPhase = 0.0, bool reduceMotion = false,
+                      // 2.28.0 视频：isVideo 画播放徽标 + 时长标签（durSec<=0 则不显示时长）。
+                      // 位置选**左上角**：右上已被横竖徽章占用、左下是标题/副行、右下是星级，
+                      // 四角中唯一空闲位（铁律 30：新增可点击标记前须核对不吞既有命中区）。
+                      bool isVideo = false, double durSec = 0.0);
 
 // 2.22.0：绘制骨架占位（脉冲底 + 微光带）。phase 由调用方按时间推进并传入，
 // 保证「相位」是显式参数而非隐藏的全局状态 → 可被门禁复现。

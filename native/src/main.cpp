@@ -40,6 +40,7 @@
 #include <QColor>
 #include "core/RtHistory.h"
 #include "core/RawDecode.h"      // 2.28.0 RAW 外部解码器桥（LA_RAW_QA 直调）
+#include "core/VideoDecode.h"     // 2.28.0 视频外部解码器桥（LA_VIDEO_QA 直调）
 #include "core/Scanner.h"
 #include "core/ICloudSource.h"
 #include "core/qaExit.h"        // 2.7.0 门禁自退契约 + 自退看门狗
@@ -425,6 +426,165 @@ static int runRawQa()
 }
 
 } // namespace（RAW 门禁）
+
+namespace {
+
+// 视频格式支持门禁（LA_VIDEO_QA，2.28.0）。结构与 LA_RAW_QA 同构，便于统一理解。
+//   A 纯函数契约（零外部依赖，任何机器都能跑）：
+//     A1 isVideoExt 白名单（含大小写不敏感）/ 拒绝非视频
+//     A2 needsExternalDecode 边界：**只对视频为真**，其余 false
+//       （★ 与 RAW 同款坑：谓词若对非目标类型返回 true，`!isPhoto && !needs` 恒假 →
+//         白名单被短路放行。上一轮 LA_ICLOUD_QA total 5→10 即此故，必须钉死。）
+//   B 真实解码（需 FFmpeg + 视频样本；缺失则显式 SKIP + 补齐方式，**不静默通过**）：
+//     B1 available() 且 toolDir 下确有 ffmpeg.exe + ffprobe.exe
+//     B2 extractPoster 产出 JPEG 且非平凡
+//     B3 封面可被 Qt 实读且尺寸合理
+//     B4 probe 取到 duration>0 / width>0 / height>0
+//     B5 非视频输入抽帧必须失败
+//   C 徽标像素门（2.28.0）：isVideo=true 时左上角必须出现非背景像素，
+//     isVideo=false 时**不得**出现 —— 防止「徽标恒显」或「永远不画」两类退化。
+// 反例 LA_VIDEO_QA_FORCE_BROKEN=1：extractPoster 改走「rc==0 即成功 + 猜错产物名」，
+//   B2/B3/B4 转红而 A 组仍绿（期望值不随 broken 变，铁律 22）。
+static int runVideoQa()
+{
+    const bool broken = !qEnvironmentVariableIsEmpty("LA_VIDEO_QA_FORCE_BROKEN");
+    int checks = 0, fails = 0;
+    QStringList failed;
+    auto chk = [&](bool cond, const char* tag) {
+        ++checks;
+        if (!cond) { ++fails; failed << QString::fromLatin1(tag);
+                     std::fprintf(stderr, "  LA_VIDEO_QA FAIL %s\n", tag); }
+    };
+
+    // ================= A 纯函数契约 =================
+    chk(VideoDecode::isVideoExt(QStringLiteral("a.mp4")), "A1a_mp4");
+    chk(VideoDecode::isVideoExt(QStringLiteral("A.MOV")), "A1b_upper_mov");
+    chk(VideoDecode::isVideoExt(QStringLiteral("x.mkv")), "A1c_mkv");
+    chk(VideoDecode::isVideoExt(QStringLiteral("y.webm")), "A1d_webm");
+    chk(!VideoDecode::isVideoExt(QStringLiteral("a.dng")), "A2a_reject_dng");
+    chk(!VideoDecode::isVideoExt(QStringLiteral("a.jpg")), "A2b_reject_jpg");
+    chk(!VideoDecode::isVideoExt(QStringLiteral("noext")), "A2c_reject_noext");
+
+    chk(VideoDecode::needsExternalDecode(QStringLiteral("a.mp4"), true), "A3a_video_true");
+    chk(!VideoDecode::needsExternalDecode(QStringLiteral("a.mp4"), false), "A3b_no_decoder_false");
+    chk(!VideoDecode::needsExternalDecode(QStringLiteral("a.json"), true), "A3c_json_false");
+    chk(!VideoDecode::needsExternalDecode(QStringLiteral("a.ini"), true), "A3d_ini_false");
+    chk(!VideoDecode::needsExternalDecode(QStringLiteral("a.jpg"), true), "A3e_jpg_false");
+    chk(!VideoDecode::needsExternalDecode(QStringLiteral("a.dng"), true), "A3f_dng_false");
+
+    // ================= B 真实解码 =================
+    const bool avail = VideoDecode::available();
+    const QString sample = qEnvironmentVariable("LA_VIDEO_SAMPLE");
+    if (!avail || sample.isEmpty() || !QFileInfo::exists(sample)) {
+        std::fprintf(stderr,
+            "LA_VIDEO_QA SKIP reason=%s hint=\"powershell -ExecutionPolicy Bypass -File "
+            "fetch_ffmpeg.ps1; then set LA_VIDEO_SAMPLE=<path-to.mp4>\"\n",
+            !avail ? "ffmpeg_missing" : "sample_missing");
+        std::fprintf(stderr, "LA_VIDEO_QA PASS checks=%d failed=0 broken=0 scope=pure-contract\n",
+                     checks);
+        std::fflush(stderr);
+        return 0;
+    }
+
+    chk(avail, "B1a_available");
+    chk(QFileInfo::exists(QDir(VideoDecode::toolDir()).filePath(QStringLiteral("ffmpeg.exe")))
+        && QFileInfo::exists(QDir(VideoDecode::toolDir()).filePath(QStringLiteral("ffprobe.exe"))),
+        "B1b_toolDir");
+
+    VideoDecode::setForceTrustExitCodeForQa(broken);
+
+    const QString poster = VideoDecode::extractPoster(sample);
+    chk(!poster.isEmpty(), "B2_poster_produced");
+    chk(!poster.isEmpty() && QFileInfo::exists(poster) && QFileInfo(poster).size() > 1024,
+        "B2b_poster_nontrivial");
+
+    QSize posterSize;
+    if (!poster.isEmpty() && QFileInfo::exists(poster)) {
+        QImageReader rd(poster);
+        const QImage pim = rd.read();
+        posterSize = pim.size();
+        chk(!pim.isNull(), "B3_poster_readable");
+        chk(posterSize.isValid() && posterSize.width() >= 16 && posterSize.height() >= 16,
+            "B3b_poster_size");
+        QFile::remove(poster);
+    }
+
+    const VideoDecode::VideoProbe vp = VideoDecode::probe(sample);
+    chk(vp.durationSec > 0, "B4a_duration");
+    chk(vp.width > 0 && vp.height > 0, "B4b_dimensions");
+
+    // B5：非视频必须失败
+    const QString bogus = QDir(QFileInfo(sample).absolutePath())
+                              .filePath(QStringLiteral("__la_not_video.mp4"));
+    QFile::remove(bogus);
+    {
+        QFile f(bogus); f.open(QIODevice::WriteOnly); f.write("not a video", 11); f.close();
+    }
+    chk(VideoDecode::extractPoster(bogus).isEmpty(), "B5_non_video_fails");
+    QFile::remove(bogus);
+
+    // ================= C 徽标像素门 =================
+    // 离屏渲染两张同尺寸卡片（isVideo true/false），比对左上角区域是否出现差异。
+    // 只认「同一张卡上，左上角有/无徽标」的**几何事实**，不卡具体颜色值。
+    {
+        const int W = 320, H = 240;
+        // ★ 必须给**非空** QPixmap：空图会让 skeletonState() 判为 Loading，
+        //   paintGalleryCard 走骨架屏分支**提前 return**，根本到不了徽标绘制处
+        //   —— 那样 badgeDiffPixels 恒 0，会把「徽标没画」误判成「徽标画得一样」。
+        //   这正是铁律 20「门禁要测什么就只取什么」的变体：夹具必须让被测阶段可达。
+        QPixmap realPm(W, H);
+        {
+            QPainter pp(&realPm);
+            pp.fillRect(0, 0, W, H, QColor(0x3a, 0x4a, 0x40));
+            pp.end();
+        }
+        auto grabCard = [&](bool isVideo) {
+            QImage img(W, H, QImage::Format_ARGB32);
+            img.fill(QColor(0x14, 0x1a, 0x16));
+            QPainter p(&img);
+            Lumen::paintGalleryCard(&p, QRectF(0, 0, W, H),
+                                    QStringLiteral("clip"), QStringLiteral("2026-10-07"),
+                                    QStringLiteral("landscape"), false, 0,
+                                    realPm, false, false, false, 0.0, false,
+                                    isVideo, isVideo ? 10.0 : 0.0);
+            p.end();
+            return img;
+        };
+        const QImage withB = grabCard(true);
+        const QImage noB   = grabCard(false);
+        // 采样左上角徽标带（与绘制处同坐标：left+12, top+12, 高 20）
+        int diff = 0;
+        for (int y = 10; y < 36; ++y)
+            for (int x = 10; x < 120; ++x)
+                if (withB.pixel(x, y) != noB.pixel(x, y)) ++diff;
+        std::fprintf(stderr, "  LA_VIDEO_QA badgeDiffPixels=%d\n", diff);
+        chk(diff > 0, "C1_badge_drawn_when_video");
+        // 反向：非视频卡的左上角应与「有图无徽标」基线完全一致 ——
+        // 用同一张 realPm 渲染的 noB 作基准，只允许图片本身内容，不允许徽标残留。
+        // 故改为断言：非视频卡在徽标带内**不含徽标底色**（0x0c,0x10,0x0d 及其叠加）。
+        int badgeLeft = 0;
+        for (int y = 10; y < 36; ++y)
+            for (int x = 10; x < 120; ++x) {
+                const QRgb px = noB.pixel(x, y);
+                // 徽标底是近黑半透明叠加（0x0c,0x10,0x0d,190）→ 与图片底 0x3a4a40 明显不同
+                if (qRed(px) < 0x20 && qGreen(px) < 0x24 && qBlue(px) < 0x20) ++badgeLeft;
+            }
+        chk(badgeLeft == 0, "C2_no_badge_when_image");
+    }
+
+    VideoDecode::setForceTrustExitCodeForQa(false);
+
+    const bool pass = (checks > 0) && (fails == 0);
+    std::fprintf(stderr, "LA_VIDEO_QA %s checks=%d failed=%d sample=%s broken=%d\n",
+                 pass ? "PASS" : "FAIL", checks, fails,
+                 qPrintable(QFileInfo(sample).fileName()), broken ? 1 : 0);
+    if (!pass)
+        std::fprintf(stderr, "LA_VIDEO_QA failed: %s\n", qPrintable(failed.join(',')));
+    std::fflush(stderr);
+    return pass ? 0 : 1;
+}
+
+} // namespace（视频门禁）
 
 namespace {
 // P10 离线逆地理编码冒烟：已知点断言（pip / 城市兜底 / 海上诚实空）+ 真库回填统计。
@@ -3914,6 +4074,10 @@ int main(int argc, char *argv[])
     if (qEnvironmentVariableIsSet("LA_RAW_QA"))
         return runRawQa();
 
+    // 2.28.0 视频格式支持门禁（须排在 animOk 之前，见门禁铁律）
+    if (qEnvironmentVariableIsSet("LA_VIDEO_QA"))
+        return runVideoQa();
+
     // P10 离线逆地理冒烟（已知点 + 真库回填统计）
     if (qEnvironmentVariableIsSet("LA_GEO_SMOKE"))
         return runGeoSmoke();
@@ -4167,6 +4331,7 @@ int main(int argc, char *argv[])
         && !qEnvironmentVariableIsSet("LA_THUMB_CACHE_QA")
         && !qEnvironmentVariableIsSet("LA_BATCH_TX_QA")
         && !qEnvironmentVariableIsSet("LA_RAW_QA")
+        && !qEnvironmentVariableIsSet("LA_VIDEO_QA")
         && !qEnvironmentVariableIsSet("LA_GALLERY_BATCH_QA")
         ;
 

@@ -18,7 +18,9 @@ public:
         RatingRole,
         DimRole,
         PrivRole,     // P16 隐私标记（卡片右上角锁徽章）
-        CategoryRole  // P16 分类标签
+        CategoryRole, // P16 分类标签
+        MediaTypeRole,// 2.28.0 "image" | "video"（卡片左上播放徽标）
+        DurRole       // 2.28.0 时长秒（0 = 未知 → 徽标只画三角不画时长）
     };
     explicit GalleryModel(QObject* parent = nullptr);
 

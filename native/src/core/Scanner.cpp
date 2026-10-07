@@ -4,6 +4,7 @@
 #include "ExifReader.h"
 #include "GeoIndex.h"
 #include "RawDecode.h"
+#include "VideoDecode.h"
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDir>
@@ -53,6 +54,10 @@ const char* const kSchemaStmts[] = {
 const char* const kExtraColumns[] = {
     "category TEXT", "cat_score REAL", "cat_at REAL",
     "rating INTEGER", "person TEXT",
+    // 2.28.0 视频支持：media_type 区分 image/video（照片恒 'image'，视频 'video'）；
+    // dur_sec = 时长（秒，REAL，取自 ffprobe；非视频恒 0）。
+    // 二者都走下方幂等 ALTER TABLE 补列机制，老库零迁移成本。
+    "media_type TEXT", "dur_sec REAL",
 };
 
 QSqlDatabase openDb(const QString& dbPath, QString* err)
@@ -125,11 +130,15 @@ QString thumbKey(const QString& absNative, qint64 mtimeSecs, qint64 size)
 //   刻意不复制一份缩略图代码，避免两条实现漂移（铁律 6：契约同源）。
 QString makeThumb(const QString& absPath, const QString& outPath)
 {
-    // RAW → 先解码出 PPM；失败即诚实返回空（不产出半成品缩略图）
+    // RAW → 先解码出 PPM；视频 → 先抽封面 JPEG。失败即诚实返回空（不产出半成品缩略图）
     QString srcPath = absPath;
     QString ppmToRemove;
     if (RawDecode::isRawExt(absPath)) {
         srcPath = RawDecode::decodeToTempPpm(absPath);
+        if (srcPath.isEmpty()) return QString();
+        ppmToRemove = srcPath;
+    } else if (VideoDecode::isVideoExt(absPath)) {
+        srcPath = VideoDecode::extractPoster(absPath);
         if (srcPath.isEmpty()) return QString();
         ppmToRemove = srcPath;
     }
@@ -200,6 +209,7 @@ ScanResult Scanner::syncRoot(const QString& rootIn, const QString& dbPathIn,
     // RAW 解码器可用性（2.28.0）：整轮扫描只探测一次。
     // 缺失时 RAW 不参与导入 —— 详见 RawDecode::isImportable 的降级理由。
     const bool rawAvailable = RawDecode::available();
+    const bool videoAvailable = VideoDecode::available();
 
     QString dbErr;
     QSqlDatabase db = openDb(dbPathIn, &dbErr);
@@ -232,7 +242,8 @@ ScanResult Scanner::syncRoot(const QString& rootIn, const QString& dbPathIn,
                 // 判据是 needsExternalDecode（只对 RAW 为真），**不可**用 isImportable：
                 // 后者对非 RAW 返回 true，会把 .json/.ini/.AAE/.icloud 一并放行。
                 if (!PathGuess::isPhoto(fi.fileName())
-                    && !RawDecode::needsExternalDecode(fi.fileName(), rawAvailable))
+                    && !RawDecode::needsExternalDecode(fi.fileName(), rawAvailable)
+                    && !VideoDecode::needsExternalDecode(fi.fileName(), videoAvailable))
                     continue;
                 files.append({ relBase.isEmpty() ? fi.fileName()
                                                  : relBase + QLatin1Char('/') + fi.fileName(),
@@ -261,6 +272,9 @@ ScanResult Scanner::syncRoot(const QString& rootIn, const QString& dbPathIn,
         double mtime = 0;
         QJsonObject exif;
         bool isUpdate = false;
+        // 2.28.0 视频：mediaType = "image" | "video"；durSec = 时长（秒，非视频 0）
+        QString mediaType = QStringLiteral("image");
+        double  durSec = 0;
     };
     QVector<Rec> pending;
     QSet<QString> seen;
@@ -276,11 +290,13 @@ ScanResult Scanner::syncRoot(const QString& rootIn, const QString& dbPathIn,
         QSqlQuery q(db);
         db.transaction();
         q.prepare(QStringLiteral(
-            "INSERT INTO photos(path,root,rel,src,size,mtime,thumb,exif_json,missing,seen_at,rating)"
-            " VALUES(?,?,?,?,?,?,?,?,0,?,0)"
+            "INSERT INTO photos(path,root,rel,src,size,mtime,thumb,exif_json,missing,seen_at,rating,"
+            "media_type,dur_sec)"
+            " VALUES(?,?,?,?,?,?,?,?,0,?,0,?,?)"
             " ON CONFLICT(path) DO UPDATE SET size=excluded.size, mtime=excluded.mtime,"
             " thumb=excluded.thumb, exif_json=excluded.exif_json, rel=excluded.rel,"
-            " src=excluded.src, missing=0, seen_at=excluded.seen_at"));
+            " src=excluded.src, missing=0, seen_at=excluded.seen_at,"
+            " media_type=excluded.media_type, dur_sec=excluded.dur_sec"));
         for (const Rec& r : pending) {
             q.addBindValue(r.path);
             q.addBindValue(rootNative);
@@ -292,6 +308,8 @@ ScanResult Scanner::syncRoot(const QString& rootIn, const QString& dbPathIn,
             q.addBindValue(QString::fromUtf8(
                 QJsonDocument(r.exif).toJson(QJsonDocument::Compact)));
             q.addBindValue(now);
+            q.addBindValue(r.mediaType);
+            q.addBindValue(r.durSec);
             if (!q.exec()) {
                 ++res.errorCount;
                 if (res.errors.size() < 5)
@@ -358,6 +376,26 @@ ScanResult Scanner::syncRoot(const QString& rootIn, const QString& dbPathIn,
                           .arg(rs.height());
         }
 
+        // ★ 2.28.0：视频客观量（供 UI 展示与门禁断言；非视频恒 0 / 空）
+        double  o_dur = 0;
+        QString o_codec;
+
+        // ★ 2.28.0 视频：ffprobe 取客观元数据（duration / 宽高 / codec）。
+        //   视频无 EXIF 概念（无 Camera/ISO/光圈），故 cam/ap/sh/iso 一律留空 ——
+        //   编造这些值是最典型的「不诚实数据」，绝不做。
+        //   抽帧已在 makeThumb 内完成（extractPoster），此处不再重复解码。
+        if (VideoDecode::isVideoExt(f.abs)) {
+            r.mediaType = QStringLiteral("video");
+            const VideoDecode::VideoProbe vp = VideoDecode::probe(f.abs);
+            r.durSec = vp.durationSec;
+            if (vp.width > 0 && vp.height > 0)
+                dim = QStringLiteral("%1%2%3").arg(vp.width)
+                          .arg(QChar(0x00D7))                  // ×
+                          .arg(vp.height);
+            o_dur = vp.durationSec;
+            o_codec = vp.codec;
+        }
+
         // 缩略图：缓存优先（命中连图都不解）
         const QString key = thumbKey(absNative, qint64(mtime), size);
         const bool pngSrc = f.rel.toLower().endsWith(QLatin1String(".png"));
@@ -397,6 +435,10 @@ ScanResult Scanner::syncRoot(const QString& rootIn, const QString& dbPathIn,
         o.insert(QStringLiteral("wb"), ex.wb);
         o.insert(QStringLiteral("meter"), ex.meter);
         o.insert(QStringLiteral("dim"), dim);
+        // 2.28.0 视频字段：非视频为 0 / 空（诚实空值，不编造）
+        o.insert(QStringLiteral("mt"), r.mediaType);
+        o.insert(QStringLiteral("dur"), o_dur);
+        o.insert(QStringLiteral("codec"), o_codec);
         // P10 离线逆地理：路径推导无地区但有真 GPS → 内嵌数据回填 r/pv/ct（写入库）。
         // LA_GEO_OFF 供 P8 金样对拍 harness 关闭（对齐 Python 无逆地理的行为）。
         if (g.r.isEmpty() && ex.hasGps && qEnvironmentVariableIsEmpty("LA_GEO_OFF")) {

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(LightAlbumNative VERSION 2.27.0 LANGUAGES CXX)
+project(LightAlbumNative VERSION 2.28.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -28,6 +28,8 @@ set(LA_SOURCES
     src/core/ExifReader.cpp
     src/core/RawDecode.h
     src/core/RawDecode.cpp
+    src/core/VideoDecode.h
+    src/core/VideoDecode.cpp
     src/core/Scanner.h
     src/core/Scanner.cpp
     src/core/ICloudSource.h
@@ -133,5 +135,19 @@ if(EXISTS "${LA_LIBRAW_BIN}/dcraw_emu.exe")
         COMMENT "Staging LibRaw binaries for RAW decode")
 else()
     message(STATUS "LibRaw not fetched -- RAW support degrades to not-imported. Run fetch_libraw.ps1")
+endif()
+
+# [2.28.0] 视频支持：把 FFmpeg 预编译产物（ffmpeg.exe + ffprobe.exe）拷到构建树，
+# 查找路径与 LibRaw 同构（<exe 同级>/3rdparty/ffmpeg/bin），开发态与打包态一致。
+# 注意：ffplay.exe 刻意**不**随包（我们不播放，省约 107MB）。体积巨大（两个 exe 合计
+# 约 200MB，全静态无 dll），故发布包会显著变大 —— 这是已知并被接受的取舍。
+set(LA_FFMPEG_BIN "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/ffmpeg/bin")
+if(EXISTS "${LA_FFMPEG_BIN}/ffmpeg.exe")
+    add_custom_command(TARGET LightAlbum POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${LA_FFMPEG_BIN}" "$<TARGET_FILE_DIR:LightAlbum>/3rdparty/ffmpeg/bin"
+        COMMENT "Staging FFmpeg binaries for video decode")
+else()
+    message(STATUS "FFmpeg not fetched -- video support degrades to not-imported. Run fetch_ffmpeg.ps1")
 endif()
 

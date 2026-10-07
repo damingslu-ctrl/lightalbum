@@ -32,6 +32,9 @@ bool Library::open(const QString& dbPath, QString* err)
             m.exec(QStringLiteral("ALTER TABLE photos ADD COLUMN mark TEXT"));
             // 方向 C·人物自动聚类：代表脸 embedding（512-d float32 BLOB）。重复 ADD 报错无害，静默忽略。
             m.exec(QStringLiteral("ALTER TABLE photos ADD COLUMN face_emb BLOB"));
+            // 2.28.0 视频：与 Scanner 的 kExtraColumns 对齐（重复 ADD 报错无害，静默忽略）
+            m.exec(QStringLiteral("ALTER TABLE photos ADD COLUMN media_type TEXT"));
+            m.exec(QStringLiteral("ALTER TABLE photos ADD COLUMN dur_sec REAL"));
             m.exec(QStringLiteral(
                 "CREATE INDEX IF NOT EXISTS idx_photos_cat ON photos(category)"));
             mig.close();
@@ -55,7 +58,7 @@ bool Library::open(const QString& dbPath, QString* err)
     q.setForwardOnly(true);
     if (!q.exec(QStringLiteral(
             "SELECT path, rel, thumb, missing, exif_json, "
-            "category, person, private, rating, mark FROM photos"))) {
+            "category, person, private, rating, mark, media_type, dur_sec FROM photos"))) {
         if (err) *err = q.lastError().text();
         return false;
     }
@@ -102,6 +105,11 @@ bool Library::open(const QString& dbPath, QString* err)
         }
         p.rating = qBound(0, rating, 5);
         p.mark   = q.value(9).toString();
+
+        // 2.28.0 视频：media_type 可能是 NULL（老库未补列的极端情况）→ 兜底 "image"
+        p.mediaType = q.value(10).toString();
+        if (p.mediaType.isEmpty()) p.mediaType = QStringLiteral("image");
+        p.durSec    = q.value(11).toDouble();
         p.mark   = q.value(9).toString();
         if (p.title.isEmpty()) p.title = p.rel;   // 兜底展示名（非编造 EXIF）
         // P10 离线逆地理回填（读时计算，库保持只读）：仅路径推导缺失且真有 GPS 时

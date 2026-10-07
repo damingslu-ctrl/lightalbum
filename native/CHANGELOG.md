@@ -3,6 +3,93 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.28.0] - 2026-10-07
+
+### 新增 - RAW 格式支持（LibRaw 外部解码器）
+
+- **架构**：RAW 走**独立进程**调用 LibRaw 的 `dcraw_emu`，**不链入 exe**。
+  故宿主（MinGW/GCC）与解码器（MSVC 2022 预编译）的 CRT/ABI **完全解耦** ——
+  这也是可直接使用官方预编译产物、无需自行源码构建的原因。
+- **中间格式实测定为 PPM（非 TIFF）**：本机 Qt 插件仅 `qgif/qico/qjpeg/qsvg`，
+  **无 `qtiff.dll`**，实测 TIFF 经 `QImageReader` 读出 `null / 0x0`（会静默失败）；
+  而 PPM 属 Qt **内建** handler，不依赖插件部署，实测 1737×1157 非空。
+- 新增 `core/RawDecode.{h,cpp}` 作为唯一真源（`isRawExt` / `isImportable` /
+  `needsExternalDecode` / `available` / `decodeToTempPpm` / `probeSize`）。
+  管线仅 3 处接线；`makeThumb` 对 RAW 先解 PPM 再喂**完全相同**的下游逻辑
+  （刻意不复制缩略图代码，避免两实现漂移）。
+- **EXIF 零改动**：`ExifReader` 按**文件签名**（`II*` / `MM*`）而非扩展名分派
+  TIFF 容器，故 DNG 的 EXIF 今天即可解析。实测导入行拿到
+  `cam=Canon EOS 350D / iso=100 / sh=1/800 / ap=f/7.1 / focal=20`。
+- **尺寸补齐**：`ExifReader` 的 `dim` 走 `QImageReader::size()`，对 RAW 恒 invalid，
+  故 RAW 的 `dim` 改由解码实测（PPM 头）取得；仅在 `dim` 缺失时才付解码代价。
+- **优雅降级**：解码器缺失时 RAW **不导入** —— 若仍导入会产出一整排无缩略图的
+  空卡片，比「看不见 RAW」更糟。
+- 门禁 `LA_RAW_QA`（full 层，`need=LA_RAW_SAMPLE` 声明式依赖）。
+  修掉一个由此引入的真实回归：并联判据误用语义更宽的 `isImportable`（非 RAW 恒 true），
+  致 `!isPhoto && !isImportable` 恒假、白名单被短路放行噪声文件
+  （`LA_ICLOUD_QA` total 5→10）。改用 `needsExternalDecode`（只对 RAW 为真）
+  并补 7 条负向断言钉死该边界。
+
+### 新增 - 视频格式支持（FFmpeg 外部解码器，视频为一等公民）
+
+- **架构**：与 RAW 同构 —— 经 `QProcess` 调 `ffmpeg.exe`（抽帧）/ `ffprobe.exe`（元数据），
+  **不链入 exe**。新增 `core/VideoDecode.{h,cpp}` 为唯一真源。
+- **schema 迁移零成本**：复用项目既有幂等补列机制（`Scanner.cpp` 的
+  `kExtraColumns` + `ALTER TABLE`），`photos` 新增 `media_type TEXT` / `dur_sec REAL`；
+  `Photo` 模型新增 `mediaType` / `durSec`。老库无迁移负担。
+- **元数据取客观量**：`ffprobe -of json` 解析（抗版本漂移，优于正则扫文本），
+  取得 `duration` / `width` / `height` / `codec_name`。抽帧取 `-ss 00:00:02`
+  以避开首帧黑场，封面输出 JPEG（Qt 实读 640×480 非空）。
+- **数据诚实**：视频无 EXIF 概念，故 `cam` / `ap` / `sh` / `iso` 一律留空，
+  **绝不编造**；时长未知（`<=0`）时徽标只画播放三角、不显示时长。
+- **UI**：卡片**左上角**新增播放徽标 + 时长标签（`0:07` / `12s` 两种格式）。
+  位置经核对为四角中唯一空闲位 —— 右上已被横竖徽章占用、左下是标题/副行、
+  右下是星级（铁律 30：新增可视标记前须核对不吞既有命中区）。
+  播放三角用 `QPolygonF` 几何绘制而非字体字形，跨字体稳定。
+  数据经 `GalleryModel` 新增 `MediaTypeRole` / `DurRole` 传递（同一真源，不在调用点转算）。
+- 门禁 `LA_VIDEO_QA`（full 层，`need=LA_VIDEO_SAMPLE`）：A 组纯函数契约、
+  B 组真实抽帧/探测、C 组**徽标像素门**（离屏渲染 `isVideo` 真/假两卡比对左上角，
+  双向断言：视频卡必须有徽标、图片卡必须无徽标 → 同时防「恒显」与「永不画」两类退化）。
+
+### 修复
+
+- **★ `QJsonValue::toDouble()` 对字符串静默返回 0.0**：ffprobe 的 `duration` 输出的是
+  字符串 `"10.000000"`，而同一 JSON 里的 `width`/`height` 是真数字故 `toInt()` 正常 ——
+  这种「一半对一半错」导致首版实现时长恒为 0 却表面正常。现统一走兼容字符串/数字的取值helper。
+- **★ 门禁夹具必须让被测阶段可达**：徽标像素门首版传入空 `QPixmap()`，
+  导致 `paintGalleryCard` 走骨架屏分支**提前 return**，根本到不了徽标绘制处 ——
+  像素差恒 0 却被误读为「徽标没画出来」。改传非空 pixmap 后实测
+  `badgeDiffPixels=1018`，证明徽标确实渲染（铁律 20 的变体）。
+
+### 依赖与合规
+
+- **LibRaw 0.22.2**（双许可 LGPL-2.1 / CDDL-1.0）：随包分发 `dcraw_emu.exe` +
+  `libraw.dll` 及三份许可文本，缺 `LICENSE.LGPL` 即中止打包。
+- **FFmpeg 9.0.2 essentials**（**GPL-3.0**，实测含 `--enable-gpl --enable-version3
+  --enable-libx264`）：随包分发 `ffmpeg.exe` + `ffprobe.exe`，
+  **GPL-3.0 文本必须随包**，缺失即 throw。
+  - `ffplay.exe`（约 107MB）**刻意不随包** —— 本项目只抽帧与读元数据，从不播放。
+  - 两个 exe 各约 100MB 且**全静态无 DLL**，故**发布包体积增加约 200MB**。
+    这是已知并被接受的取舍。
+  - `THIRD_PARTY_NOTICE` 说明：FFmpeg 以独立进程调用，与本项目 exe 不构成同一
+    可执行映像（*mere aggregation*），故 **GPL copyleft 不传染**到本项目源代码；
+    但我们不隐瞒包内含其完整副本，并附许可文本与源码获取途径。
+    若未来改为链入 exe，上述结论**不再成立**，须重新评估整体许可。
+- 仓库维持**零二进制**惯例：`.gitignore` 排除 `3rdparty/*/bin/`，
+  新增 `fetch_libraw.ps1` / `fetch_ffmpeg.ps1`（均**纯 ASCII 无 BOM**，
+  带 `-SelfTest` 契约自检 —— 分别 `contracts=2` / `contracts=3`）。
+- `CMakeLists.txt` 在 `POST_BUILD` 把解码器产物拷到 `<exe 同级>/3rdparty/*/bin`，
+  使**开发态与发布态走同一条查找路径**；未获取到产物时静默跳过并优雅降级。
+
+### 门禁
+
+- 门总数 **53 → 55**（新增 `LA_RAW_QA`、`LA_VIDEO_QA`，均 full 层）。
+- 回归：fast `PASS=15 FAIL=0`（与 2.27.0 基线同数）/ full `PASS=34 FAIL=0`。
+- `LA_RELEASE_QA PASS contracts=8 injected=13 caught=13`；
+  `LA_GATE_MATRIX_QA PASS gates=55 fast=15 full=40`。
+
+---
+
 ## [2.27.0] - 2026-10-07
 
 ### 新增 - 方向 A·地图「国家层深化」三件套

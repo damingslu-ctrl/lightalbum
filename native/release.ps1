@@ -745,6 +745,36 @@ if (Test-Path (Join-Path $librawBin "dcraw_emu.exe")) {
   Write-Host "WARN: LibRaw not fetched -- RAW support degrades to not-imported in this build"
 }
 
+# 3.66) video support runtime (FFmpeg) + license text.
+# ffmpeg.exe / ffprobe.exe are separate processes (see core/VideoDecode.cpp), so
+# they travel next to the exe instead of being linked in -- same layout CMake
+# POST_BUILD produces, so dev and release resolve identically.
+# ffplay.exe is deliberately NOT shipped: we never play video, and it is ~107MB.
+# NOTE: these are fully static builds of ~100MB each (no DLLs), so the release
+# package grows by roughly 200MB. That is a known, accepted trade-off.
+# The GPL-3.0 LICENSE text MUST ship alongside (see docs/THIRD_PARTY_NOTICE.md).
+$ffBin = Join-Path $root "3rdparty/ffmpeg/bin"
+$ffDocs = Join-Path $root "3rdparty/ffmpeg"
+if (Test-Path (Join-Path $ffBin "ffmpeg.exe")) {
+  $dst = Join-Path $staging "3rdparty/ffmpeg/bin"
+  New-Item -ItemType Directory -Path $dst -Force | Out-Null
+  foreach ($f in @("ffmpeg.exe", "ffprobe.exe")) {
+    $src = Join-Path $ffBin $f
+    if (Test-Path $src) { Copy-Item $src $dst -Force }
+  }
+  New-Item -ItemType Directory -Path (Join-Path $staging "3rdparty/ffmpeg") -Force | Out-Null
+  foreach ($f in @("LICENSE", "README.txt")) {
+    $src = Join-Path $ffDocs $f
+    if (Test-Path $src) { Copy-Item $src (Join-Path $staging "3rdparty/ffmpeg") -Force }
+  }
+  if (-not (Test-Path (Join-Path $staging "3rdparty/ffmpeg/LICENSE"))) {
+    throw "FFmpeg staged without LICENSE -- GPL-3.0 requires the text to ship"
+  }
+  Write-Host "3rdparty/ffmpeg staged (video decode runtime + GPL-3.0 license)"
+} else {
+  Write-Host "WARN: FFmpeg not fetched -- video support degrades to not-imported in this build"
+}
+
 # 3.7) contracts C2/C6 on the staged tree, before anything is zipped.
 # C3 is deliberately NOT here: it requires BUILDINFO.txt, which can only be
 # written once the trim is done (the trim changes the file set the SBOM

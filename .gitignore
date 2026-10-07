@@ -10,8 +10,9 @@ native/LightAlbum-*-win64/
 native/LightAlbum-*-win64-*/
 native/_trim_excluded/
 native/.qt/
-# 第三方二进制（fetch_libraw.ps1 下载，不入库 —— 仓库零二进制惯例）
+# 第三方二进制（fetch_libraw.ps1 / fetch_ffmpeg.ps1 下载，不入库 —— 仓库零二进制惯例）
 native/3rdparty/libraw/bin/
+native/3rdparty/ffmpeg/bin/
 native/LightAlbum_autogen/
 native/_ui_shot_*/
 native/_probe_*
