@@ -3,6 +3,34 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.29.0] - 2026-10-08
+
+### 修复 - 2.28.0 接入 RAW/视频后的下游漏接点
+
+- **选片豁免（修复误杀）**：2.28.0 接入 RAW/视频后，质量选片仍按「纯 JPEG」判格式，
+  且各自持有独立扩展名表，与 `RawDecode`/`VideoDecode` 漂移 8 种 RAW（Sigma / Pentax /
+  Phase One / Mamiya / Ricoh / Sony 等）+ 10 种视频。收敛为**唯一真源**
+  `CullInput::exemptFromQualityCull()`：RAW（24 种）与视频（14 种）在质量选片中统一
+  **只查分辨率**，不再被「模糊 / 曝光」误淘汰。iCloud 空壳判定同步改走
+  `VideoDecode::isVideoExt()`。新增门禁 `LA_CULL_EXEMPT_QA`（fast 层，含极暗合成图三路径对比）。
+- **修图页支持 RAW/视频（修复进不去）**：2.28.0 的 RAW 进了库与缩略图，却漏了修图页入口——
+  `QImage(原图)` 直读 RAW 返回 `0×0`，RAW 根本进不了编辑器。新增
+  `core/ImageLoad::loadForEdit()` 唯一加载器收口照片 / RAW / 视频三路；
+  `RetouchEngine::apply` 是与格式无关的纯函数，零改动即可吃 RAW。
+  新增门禁 `LA_EDIT_RAW_QA`（含端到端像素门，实测 changed=98.4%）。
+- **灯箱后台解码支持 RAW**：全尺寸预览的后台解码任务补齐 RAW/视频分派，保留原
+  「先读尺寸、超界放弃」解码炸弹前置防护（外部格式无法解码前取尺寸，改解码后校验）。
+  在 `LA_TRANSITION_QA` 补真实断言：FullCache 必须解出 RAW（设 `LA_RAW_SAMPLE` 时生效）。
+- **系统审计**：按新铁律「新增格式必查 10 个下游入口」逐一审过 —— 扫描 / 缩略图 /
+  EXIF / 选片 / 修图 / iCloud 已合规；去重、分类只吃缩略图，地图 GPS 来自 EXIF，
+  均格式无关，本就合规。
+
+### 发布
+
+- 门禁 **gates 57**（fast=16 / full=41）；`LA_GATE_MATRIX_QA PASS fails=0`。
+- 回归 fast `PASS=16 FAIL=0` / full `PASS=35 FAIL=0 SKIP=6 KILL=0`。
+- 提交序列 `40c19aa` → `01bb203` → `1d57a5d`（均经 pre-commit 复跑 fast 层判 GREEN）。
+
 ## [2.28.0] - 2026-10-07
 
 ### 新增 - RAW 格式支持（LibRaw 外部解码器）
