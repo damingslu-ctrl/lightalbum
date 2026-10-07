@@ -266,6 +266,16 @@ $GateTable = @(
   # RAW 与视频必须 candidate（豁免生效），普通照片必须 rejected（证明非恒真，铁律 16）。
   # 反例 LA_CULL_EXEMPT_QA_FORCE_BROKEN=1 令 RAW 豁免失效 -> B1 转红而 A 组仍绿。
   @{n="LA_CULL_EXEMPT_QA"; png=$false; tier="fast"; measuredMs=120},
+  # 2.29.0 RAW/视频修图链路门禁（LA_EDIT_RAW_QA）。修图页原本用 QImage(ph.path) 直读
+  # 原图，实测对 RAW 返回 **0x0 null=1** → RAW 根本进不了修图页（2.28.0 漏了这条入口）。
+  # 现统一走 ImageLoad::loadForEdit（照片/RAW/视频三路收口）。need= 声明两个样本依赖：
+  # RAW 与视频各需一个素材，缺一即优雅 SKIP（样本绝不入库/进 CI）。
+  # ★B4 端到端像素门：加载 → RetouchEngine::apply → 断言像素**确实改变**（实测 98.4%），
+  #   杜绝「能加载但调参无效果」的假通过（铁律 29）。
+  # 反例 LA_EDIT_RAW_QA_FORCE_BROKEN=1 令 RAW 回退 QImage 直读（复现 2.28.0 缺陷形态）
+  #   -> B1/B1b 转红（实测 raw: 0x0 null=1），A 组仍绿。
+  # tier 缺省=full：真实 RAW 解码实测 ~0.6s/张，进程另付 QApplication 启动开销。
+  @{n="LA_EDIT_RAW_QA"; png=$false; need=@("LA_RAW_SAMPLE","LA_VIDEO_SAMPLE"); measuredMs=1500},
   @{n="LA_GALLERY_FILL_QA"; png=$true; measuredMs=2690},
   @{n="LA_RETOUCH_A_QA";    png=$true; measuredMs=2707},
   @{n="LA_SCALE_SMOKE";     png=$false; measuredMs=3351},

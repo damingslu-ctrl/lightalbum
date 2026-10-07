@@ -1,4 +1,5 @@
 #include "RetouchPage.h"
+#include "../core/ImageLoad.h"   // 2.29.0 统一原图加载（照片/RAW/视频）
 #include "../core/qaExit.h"   // 2.7.0 门禁自退契约（禁裸调 quit）
 #include "MaskCanvas.h"
 #include "CropCanvas.h"
@@ -1024,7 +1025,9 @@ void RetouchPage::onExport()
     if (geoSrc_.isNull()) return;
     const Photo& ph = (*photos_)[usableIdx_[photoCombo_->currentIndex()]];
     // 优先用原始全分辨率文件（仍零云端，纯本地）：先几何后修调，与预览同序
-    QImage full = QImage(ph.path);
+    // 2.29.0：统一走 ImageLoad::loadForEdit（照片/RAW/视频三条路径收口）。
+    // 旧代码用 QImage(ph.path)，实测对 RAW 返回 **0x0 null=1** → RAW 无法进入修图页。
+    QImage full = ImageLoad::loadForEdit(ph.path);
     QImage work = full.isNull() ? geoSrc_ : full;
     if (work.width() > kMaxExport || work.height() > kMaxExport)
         work = work.scaled(kMaxExport, kMaxExport, Qt::KeepAspectRatio, Qt::SmoothTransformation);

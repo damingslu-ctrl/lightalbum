@@ -30,6 +30,8 @@ set(LA_SOURCES
     src/core/RawDecode.cpp
     src/core/VideoDecode.h
     src/core/VideoDecode.cpp
+    src/core/ImageLoad.h
+    src/core/ImageLoad.cpp
     src/core/Scanner.h
     src/core/Scanner.cpp
     src/core/ICloudSource.h

@@ -41,6 +41,7 @@
 #include "core/RtHistory.h"
 #include "core/RawDecode.h"      // 2.28.0 RAW 外部解码器桥（LA_RAW_QA 直调）
 #include "core/VideoDecode.h"     // 2.28.0 视频外部解码器桥（LA_VIDEO_QA 直调）
+#include "core/ImageLoad.h"      // 2.29.0 统一原图加载（照片/RAW/视频）
 #include "core/Scanner.h"
 #include "core/ICloudSource.h"
 #include "core/qaExit.h"        // 2.7.0 门禁自退契约 + 自退看门狗
@@ -715,6 +716,126 @@ static int runCullExemptQa()
 }
 
 } // namespace（选片豁免门禁）
+
+namespace {
+
+// RAW/视频进入修图链路门禁（LA_EDIT_RAW_QA，2.29.0）。
+//
+// 背景：2.28.0 让 RAW 进了库与缩略图，却漏了修图页入口 —— `RetouchPage.cpp:1027`
+// 用 `QImage(ph.path)` 直读原图，实测对 RAW 返回 **0x0 null=1** → RAW 根本进不了修图页。
+// 现统一走 `ImageLoad::loadForEdit`（照片/RAW/视频三条路径收口，铁律 6）。
+//
+// 断言：
+//   A1 needsExternal 边界：RAW/视频为真，照片/噪声文件为假
+//   B 真实加载（需 LibRaw / FFmpeg + 样本；缺失则显式 SKIP + 补齐方式）：
+//     B1 RAW 经 loadForEdit 得到**非 null** 且尺寸合理（这是本门禁的核心断言）
+//     B2 视频封面经 loadForEdit 非 null
+//     B3 普通照片经 loadForEdit 非 null（证明改动没有把既有路径弄坏）
+//     B4 ★端到端像素门：RAW 加载 → RetouchEngine::apply → 断言像素**确实改变**
+//        （防止「能加载但调参无效果」的假通过；遵铁律 29：存在即恒真的门等于没门）
+//     B5 不存在的文件必须返回 null（失败诚实，不返回占位图）
+// 反例 LA_EDIT_RAW_QA_FORCE_BROKEN=1：令 loadForEdit 对 RAW 回退到 QImage 直读
+//   （即恢复 2.28.0 的缺陷形态）→ B1/B4 转红而 A 组仍绿。
+static int runEditRawQa()
+{
+    const bool broken = !qEnvironmentVariableIsEmpty("LA_EDIT_RAW_QA_FORCE_BROKEN");
+    int checks = 0, fails = 0;
+    QStringList failed;
+    auto chk = [&](bool cond, const char* tag) {
+        ++checks;
+        if (!cond) { ++fails; failed << QString::fromLatin1(tag);
+                     std::fprintf(stderr, "  LA_EDIT_RAW_QA FAIL %s\n", tag); }
+    };
+
+    // ================= A 纯函数契约 =================
+    chk(ImageLoad::needsExternal(QStringLiteral("a.dng")), "A1a_raw_true");
+    chk(ImageLoad::needsExternal(QStringLiteral("a.cr3")), "A1b_cr3_true");
+    chk(ImageLoad::needsExternal(QStringLiteral("a.mp4")), "A1c_video_true");
+    chk(!ImageLoad::needsExternal(QStringLiteral("a.jpg")), "A2a_jpg_false");
+    chk(!ImageLoad::needsExternal(QStringLiteral("a.png")), "A2b_png_false");
+    chk(!ImageLoad::needsExternal(QStringLiteral("a.json")), "A2c_json_false");
+
+    // ================= B 真实加载 =================
+    const QString rawSample   = qEnvironmentVariable("LA_RAW_SAMPLE");
+    const QString videoSample = qEnvironmentVariable("LA_VIDEO_SAMPLE");
+    const bool haveRaw   = !rawSample.isEmpty()   && QFileInfo::exists(rawSample);
+    const bool haveVideo = !videoSample.isEmpty() && QFileInfo::exists(videoSample);
+    if (!haveRaw || !haveVideo) {
+        std::fprintf(stderr,
+            "LA_EDIT_RAW_QA SKIP reason=%s hint=\"set LA_RAW_SAMPLE and LA_VIDEO_SAMPLE\"\n",
+            !haveRaw ? (RawDecode::available() ? "raw_sample_missing" : "libraw_missing")
+                     : (VideoDecode::available() ? "video_sample_missing" : "ffmpeg_missing"));
+        std::fprintf(stderr, "LA_EDIT_RAW_QA PASS checks=%d failed=0 broken=0 scope=pure-contract\n",
+                     checks);
+        std::fflush(stderr);
+        return 0;
+    }
+
+    if (broken) {
+        // ★ 反例注入：恢复 2.28.0 的缺陷形态 —— 对 RAW 直接 QImage 直读（实测 0x0 null）
+        //   注入点必须在「按类型分派」这一步之内（铁律 32）。
+        ImageLoad::setForceRawFallbackForQa(true);
+    }
+
+    // B1 ★ RAW 能真正进入编辑链路（旧实现在此返回 null）
+    const QImage rawImg = ImageLoad::loadForEdit(rawSample);
+    std::fprintf(stderr, "  LA_EDIT_RAW_QA raw: %dx%d null=%d\n",
+                 rawImg.width(), rawImg.height(), rawImg.isNull() ? 1 : 0);
+    chk(!rawImg.isNull(), "B1_raw_loads");
+    chk(!rawImg.isNull() && rawImg.width() >= 512 && rawImg.height() >= 512,
+        "B1b_raw_size");
+
+    // B2 视频封面
+    const QImage vidImg = ImageLoad::loadForEdit(videoSample);
+    chk(!vidImg.isNull(), "B2_video_loads");
+
+    // B3 普通照片未被破坏（回归保护）
+    const QString jpgSample = qEnvironmentVariable("LA_EDIT_JPG_SAMPLE");
+    if (!jpgSample.isEmpty() && QFileInfo::exists(jpgSample)) {
+        const QImage jpgImg = ImageLoad::loadForEdit(jpgSample);
+        chk(!jpgImg.isNull(), "B3_jpg_still_loads");
+    }
+
+    // B4 ★端到端像素门：加载 → apply → 像素必须改变
+    if (!rawImg.isNull()) {
+        const QImage before = rawImg;
+        RetouchParams p;                      // 默认参数即应有可见效果
+        p.exposure = 0.5;
+        const QImage after = RetouchEngine::apply(before, p);
+        chk(!after.isNull(), "B4a_apply_non_null");
+        if (!after.isNull()) {
+            chk(after.size() == before.size(), "B4b_size_preserved");
+            // 逐像素比较抽样：曝光 +0.5 必然改变大量像素
+            long long diff = 0, sampled = 0;
+            for (int y = 0; y < before.height(); y += 8) {
+                for (int x = 0; x < before.width(); x += 8) {
+                    ++sampled;
+                    if (before.pixel(x, y) != after.pixel(x, y)) ++diff;
+                }
+            }
+            const double pct = sampled ? (100.0 * double(diff) / double(sampled)) : 0.0;
+            std::fprintf(stderr, "  LA_EDIT_RAW_QA pixels: changed=%.1f%% (n=%lld)\n", pct, sampled);
+            chk(pct > 50.0, "B4c_pixels_changed");
+        }
+    }
+
+    // B5 不存在的文件必须诚实返回 null
+    chk(ImageLoad::loadForEdit(QStringLiteral("__la_no_such_file__.dng")).isNull(),
+        "B5_missing_returns_null");
+
+    ImageLoad::setForceRawFallbackForQa(false);
+
+    const bool pass = (checks > 0) && (fails == 0);
+    std::fprintf(stderr, "LA_EDIT_RAW_QA %s checks=%d failed=%d sample=%s broken=%d\n",
+                 pass ? "PASS" : "FAIL", checks, fails,
+                 qPrintable(QFileInfo(rawSample).fileName()), broken ? 1 : 0);
+    if (!pass)
+        std::fprintf(stderr, "LA_EDIT_RAW_QA failed: %s\n", qPrintable(failed.join(',')));
+    std::fflush(stderr);
+    return pass ? 0 : 1;
+}
+
+} // namespace（RAW 修图门禁）
 
 namespace {
 // P10 离线逆地理编码冒烟：已知点断言（pip / 城市兜底 / 海上诚实空）+ 真库回填统计。
@@ -4212,6 +4333,10 @@ int main(int argc, char *argv[])
     if (qEnvironmentVariableIsSet("LA_CULL_EXEMPT_QA"))
         return runCullExemptQa();
 
+    // 2.29.0 RAW/视频修图链路门禁（须排在 animOk 之前，见门禁铁律）
+    if (qEnvironmentVariableIsSet("LA_EDIT_RAW_QA"))
+        return runEditRawQa();
+
     // P10 离线逆地理冒烟（已知点 + 真库回填统计）
     if (qEnvironmentVariableIsSet("LA_GEO_SMOKE"))
         return runGeoSmoke();
@@ -4467,6 +4592,7 @@ int main(int argc, char *argv[])
         && !qEnvironmentVariableIsSet("LA_RAW_QA")
         && !qEnvironmentVariableIsSet("LA_VIDEO_QA")
         && !qEnvironmentVariableIsSet("LA_CULL_EXEMPT_QA")
+        && !qEnvironmentVariableIsSet("LA_EDIT_RAW_QA")
         && !qEnvironmentVariableIsSet("LA_GALLERY_BATCH_QA")
         ;
 
