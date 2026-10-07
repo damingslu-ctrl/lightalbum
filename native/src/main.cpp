@@ -42,6 +42,7 @@
 #include "core/RawDecode.h"      // 2.28.0 RAW 外部解码器桥（LA_RAW_QA 直调）
 #include "core/VideoDecode.h"     // 2.28.0 视频外部解码器桥（LA_VIDEO_QA 直调）
 #include "core/ImageLoad.h"      // 2.29.0 统一原图加载（照片/RAW/视频）
+#include "core/VideoDecoder.h"     // 2.30.0 内嵌视频解码（ffmpeg rawvideo 管道）
 #include "core/Scanner.h"
 #include "core/ICloudSource.h"
 #include "core/qaExit.h"        // 2.7.0 门禁自退契约 + 自退看门狗
@@ -581,6 +582,89 @@ static int runVideoQa()
                  qPrintable(QFileInfo(sample).fileName()), broken ? 1 : 0);
     if (!pass)
         std::fprintf(stderr, "LA_VIDEO_QA failed: %s\n", qPrintable(failed.join(',')));
+    std::fflush(stderr);
+    return pass ? 0 : 1;
+}
+
+// ================================================================
+// 2.30.0 视频播放门禁 LA_VIDEO_PLAY_QA
+//  验证「内嵌自研解码器」能经 ffmpeg rawvideo 管道逐帧解出**动态**画面。
+//  正例：帧数>0、末帧非空且尺寸正确、帧间像素确实不同（真解码非静止图）、pts 递增。
+//  反例：FORCE_BROKEN 塞入不存在的第二输入 → ffmpeg 建不起输出流 → 必须 0 帧。
+//  need=LA_VIDEO_SAMPLE（样本是外部素材，不入库、不进 CI）。
+// ================================================================
+static int runVideoPlayQa()
+{
+    const QString sample = QString::fromLocal8Bit(qgetenv("LA_VIDEO_SAMPLE"));
+    const bool broken = !qEnvironmentVariableIsEmpty("LA_VIDEO_PLAY_QA_FORCE_BROKEN");
+    int checks = 0, fails = 0;
+    QStringList failed;
+    auto chk = [&](bool cond, const char* tag) {
+        ++checks;
+        if (!cond) { ++fails; failed << QString::fromLatin1(tag);
+                     std::fprintf(stderr, "  LA_VIDEO_PLAY_QA FAIL %s\n", tag); }
+    };
+
+    if (sample.isEmpty() || !QFileInfo::exists(sample)) {
+        std::fprintf(stderr,
+            "LA_VIDEO_PLAY_QA SKIP: set LA_VIDEO_SAMPLE=<a video file> to run\n");
+        std::fflush(stderr);
+        return 0;
+    }
+
+    VideoDecoder::setForceBrokenForQa(broken);
+
+    const int kW = 320, kH = 240;
+    const int kTarget = 60;
+    QImage firstFrame, lastFrame;
+    int     frameCount = 0;
+    qint64  lastPts = 0;
+    bool    gotFinish = false, gotError = false;
+
+    VideoDecoder dec;
+    QObject::connect(&dec, &VideoDecoder::frameDecoded, &dec,
+        [&](const QImage& f, qint64 pts) {
+            if (frameCount == 0) firstFrame = f;
+            lastFrame = f; lastPts = pts; ++frameCount;
+        });
+    QObject::connect(&dec, &VideoDecoder::finished, &dec, [&](){ gotFinish = true; });
+    QObject::connect(&dec, &VideoDecoder::decodeError, &dec,
+        [&](const QString&){ gotError = true; });
+
+    dec.configure(sample, kW, kH, 25.0);
+    dec.start();
+
+    QElapsedTimer timer; timer.start();
+    while (frameCount < kTarget && !gotFinish && timer.elapsed() < 25000)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    dec.stop();   // 主动回收线程（铁律 19）
+
+    // ★正/反例断言**完全相同**，不随 broken 切换（铁律22：期望值不随 broken 变）。
+    //   broken 只是把产品注入成「解不出帧」，于是 A1/A2/A4 自然变红（铁律23：反例须实测变红）。
+    chk(frameCount > 0, "A1_frames_decoded");
+    chk(!lastFrame.isNull(), "A2_last_frame_nonnull");
+    chk(lastFrame.width() == kW && lastFrame.height() == kH, "A3_frame_size");
+    // ★真动态解码：首末帧必须有像素不同（采样网格；静止图/占位图会红）
+    bool motion = false;
+    if (frameCount >= 2 && !firstFrame.isNull() && !lastFrame.isNull()) {
+        for (int y = 0; y < kH && !motion; y += 16)
+            for (int x = 0; x < kW; x += 16)
+                if (firstFrame.pixel(x, y) != lastFrame.pixel(x, y)) { motion = true; break; }
+    }
+    chk(motion, "A4_real_motion_frames_differ");
+    chk(lastPts > 0, "A5_pts_monotonic");
+    std::fprintf(stderr, "  decoded frames=%d lastPts=%lld finish=%d err=%d broken=%d\n",
+                 frameCount, (long long)lastPts, gotFinish ? 1 : 0,
+                 gotError ? 1 : 0, broken ? 1 : 0);
+
+    VideoDecoder::setForceBrokenForQa(false);
+
+    const bool pass = (checks > 0) && (fails == 0);
+    std::fprintf(stderr, "LA_VIDEO_PLAY_QA %s checks=%d failed=%d sample=%s broken=%d\n",
+                 pass ? "PASS" : "FAIL", checks, fails,
+                 qPrintable(QFileInfo(sample).fileName()), broken ? 1 : 0);
+    if (!pass)
+        std::fprintf(stderr, "LA_VIDEO_PLAY_QA failed: %s\n", qPrintable(failed.join(',')));
     std::fflush(stderr);
     return pass ? 0 : 1;
 }
@@ -4356,6 +4440,10 @@ int main(int argc, char *argv[])
     // 2.28.0 视频格式支持门禁（须排在 animOk 之前，见门禁铁律）
     if (qEnvironmentVariableIsSet("LA_VIDEO_QA"))
         return runVideoQa();
+
+    // 2.30.0 视频播放（内嵌解码器）门禁（须排在 animOk 之前）
+    if (qEnvironmentVariableIsSet("LA_VIDEO_PLAY_QA"))
+        return runVideoPlayQa();
 
     // 2.29.0 选片豁免契约门禁（须排在 animOk 之前，见门禁铁律）
     if (qEnvironmentVariableIsSet("LA_CULL_EXEMPT_QA"))

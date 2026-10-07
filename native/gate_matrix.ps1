@@ -259,6 +259,13 @@ $GateTable = @(
   # -> B2b 转红；徽标像素门不受影响（证明反例只打解码判定，不是一刀切）。
   # tier 缺省=full：真实抽帧实测 ~0.3-0.8s，进程另付 QApplication 启动开销。
   @{n="LA_VIDEO_QA"; png=$false; need=@("LA_VIDEO_SAMPLE"); measuredMs=1600},
+  # 2.30.0 视频播放（内嵌解码器）门禁（LA_VIDEO_PLAY_QA）。经 QProcess 调 ffmpeg rawvideo
+  # 管道逐帧解出**动态**画面：正例断言帧数>0、末帧非空且尺寸正确、**帧间像素确实不同**
+  # （真动态解码，静止图/占位图会红）、pts 递增。反例 LA_VIDEO_PLAY_QA_FORCE_BROKEN=1
+  # 令 ffmpeg 传入不存在的第二输入 -> 建不起输出流 -> 解出 0 帧，A1/A2/A3/A4/A5 转红
+  # （期望值不随 broken 切换，铁律22）。need=LA_VIDEO_SAMPLE（外部素材不入库/不进 CI）。
+  # tier 缺省=full：真实解码 ~1s，进程另付 QApplication 启动开销。
+  @{n="LA_VIDEO_PLAY_QA"; png=$false; need=@("LA_VIDEO_SAMPLE"); measuredMs=2500},
   # 2.29.0 选片豁免契约门禁（LA_CULL_EXEMPT_QA）。纯函数 + 合成缩略图，**零外部依赖**，
   # 故可进 fast 层（实测毫秒级）。A 组钉死「RAW/视频豁免」谓词，含曾经漂移的 8 种
   # RAW 扩展名（fff/iiq/k25/kdc/mos/ptx/srf/srw —— Sigma/Phase One/Pentax/Mamiya/Ricoh/Sony）
