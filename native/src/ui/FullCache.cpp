@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 LightAlbum Contributors
 #include "FullCache.h"
+#include "../core/ImageLoad.h"   // 2.29.0 统一原图加载（照片/RAW/视频），替代裸 QImageReader
 #include <QImageReader>
 #include <QRunnable>
 #include <QThreadStorage>
@@ -61,13 +62,31 @@ public:
         QImage img;
         bool ok = false;
         if (!g_forceFailForQa) {
-            QImageReader r(path_);
-            // 解码炸弹防护：先读尺寸，超上限直接放弃（不分配巨量内存）。
-            const QSize sz = r.size();
-            if (sz.isValid() && !sz.isEmpty()
-                && qint64(sz.width()) * sz.height() <= FullCache::maxPixels()) {
-                img = r.read();
-                ok = !img.isNull();
+            // 2.29.0：普通照片保留「先读尺寸、后分配」的解码炸弹防护（不变）。
+            if (!ImageLoad::needsExternal(path_)) {
+                QImageReader r(path_);
+                const QSize sz = r.size();
+                if (sz.isValid() && !sz.isEmpty()
+                    && qint64(sz.width()) * sz.height() <= FullCache::maxPixels()) {
+                    img = r.read();
+                    ok = !img.isNull();
+                }
+            } else {
+                // RAW / 视频：走统一加载器（否则 QImageReader 对 RAW 返回 null，
+                // 实测 QImage("x.dng") → 0x0，见 2.29.0 取证）。
+                //
+                // ★诚实说明防护差异（勿误读为等效）：外部格式**无法**在解码前拿到尺寸
+                //   —— QImageReader::size() 对 RAW 返回 invalid，故此分支只能**解码后**校验。
+                //   这意味着超大外部文件仍会先分配再丢弃（弱于上分支的前置防护）。
+                //   取舍理由：RAW 侧 dcraw_emu 用 `-h` 半尺寸输出（实测 1737x1157）、
+                //   视频侧只抽单帧，输出规模天然受解码器限制；且本路径目前
+                //   **仅被 QA 探针引用、生产灯箱尚未接线**（2.29.0 取证结论）。
+                //   若日后灯箱上线且需严格等价防护，应改为「先 probeSize 再解码」，
+                //   代价是每张多一次解码。
+                img = ImageLoad::loadForEdit(path_);
+                ok = !img.isNull()
+                     && qint64(img.width()) * img.height() <= FullCache::maxPixels();
+                if (!ok) img = QImage();
             }
         }
         // 回主线程：QObject::connect 的 QueuedConnection 依赖接收者在主线程，

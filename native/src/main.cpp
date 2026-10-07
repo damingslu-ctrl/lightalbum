@@ -3074,6 +3074,34 @@ int runTransitionQa()
             big.save(orig);
         }
         FullCache::setForceFailForQa(broken);   // 反例：解码恒失败
+
+        // 2.29.0：FullCache 后台解码须能吃 RAW（此前裸 QImageReader 对 RAW 返回
+        // 0x0 null，实测 QImage("x.dng") → 0x0）。此断言把「灯箱上线后才发现」的风险
+        // 前移到此刻。缺 RAW 样本时静默跳过该条（样本是外部素材，绝不入库/进 CI）。
+        if (!broken) {
+            const QString rawS = qEnvironmentVariable("LA_RAW_SAMPLE");
+            if (!rawS.isEmpty() && QFileInfo::exists(rawS)) {
+                FullCache rawCache;
+                QImage rawDecoded;
+                rawCache.request(rawS, nullptr,
+                                 [&rawDecoded](const QImage& im) { rawDecoded = im; });
+                for (int i = 0; i < 400; ++i) {
+                    QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+                    if (!rawDecoded.isNull()) break;
+                    // ★必须让出 CPU：后台线程要跑 dcraw_emu（实测 ~0.6s），
+                    //   只 processEvents 而不 sleep = 空转，线程池任务 starvation
+                    //   → 循环空转 4s 后退出、断言误报 null。
+                    //   紧邻的 PNG 用例本就带 msleep(5)，此处同理（铁律 22：
+                    //   门禁不得依赖未验证的时序假设）。
+                    QThread::msleep(5);
+                }
+                std::fprintf(stderr, "  LA_THUMB_CACHE_QA raw: %dx%d null=%d\n",
+                             rawDecoded.width(), rawDecoded.height(),
+                             rawDecoded.isNull() ? 1 : 0);
+                note(!rawDecoded.isNull(),
+                     QStringLiteral("FullCache must decode RAW (got null)"));
+            }
+        }
         FullCache cache;
         QImage decoded;
         cache.request(orig, nullptr, [&decoded](const QImage& im) { decoded = im; });
