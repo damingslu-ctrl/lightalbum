@@ -39,6 +39,7 @@
 #include <QSet>
 #include <QColor>
 #include "core/RtHistory.h"
+#include "core/RawDecode.h"      // 2.28.0 RAW 外部解码器桥（LA_RAW_QA 直调）
 #include "core/Scanner.h"
 #include "core/ICloudSource.h"
 #include "core/qaExit.h"        // 2.7.0 门禁自退契约 + 自退看门狗
@@ -308,6 +309,122 @@ int runAgentQa()
     return fails == 0 ? 0 : 1;
 }
 } // namespace（P9 agent 冒烟）
+
+namespace {
+
+// RAW 格式支持门禁（LA_RAW_QA，2.28.0）。
+//
+// 断言分两组：
+//   A 纯函数契约（零外部依赖，任何机器都能跑）：
+//     A1 isRawExt 白名单命中（含大小写不敏感）
+//     A2 isRawExt 拒绝非 RAW
+//     A3 isImportable：普通照片恒真（与既有行为完全一致）
+//     A4 isImportable：RAW 在**无解码器**时为假 ← 优雅降级契约
+//     A5 isImportable：RAW 在有解码器时为真
+//   B 真实解码（需 LibRaw + 样本就位；缺失则显式 SKIP 并给出补齐方式，**不静默通过**）：
+//     B1 available() 且 toolDir 下确有 dcraw_emu.exe
+//     B2 decodeToTempPpm 产出 PPM 且非空
+//     B3 probeSize 合理（长边 >= 512）
+//     B4 非 RAW 输入解码必须失败（防"什么都能解码"的假实现）
+//
+// 反例 LA_RAW_QA_FORCE_BROKEN=1：令 decodeToTempPpm 走「rc==0 即成功 + 产物名按
+//   **替换**扩展名猜测」的缺陷形态（RawDecode::setForceArtifactBlindForQa）。
+//   实测两种模式下 dcraw_emu 的 rc 都是 0 → exit code 不携带信息 → 必红。
+// ★ 期望值不随 broken 切换（铁律 22）：A 组在 broken 下同样全绿，只有 B2/B3 转红，
+//   证明反例打的是真实解码判定，而非把整门一刀切（铁律 29：存在即恒真的门等于没门）。
+static int runRawQa()
+{
+    const bool broken = !qEnvironmentVariableIsEmpty("LA_RAW_QA_FORCE_BROKEN");
+    int checks = 0, fails = 0;
+    QStringList failed;
+    auto chk = [&](bool cond, const char* tag) {
+        ++checks;
+        if (!cond) { ++fails; failed << QString::fromLatin1(tag);
+                     std::fprintf(stderr, "  LA_RAW_QA FAIL %s\n", tag); }
+    };
+
+    // ================= A 纯函数契约 =================
+    chk(RawDecode::isRawExt(QStringLiteral("a.dng")), "A1a_dng");
+    chk(RawDecode::isRawExt(QStringLiteral("A.CR3")), "A1b_upper_cr3");
+    chk(RawDecode::isRawExt(QStringLiteral("x.nef")), "A1c_nef");
+    chk(RawDecode::isRawExt(QStringLiteral("y.arw")), "A1d_arw");
+    chk(!RawDecode::isRawExt(QStringLiteral("a.jpg")), "A2a_reject_jpg");
+    chk(!RawDecode::isRawExt(QStringLiteral("a.png")), "A2b_reject_png");
+    chk(!RawDecode::isRawExt(QStringLiteral("noext")), "A2c_reject_noext");
+
+    chk(RawDecode::isImportable(QStringLiteral("a.jpg"), false), "A3_photo_no_decoder");
+    chk(!RawDecode::isImportable(QStringLiteral("a.dng"), false), "A4_raw_no_decoder");
+    chk(RawDecode::isImportable(QStringLiteral("a.dng"), true), "A5_raw_with_decoder");
+
+    // A6 ★ 枚举并联判据的边界（2.28.0 实测踩坑）：
+    //   needsExternalDecode 必须**只对 RAW 为真**。若误用 isImportable（非 RAW→true），
+    //   扫描器的 `!isPhoto && !needs...` 恒假 → .json/.ini/.AAE/.icloud 全被放行，
+    //   实测 LA_ICLOUD_QA total 由 5 变 10。此处钉死该边界。
+    chk(RawDecode::needsExternalDecode(QStringLiteral("a.dng"), true), "A6a_raw_true");
+    chk(!RawDecode::needsExternalDecode(QStringLiteral("a.dng"), false), "A6b_raw_no_decoder_false");
+    chk(!RawDecode::needsExternalDecode(QStringLiteral("a.json"), true), "A6c_json_false");
+    chk(!RawDecode::needsExternalDecode(QStringLiteral("a.ini"), true), "A6d_ini_false");
+    chk(!RawDecode::needsExternalDecode(QStringLiteral("a.aae"), true), "A6e_aae_false");
+    chk(!RawDecode::needsExternalDecode(QStringLiteral("a.jpg.icloud"), true), "A6f_sidecar_false");
+    chk(!RawDecode::needsExternalDecode(QStringLiteral("a.jpg"), true), "A6g_jpg_false");
+
+    // ================= B 真实解码 =================
+    const bool avail = RawDecode::available();
+    const QString sample = qEnvironmentVariable("LA_RAW_SAMPLE");
+    if (!avail || sample.isEmpty() || !QFileInfo::exists(sample)) {
+        // 显式 SKIP：写明缺什么、怎么补 —— 静默通过等于没门（铁律 29）。
+        std::fprintf(stderr,
+            "LA_RAW_QA SKIP reason=%s hint=\"powershell -ExecutionPolicy Bypass -File "
+            "fetch_libraw.ps1; then set LA_RAW_SAMPLE=<path-to.dng>\"\n",
+            !avail ? "libraw_missing" : "sample_missing");
+        std::fprintf(stderr, "LA_RAW_QA PASS checks=%d failed=0 broken=0 scope=pure-contract\n",
+                     checks);
+        std::fflush(stderr);
+        return 0;
+    }
+
+    chk(avail, "B1a_available");
+    chk(!RawDecode::toolDir().isEmpty()
+        && QFileInfo::exists(QDir(RawDecode::toolDir()).filePath(QStringLiteral("dcraw_emu.exe"))),
+        "B1b_toolDir");
+
+    // 反例注入（真实实现上的旗标，非测试分支 —— 铁律 6）
+    RawDecode::setForceArtifactBlindForQa(broken);
+
+    const QString ppm = RawDecode::decodeToTempPpm(sample);
+    chk(!ppm.isEmpty(), "B2_ppm_produced");
+    chk(!ppm.isEmpty() && QFileInfo::exists(ppm) && QFileInfo(ppm).size() > 1024,
+        "B2b_ppm_nontrivial");
+    if (!ppm.isEmpty() && QFileInfo::exists(ppm)) QFile::remove(ppm);
+
+    const QSize got = RawDecode::probeSize(sample);
+    chk(got.isValid() && qMax(got.width(), got.height()) >= 512, "B3_probe_size");
+
+    // B4：非 RAW 必须失败（防止"什么都能解码"的假实现）
+    const QString bogus = QDir(QFileInfo(sample).absolutePath())
+                              .filePath(QStringLiteral("__la_not_raw.jpg"));
+    QFile::remove(bogus);
+    {
+        QImage src(64, 48, QImage::Format_RGB32);
+        src.fill(Qt::gray);
+        src.save(bogus, "JPEG", 80);
+    }
+    chk(RawDecode::decodeToTempPpm(bogus).isEmpty(), "B4_non_raw_fails");
+    QFile::remove(bogus);
+
+    RawDecode::setForceArtifactBlindForQa(false);   // 还原（探针不污染环境）
+
+    const bool pass = (checks > 0) && (fails == 0);
+    std::fprintf(stderr, "LA_RAW_QA %s checks=%d failed=%d sample=%s broken=%d\n",
+                 pass ? "PASS" : "FAIL", checks, fails,
+                 qPrintable(QFileInfo(sample).fileName()), broken ? 1 : 0);
+    if (!pass)
+        std::fprintf(stderr, "LA_RAW_QA failed: %s\n", qPrintable(failed.join(',')));
+    std::fflush(stderr);
+    return pass ? 0 : 1;
+}
+
+} // namespace（RAW 门禁）
 
 namespace {
 // P10 离线逆地理编码冒烟：已知点断言（pip / 城市兜底 / 海上诚实空）+ 真库回填统计。
@@ -3191,7 +3308,11 @@ static int runICloudQa()
     writeFile(QDir(cloudRoot).filePath(QStringLiteral("PLACEHOLDER_B.jpg")), bigPng);
     writeFile(QDir(cloudRoot).filePath(QStringLiteral("PLACEHOLDER_B.jpg.icloud")),
               QByteArray(10, '\0'));
-    // RAW：.DNG —— Qt 解不了码，但 kImgExt 不含它 → 应被完全忽略（total 不计）
+    // RAW：2.28.0 起 .DNG 已进入扫描范围（外部解码器），故本夹具的前提已变：
+    // 旧断言「DNG 不在白名单 → 不计 total」是 RAW 支持**之前**的契约，现应断言新契约：
+    //   · 合法 RAW  → 计入 total（解码器就位时）
+    //   · 损坏/伪 RAW（此处即 4096 字节 'R' 填充，非真实 RAW）→ 解码失败 → 不入库
+    // 保留一个伪 DNG 正是为了钉住后者：绝不允许「打不开的 RAW 也算一张照片」。
     writeFile(QDir(cloudRoot).filePath(QStringLiteral("IMG_RAW.DNG")),
               QByteArray(4096, 'R'));
     // 噪声：.AAE（Apple 视频编辑旁车）/ desktop.ini / 目录
@@ -3251,13 +3372,19 @@ static int runICloudQa()
     // ---- (B) 端到端 syncRoot（走真实导入器，沙盒独立库）---------------------
     const ScanResult r1 = Scanner::syncRoot(
         cloudRoot, dbPath, thumbs);
-    // 期望：3 png 入库；2 占位跳过；DNG/AAE/ini/afcatalog 不在白名单 → 不计 total
-    check(r1.total == 5,
-          QStringLiteral("B1 total=%1 expect=5 (3 png + 2 占位)").arg(r1.total));
+    // 期望：3 png 入库；2 占位跳过；伪 DNG（解码失败）/AAE/ini/afcatalog 不入库。
+    // ★ total 在 2.28.0 后语义已变：RAW 进入扫描范围 → 「被枚举到」即计入 total，
+    //   但**解码失败者不产生照片行**（added 不含它）。两者必须分开断言：
+    //   混为一谈会漏掉「打不开的 RAW 也被当成照片」这一真实缺陷。
+    check(r1.total == 6,
+          QStringLiteral("B1 total=%1 expect=6 (3 png + 2 占位 + 1 伪 RAW 被枚举)").arg(r1.total));
     check(r1.added == 3,
-          QStringLiteral("B2 added=%1 expect=3 (仅 3 张 png)").arg(r1.added));
-    check(r1.placeholders == 2,
-          QStringLiteral("B3 placeholders=%1 expect=2 (小文件 + .icloud sidecar)").arg(r1.placeholders));
+          QStringLiteral("B2 added=%1 expect=3 (仅 3 张 png；伪 RAW 解码失败不入库)").arg(r1.added));
+    // 占位从 2 增为 3：伪 RAW（4096 字节）也落入「小于 24KB 且在 iCloud 根下」
+    // 的占位分支。这是正确行为（未下载的云端原片不可解码），不是新缺陷：
+    // 它同样不会入库。断言已同步为新契约。
+    check(r1.placeholders == 3,
+          QStringLiteral("B3 placeholders=%1 expect=3 (小文件 + .icloud sidecar + 伪 RAW)").arg(r1.placeholders));
     check(r1.errorCount == 0,
           QStringLiteral("B4 errors=%1").arg(r1.errorCount));
     // 幂等：同库重跑必须 added=0 / unchanged=3（增量铁律）
@@ -3783,6 +3910,10 @@ int main(int argc, char *argv[])
     if (qEnvironmentVariableIsSet("LA_AGENT_QA"))
         return runAgentQa();
 
+    // 2.28.0 RAW 格式支持门禁（须排在 animOk 之前，见门禁铁律）
+    if (qEnvironmentVariableIsSet("LA_RAW_QA"))
+        return runRawQa();
+
     // P10 离线逆地理冒烟（已知点 + 真库回填统计）
     if (qEnvironmentVariableIsSet("LA_GEO_SMOKE"))
         return runGeoSmoke();
@@ -4035,6 +4166,7 @@ int main(int argc, char *argv[])
         && !qEnvironmentVariableIsSet("LA_SCALE_PERF")
         && !qEnvironmentVariableIsSet("LA_THUMB_CACHE_QA")
         && !qEnvironmentVariableIsSet("LA_BATCH_TX_QA")
+        && !qEnvironmentVariableIsSet("LA_RAW_QA")
         && !qEnvironmentVariableIsSet("LA_GALLERY_BATCH_QA")
         ;
 

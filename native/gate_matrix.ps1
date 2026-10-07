@@ -242,6 +242,15 @@ $GateTable = @(
   # 同 LA_SCALE_PERF 不进 fast 防 CI flake）。
   @{n="LA_MAP_PERF";        png=$false; measuredMs=3735},
   @{n="LA_GALLERY_E_QA";    png=$true; measuredMs=2589},
+
+  # 2.28.0 RAW 格式支持门禁（LA_RAW_QA）。A 组纯函数契约零依赖恒可跑；B 组真实解码
+  # 需 LibRaw 产物 + 一个 RAW 样本。need= 声明式依赖（铁律 26）：两者缺一即优雅 SKIP，
+  # 绝不静默假通过；样本是外部素材，**绝不入库/进 CI**（仓库零二进制 + 无个人数据）。
+  # 反例 LA_RAW_QA_FORCE_BROKEN=1 令 decodeToTempPpm 改用「rc==0 即成功 + 产物名按
+  # 替换扩展名猜测」的缺陷形态 -> B2/B3 转红（实测两模式 dcraw_emu 的 rc 均为 0，
+  # exit code 不携带信息，产物校验是唯一判据）。期望值不随 broken 变（铁律 22）。
+  # tier 缺省=full：真实解码实测 ~0.6s/张，进程另付 QApplication 启动开销。
+  @{n="LA_RAW_QA"; png=$false; need=@("LA_RAW_SAMPLE"); measuredMs=1400},
   @{n="LA_GALLERY_FILL_QA"; png=$true; measuredMs=2690},
   @{n="LA_RETOUCH_A_QA";    png=$true; measuredMs=2707},
   @{n="LA_SCALE_SMOKE";     png=$false; measuredMs=3351},

@@ -26,6 +26,8 @@ set(LA_SOURCES
     src/core/PathGuess.cpp
     src/core/ExifReader.h
     src/core/ExifReader.cpp
+    src/core/RawDecode.h
+    src/core/RawDecode.cpp
     src/core/Scanner.h
     src/core/Scanner.cpp
     src/core/ICloudSource.h
@@ -118,3 +120,18 @@ target_compile_definitions(LightAlbum PRIVATE LA_VERSION="${PROJECT_VERSION}")
 # P3 起按模块加入（见 docs/REWRITE-PLAN.md 模块映射）
 # add_subdirectory(src/retouch)
 # add_subdirectory(src/engine/lumen)
+
+# [2.28.0] RAW 支持：把 LibRaw 预编译产物拷到构建树，使 RawDecode::available()
+# 在开发态与打包态走**同一条查找路径**（<exe 同级>/3rdparty/libraw/bin）。
+# 仓库零二进制 —— 产物由 fetch_libraw.ps1 下载；未下载时静默跳过，
+# RAW 优雅降级为「不导入」（见 RawDecode::isImportable），绝不产生无缩略图空卡片。
+set(LA_LIBRAW_BIN "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/libraw/bin")
+if(EXISTS "${LA_LIBRAW_BIN}/dcraw_emu.exe")
+    add_custom_command(TARGET LightAlbum POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${LA_LIBRAW_BIN}" "$<TARGET_FILE_DIR:LightAlbum>/3rdparty/libraw/bin"
+        COMMENT "Staging LibRaw binaries for RAW decode")
+else()
+    message(STATUS "LibRaw not fetched -- RAW support degrades to not-imported. Run fetch_libraw.ps1")
+endif()
+

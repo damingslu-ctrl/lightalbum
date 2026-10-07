@@ -3,6 +3,7 @@
 #include "PathGuess.h"
 #include "ExifReader.h"
 #include "GeoIndex.h"
+#include "RawDecode.h"
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDir>
@@ -118,9 +119,22 @@ QString thumbKey(const QString& absNative, qint64 mtimeSecs, qint64 size)
 
 // thumbs._make 的 Qt 对应：EXIF 摆正 → 缩到 512 → 透明合成白底 → JPEG q82
 // （Qt 的 setScaledSize 对 JPEG 走缩减解码，等价 PIL draft() 提速）
+//
+// ★ 2.28.0 RAW 分流：RAW 无法被 QImageReader 直接读（实测 null），
+//   故先经 RawDecode 出 PPM 中间图，再喂进**完全相同**的下游逻辑 ——
+//   刻意不复制一份缩略图代码，避免两条实现漂移（铁律 6：契约同源）。
 QString makeThumb(const QString& absPath, const QString& outPath)
 {
-    QImageReader reader(absPath);
+    // RAW → 先解码出 PPM；失败即诚实返回空（不产出半成品缩略图）
+    QString srcPath = absPath;
+    QString ppmToRemove;
+    if (RawDecode::isRawExt(absPath)) {
+        srcPath = RawDecode::decodeToTempPpm(absPath);
+        if (srcPath.isEmpty()) return QString();
+        ppmToRemove = srcPath;
+    }
+
+    QImageReader reader(srcPath);
     reader.setAutoTransform(true);                      // = ImageOps.exif_transpose
     const QSize full = reader.size();
     if (full.isValid() && full.width() > 0 && full.height() > 0) {
@@ -130,7 +144,7 @@ QString makeThumb(const QString& absPath, const QString& outPath)
                                        qMax(1, full.height() * 512 / mx)));
     }
     QImage img = reader.read();
-    if (img.isNull()) return QString();
+    if (img.isNull()) { QFile::remove(ppmToRemove); return QString(); }
     if (img.width() > 512 || img.height() > 512) {
         const int mx = qMax(img.width(), img.height());
         img = img.scaled(qMax(1, img.width() * 512 / mx), qMax(1, img.height() * 512 / mx),
@@ -147,7 +161,9 @@ QString makeThumb(const QString& absPath, const QString& outPath)
         img = img.convertToFormat(QImage::Format_RGB32);
     }
     // Python 对 .png 源也存 JPEG 内容（仅文件名带 .png），这里同构
-    if (!img.save(outPath, "JPEG", 82)) return QString();
+    const bool ok = img.save(outPath, "JPEG", 82);
+    QFile::remove(ppmToRemove);                         // 中间图用完即删（不留磁盘垃圾）
+    if (!ok) return QString();
     return outPath;
 }
 
@@ -181,6 +197,10 @@ ScanResult Scanner::syncRoot(const QString& rootIn, const QString& dbPathIn,
     }
     QDir().mkpath(thumbsDir);
 
+    // RAW 解码器可用性（2.28.0）：整轮扫描只探测一次。
+    // 缺失时 RAW 不参与导入 —— 详见 RawDecode::isImportable 的降级理由。
+    const bool rawAvailable = RawDecode::available();
+
     QString dbErr;
     QSqlDatabase db = openDb(dbPathIn, &dbErr);
     if (!db.isValid()) {
@@ -208,7 +228,12 @@ ScanResult Scanner::syncRoot(const QString& rootIn, const QString& dbPathIn,
             }
             const QFileInfoList fs = d.entryInfoList(QDir::Files, QDir::Name);
             for (const QFileInfo& fi : fs) {
-                if (!PathGuess::isPhoto(fi.fileName())) continue;
+                // RAW 走外部解码器（2.28.0）：kImgExt 不含 RAW，故并联判定 ——
+                // 判据是 needsExternalDecode（只对 RAW 为真），**不可**用 isImportable：
+                // 后者对非 RAW 返回 true，会把 .json/.ini/.AAE/.icloud 一并放行。
+                if (!PathGuess::isPhoto(fi.fileName())
+                    && !RawDecode::needsExternalDecode(fi.fileName(), rawAvailable))
+                    continue;
                 files.append({ relBase.isEmpty() ? fi.fileName()
                                                  : relBase + QLatin1Char('/') + fi.fileName(),
                                fi.absoluteFilePath() });
@@ -320,6 +345,19 @@ ScanResult Scanner::syncRoot(const QString& rootIn, const QString& dbPathIn,
                        && d.left(4).toInt() > 0)
                           ? d.left(4).toInt() : 0;
 
+        // ★ 2.28.0 RAW 尺寸补齐：ExifReader 的 out.dim 走 QImageReader::size()，
+        //   对 RAW 恒为 invalid（QImageReader 打不开 RAW）→ 实测 DNG 行 dim 为空。
+        //   此处按需解码一次取真实尺寸；失败/非 RAW 一律留空（诚实空值，不编造）。
+        //   仅在 dim 缺失时才付解码代价，JPEG 等常规格式零开销。
+        QString dim = ex.dim;
+        if (dim.isEmpty() && RawDecode::isRawExt(f.abs)) {
+            const QSize rs = RawDecode::probeSize(f.abs);
+            if (rs.isValid() && rs.width() > 0 && rs.height() > 0)
+                dim = QStringLiteral("%1%2%3").arg(rs.width())
+                          .arg(QChar(0x00D7))                  // ×
+                          .arg(rs.height());
+        }
+
         // 缩略图：缓存优先（命中连图都不解）
         const QString key = thumbKey(absNative, qint64(mtime), size);
         const bool pngSrc = f.rel.toLower().endsWith(QLatin1String(".png"));
@@ -358,7 +396,7 @@ ScanResult Scanner::syncRoot(const QString& rootIn, const QString& dbPathIn,
         o.insert(QStringLiteral("evc"), ex.evc);
         o.insert(QStringLiteral("wb"), ex.wb);
         o.insert(QStringLiteral("meter"), ex.meter);
-        o.insert(QStringLiteral("dim"), ex.dim);
+        o.insert(QStringLiteral("dim"), dim);
         // P10 离线逆地理：路径推导无地区但有真 GPS → 内嵌数据回填 r/pv/ct（写入库）。
         // LA_GEO_OFF 供 P8 金样对拍 harness 关闭（对齐 Python 无逆地理的行为）。
         if (g.r.isEmpty() && ex.hasGps && qEnvironmentVariableIsEmpty("LA_GEO_OFF")) {

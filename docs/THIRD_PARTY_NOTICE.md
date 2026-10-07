@@ -51,6 +51,48 @@
 
 ---
 
+## LibRaw（RAW 格式解码，2.28.0 起）
+
+- 项目：**LibRaw**
+- 地址：https://www.libraw.org / https://github.com/LibRaw/LibRaw
+- 取用形式：官方预编译 Windows 产物 `LibRaw-0.22.2-Win64.zip`（MSVC 2022 构建，64 位）
+- 许可：**双许可，由使用者择一** —
+  1. **GNU LESSER GENERAL PUBLIC LICENSE version 2.1**（`LICENSE.LGPL`）
+  2. **COMMON DEVELOPMENT AND DISTRIBUTION LICENSE (CDDL) Version 1.0**（`LICENSE.CDDL`）
+- 版权：Copyright (C) 2008-2025 LibRaw LLC（http://www.libraw.org, info@libraw.org）
+- 上游致谢（见 `3rdparty/libraw/COPYRIGHT`）：
+  - `dcraw.c` — Copyright 1997-2018 Dave Coffin
+  - DCB demosaic / FBDD denoise — BSD-like 3-clause，Copyright (C) 2010 Jacek Gozdz
+  - X3F library — BSD-style，Copyright (c) 2010 Roland Karlsson
+  - Adobe DNG SDK 1.4 部分代码 — MIT，Copyright (c) 2005 Adobe Systems Incorporated
+
+### 为什么以「独立进程」方式使用（合规要点）
+
+本项目**不把 `libraw.dll` 链入 `LightAlbum.exe`**，而是通过 `QProcess` 调用其官方命令行
+工具 `dcraw_emu.exe`（见 `native/src/core/RawDecode.cpp`）。由此：
+
+- 解码器与宿主 exe **不构成同一个可执行映像**，不存在链接/重链接关系；
+  宿主（MinGW/GCC 构建）与解码器（MSVC 构建）的 CRT/ABI **互不约束** ——
+  这也是可以直接使用官方 MSVC 预编译产物、无需自行从源码构建的原因。
+- 随包分发的二进制仅为**上述命令行工具与其运行时 DLL**，完整许可文本随附。
+
+### 随包分发
+
+- `native/3rdparty/libraw/` 下的 `LICENSE.LGPL`、`LICENSE.CDDL`、`COPYRIGHT`
+  随 dist 一并分发（LGPL 2.1 §4 / CDDL §4 均要求随二进制附带许可文本）。
+- 上述文件由 `native/fetch_libraw.ps1` 在获取产物时一并落位；该脚本**纯 ASCII**
+  （PS 5.1 无 BOM 按 GBK 解析中文注释会报「字符串缺少终止符」）。
+
+### 仓库不收录二进制
+
+`native/3rdparty/libraw/bin/` 已列入 `.gitignore`（本仓库零二进制惯例）。
+产物由 `fetch_libraw.ps1` 按需下载，`CMakeLists.txt` 在 `POST_BUILD` 阶段将其
+复制到 `<exe 同级>/3rdparty/libraw/bin`，使开发态与发布态走**同一条查找路径**。
+未获取到产物时 RAW 支持**优雅降级为不导入**（`RawDecode::isImportable`），
+绝不产生「有记录但无缩略图」的空卡片。
+
+---
+
 ## 随包分发
 
 - `docs/THIRD_PARTY_NOTICE.md` 在打包时复制为 dist 根目录的 **`THIRD_PARTY-NOTICE.md`**，

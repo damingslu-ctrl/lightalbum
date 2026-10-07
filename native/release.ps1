@@ -717,6 +717,34 @@ if (Test-Path $noticeSrc) {
   Write-Host ("WARN: " + $noticeSrc + " not found; C6 will fail the release")
 }
 
+# 3.65) RAW support runtime (LibRaw) + its license texts.
+# LibRaw is invoked as a SEPARATE PROCESS (see core/RawDecode.cpp), so the
+# decoder dll travels next to the exe instead of being linked into it. The
+# lookup path is <exe dir>/3rdparty/libraw/bin -- the exact layout produced by
+# CMake POST_BUILD, so dev and release resolve identically.
+# The three license files are mandatory: LibRaw is dual LGPL-2.1 / CDDL-1.0 and
+# both require their text to accompany the binaries.
+$librawBin = Join-Path $root "3rdparty/libraw/bin"
+$librawDocs = Join-Path $root "3rdparty/libraw"
+if (Test-Path (Join-Path $librawBin "dcraw_emu.exe")) {
+  $dst = Join-Path $staging "3rdparty/libraw/bin"
+  New-Item -ItemType Directory -Path $dst -Force | Out-Null
+  foreach ($f in @("dcraw_emu.exe", "libraw.dll", "simple_dcraw.exe", "raw-identify.exe")) {
+    $src = Join-Path $librawBin $f
+    if (Test-Path $src) { Copy-Item $src $dst -Force }
+  }
+  foreach ($f in @("LICENSE.LGPL", "LICENSE.CDDL", "COPYRIGHT")) {
+    $src = Join-Path $librawDocs $f
+    if (Test-Path $src) { Copy-Item $src (Join-Path $staging "3rdparty/libraw") -Force }
+  }
+  if (-not (Test-Path (Join-Path $staging "3rdparty/libraw/LICENSE.LGPL"))) {
+    throw "LibRaw staged without LICENSE.LGPL -- LGPL-2.1 requires the text to ship"
+  }
+  Write-Host "3rdparty/libraw staged (RAW decode runtime + licenses)"
+} else {
+  Write-Host "WARN: LibRaw not fetched -- RAW support degrades to not-imported in this build"
+}
+
 # 3.7) contracts C2/C6 on the staged tree, before anything is zipped.
 # C3 is deliberately NOT here: it requires BUILDINFO.txt, which can only be
 # written once the trim is done (the trim changes the file set the SBOM
