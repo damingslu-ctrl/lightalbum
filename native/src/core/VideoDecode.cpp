@@ -1,14 +1,20 @@
 #include "VideoDecode.h"
 
 #include <QCoreApplication>
+#include <QCryptographicHash>
+#include <QDateTime>
 #include <QDir>
+#include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
 #include <QImageReader>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QMutex>
+#include <QMutexLocker>
 #include <QProcess>
+#include <QStandardPaths>
 #include <QTemporaryDir>
 #include <cstdio>
 
@@ -30,6 +36,10 @@ void setForceTrustExitCodeForQa(bool on) { g_trustExitCodeForQa = on; }
 // 2.31.0 选帧反例：置 true 后忽略 atSec，恒抽第2 秒（复现「换秒读到同一帧」）
 bool g_ignoreFrameForQa = false;
 void setForceIgnoreFrameForQa(bool on) { g_ignoreFrameForQa = on; }
+
+// 2.31.0 缓存反例：置 true 后 extractPoster 完全绕过磁盘缓存
+bool g_bypassFrameCacheForQa = false;
+void setForceBypassFrameCacheForQa(bool on) { g_bypassFrameCacheForQa = on; }
 
 bool isVideoExt(const QString& fileName)
 {
@@ -150,6 +160,174 @@ VideoProbe probe(const QString& videoPath, int timeoutMs)
     return out;
 }
 
+// ================================================================
+// 2.31.0 抽帧磁盘缓存（FrameCache）
+// ================================================================
+namespace {
+
+qint64 envBudget() {
+    bool ok = false;
+    const qint64 v = qEnvironmentVariable("LA_VIDEO_CACHE_BUDGET_BYTES").toLongLong(&ok);
+    return ok && v >= 0 ? v : qint64(512) * 1024 * 1024;
+}
+
+class FrameCache {
+public:
+    static FrameCache& instance() {
+        static FrameCache inst;
+        return inst;
+    }
+
+    QString cacheDir() const {
+        if (!dir_.isEmpty()) return dir_;
+        const QString base = QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
+        if (base.isEmpty()) return QString();
+        QString d = QDir(base).filePath(QStringLiteral("frames"));
+        QDir(base).mkpath(QStringLiteral("frames"));
+        if (!QFileInfo::exists(d)) return QString();
+        // 非 const 赋值只在首次调用，但本函数被 mutex_ 保护调用，安全。
+        const_cast<FrameCache*>(this)->dir_ = d;
+        return dir_;
+    }
+
+    void setBudget(qint64 bytes) { QMutexLocker lk(&mutex_); budget_ = qMax(qint64(0), bytes); }
+    qint64 budget() const { QMutexLocker lk(&mutex_); return budget_; }
+
+    // 查询缓存：命中则把缓存文件拷贝到 dstTempPath，并验证拷贝后的文件可读。
+    // 若拷贝后验证失败，删除缓存条目并返回 false（让调用方走 ffmpeg 重抽）。
+    bool fetch(const QString& videoPath, double atSec, const QString& dstTempPath) {
+        QMutexLocker lk(&mutex_);
+        const QString cp = cacheFilePath(videoPath, atSec);
+        if (cp.isEmpty()) return false;
+        if (!QFileInfo::exists(cp)) return false;
+        if (QFileInfo(cp).size() < 1024) { QFile::remove(cp); return false; }
+
+        lk.unlock();
+        QFile::remove(dstTempPath);
+        if (!QFile::copy(cp, dstTempPath)) return false;
+
+        // 验证拷贝产物：与 extractPoster 成败标准一致
+        QImageReader rd(dstTempPath);
+        const QSize sz = rd.size();
+        if (!sz.isValid() || sz.width() < 16 || sz.height() < 16) {
+            QFile::remove(dstTempPath);
+            // 缓存文件本身损坏 → 删除，防止反复命中坏帧
+            lk.relock();
+            QFile::remove(cp);
+            return false;
+        }
+        return true;
+    }
+
+    // 把 srcTempPath 存入缓存（已验证过），必要时按 mtime 淘汰旧条目。
+    void store(const QString& videoPath, double atSec, const QString& srcTempPath) {
+        QMutexLocker lk(&mutex_);
+        const QString cp = cacheFilePath(videoPath, atSec);
+        if (cp.isEmpty()) return;
+        QDir(QFileInfo(cp).absolutePath()).mkpath(QStringLiteral("."));
+        QFile::remove(cp);
+        if (!QFile::copy(srcTempPath, cp)) return;
+
+        evictLocked();
+    }
+
+    qint64 bytes() const {
+        QMutexLocker lk(&mutex_);
+        qint64 total = 0;
+        const QString d = cacheDir();
+        if (d.isEmpty()) return 0;
+        QDirIterator it(d, QStringList() << QStringLiteral("*.jpg"),
+                        QDir::Files, QDirIterator::Subdirectories);
+        while (it.hasNext()) { total += QFileInfo(it.next()).size(); }
+        return total;
+    }
+
+    int count() const {
+        QMutexLocker lk(&mutex_);
+        int n = 0;
+        const QString d = cacheDir();
+        if (d.isEmpty()) return 0;
+        QDirIterator it(d, QStringList() << QStringLiteral("*.jpg"),
+                        QDir::Files, QDirIterator::Subdirectories);
+        while (it.hasNext()) { it.next(); ++n; }
+        return n;
+    }
+
+    void clear() {
+        QMutexLocker lk(&mutex_);
+        const QString d = cacheDir();
+        if (d.isEmpty()) return;
+        QDirIterator it(d, QStringList() << QStringLiteral("*.jpg"),
+                        QDir::Files, QDirIterator::Subdirectories);
+        while (it.hasNext()) QFile::remove(it.next());
+    }
+
+private:
+    FrameCache() { budget_ = envBudget(); }
+
+    // 缓存键：文件身份（规范绝对路径 + 修改时间 + 大小）+ 秒数。
+    // 不哈希文件内容（大视频太慢），mtime/size 足够捕获常见修改/替换场景。
+    QString cacheKey(const QString& videoPath, double atSec) const {
+        const QFileInfo fi(videoPath);
+        const QString canonical = fi.canonicalFilePath();
+        if (canonical.isEmpty()) return QString();
+        const QString key = QStringLiteral("%1|%2|%3|%4")
+                                .arg(canonical)
+                                .arg(fi.lastModified().toString(Qt::ISODate))
+                                .arg(fi.size())
+                                .arg(atSec, 0, 'f', 3);
+        return QString::fromLatin1(
+            QCryptographicHash::hash(key.toUtf8(), QCryptographicHash::Sha256).toHex());
+    }
+
+    QString cacheFilePath(const QString& videoPath, double atSec) const {
+        const QString k = cacheKey(videoPath, atSec);
+        if (k.isEmpty()) return QString();
+        const QString d = const_cast<FrameCache*>(this)->cacheDir();
+        if (d.isEmpty()) return QString();
+        // 两层子目录，防单目录文件过多
+        const QString p1 = k.left(2);
+        const QString p2 = k.mid(2, 2);
+        return QDir(d).filePath(QStringLiteral("%1/%2/%3.jpg").arg(p1, p2, k));
+    }
+
+    void evictLocked() {
+        if (budget_ <= 0) return;
+        const QString d = cacheDir();
+        if (d.isEmpty()) return;
+
+        // 计算总字节，按 mtime 升序收集条目
+        struct Item { QString path; qint64 size; QDateTime mtime; };
+        QVector<Item> items;
+        qint64 total = 0;
+        QDirIterator it(d, QStringList() << QStringLiteral("*.jpg"),
+                        QDir::Files, QDirIterator::Subdirectories);
+        while (it.hasNext()) {
+            const QString p = it.next();
+            const QFileInfo fi(p);
+            const qint64 sz = fi.size();
+            items.append({ p, sz, fi.lastModified() });
+            total += sz;
+        }
+        if (total <= budget_) return;
+
+        // 淘汰最旧的，直到预算内（保留最新写入的，即 MRU）
+        std::sort(items.begin(), items.end(),
+                  [](const Item& a, const Item& b) { return a.mtime < b.mtime; });
+        for (const Item& it : items) {
+            if (total <= budget_) break;
+            QFile::remove(it.path);
+            total -= it.size;
+        }
+    }
+
+    mutable QMutex mutex_;
+    QString dir_;
+    qint64 budget_ = qint64(512) * 1024 * 1024; // 默认 512MiB
+};
+
+} // namespace
+
 QString extractPoster(const QString& videoPath, double atSec, int timeoutMs)
 {
     const QString dir = toolDir();
@@ -162,6 +340,15 @@ QString extractPoster(const QString& videoPath, double atSec, int timeoutMs)
     const QString jpg = workPath(QStringLiteral("%1_t%2")
                                      .arg(base)
                                      .arg(effSec, 0, 'f', 2), ".jpg");
+
+    // ★ 2.31.0 抽帧缓存：QA 反例钩子会产出错误/误导性帧，必须绕过缓存，
+    //   否则会把缺陷形态固化到磁盘，导致反例后续跑成假绿（铁律 22）。
+    const bool useCache = !g_bypassFrameCacheForQa
+                          && !g_trustExitCodeForQa
+                          && !g_ignoreFrameForQa;
+    FrameCache& fc = FrameCache::instance();
+    if (useCache && fc.fetch(videoPath, effSec, jpg))
+        return jpg;
 
     QProcess p;
     p.setWorkingDirectory(dir);
@@ -195,7 +382,22 @@ QString extractPoster(const QString& videoPath, double atSec, int timeoutMs)
     QImageReader rd(jpg);
     const QSize sz = rd.size();
     if (!sz.isValid() || sz.width() < 16 || sz.height() < 16) { QFile::remove(jpg); return QString(); }
+
+    // 2.31.0：抽帧成功且非 QA 模式 → 写入磁盘缓存
+    if (useCache) fc.store(videoPath, effSec, jpg);
+
     return jpg;
 }
+
+// ---- 公开 API：磁盘缓存配置与观测 ----
+QString frameCacheDir() { return FrameCache::instance().cacheDir(); }
+
+void   setFrameCacheBudgetBytes(qint64 bytes) { FrameCache::instance().setBudget(bytes); }
+qint64 frameCacheBudgetBytes()                { return FrameCache::instance().budget(); }
+
+qint64 frameCacheBytes() { return FrameCache::instance().bytes(); }
+int    frameCacheCount() { return FrameCache::instance().count(); }
+
+void clearFrameCache() { FrameCache::instance().clear(); }
 
 } // namespace VideoDecode

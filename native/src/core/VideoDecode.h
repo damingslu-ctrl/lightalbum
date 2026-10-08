@@ -58,4 +58,38 @@ void setForceTrustExitCodeForQa(bool on);
 // 精确复现「换了秒却读到同一帧」的选帧器头号缺陷形态。期望值不随本开关改变（铁律 22）。
 void setForceIgnoreFrameForQa(bool on);
 
+// ---- 2.31.0 抽帧磁盘缓存（ Frame Cache ） ----
+// 背景：extractPoster 每次起 ffmpeg 抽帧，~0.3-0.8s/次；同一视频同一秒被多次请求
+// （Scanner 缩略图、RetouchPage 反复进入、选帧器回退）时浪费严重。
+// 磁盘缓存以「文件身份 + 修改时间 + 大小 + 秒数」为键，把 JPEG 帧持久化到
+// QStandardPaths::CacheLocation/frames，命中时直接从缓存拷贝到临时目录返回，
+// 调用方仍按旧契约删除临时产物；未命中则 ffmpeg 抽帧后写入缓存再返回。
+//
+// 当前策略：
+//   - 默认磁盘预算 512MiB（env LA_VIDEO_CACHE_BUDGET_BYTES 可覆盖）
+//   - 写缓存时若超预算，按文件 mtime 淘汰最旧的条目
+//   - 命中时验证缓存文件本身可读且非平凡（与 extractPoster 成败标准一致）
+//   - 任何 QA 反例钩子激活时自动绕过缓存，避免把缺陷形态固化到磁盘
+//
+// 注意：这不替代 FullCache（内存原图缓存），而是把「ffmpeg 抽帧」这一昂贵步骤
+// 的结果持久化；FullCache 仍负责修图页/灯箱的内存 QImage 缓存。
+
+// 缓存目录（按需创建）。返回空串表示无法创建/不可用。
+QString frameCacheDir();
+
+// 设置/获取磁盘预算（字节）。默认 512MiB。
+void   setFrameCacheBudgetBytes(qint64 bytes);
+qint64 frameCacheBudgetBytes();
+
+// 当前缓存占用（字节）与条目数。
+qint64 frameCacheBytes();
+int    frameCacheCount();
+
+// 清空磁盘缓存。
+void clearFrameCache();
+
+// QA 钩子（2.31.0）：置 true 后 extractPoster 完全绕过磁盘缓存，
+// 用于正例验证「确实走了 ffmpeg」和反例验证「文件修改后缓存失效」。
+void setForceBypassFrameCacheForQa(bool on);
+
 } // namespace VideoDecode

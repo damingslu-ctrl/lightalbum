@@ -283,7 +283,12 @@ $GateTable = @(
   # 反例 FORCE_BROKEN令 extractPoster 忽略 atSec（恒抽2s）→ E2/E3/E4 转红。
   # need=LA_VIDEO_SAMPLE。tier 缺省=full（三次抽帧各起一次 ffmpeg，~1.5s）。
   @{n="LA_VIDEO_FRAME_QA"; png=$false; need=@("LA_VIDEO_SAMPLE"); measuredMs=2500},
-  # 2.29.0 选片豁免契约门禁（LA_CULL_EXEMPT_QA）。纯函数 + 合成缩略图，**零外部依赖**，
+  # 2.31.0 抽帧缓存门禁（LA_VIDEO_CACHE_QA）。验证 extractPoster 的磁盘缓存：
+  # 正例断言首次未命中写入缓存（count=1）、第二次命中（count 不变）、源文件 mtime 变化后
+  # 缓存失效产生新条目（count=2）、clear 后清空；反例 FORCE_BROKEN 绕过缓存，
+  # C2/C3/C5/C8 转红。need=LA_VIDEO_SAMPLE。实测约 2-3s（两次 ffmpeg 未命中）。
+  @{n="LA_VIDEO_CACHE_QA"; png=$false; need=@("LA_VIDEO_SAMPLE"); measuredMs=3500},
+  # 2.29.0 选片豁免契约门禁（LA_CULL_EXEMPT_QA）。纯函数 + 合成缩略图，**零外部依赖**,
   # 故可进 fast 层（实测毫秒级）。A 组钉死「RAW/视频豁免」谓词，含曾经漂移的 8 种
   # RAW 扩展名（fff/iiq/k25/kdc/mos/ptx/srf/srw —— Sigma/Phase One/Pentax/Mamiya/Ricoh/Sony）
   # 与曾经漏掉的 10 种视频扩展名；B 组用**极暗合成图**对比 RAW/视频/普通照片三条路径：

@@ -3,6 +3,38 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.31.0] - 未发布
+
+### 新增 - 视频抽帧磁盘缓存
+
+`VideoDecode::extractPoster` 现在把抽帧结果缓存到磁盘，命中时直接从缓存拷贝，
+避免同一视频同一秒反复起 ffmpeg（~0.3-0.8s/次）。Scanner 缩略图、RetouchPage
+修图、选帧器回退均自动受益。
+
+- **缓存键**：文件规范绝对路径 + 修改时间 + 大小 + 秒数（SHA-256）。
+  不哈希文件内容（大视频太慢），mtime/size 足以捕获常见修改/替换场景。
+- **缓存位置**：`QStandardPaths::CacheLocation/frames`，两层子目录防单目录膨胀。
+- **默认预算**：512 MiB（`LA_VIDEO_CACHE_BUDGET_BYTES` 可覆盖）；超预算时按
+  mtime 淘汰最旧条目。
+- **调用方契约不变**：仍返回临时 JPEG 路径，调用方用完删除；缓存文件由
+  `VideoDecode` 内部管理。
+- **QA 反例安全**：任何 `setForce*ForQa` 钩子激活时自动绕过缓存，防止把
+  缺陷形态固化到磁盘（铁律 22）。
+
+### 门禁（gates 61 → 62）
+
+- `LA_VIDEO_CACHE_QA`：命中/失效/清空门。
+  - 正例：首次抽帧写入缓存（count=1, bytes>0）；第二次命中（count 不变、内容一致）；
+    修改源文件 mtime 后缓存失效并产生新条目（count=2）；`clearFrameCache()` 清空。
+  - 反例 `LA_VIDEO_CACHE_QA_FORCE_BROKEN=1`：强制绕过缓存 → C2/C3/C5/C8 转红。
+
+### 回归
+
+- fast `PASS=16 FAIL=0`；full `PASS=40 FAIL=1 SKIP=5`（FAIL 为 `LA_SCALE_PERF`
+  偶发负载敏感门，单独连跑 3 次均通过，非本改动引入）。
+- 既有视频门禁 `LA_VIDEO_QA`、`LA_VIDEO_FRAME_QA`、`LA_VIDEO_PLAY_QA`、
+  `LA_VIDEO_UI_QA` 无回归。
+
 ## [2.30.0] - 2026-10-08
 
 ### 新增 - 视频播放（内嵌解码器）

@@ -9,6 +9,8 @@
 #include <QDateTime>
 #include <QDir>
 #include <QMenu>              // 缺陷②回归：LA_SMOKE 断言导入下拉菜单带暗色 QSS
+#include <QFile>
+#include <QFileDevice>
 #include <QFileInfo>
 #include <QFontDatabase>
 #include <QJsonDocument>
@@ -71,6 +73,7 @@
 #include <QPixmap>
 #include <QElapsedTimer>
 #include <QByteArray>
+#include <QCryptographicHash>
 #include <functional>
 #include "ui/ThumbCache.h"
 #include <QSqlQuery>
@@ -895,6 +898,111 @@ static int runVideoFrameQa()
                  qPrintable(QFileInfo(sample).fileName()), broken ? 1 : 0);
     if (!pass)
         std::fprintf(stderr, "LA_VIDEO_FRAME_QA failed: %s\n", qPrintable(failed.join(',')));
+    std::fflush(stderr);
+    return pass ? 0 : 1;
+}
+
+// ================================================================
+// 2.31.0 抽帧缓存门禁 LA_VIDEO_CACHE_QA
+//  验证 extractPoster 的磁盘缓存真的命中、真的失效。
+//  正例：
+//    C1 首次抽帧成功；
+//    C2/C3 缓存被写入（count=1, bytes>0）；
+//    C4/C5 同一视频同一秒再次抽帧命中缓存（count 不变）；
+//    C6 命中返回的帧与首次内容一致；
+//    C7/C8 源文件被替换（mtime 变化）后缓存失效并产生新条目（count=2）；
+//    C9 clearFrameCache 清空。
+//  反例 FORCE_BROKEN：setForceBypassFrameCacheForQa(true) → 缓存完全不被写入/命中，
+//    C2/C3/C5/C8 转红（期望值不随 broken 变，铁律 22）。
+// ================================================================
+static int runVideoCacheQa()
+{
+    const QString sample = QString::fromLocal8Bit(qgetenv("LA_VIDEO_SAMPLE"));
+    const bool broken = !qEnvironmentVariableIsEmpty("LA_VIDEO_CACHE_QA_FORCE_BROKEN");
+    int checks = 0, fails = 0;
+    QStringList failed;
+    auto chk = [&](bool cond, const char* tag) {
+        ++checks;
+        if (!cond) { ++fails; failed << QString::fromLatin1(tag);
+                     std::fprintf(stderr, "  LA_VIDEO_CACHE_QA FAIL %s\n", tag); }
+    };
+
+    if (sample.isEmpty() || !QFileInfo::exists(sample)) {
+        std::fprintf(stderr, "LA_VIDEO_CACHE_QA SKIP: set LA_VIDEO_SAMPLE to run\n");
+        std::fflush(stderr);
+        return 0;
+    }
+
+    VideoDecode::setForceBypassFrameCacheForQa(broken);
+    VideoDecode::clearFrameCache();
+
+    // 用临时副本测试，避免改动原始样本
+    const QString tmpCopy = QDir(QStandardPaths::writableLocation(QStandardPaths::TempLocation))
+                                .filePath(QStringLiteral("la_cache_qa_copy.mp4"));
+    QFile::remove(tmpCopy);
+    if (!QFile::copy(sample, tmpCopy)) {
+        std::fprintf(stderr, "LA_VIDEO_CACHE_QA SKIP: failed to copy sample to temp\n");
+        std::fflush(stderr);
+        VideoDecode::setForceBypassFrameCacheForQa(false);
+        return 0;
+    }
+
+    auto fileHash = [](const QString& path) -> QByteArray {
+        QFile f(path);
+        if (!f.open(QIODevice::ReadOnly)) return QByteArray();
+        QCryptographicHash h(QCryptographicHash::Md5);
+        if (!h.addData(&f)) return QByteArray();
+        return h.result().toHex();
+    };
+
+    // C1-C3：首次抽帧 → 必须未命中，写入缓存
+    const QString p1 = VideoDecode::extractPoster(tmpCopy, 2.0);
+    chk(!p1.isEmpty(), "C1_first_extract_ok");
+    chk(VideoDecode::frameCacheCount() == 1, "C2_cache_populated");
+    chk(VideoDecode::frameCacheBytes() > 0, "C3_cache_bytes_positive");
+
+    // C4-C6：再次抽帧 → 必须命中，count 不变，内容一致
+    const QString p2 = VideoDecode::extractPoster(tmpCopy, 2.0);
+    chk(!p2.isEmpty(), "C4_second_extract_ok");
+    chk(VideoDecode::frameCacheCount() == 1, "C5_cache_hit_no_new_entry");
+    const QByteArray h1 = fileHash(p1);
+    const QByteArray h2 = fileHash(p2);
+    chk(!h1.isEmpty() && h1 == h2, "C6_cache_hit_identical");
+
+    // C7-C8：修改副本 mtime（内容不变）→ 缓存键变，应产生新条目，验证缓存失效
+    bool timeChanged = false;
+    {
+        QFile f(tmpCopy);
+        // Windows 上修改时间需写权限，故以 ReadWrite 打开
+        if (f.open(QIODevice::ReadWrite)) {
+            timeChanged = f.setFileTime(QDateTime::currentDateTime().addDays(1),
+                                        QFileDevice::FileModificationTime);
+            f.close();
+        }
+    }
+    chk(timeChanged, "C7_mtime_changed");
+    const QString p3 = VideoDecode::extractPoster(tmpCopy, 2.0);
+    chk(!p3.isEmpty(), "C7b_replace_extract_ok");
+    chk(VideoDecode::frameCacheCount() == 2, "C8_cache_invalidated_new_entry");
+
+    // C9：清空
+    VideoDecode::clearFrameCache();
+    chk(VideoDecode::frameCacheCount() == 0, "C9_clear_cache");
+
+    // 清理临时产物
+    QFile::remove(tmpCopy);
+    QFile::remove(p1);
+    QFile::remove(p2);
+    QFile::remove(p3);
+    VideoDecode::setForceBypassFrameCacheForQa(false);
+
+    const bool pass = (checks > 0) && (fails == 0);
+    std::fprintf(stderr, "LA_VIDEO_CACHE_QA %s checks=%d failed=%d sample=%s broken=%d cache_dir=%s\n",
+                 pass ? "PASS" : "FAIL", checks, fails,
+                 qPrintable(QFileInfo(sample).fileName()), broken ? 1 : 0,
+                 qPrintable(VideoDecode::frameCacheDir()));
+    if (!pass)
+        std::fprintf(stderr, "LA_VIDEO_CACHE_QA failed: %s\n", qPrintable(failed.join(',')));
     std::fflush(stderr);
     return pass ? 0 : 1;
 }
@@ -4686,6 +4794,10 @@ int main(int argc, char *argv[])
     // 2.31.0 视频选帧门禁（按秒取帧·防串帧）
     if (qEnvironmentVariableIsSet("LA_VIDEO_FRAME_QA"))
         return runVideoFrameQa();
+
+    // 2.31.0 抽帧缓存门禁（命中/失效/清空）
+    if (qEnvironmentVariableIsSet("LA_VIDEO_CACHE_QA"))
+        return runVideoCacheQa();
 
     // 2.29.0 选片豁免契约门禁（须排在 animOk 之前，见门禁铁律）
     if (qEnvironmentVariableIsSet("LA_CULL_EXEMPT_QA"))
