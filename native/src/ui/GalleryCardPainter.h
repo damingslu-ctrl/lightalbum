@@ -47,4 +47,8 @@ void paintGalleryCard(QPainter* p, const QRectF& card,
 // 铁律 19：脉冲属逐帧动态元素，**只能画在动态 paint 段**，禁入任何静态烘焙层。
 void paintSkeleton(QPainter* p, const QRectF& card, double phase,
                    bool reduceMotion = false);
+
+// 2.31.0 视频徽标统一绘制（图库页与选片页共用，保证视觉一致）。
+// 在 rect 左上角画圆角暗底 + 白播放三角 + 时长（durSec<=0 只画三角）。
+void paintVideoBadge(QPainter* p, const QRectF& rect, double durSec);
 }

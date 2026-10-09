@@ -1,6 +1,7 @@
 #include "CullPage.h"
 #include "../core/qaExit.h"   // 2.7.0 门禁自退契约（禁裸调 quit）
 #include "../core/RawDecode.h"  // 2.29.0 RAW 判据唯一真源（禁在本文件另立表）
+#include "GalleryCardPainter.h" // 2.31.0 视频徽标统一绘制
 #include "Theme.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -32,6 +33,8 @@
 
 namespace {
 constexpr double PI = 3.14159265358979323846;
+// 2.31.0 QA 反例钩子：关闭视频徽标绘制，用于 LA_CULL_VIDEO_QA 反例验证。
+static bool g_qaDisableVideoBadge = false;
 
 // 2.29.0：原先此处有一份**独立的** RAW 扩展名表（16 种），与
 // core/RawDecode.cpp 的 kRawExt[]（24 种）漂移 8 种 —— fff/iiq/k25/kdc/mos/ptx/srf/srw
@@ -91,6 +94,9 @@ QVariant CullModel::data(const QModelIndex& idx, int role) const
         case StatusRole: return r.item.status;
         case CategoryRole: return r.item.category;
         case MarkRole:   return r.mark;
+        case MediaTypeRole: return r.item.mediaType;
+        case DurRole:      return r.item.durSec;
+        case IsVideoRole:  return r.item.isVideo;
         case Qt::DecorationRole: return r.pm;
         default: break;
     }
@@ -159,11 +165,19 @@ bool CullProxy::filterAcceptsRow(int srow, const QModelIndex& sparent) const
     if (!mark_.isEmpty()) {
         if (idx.data(CullModel::MarkRole).toString() != mark_) return false;
     }
+    if (videoOnly_) {
+        if (!idx.data(CullModel::IsVideoRole).toBool()) return false;
+    }
     return true;
 }
 
 // ---------------------------------------------------------------- 委托
 CullCardDelegate::CullCardDelegate(QObject* parent) : QStyledItemDelegate(parent) {}
+
+void CullPage::qaSetVideoBadgeDisabled(bool disabled)
+{
+    g_qaDisableVideoBadge = disabled;
+}
 
 QSize CullCardDelegate::sizeHint(const QStyleOptionViewItem&, const QModelIndex&) const
 {
@@ -182,6 +196,8 @@ void CullCardDelegate::paint(QPainter* p, const QStyleOptionViewItem& o,
 
     const QPixmap pm = idx.data(Qt::DecorationRole).value<QPixmap>();
     QRect imgR(r.x() + 8, r.y() + 8, r.width() - 16, 168);
+    bool isVideo = false;
+    double durSec = 0;
     if (!pm.isNull()) {
         const QPixmap scaled = pm.scaled(imgR.size(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
         p->drawPixmap(imgR.x() + (imgR.width() - scaled.width()) / 2,
@@ -190,6 +206,12 @@ void CullCardDelegate::paint(QPainter* p, const QStyleOptionViewItem& o,
         p->setPen(QColor(0x5a, 0x6b, 0x60));
         p->drawText(imgR, Qt::AlignCenter, QCoreApplication::translate("LightAlbum", "无缩略图"));
     }
+    // 2.31.0 视频徽标：统一走 Lumen::paintVideoBadge，与图库页视觉一致。
+    // QA 反例可通过 g_qaDisableVideoBadge 关闭绘制。
+    isVideo = idx.data(CullModel::IsVideoRole).toBool();
+    durSec  = idx.data(CullModel::DurRole).toDouble();
+    if (isVideo && !g_qaDisableVideoBadge)
+        Lumen::paintVideoBadge(p, r, durSec);
 
     const QString grade = idx.data(CullModel::GradeRole).toString();
     const double score = idx.data(CullModel::ScoreRole).toDouble();
@@ -440,6 +462,7 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     markCombo_->addItem(QCoreApplication::translate("LightAlbum", "只看喜欢"), QStringLiteral("like"));
     markCombo_->addItem(QCoreApplication::translate("LightAlbum", "只看略过"), QStringLiteral("skip"));
     markCombo_->addItem(QCoreApplication::translate("LightAlbum", "只看锁定"), QStringLiteral("lock"));
+    markCombo_->addItem(QCoreApplication::translate("LightAlbum", "只看视频"), QStringLiteral("__video__"));
     markCombo_->setStyleSheet(Lumen::input());
 
     progress_ = new QLabel(QCoreApplication::translate("LightAlbum", "基于本地缩略图 · 零云端 · 失败即放行"), bar);
@@ -708,6 +731,15 @@ void CullPage::buildChips(const QMap<QString,int>& counts)
         return b;
     };
     mk(QCoreApplication::translate("LightAlbum", "全部"), QString(), model_->rowCount());
+
+    // 2.31.0 视频适配：若有视频项，在场景 chips 最前追加「视频」分类（按 isVideo 而非 category）
+    int videoCnt = 0;
+    for (int i = 0; i < model_->rowCount(); ++i)
+        if (model_->data(model_->index(i, 0), CullModel::IsVideoRole).toBool())
+            ++videoCnt;
+    if (videoCnt > 0)
+        mk(QCoreApplication::translate("LightAlbum", "视频"), QStringLiteral("__video__"), videoCnt);
+
     for (auto it = counts.begin(); it != counts.end(); ++it)
         mk(it.key(), it.key(), it.value());
     cl->addStretch(1);
@@ -716,7 +748,13 @@ void CullPage::buildChips(const QMap<QString,int>& counts)
 void CullPage::onChipClicked(const QString& cat)
 {
     activeCat_ = (activeCat_ == cat) ? QString() : cat;
-    proxy_->setCategoryFilter(activeCat_);
+    if (activeCat_ == QStringLiteral("__video__")) {
+        proxy_->setCategoryFilter(QString());
+        proxy_->setVideoOnly(true);
+    } else {
+        proxy_->setCategoryFilter(activeCat_);
+        proxy_->setVideoOnly(false);
+    }
     for (QPushButton* b : chips_) {
         const bool on = (b->property("cat").toString() == activeCat_);
         b->setStyleSheet(on
@@ -730,7 +768,14 @@ void CullPage::onChipClicked(const QString& cat)
 void CullPage::onMarkFilterChanged(int idx)
 {
     if (!markCombo_) return;
-    proxy_->setMarkFilter(markCombo_->itemData(idx).toString());
+    const QString data = markCombo_->itemData(idx).toString();
+    if (data == QStringLiteral("__video__")) {
+        proxy_->setMarkFilter(QString());
+        proxy_->setVideoOnly(true);
+    } else {
+        proxy_->setMarkFilter(data);
+        proxy_->setVideoOnly(false);
+    }
 }
 
 void CullPage::onSelectionChanged(const QModelIndex& cur, const QModelIndex&)
@@ -892,6 +937,7 @@ void CullPage::onAnalyze()
         // 2.29.0：isRaw 走唯一真源；isVideo 由 mediaType 驱动（不靠扩展名二次判定）
         in.isRaw   = RawDecode::isRawExt(ph.path);
         in.isVideo = (ph.mediaType == QLatin1String("video"));
+        in.durSec  = ph.durSec;     // 2.31.0 视频时长透传
         in.category = ph.category;
         inputs.append(in);
     }
@@ -924,6 +970,7 @@ void CullPage::autoRun(int cap)
         // 2.29.0：isRaw 走唯一真源；isVideo 由 mediaType 驱动（不靠扩展名二次判定）
         in.isRaw   = RawDecode::isRawExt(ph.path);
         in.isVideo = (ph.mediaType == QLatin1String("video"));
+        in.durSec  = ph.durSec;     // 2.31.0 视频时长透传
         in.category = ph.category;
         inputs.append(in);
     }
@@ -957,6 +1004,7 @@ void CullPage::onFinished(const CullReport& rep)
     // 复位筛选
     activeCat_.clear();
     proxy_->setCategoryFilter(QString());
+    proxy_->setVideoOnly(false);
     markCombo_->setCurrentIndex(0);
     proxy_->setMarkFilter(QString());
 

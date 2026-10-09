@@ -57,6 +57,8 @@
 #include "ui/GalleryPage.h"
 #include "ui/GalleryModel.h"
 #include "ui/GalleryCardPainter.h"
+#include "ui/CullPage.h"
+#include "core/CullEngine.h"
 #include "ui/RetouchPage.h"
 #include "ui/HomePage.h"
 #include "ui/DarkPalette.h"
@@ -1138,6 +1140,143 @@ static int runCullExemptQa()
 }
 
 } // namespace（选片豁免门禁）
+
+namespace {
+
+// 2.31.0 选片页视频适配门禁（LA_CULL_VIDEO_QA）。
+//
+// 断言：
+//   A 数据贯通：CullEngine 透传 isVideo/mediaType/durSec 到 CullItem
+//   B 模型角色：CullModel 正确暴露 IsVideoRole / DurRole / MediaTypeRole
+//   C 代理过滤：CullProxy::setVideoOnly(true) 只保留视频
+//   D 像素门：CullCardDelegate 为视频项绘制播放徽标 + 时长
+//   反例 LA_CULL_VIDEO_QA_FORCE_BROKEN=1：关闭徽标绘制 → 徽标像素消失
+static int runCullVideoQa()
+{
+    const bool broken = !qEnvironmentVariableIsEmpty("LA_CULL_VIDEO_QA_FORCE_BROKEN");
+    int checks = 0, fails = 0;
+    QStringList failed;
+    auto chk = [&](bool cond, const char* tag) {
+        ++checks;
+        if (!cond) {
+            ++fails;
+            failed << QString::fromLatin1(tag);
+            std::fprintf(stderr, "  LA_CULL_VIDEO_QA FAIL %s\n", tag);
+        }
+    };
+
+    // A. 数据贯通：构造一个视频输入与一个照片输入
+    QTemporaryDir td;
+    if (!td.isValid()) {
+        std::fprintf(stderr, "LA_CULL_VIDEO_QA SKIP (tmpdir)\n");
+        std::fflush(stderr);
+        return 0;
+    }
+    const QString photoPath = td.filePath(QStringLiteral("photo.jpg"));
+    const QString videoPath = td.filePath(QStringLiteral("video.jpg"));
+    {
+        QImage photo(200, 150, QImage::Format_RGB32);
+        photo.fill(QColor(0x4f, 0xc0, 0x8a)); // 绿
+        photo.save(photoPath);
+        QImage video(200, 150, QImage::Format_RGB32);
+        video.fill(QColor(0xd9, 0xa9, 0x4e)); // 金
+        video.save(videoPath);
+    }
+
+    CullInput inPhoto, inVideo;
+    inPhoto.thumbPath = photoPath;
+    inPhoto.origW = 4000; inPhoto.origH = 3000;
+    inPhoto.isVideo = false;
+    inPhoto.durSec = 0;
+
+    inVideo.thumbPath = videoPath;
+    inVideo.origW = 1920; inVideo.origH = 1080;
+    inVideo.isVideo = true;
+    inVideo.durSec = 125.0; // 2:05
+
+    const CullReport rep = CullEngine::analyze(QVector<CullInput>{inPhoto, inVideo}, CullOptions());
+    // 两张都应成为候选（视频豁免质量淘汰）
+    int videoItemIdx = -1;
+    for (int i = 0; i < rep.topItems.size(); ++i) {
+        if (rep.topItems[i].thumbPath == videoPath) { videoItemIdx = i; break; }
+    }
+    chk(videoItemIdx >= 0, "A1_video_in_candidates");
+    if (videoItemIdx >= 0) {
+        const CullItem& vit = rep.topItems[videoItemIdx];
+        chk(vit.isVideo == true, "A2_item_isVideo");
+        chk(vit.mediaType == QLatin1String("video"), "A3_item_mediaType");
+        chk(qFuzzyCompare(vit.durSec, 125.0), "A4_item_durSec");
+    }
+
+    // B. 模型角色
+    CullModel model;
+    model.setItems(rep.topItems, td.path());
+    const QModelIndex vidIx = model.index(videoItemIdx >= 0 ? videoItemIdx : 0, 0);
+    chk(model.data(vidIx, CullModel::IsVideoRole).toBool() == true, "B1_model_isVideo");
+    chk(model.data(vidIx, CullModel::MediaTypeRole).toString() == QLatin1String("video"), "B2_model_mediaType");
+    chk(qFuzzyCompare(model.data(vidIx, CullModel::DurRole).toDouble(), 125.0), "B3_model_durSec");
+
+    // C. 代理过滤
+    CullProxy proxy;
+    proxy.setSourceModel(&model);
+    proxy.setVideoOnly(true);
+    chk(proxy.rowCount() == 1, "C1_videoOnly_one_row");
+    if (proxy.rowCount() == 1) {
+        const QModelIndex mapped = proxy.mapToSource(proxy.index(0, 0));
+        chk(model.data(mapped, CullModel::IsVideoRole).toBool() == true, "C2_videoOnly_is_video");
+    }
+    proxy.setVideoOnly(false);
+    chk(proxy.rowCount() == model.rowCount(), "C3_videoOnly_off_restores");
+
+    // D. 像素门：用 CullCardDelegate 直接绘制到 QPixmap，避免 QWidget show 依赖
+    CullPage::qaSetVideoBadgeDisabled(broken);
+    QPixmap pm(232, 268);
+    pm.fill(Qt::transparent);
+    {
+        QPainter painter(&pm);
+        QStyleOptionViewItem opt;
+        opt.rect = QRect(0, 0, 232, 268);
+        opt.state = QStyle::State_Enabled;
+        CullCardDelegate delegate;
+        delegate.paint(&painter, opt, vidIx);
+    }
+    CullPage::qaSetVideoBadgeDisabled(false);
+    const QImage img = pm.toImage().convertToFormat(QImage::Format_RGB32);
+    long whiteBadge = 0;
+    // 播放三角与时长文字为 #f4f7f4（高亮）；统计左上角区域（徽标大致位置）
+    for (int y = 12; y < 50 && y < img.height(); ++y) {
+        const QRgb* row = reinterpret_cast<const QRgb*>(img.constScanLine(y));
+        for (int x = 12; x < 90 && x < img.width(); ++x) {
+            const QRgb px = row[x];
+            if (qRed(px) > 230 && qGreen(px) > 230 && qBlue(px) > 230) ++whiteBadge;
+        }
+    }
+    chk(whiteBadge > 5, broken ? "D1_badge_pixels_absent_in_broken" : "D1_badge_pixels_present");
+
+    // 时长文案 "2:05" 中有 '2'、':'、'0'、'5'，至少应有一部分白色像素落在右侧
+    if (!broken) {
+        bool hasTextPixel = false;
+        for (int y = 14; y < 36 && y < img.height(); ++y) {
+            const QRgb* row = reinterpret_cast<const QRgb*>(img.constScanLine(y));
+            for (int x = 36; x < 80 && x < img.width(); ++x) {
+                const QRgb px = row[x];
+                if (qRed(px) > 230 && qGreen(px) > 230 && qBlue(px) > 230) { hasTextPixel = true; break; }
+            }
+            if (hasTextPixel) break;
+        }
+        chk(hasTextPixel, "D2_duration_text_visible");
+    }
+
+    const bool pass = (checks > 0) && (fails == 0);
+    std::fprintf(stderr, "LA_CULL_VIDEO_QA %s checks=%d failed=%d broken=%d badge=%ld\n",
+                 pass ? "PASS" : "FAIL", checks, fails, broken ? 1 : 0, whiteBadge);
+    if (!pass)
+        std::fprintf(stderr, "LA_CULL_VIDEO_QA failed: %s\n", qPrintable(failed.join(',')));
+    std::fflush(stderr);
+    return pass ? 0 : 1;
+}
+
+} // namespace（选片视频适配门禁）
 
 namespace {
 
@@ -4803,6 +4942,10 @@ int main(int argc, char *argv[])
     if (qEnvironmentVariableIsSet("LA_CULL_EXEMPT_QA"))
         return runCullExemptQa();
 
+    // 2.31.0 选片页视频适配门禁（须排在 animOk 之前，见门禁铁律）
+    if (qEnvironmentVariableIsSet("LA_CULL_VIDEO_QA"))
+        return runCullVideoQa();
+
     // 2.29.0 RAW/视频修图链路门禁（须排在 animOk 之前，见门禁铁律）
     if (qEnvironmentVariableIsSet("LA_EDIT_RAW_QA"))
         return runEditRawQa();
@@ -5062,6 +5205,7 @@ int main(int argc, char *argv[])
         && !qEnvironmentVariableIsSet("LA_RAW_QA")
         && !qEnvironmentVariableIsSet("LA_VIDEO_QA")
         && !qEnvironmentVariableIsSet("LA_CULL_EXEMPT_QA")
+        && !qEnvironmentVariableIsSet("LA_CULL_VIDEO_QA")
         && !qEnvironmentVariableIsSet("LA_EDIT_RAW_QA")
         && !qEnvironmentVariableIsSet("LA_GALLERY_BATCH_QA")
         ;

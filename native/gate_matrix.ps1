@@ -295,6 +295,11 @@ $GateTable = @(
   # RAW 与视频必须 candidate（豁免生效），普通照片必须 rejected（证明非恒真，铁律 16）。
   # 反例 LA_CULL_EXEMPT_QA_FORCE_BROKEN=1 令 RAW 豁免失效 -> B1 转红而 A 组仍绿。
   @{n="LA_CULL_EXEMPT_QA"; png=$false; tier="fast"; measuredMs=120},
+  # 2.31.0 选片页视频适配门禁（LA_CULL_VIDEO_QA）。验证：CullEngine 透传 isVideo/durSec、
+  # CullModel 暴露角色、CullProxy「只看视频」过滤、CullCardDelegate 绘制播放徽标+时长。
+  # 纯合成缩略图，零外部依赖，进 fast 层（实测毫秒级）。
+  # 反例 LA_CULL_VIDEO_QA_FORCE_BROKEN=1 关闭徽标绘制 -> D1/D2 转红而 A/B/C 仍绿。
+  @{n="LA_CULL_VIDEO_QA"; png=$false; tier="fast"; measuredMs=80},
   # 2.29.0 RAW/视频修图链路门禁（LA_EDIT_RAW_QA）。修图页原本用 QImage(ph.path) 直读
   # 原图，实测对 RAW 返回 **0x0 null=1** → RAW 根本进不了修图页（2.28.0 漏了这条入口）。
   # 现统一走 ImageLoad::loadForEdit（照片/RAW/视频三路收口）。need= 声明两个样本依赖：

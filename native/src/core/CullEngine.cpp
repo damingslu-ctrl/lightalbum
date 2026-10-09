@@ -208,6 +208,9 @@ CullReport CullEngine::analyze(const QVector<CullInput>& inputs,
         CullItem it;
         it.thumbPath = in.thumbPath;
         it.category = in.category;   // 透传场景分类，供选片页 chips 筛选
+        it.mediaType = in.isVideo ? QStringLiteral("video") : QStringLiteral("image");
+        it.isVideo = in.isVideo;
+        it.durSec = in.durSec;
 
         // MD5（文件字节；解码失败时仍能算）
         {

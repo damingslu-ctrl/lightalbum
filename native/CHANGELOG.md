@@ -21,12 +21,33 @@
 - **QA 反例安全**：任何 `setForce*ForQa` 钩子激活时自动绕过缓存，防止把
   缺陷形态固化到磁盘（铁律 22）。
 
-### 门禁（gates 61 → 62）
+### 新增 - 选片页视频适配
+
+选片（Cull）页此前对视频只有「能显示首帧缩略图」，缺视频身份标识与过滤。
+本次补齐与图库页一致的视频适配，复用图库页既有 `Lumen::paintVideoBadge`。
+
+- **数据透传**：`Photo.durSec`（Scanner 已用 ffprobe 填充）→ `CullInput.durSec`
+  → `CullItem.{mediaType,durSec,isVideo}` → `CullModel::{MediaTypeRole,DurRole,
+  IsVideoRole}` → `CullCardDelegate` 徽标。全链路不改既有 image 路径。
+- **统一徽标**：从 `paintGalleryCard` 抽出 `Lumen::paintVideoBadge(p, rect, durSec)`，
+  Gallery 与 Cull 共用同一绘制（左上圆角暗底 + 白色 ▶ + 时长 `m:ss`），视觉一致。
+- **「只看视频」过滤**：`CullProxy::setVideoOnly(bool)` + 分类 chip / 评分下拉共用
+  `__video__` 哨兵；选片结束 `onFinished` 自动复位 `setVideoOnly(false)`。
+- **QA 反例钩子**：`CullPage::qaSetVideoBadgeDisabled(bool)` 由 `LA_CULL_VIDEO_QA_
+  FORCE_BROKEN=1` 驱动，关掉徽标绘制以证像素断言非空洞（徽标像素归零、其余 11 项仍绿）。
+
+### 门禁（gates 62 → 63）
 
 - `LA_VIDEO_CACHE_QA`：命中/失效/清空门。
   - 正例：首次抽帧写入缓存（count=1, bytes>0）；第二次命中（count 不变、内容一致）；
     修改源文件 mtime 后缓存失效并产生新条目（count=2）；`clearFrameCache()` 清空。
   - 反例 `LA_VIDEO_CACHE_QA_FORCE_BROKEN=1`：强制绕过缓存 → C2/C3/C5/C8 转红。
+- `LA_CULL_VIDEO_QA`：fast 门、measuredMs=80、无外部素材依赖（合成缩略图）。
+  - 正例（12 checks）：数据透传（候选含视频、isVideo/mediaType/durSec 正确）、
+    model 3 角色、proxy videoOnly 过滤、像素徽标存在（whiteBadge>5）+ 时长文本可见。
+    实测 `checks=12 failed=0 broken=0 badge=63`。
+  - 反例 `LA_CULL_VIDEO_QA_FORCE_BROKEN=1`：仅徽标相关断言转红（badge=0），
+    其余数据/model/filter 检查仍绿（期望值不随 broken 切换，铁律22/41）。
 
 ### 回归
 
@@ -34,6 +55,9 @@
   偶发负载敏感门，单独连跑 3 次均通过，非本改动引入）。
 - 既有视频门禁 `LA_VIDEO_QA`、`LA_VIDEO_FRAME_QA`、`LA_VIDEO_PLAY_QA`、
   `LA_VIDEO_UI_QA` 无回归。
+- 新增 `LA_CULL_VIDEO_QA` 与相邻门无回归：`LA_CULL_EXEMPT_QA`（41 checks PASS）、
+  `LA_GALLERY_E_QA`（PASS，证 GalleryCardPainter 抽出安全）、`LA_VIDEO_CACHE_QA`
+  （10 checks PASS）均通过。
 
 ## [2.30.0] - 2026-10-08
 

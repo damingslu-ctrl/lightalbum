@@ -66,6 +66,39 @@ void paintSkeleton(QPainter* p, const QRectF& card, double phase, bool reduceMot
     p->restore();
 }
 
+void paintVideoBadge(QPainter* p, const QRectF& rect, double durSec)
+{
+    p->save();
+    p->setRenderHint(QPainter::Antialiasing, true);
+    QFont vf = p->font(); vf.setPointSizeF(8.5); vf.setBold(true); p->setFont(vf);
+    // 时长文案：<60s 显示秒；否则 分:秒。未知(<=0) 则只画三角不画时长（诚实空值）。
+    QString durTxt;
+    if (durSec > 0) {
+        const int total = int(durSec + 0.5);
+        durTxt = (total < 60) ? QStringLiteral("%1s").arg(total)
+                              : QStringLiteral("%1:%2").arg(total / 60).arg(total % 60, 2, 10, QLatin1Char('0'));
+    }
+    const qreal bw = durTxt.isEmpty() ? 22.0 : 22.0 + p->fontMetrics().horizontalAdvance(durTxt) + 8.0;
+    const QRectF vb(rect.left() + 12, rect.top() + 12, bw, 20);
+    p->setPen(QColor(0xf4, 0xf7, 0xf4));
+    p->setBrush(QColor(0x0c, 0x10, 0x0d, 190));
+    p->drawRoundedRect(vb, 7, 7);
+    // 播放三角（几何画法，不依赖字体字形 → 跨字体稳定）
+    QPolygonF tri;
+    const qreal ty = vb.center().y();
+    const qreal tx = vb.left() + 8.0;
+    tri << QPointF(tx - 3.0, ty - 5.0) << QPointF(tx - 3.0, ty + 5.0) << QPointF(tx + 4.5, ty);
+    p->setPen(Qt::NoPen);
+    p->setBrush(QColor(0xf4, 0xf7, 0xf4));
+    p->drawPolygon(tri);
+    if (!durTxt.isEmpty()) {
+        p->setPen(QColor(0xf4, 0xf7, 0xf4));
+        p->drawText(QRectF(vb.left() + 16, vb.top(), vb.width() - 20, vb.height()),
+                    Qt::AlignVCenter | Qt::AlignLeft, durTxt);
+    }
+    p->restore();
+}
+
 void paintGalleryCard(QPainter* p, const QRectF& card,
                       const QString& title, const QString& sub,
                       const QString& orient, bool miss, int rating,
@@ -128,35 +161,9 @@ void paintGalleryCard(QPainter* p, const QRectF& card,
         p->drawText(br, Qt::AlignCenter, b);
     }
 
-    // 2.28.0 视频徽标（左上角）：播放三角 + 时长。刻意不占用右侧任何位置。
-    if (isVideo) {
-        QFont vf = p->font(); vf.setPointSizeF(8.5); vf.setBold(true); p->setFont(vf);
-        // 时长文案：<60s 显示秒；否则 分:秒。未知(<=0) 则只画三角不画时长（诚实空值）。
-        QString durTxt;
-        if (durSec > 0) {
-            const int total = int(durSec + 0.5);
-            durTxt = (total < 60) ? QStringLiteral("%1s").arg(total)
-                                  : QStringLiteral("%1:%2").arg(total / 60).arg(total % 60, 2, 10, QLatin1Char('0'));
-        }
-        const qreal bw = durTxt.isEmpty() ? 22.0 : 22.0 + p->fontMetrics().horizontalAdvance(durTxt) + 8.0;
-        const QRectF vb(c.left() + 12, c.top() + 12, bw, 20);
-        p->setPen(QColor(0xf4, 0xf7, 0xf4));
-        p->setBrush(QColor(0x0c, 0x10, 0x0d, 190));
-        p->drawRoundedRect(vb, 7, 7);
-        // 播放三角（几何画法，不依赖字体字形 → 跨字体稳定）
-        QPolygonF tri;
-        const qreal ty = vb.center().y();
-        const qreal tx = vb.left() + 8.0;
-        tri << QPointF(tx - 3.0, ty - 5.0) << QPointF(tx - 3.0, ty + 5.0) << QPointF(tx + 4.5, ty);
-        p->setPen(Qt::NoPen);
-        p->setBrush(QColor(0xf4, 0xf7, 0xf4));
-        p->drawPolygon(tri);
-        if (!durTxt.isEmpty()) {
-            p->setPen(QColor(0xf4, 0xf7, 0xf4));
-            p->drawText(QRectF(vb.left() + 16, vb.top(), vb.width() - 20, vb.height()),
-                        Qt::AlignVCenter | Qt::AlignLeft, durTxt);
-        }
-    }
+    // 2.28.0 / 2.31.0 视频徽标：统一走 Lumen::paintVideoBadge，保证图库页与选片页视觉一致。
+    if (isVideo)
+        paintVideoBadge(p, c, durSec);
 
     // 底部渐隐遮罩（文字浮层可读，盖在图上而非卡片底上）
     const qreal scrimH = c.height() * (feature ? 0.32 : 0.42);

@@ -26,7 +26,8 @@ class CullModel : public QAbstractListModel {
 public:
     using QAbstractListModel::QAbstractListModel;  // 继承 QObject* 构造
     enum Role { ThumbRole = Qt::UserRole + 1, ScoreRole, GradeRole,
-                ReasonRole, StatusRole, CategoryRole, MarkRole };
+                ReasonRole, StatusRole, CategoryRole, MarkRole,
+                MediaTypeRole, DurRole, IsVideoRole };  // 2.31.0 视频适配
     void setItems(const QVector<CullItem>& items, const QString& thumbsDir);
     int rowCount(const QModelIndex& = QModelIndex()) const override { return items_.size(); }
     QVariant data(const QModelIndex& idx, int role) const override;
@@ -48,11 +49,13 @@ public:
     using QSortFilterProxyModel::QSortFilterProxyModel;
     void setCategoryFilter(const QString& c) { cat_ = c; invalidateFilter(); }
     void setMarkFilter(const QString& m) { mark_ = m; invalidateFilter(); }
+    void setVideoOnly(bool v) { videoOnly_ = v; invalidateFilter(); }
 protected:
     bool filterAcceptsRow(int srow, const QModelIndex& sparent) const override;
 private:
     QString cat_;   // 空 = 全部
     QString mark_;  // 空 = 全部
+    bool    videoOnly_ = false;
 };
 
 // 卡片委托：缩略图 + 分数/等级 + 拒绝理由 + 标记徽标
@@ -111,6 +114,9 @@ public:
                       QWidget* parent = nullptr);
     // 自测钩子：同步跑前 cap 张并直接出结果（LA_CULL_SMOKE / LA_UI_SHOT）
     void autoRun(int cap = 80);
+
+    // 2.31.0 QA 反例钩子：关闭/恢复选片卡片视频徽标绘制
+    static void qaSetVideoBadgeDisabled(bool disabled);
 
 private slots:
     void onAnalyze();

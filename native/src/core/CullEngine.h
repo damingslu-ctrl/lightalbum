@@ -25,6 +25,7 @@ struct CullInput {
     // 视频缩略图是抽帧封面，拿它的 Laplacian/曝光去淘汰视频在语义上不成立
     // （与「视频无 EXIF 不编造」同源的一致性要求）。
     bool    isVideo = false;
+    double  durSec = 0;         // 2.31.0 视频时长（秒，非视频为 0），透传到 CullItem 供 UI 显示
     QString category;           // CLIP 场景分类标签（空 = 未分类），供选片页筛选
 
     // 2.29.0：RAW / 视频是否豁免质量淘汰（只查分辨率）。
@@ -49,6 +50,10 @@ struct CullItem {
     double  coverage = 0;        // 参与计分的权重占比
     QString status;              // candidate / rejected
     QString category;            // CLIP 场景分类标签（透传自 CullInput）
+    // 2.31.0 视频适配：透传自 CullInput，供选片页绘制徽标与「只看视频」过滤
+    QString mediaType = QStringLiteral("image");
+    double  durSec = 0;
+    bool    isVideo = false;
     QString rejectReason;
     QString dupOf;               // 去重时被指向的保留者缩略图
     int     dupGroup = 0;
