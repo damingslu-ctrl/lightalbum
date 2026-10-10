@@ -13,8 +13,9 @@
 
 - **进程边界**：新增独立 MSVC 项目 `inpaint/`（ONNX Runtime C++ + SAIC-MLP LaMa ONNX 模型，
   约 191MB），不进 MinGW 主构建、主程序零新链接依赖；宿主侧新增 `core/EraseRunner`
-  （常驻 QProcess 子进程封装）以帧协议通信：握手 `READY 1`（就绪）/ `READY 0`（模型缺失，任务诚实
-  失败且支持稍后 fetch 重试）→ `TASK <id> <w> <h> <nb> <nm>` + 裸 RGB888 底图 + 裸 alpha-mask
+  （常驻 QProcess 子进程封装）以帧协议通信：握手 `READY 1`（就绪）/ `READY 0`（模型文件在场但加载
+  失败——子进程逐任务诚实 `ERR`，修复模型后可重试；模型整体缺失则由宿主侧 spawn 前拦截，保持
+  `blocked_no_model`）→ `TASK <id> <w> <h> <nb> <nm>` + 裸 RGB888 底图 + 裸 alpha-mask
   字节流 → 应答 `OK <id> <w> <h> <no>`（+ 裸 RGB888 结果）/ `ERR <id> <原因>`。**三重隔离**：ABI（MSVC CRT 与
   宿主 MinGW 彻底解耦）、崩溃半径（子进程挂掉只影响当次任务，下一任务自动重拉）、许可
   （模型分发独立于主程序）——沿用 dcraw/ffmpeg 的独立进程先例。
@@ -60,14 +61,22 @@
 
 ### 回归
 
-- 全量套件（tier=all，**71 门 = fast 18 + full 53**）：`PASS=59 FAIL=0 CHECK=0 KILL=0
+- 全量套件（tier=all，**工作树名册 71 门 = fast 18 + full 53**）：`PASS=59 FAIL=0 CHECK=0 KILL=0
   SKIP=12`，墙钟 63661 ms。12 道 SKIP 皆为需要外部环境变量的门（`LA_SCAN_*` 个人库 /
   `LA_RAW_SAMPLE`/`LA_VIDEO_SAMPLE` 素材 / `LA_ERASE_MODEL_QA` 需 `LA_LAMA_MODEL`），非回归。
-- `gate_matrix.ps1 -SelfTest` 全绿：名册 71 门（`fast=18 full=53`、`nonAsciiBytes=0`、
-  `textual=71==parsed`、`fails=0`）。
+- ★门数溯源（诚实披露，铁律 34）：上句「71 门」是**含未提交名册修复的工作树** `gate_matrix.ps1`
+  的解析数。HEAD 提交态名册仍受既存 CJK/GBK 缺陷影响（含中文注释处 PS 5.1 静默吞注册），
+  `-SelfTest` 实测仅 **54 门 = fast 15 + full 39**（`fails=0`；E11/E12 纯 ASCII 自检亦只活在
+  工作树）。差值 ≈12 道是提交态被吞的**已实现**门（2.29–2.31 已提交），其余是工作树**新增且
+  实现未提交**的门（如 `LA_MOTION_QA`）；两类编辑在同一文件里纠缠，名册修复无法先行单独提交
+  （否则干净克隆上 qa_runner 引用缺失 dispatch 必红）。待 2.33/2.34 整轨落地，71 门方为提交态真值。
+- `gate_matrix.ps1 -SelfTest`：工作树态全绿 71 门（`fast=18 full=53`、`nonAsciiBytes=0`、
+  `textual=71==parsed`、`fails=0`）；提交态（HEAD 名册）全绿 54 门（`fails=0`）。
 - `release.ps1 -SelfTest`：`LA_RELEASE_QA PASS contracts=9 injected=15 caught=15 baseline=9
   zip=9`。
-- 版本 2.34.0 → **2.35.0**（新功能 = MINOR，单一真源 `CMakeLists.txt`）。
+- 版本 → **2.35.0**（新功能 = MINOR，单一真源 `CMakeLists.txt`；提交态由 2.32.0 系直接经本路线
+  收口为 2.35.0——2.33.0/2.34.0 两节与其 bump 活在未提交 WIP，已提交 CHANGELOG 中本节的前节
+  是 `[2.32.0]`）。
 
 ## [2.32.0] - 未发布
 
