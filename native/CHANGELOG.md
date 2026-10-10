@@ -3,6 +3,68 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.35.0] - 未发布
+
+本轮为「引擎升级·双路线」合并发布：路线 1 把全仓唯一残缺引擎 EraseBridge 从诚实桩升级为
+**真引擎**（独立子进程 + LaMa ONNX，零云端）；路线 2 把人脸聚类从贪心单遍升级为**两遍精炼**
+（质心迭代，API 零变化）。两条路线合并发一个 MINOR 版本。
+
+### 新增 - ★AI 消除真引擎：EraseBridge 桩→独立执行器（路线 1）
+
+- **进程边界**：新增独立 MSVC 项目 `inpaint/`（ONNX Runtime C++ + SAIC-MLP LaMa ONNX 模型，
+  约 191MB），不进 MinGW 主构建、主程序零新链接依赖；宿主侧新增 `core/EraseRunner`
+  （常驻 QProcess 子进程封装）以帧协议通信：握手 `READY <w> <h> <maxbytes>` → `TASK` +
+  PPM(P6) 底图 + PGM(P5) 蒙版 → `OK/ERR` + PPM(P6) 结果。**三重隔离**：ABI（MSVC CRT 与
+  宿主 MinGW 彻底解耦）、崩溃半径（子进程挂掉只影响当次任务，下一任务自动重拉）、许可
+  （模型分发独立于主程序）——沿用 dcraw/ffmpeg 的独立进程先例。
+- **契约变真**：`modelReady()` 从桩的恒 false 改为「inpaint.exe 与 lama.onnx 均在且握手
+  成功」；任务状态机 `queued → running → done | failed`（新增 `running`）；未取模型时保持
+  诚实 `blocked_no_model`（note 注明零云端/未接入，绝不伪报 done）；失败判定 = 进程非零
+  退出 / `ERR` / 结果为空或尺寸 ≠ 底图 → 走既有 `failed` 分支。`RetouchPage` UI 本轮
+  零改动（早已 100% 接线）。
+- **零云端 + 隐私**：inpaint.exe 不发起任何网络请求；模型由用户在构建期主动运行
+  `fetch_lama.ps1` 获取（LICENSE 硬校验，无许可即 fetch 失败；SHA 哨兵 `PIN-ON-FIRST-FETCH`
+  钉死之前拒绝真实下载，fail-closed）。送进子进程的是编辑态图，继承修图页注入点的
+  私密过滤，本层不再二次遍历。
+- **门禁第 70 门 `LA_ERASE_QA`（full）**：契约门走确定性 MinGW 桩 `inpaint_stub.exe`
+  （常绿、宿主无关）：A 状态机全序 / B 守恒像素判别（蒙版外逐字节 == 底图 + 蒙版内
+  平均差 > 阈值，证明确实动了）/ C 常驻复用（连投 3 任务 `processId` 恒等）/ D 崩溃恢复
+  （任务间 kill → 当前任务 failed、下一任务自动重 spawn 并 done）。反例
+  `LA_ERASE_QA_FORCE_BROKEN=1` 故意错配结果尺寸 → A/B 双转红（期望式一字不改，非空心）。
+- **质量第 71 门 `LA_ERASE_MODEL_QA`（full，opt-in）**：仅当 `LA_LAMA_MODEL` 指向真实
+  lama.onnx 时才跑真模型质量断言；本机从未持有模型 → `[SKIP]`（诚实缺席，不计回归）。
+- **发布许可契约 C9**：staging 内出现 inpaint.exe 而缺 `LICENSE` 即 throw 拒打包；
+  `release.ps1 -SelfTest` 注入「删 LICENSE → C9 转红」。默认包**不含模型**——仅当用户
+  主动 fetch 后，release 打包才含 4 件 lama 产物（inpaint.exe / onnxruntime.dll /
+  lama.onnx / LICENSE）。
+
+### 新增 - 人脸聚类两遍精炼（路线 2）
+
+- **算法**：`FaceCluster::cluster()` 从「贪心 leader 单遍、只与每簇首张脸比余弦」
+  （顺序敏感、代表信息量最少）升级为**两遍**：预归一化（余弦降为点积，约 2× 提速）→
+  贪心种子（阈值 0.4）→ ≤3 轮质心精炼（每轮全量重分配至最近质心、低于阈值新建单例簇、
+  零重分配早停）。顺序不变性由精炼收敛获得；簇代表从「首张脸」变为「质心」。
+- **调用侧零改动**：API 签名一字不改，读回 embedding → 聚类 → 落库流程、守恒契约
+  （`outputCount==inputCount`）、`setForceBrokenForQa` 反例钩子与标签编号全部保持。
+- **成本**：约 10s → 约 25–30s（QtConcurrent 后台一次性作业，不阻 GUI，已与用户确认接受）。
+- **门禁强化 `LA_FACE_CLUSTER_QA`**（既有 A–H 八组不动，新增 O/C/S/D 四组）：**O** 顺序
+  不变性（同一 12 项集合 3 种排列 → 集合意义同划分；贪心单遍必红，真判别器）、**C** 质心
+  优于头脸（每簇 `mean cos(→质心) ≥ mean cos(→首张脸)`）、**S** 同人必同簇（5 条近重复
+  embedding 随机排 3 次均同簇）、**D** 异人必分簇（5 条正交 embedding 各成一簇）；新增
+  反例钩子 `qaSetForceMergeForQa`（`LA_FACE_CLUSTER_QA_FORCE_MERGE=1` 全塌 group0 →
+  C/D 双转红）。测试集为确定性合成集，`measuredMs` 已从 `-Timing` 重测回填。
+
+### 回归
+
+- 全量套件（tier=all，**71 门 = fast 18 + full 53**）：`PASS=59 FAIL=0 CHECK=0 KILL=0
+  SKIP=12`，墙钟 63661 ms。12 道 SKIP 皆为需要外部环境变量的门（`LA_SCAN_*` 个人库 /
+  `LA_RAW_SAMPLE`/`LA_VIDEO_SAMPLE` 素材 / `LA_ERASE_MODEL_QA` 需 `LA_LAMA_MODEL`），非回归。
+- `gate_matrix.ps1 -SelfTest` 全绿：名册 71 门（`fast=18 full=53`、`nonAsciiBytes=0`、
+  `textual=71==parsed`、`fails=0`）。
+- `release.ps1 -SelfTest`：`LA_RELEASE_QA PASS contracts=9 injected=15 caught=15 baseline=9
+  zip=9`。
+- 版本 2.34.0 → **2.35.0**（新功能 = MINOR，单一真源 `CMakeLists.txt`）。
+
 ## [2.32.0] - 未发布
 
 ### 新增 - 自动故事相册（人物故事方向·B）
