@@ -386,8 +386,10 @@ $GateTable = @(
   # gate in the strict layer is always legal, and it matches its two sibling
   # direction-C gates (LA_CLASSIFY_QA 1600 ms, LA_PERSON_QA 500 ms, both FULL).
   # release.ps1 gates on the union anyway, so packaging coverage is unaffected.
-  # measuredMs=220 from qa_runner -Timing (rule 13), non-zero for E8.
-  @{n="LA_FACE_CLUSTER_QA"; png=$false; measuredMs=220}
+  # measuredMs=165 from qa_runner -Timing (rule 13), non-zero for E8.
+  # 2.35.0: two-pass (greedy seed + centroid refine); groups O(order)/C(centroid)/
+  # S(same-person)/D(different-person) added; FORCE_MERGE collapses all -> C/D RED.
+  @{n="LA_FACE_CLUSTER_QA"; png=$false; measuredMs=165}
   # Direction B（人物故事方向·B）：auto story album (place + time-window clustering).
   # Pure-function StoryGen::build over synthetic QVector<Photo> (no DB, no UI):
   # (A) conservation -- outputCount == inputCount and every path appears exactly once;

@@ -3386,6 +3386,7 @@ int runFaceClusterQa()
     PersonDetector::setSyntheticEmbForQa(synEmb);
     // 反例钩子：cluster 丢一张 → 守恒断言转红
     FaceCluster::setForceBrokenForQa(broken);
+    FaceCluster::qaSetForceMergeForQa(!qEnvironmentVariableIsEmpty("LA_FACE_CLUSTER_QA_FORCE_MERGE"));
 
     QStringList fails;
     const auto note = [&fails](bool ok, const QString& what) {
@@ -3648,6 +3649,7 @@ int runFaceClusterQa()
 
     // 复位静态钩子
     FaceCluster::setForceBrokenForQa(false);
+    FaceCluster::qaSetForceMergeForQa(false);
     PersonDetector::clearSyntheticEmbForQa();
     if (!qEnvironmentVariableIsSet("LA_FACE_CLUSTER_QA_KEEP"))
         QDir(dir).removeRecursively();
