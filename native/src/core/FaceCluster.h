@@ -44,6 +44,9 @@ public:
     // QA 反例钩子：打开后 cluster 故意丢一张（使守恒断言转红，非空心）。
     static void setForceBrokenForQa(bool on);
 
+    // QA 反例 2：打开后把所有成员塌进 group 0（破坏分簇语义，测 O/C/D）。
+    static void qaSetForceMergeForQa(bool on);
+
     // 余弦相似度（仅对长度一致的 float32 BLOB 有效；否则返回 0）。供 QA 复核。
     static double cosine(const QByteArray& a, const QByteArray& b);
 };

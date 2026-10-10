@@ -7,7 +7,10 @@
 static bool g_forceBroken = false;
 void FaceCluster::setForceBrokenForQa(bool on) { g_forceBroken = on; }
 
-// 单位化一份 float32 embedding（长度非 4 倍数或零向量原样返回）。
+static bool g_forceMerge = false;
+void FaceCluster::qaSetForceMergeForQa(bool on) { g_forceMerge = on; }
+
+// 单位化一份 float32 embedding（对前 size()/4 个 float 归一化；末尾非 4 倍数的余量字节原样保留；零向量不除，原样返回）。
 static QByteArray fcNormalize(const QByteArray& emb)
 {
     QByteArray out = emb;
@@ -149,6 +152,15 @@ ClusterResult FaceCluster::cluster(const QVector<ClusterInput>& items,
         for (ClusterGroup& g : r.groups) {
             if (!g.paths.isEmpty()) { g.paths.removeFirst(); --r.outputCount; break; }
         }
+    }
+
+    // QA 反例 2：全塌进 group 0（守恒不变，但分簇/质心判别必红）。
+    if (g_forceMerge && r.groups.size() > 1) {
+        for (int g = 1; g < r.groups.size(); ++g)
+            for (const QString& p : r.groups[g].paths)
+                r.groups[0].paths.append(p);
+        // 保留 groups[0]，清空其余成员（成员总数不变→守恒仍成立）
+        for (int g = 1; g < r.groups.size(); ++g) r.groups[g].paths.clear();
     }
     return r;
 }
