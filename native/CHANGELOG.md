@@ -3,6 +3,36 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.36.0] - 未发布
+
+本轮为 AI 消除引擎的**异步化与协议健壮性收口**：解除 2.35.0 遗留已知限制
+「消除推理为 GUI 线程同步调用（真模型下 UI 秒级冻结、`running` 态来不及刷新）」，
+并根治其暴露出的帧协议短读缺陷。
+
+### 变更 - ★AI 消除异步化：专属 worker 线程（GUI 零冻结）
+
+- **线程模型**：`EraseRunner` 移入专属 `QThread`（QProcess 线程亲和不变——runner 同步
+  waitFor* 内部一字不动，只换 owner 线程）；`EraseBridge.submit` 经 queued 投递任务，
+  `tasks_` 任务表仍由 GUI 线程单写（AiWriter 先例）；`running` 态在提交即时置位并通知
+  UI——真模型秒级推理不再冻结界面，进度回报恢复可见。
+- **modelReady() 纯探针化**：改文件存在性 + 同目录 lama.onnx 校验（`executorAvailable()`，
+  MinGW 桩按文件名豁免），零 spawn、零阻塞；每次提交逐次复查保留（fetch 后热替换语义不变）；
+  执行器缺席仍诚实 `blocked_no_model`。
+- **修复 - 帧协议体短读（short rgb）根治**：`EraseProto::readResponse` 原先单次
+  `io->read(no)` 取 120KB 体——Windows 管道拆段下短读是常态不是错误，异步化改变读管时序
+  后以间歇门红复现（全量套件 D 组、独立运行 1/8）。改循环凑满 + 总预算 20s + 子进程退出即断。
+- **门禁强化**：`LA_ERASE_QA` 新增 E 组非阻塞判别（桩飞行 220ms 窗口内 GUI 5ms tick 增量
+  >=20；对旧同步实现实测 RED ticks=0）；桩新增流式拆块必现装置
+  （`LA_ERASE_STUB_CHUNK_KB/CHUNK_MS`，对旧单次读实现必红 `short rgb`——装置确定性、
+  宿主无关，铁律29）；FAIL reason 附带任务终态与 note。反例臂语义不变
+  （`FORCE_BROKEN=1` → A/B/D 红 rc=1，期望式一字不改，铁律22）。
+  measuredMs 2210 → 3141 → 3667（`-Timing` 实测回填，历史锚点留档）。
+
+### 回归
+
+- 全量 71 门（工作树名册语义）：`PASS=59 FAIL=0 CHECK=0 SKIP=12 KILL=0`（SKIP 皆需外部
+  env / `LA_LAMA_MODEL`）；`LA_ERASE_QA` 正臂 6/6 稳 + 反例臂双测绿/红符合预期。
+
 ## [2.35.0] - 未发布
 
 本轮为「引擎升级·双路线」合并发布：路线 1 把全仓唯一残缺引擎 EraseBridge 从诚实桩升级为
