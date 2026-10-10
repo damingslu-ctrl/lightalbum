@@ -422,14 +422,17 @@ $GateTable = @(
   # + mask-in change ratio >= 10%; (C) child process PID persists across submissions;
   # (D) after qaKillChild crash, next submit auto-restarts and completes; (E) non-blocking --
   # while the stub sleeps 220ms (LA_ERASE_STUB_DELAY_MS) a 5ms timer must log >=20 ticks inside
-  # the running->terminal window (RED-proven against the pre-2.36.0 sync impl). Counterexample
+  # the running->terminal window (RED-proven against the pre-2.36.0 sync impl). The stub answers
+  # streamed (LA_ERASE_STUB_CHUNK_KB=8 + CHUNK_MS=3) so the host body-read loop is proven against
+  # deterministic pipe fragmentation (single-read impl was RED-proven: short rgb, every task).
+  # Counterexample
   # LA_ERASE_QA_FORCE_BROKEN=1 arms EraseRunner::qaInjectBadSize BEFORE the first submit;
   # run() then returns an out-of-bounds-copy (null) QImage, applyResult rejects it, and the
   # done/pixel/recovery assertions turn RED together (rule 22: expectations never branch).
-  # Tier: FULL (QProcess lifecycle, no external env). measuredMs=3141 from qa_runner -Timing
-  # (rule 13; re-measured after the 2.36.0 worker-thread async, was 2210 sync).
+  # Tier: FULL (QProcess lifecycle, no external env). measuredMs=3667 from qa_runner -Timing
+  # (rule 13; re-measured after the 2.36.0 async + streamed-body rig; history 2210 sync -> 3141 async).
   # E1-group sub-assert: qaSetForceNoExecutor(true) -> fresh bridge parks its task as blocked_no_model (modelReady false, no process spawn); passes in both arms (rule 22).
-  @{n="LA_ERASE_QA"; png=$false; measuredMs=3141},
+  @{n="LA_ERASE_QA"; png=$false; measuredMs=3667},
   # 2.35.0 opt-in real LaMa quality gate. need=LA_LAMA_MODEL (path to fetched lama.onnx):
   # absent -> qa_runner [SKIP] (non-regression, same as LA_SCAN_SMOKE/LA_RAW_QA). When the
   # env IS set but inpaint.exe is missing/resolves to the stub -> honest FAIL (rule 34).
