@@ -17,6 +17,7 @@ public:
     bool processId(qint64& pid) const;
     void qaKillChild();
     static void qaInjectBadSize(bool on);                // QA 反例钩子（Task 5/9 用）
+    static void qaSetForceNoExecutor(bool on);           // QA 钩子：令 findExe 返回空 -> modelReady false -> blocked_no_model
     QString exePath() const { return exePath_; }
 
 private:

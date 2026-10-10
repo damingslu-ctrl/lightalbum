@@ -63,7 +63,7 @@ SAIC-MLP/LaMa-ONNX 导出惯例的**文档**。但张量**布局**是硬契约�
 ```bat
 cd /d <repo>\inpaint
 cmake -S . -B build -A x64 ^
-  -DONRUNTIME_ROOT="C:/dev/onnxruntime-win-x64-1.19.2" ^
+  -DONNXRUNTIME_ROOT="C:/dev/onnxruntime-win-x64-1.19.2" ^
   -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release
 ```
@@ -72,7 +72,7 @@ cmake --build build --config Release
 - `-A x64`：VS 生成器默认 win32，必须显式 x64 以匹配 ORT win-x64 包。
 - `find_package(onnxruntime CONFIG REQUIRED)` 命中 ORT zip 包内的 config 文件，得到
   `onnxruntime::onnxruntime` 导入目标；若你改用系统安装版 ORT，把安装前缀放进
-  `CMAKE_PREFIX_PATH` 亦可（`ONRUNTIME_ROOT` 只是便捷别名，同时用于 POST_BUILD 拷 dll）。
+  `CMAKE_PREFIX_PATH` 亦可（`ONNXRUNTIME_ROOT` 只是便捷别名，同时用于 POST_BUILD 拷 dll）。
 - 产物：`build\Release\inpaint.exe` + 同目录自动拷入的 `onnxruntime.dll`
   （及 `onnxruntime_providers_shared.dll`，若包内含）。
 - 源文件含 UTF-8 中文注释，target 已加 `/utf-8`；请勿删除该编译选项。

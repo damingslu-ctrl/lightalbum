@@ -179,15 +179,20 @@ New-Item -ItemType Directory -Path $binDest -Force | Out-Null
 $stage = Join-Path ([IO.Path]::GetTempPath()) ('la_lama_' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $stage -Force | Out-Null
 try {
-    # 1. Model weights (~191MB), saved locally AS lama.onnx.
+    # 1. Model weights (~191MB) land in STAGING first; they are saved AS lama.onnx only AFTER
+    #    verification, so a SHA-mismatch throw can never leave bad bytes in the deploy dir (Minor#1).
     $tmpModel = Join-Path $stage 'lama_fp32.onnx'
     Write-Host "Downloading model (about 191MB, please wait): $urlModel"
     Invoke-DownloadToTemp -Url $urlModel -OutFile $tmpModel -HintUrl $hfTreeHint
-    Move-Item -LiteralPath $tmpModel -Destination $modelDest -Force
 
     # 2. Model LICENSE (one level above bin, alongside the other 3rdparty licenses).
     Write-Host "Downloading license: $urlLicense"
     Invoke-DownloadToTemp -Url $urlLicense -OutFile $licenseDest -HintUrl $hfTreeHint
+
+    # 2b. Verify-before-land: run the SAME shared provenance path (as -SelfTest) against the
+    #     STAGED model bytes; only a verified model is then allowed to move into bin/.
+    Invoke-ProvenanceChecks -ModelPath $tmpModel -LicensePath $licenseDest -ExpectedSha $expectedSha
+    Move-Item -LiteralPath $tmpModel -Destination $modelDest -Force
 
     # 3. onnxruntime.dll from the pinned Microsoft release zip.
     $ortZip = Join-Path $stage 'onnxruntime-win-x64-1.19.2.zip'

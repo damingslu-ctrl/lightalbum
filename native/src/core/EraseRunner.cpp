@@ -11,6 +11,12 @@
 static bool g_bad = false;
 void EraseRunner::qaInjectBadSize(bool on) { g_bad = on; }
 
+// ---- QA 钩子：置 true 令 findExe 直接返回空 -> ensureStarted 失败 -> modelReady false
+//      -> EraseBridge 把任务挂成 blocked_no_model（LA_ERASE_QA 的 spec §2.4-A 断言用）。
+//      复位纪律同 qaInjectBadSize：每次布防必显式解除，不得泄漏给后续门。----
+static bool g_forceNoExecutor = false;
+void EraseRunner::qaSetForceNoExecutor(bool on) { g_forceNoExecutor = on; }
+
 EraseRunner::EraseRunner(QObject* parent) : QObject(parent) {}
 EraseRunner::~EraseRunner()
 {
@@ -19,6 +25,7 @@ EraseRunner::~EraseRunner()
 
 static QString findExe()
 {
+    if (g_forceNoExecutor) return QString();               // QA：强制无执行器（blocked_no_model 断言用）
     const QString appDir = QCoreApplication::applicationDirPath();
     QStringList candidates = {
         appDir + "/3rdparty/lama/bin/inpaint.exe",
@@ -34,6 +41,15 @@ bool EraseRunner::ensureStarted()
     if (ready_ && proc_ && proc_->state() == QProcess::Running) return true;
     if (exePath_.isEmpty()) exePath_ = findExe();
     if (exePath_.isEmpty()) return false;
+    // spec §2.3「exe 且 lama.onnx 均在」：真 inpaint.exe 缺同目录 lama.onnx = 执行器不可用，
+    // 直接返回 false 且绝不 spawn 进程（ready_ 保持 false）。EraseBridge 据此把任务挂成
+    // blocked_no_model；待用户稍后运行 fetch_lama.ps1 补上模型，下一次 submit 自动重试
+    // （热替换保留：ensureStarted 每次调用都重跑下面这道 onnx 校验，所以即便 exePath_ 已缓存，
+    // 模型出现与否仍逐次复查，而非只在首查时判定一次）。MinGW 开发桩（候选 2，扁平
+    // inpaint_stub.exe）无需模型，按文件名精确豁免。
+    if (QFileInfo(exePath_).fileName().compare(QStringLiteral("inpaint.exe"), Qt::CaseInsensitive) == 0
+        && !QFileInfo::exists(QDir(QFileInfo(exePath_).absolutePath()).filePath(QStringLiteral("lama.onnx"))))
+        return false;
     if (!proc_) proc_ = new QProcess(this);
     if (proc_->state() != QProcess::NotRunning) { proc_->kill(); proc_->waitForFinished(1000); }
     proc_->setProcessChannelMode(QProcess::SeparateChannels);
