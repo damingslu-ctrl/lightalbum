@@ -1,6 +1,7 @@
 #include "GalleryPage.h"
 #include "Theme.h"
 #include "../core/PhotoCluster.h"
+#include "../core/StoryGen.h"
 #include "DedupDialog.h"
 #include "EditorialView.h"
 #include "GalleryCardPainter.h"
@@ -15,6 +16,7 @@
 #include <QImage>
 #include <QLineEdit>
 #include <QInputDialog>
+#include <algorithm>
 
 // P16 分类固定次序（与 classifier_server.py LABELS 单一事实源一致；空分类不展示）
 static QStringList catOrder()
@@ -22,6 +24,21 @@ static QStringList catOrder()
     return {QStringLiteral("人像"), QStringLiteral("风光"), QStringLiteral("夜景·星空"),
             QStringLiteral("城市·建筑"), QStringLiteral("微距·花卉"), QStringLiteral("动物"),
             QStringLiteral("美食"), QStringLiteral("黑白")};
+}
+
+// 人物故事方向·B 的 A 轻增强：人物 chip 改圆形头像徽标（首字母 + 确定性主题配色）。
+// 说明：FaceCluster 仅存 embedding，磁盘无现成人脸代表图，故用首字母 + 色环，
+// 诚实不伪装成照片；配色由名字哈希确定，稳定且落在主题绿/青/褐色系内。
+static QString storyAvatarColor(const QString& name)
+{
+    const QByteArray s = name.toUtf8();
+    uint h = 2166136261u;
+    for (char c : s) { h ^= (unsigned char)c; h *= 16777619u; }
+    static const QStringList palette = {
+        QStringLiteral("#2f6f54"), QStringLiteral("#3a6e7a"), QStringLiteral("#5a6b3a"),
+        QStringLiteral("#7a5a3a"), QStringLiteral("#6b3a5a"), QStringLiteral("#3a5a7a"),
+        QStringLiteral("#5a3a6b"), QStringLiteral("#7a3a4a") };
+    return palette[h % palette.size()];
 }
 
 class GalleryCardDelegate : public QStyledItemDelegate {
@@ -149,6 +166,14 @@ GalleryPage::GalleryPage(const QVector<Photo>* photos, const QString& thumbsDir,
     connect(faceClusterBtn, &QPushButton::clicked, this, &GalleryPage::faceClusterRequested);
     clusterLay->addWidget(faceClusterBtn);
     lay->addWidget(clusterBar_);
+
+    // 人物故事方向·B：故事相册入口条（纯视图态，按 StoryGen 聚合结果填充；无库写入）
+    storyBar_ = new QWidget(this);
+    storyBar_->setStyleSheet(QStringLiteral("background:#060806;"));
+    auto* storyLay = new QHBoxLayout(storyBar_);
+    storyLay->setContentsMargins(20, 8, 20, 0);
+    storyLay->setSpacing(8);
+    lay->addWidget(storyBar_);
 
     // 方向 C 第一步：搜索框（地点/时间/评分/关键词过滤，经 applyFilter → GalleryModel::setFilter）
     auto* searchBar = new QWidget(this);
@@ -396,11 +421,19 @@ void GalleryPage::buildChips()
         QStringList sorted = QStringList(persons.cbegin(), persons.cend());
         std::sort(sorted.begin(), sorted.end());
         for (const QString& n : sorted) {
-            auto* b = new QPushButton(n, personBar_);
+            // A 轻增强：圆形头像徽标（首字母 + 确定性主题配色），替代纯文字 chip。
+            auto* b = new QPushButton(n.left(1), personBar_);
+            b->setFixedSize(34, 34);
             b->setCheckable(true);
             b->setCursor(Qt::PointingHandCursor);
-            b->setStyleSheet(chipCss);
+            b->setStyleSheet(QStringLiteral(
+                "QPushButton{background:%1;border:none;border-radius:17px;"
+                "color:#f4f7f4;font-size:14px;font-weight:bold;}"
+                "QPushButton:hover{border:2px solid #4fc08a;}"
+                "QPushButton:checked{border:2px solid #4fc08a;background:%1;}")
+                .arg(storyAvatarColor(n)));
             b->setProperty("personTag", n);
+            b->setToolTip(n);
             connect(b, &QPushButton::clicked, this, [this, b] {
                 const QString n = b->property("personTag").toString();
                 activePerson_ = (activePerson_ == n) ? QString() : n;
@@ -430,6 +463,7 @@ void GalleryPage::buildChips()
         personBar_->setVisible(false);
     }
     buildClusterBar();   // 方向 C：聚类条随数据/隐私门一并重建
+    buildStoryBar();     // 人物故事方向·B：故事条随数据/隐私门一并重建
     restyleChips();
 }
 
@@ -534,6 +568,119 @@ void GalleryPage::restyleClusterChips()
         b->setChecked(activeClusterKey_ == b->property("clusterKey").toString());
 }
 
+// 人物故事方向·B：按 StoryGen 纯函数聚合结果重建故事入口条。
+// 铁律：故事分组来自 core/StoryGen 纯函数（唯一真源），本函数只做「故事 → chip」呈现；
+// 分组的**排序与拆分规则不在 UI 层重写**（否则会与 LA_STORY_QA 各算一套）。
+// 纯视图态：点击 chip 只调 model_.setStoryFilter（path 集合包含匹配），不写库（铁律5）。
+void GalleryPage::buildStoryBar()
+{
+    if (!storyBar_ || !photos_) return;
+    for (QPushButton* b : storyChips_) b->deleteLater();
+    storyChips_.clear();
+    storyPaths_.clear();
+    storyTitles_.clear();
+    auto* lay = static_cast<QHBoxLayout*>(storyBar_->layout());
+    if (!lay) {
+        lay = new QHBoxLayout(storyBar_);
+        lay->setContentsMargins(0, 0, 0, 0);
+        lay->setSpacing(8);
+    }
+    const QString chipCss = QStringLiteral(
+        "QPushButton{background:#101710;border:1px solid #232d26;border-radius:11px;"
+        "padding:4px 12px;color:#8da996;font-size:12px;}"
+        "QPushButton:hover{border-color:#4fc08a;color:#f4f7f4;}"
+        "QPushButton:checked{background:#4fc08a;border-color:#4fc08a;"
+        "color:#0c100d;font-weight:bold;}");
+
+    const StoryGen::Result r = StoryGen::build(*photos_, 5, hidePrivate_);
+    if (r.stories.isEmpty()) { storyBar_->setVisible(false); return; }
+    for (const StoryGen::Story& s : r.stories) {
+        storyPaths_.insert(s.id, s.paths);
+        storyTitles_.insert(s.id, s.title);
+    }
+
+    // 「全部故事」chip（清除故事筛选）
+    {
+        auto* b = new QPushButton(
+            QCoreApplication::translate("LightAlbum", "全部故事 %1").arg(r.stories.size()), storyBar_);
+        b->setCheckable(true);
+        b->setCursor(Qt::PointingHandCursor);
+        b->setStyleSheet(chipCss);
+        b->setProperty("storyId", QString());
+        connect(b, &QPushButton::clicked, this, [this, b] {
+            if (b->property("storyId").toString().isEmpty()) {
+                activeStoryId_.clear(); activeStoryTitle_.clear();
+                model_.setStoryFilter(QStringList());
+            }
+            restyleStoryChips();
+            updateCount();
+        });
+        lay->addWidget(b);
+        storyChips_.append(b);
+    }
+    // 各故事（点击→只看该故事的照片）。
+    // ★ 规模安全：真实库可能聚合出成千上万个故事，若每个故事都建一个 QWidget，
+    //   会瞬间创建数千控件、拖垮首屏并让规模门崩在构造期（铁律20 对拍实证）。
+    //   故按照片数降序取前 kCap 个展示，其余用「…共 M 个故事」提示；所有故事的
+    //   路径/标题仍全量写入 storyPaths_/storyTitles_，点可见 chip 始终可用。
+    QVector<StoryGen::Story> ordered = r.stories;
+    std::sort(ordered.begin(), ordered.end(), [](const StoryGen::Story& a, const StoryGen::Story& b) {
+        if (a.photoCount != b.photoCount) return a.photoCount > b.photoCount;
+        return a.begin < b.begin;
+    });
+    const int kCap = 60;
+    const int shown = qMin(kCap, ordered.size());
+    for (int i = 0; i < shown; ++i) {
+        const StoryGen::Story& s = ordered[i];
+        auto* b = new QPushButton(
+            QCoreApplication::translate("LightAlbum", "%1 · %2 张").arg(s.title).arg(s.photoCount),
+            storyBar_);
+        b->setCheckable(true);
+        b->setCursor(Qt::PointingHandCursor);
+        b->setStyleSheet(chipCss);
+        b->setProperty("storyId", s.id);
+        b->setToolTip(s.title);
+        connect(b, &QPushButton::clicked, this, [this, b] {
+            const QString id = b->property("storyId").toString();
+            if (activeStoryId_ == id) {           // 再点=取消
+                activeStoryId_.clear(); activeStoryTitle_.clear();
+                model_.setStoryFilter(QStringList());
+            } else {
+                activeStoryId_ = id;
+                activeStoryTitle_ = storyTitles_.value(id);
+                model_.setStoryFilter(storyPaths_.value(id));
+            }
+            restyleStoryChips();
+            updateCount();
+        });
+        lay->addWidget(b);
+        storyChips_.append(b);
+    }
+    if (ordered.size() > kCap) {
+        auto* more = new QPushButton(
+            QCoreApplication::translate("LightAlbum", "… 共 %1 个故事").arg(ordered.size()), storyBar_);
+        more->setEnabled(false);
+        more->setCursor(Qt::ArrowCursor);
+        more->setStyleSheet(QStringLiteral(
+            "QPushButton{background:transparent;border:none;color:#5d6b62;font-size:12px;}"));
+        lay->addWidget(more);
+    }
+    lay->addStretch(1);
+    // 故事可能随隐私门/数据变化而消失，若当前激活故事已不存在则自动解除过滤
+    if (!activeStoryId_.isEmpty() && !storyPaths_.contains(activeStoryId_)) {
+        activeStoryId_.clear(); activeStoryTitle_.clear();
+        model_.setStoryFilter(QStringList());
+    }
+    storyBar_->setVisible(true);
+    restyleStoryChips();
+}
+
+void GalleryPage::restyleStoryChips()
+{
+    for (QPushButton* b : storyChips_)
+        b->setChecked(activeStoryId_ == b->property("storyId").toString());
+}
+
 void GalleryPage::applyCategoryFilter(const QString& cat)
 {
     activeCat_ = cat;
@@ -574,6 +721,8 @@ void GalleryPage::updateCount()
                 ? QCoreApplication::translate("LightAlbum", "未分类")
                 : activeClusterKey_);
     }
+    if (!activeStoryId_.isEmpty())         // 人物故事方向·B：故事注记
+        notes << QCoreApplication::translate("LightAlbum", "故事：%1").arg(activeStoryTitle_);
     if (selCount_ > 0) notes << QCoreApplication::translate("LightAlbum", "已选 %1").arg(selCount_);
     const QString suffix = notes.isEmpty()
         ? QString() : QStringLiteral("（%1）").arg(notes.join(QStringLiteral(" · ")));

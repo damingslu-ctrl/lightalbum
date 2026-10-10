@@ -388,6 +388,19 @@ $GateTable = @(
   # release.ps1 gates on the union anyway, so packaging coverage is unaffected.
   # measuredMs=220 from qa_runner -Timing (rule 13), non-zero for E8.
   @{n="LA_FACE_CLUSTER_QA"; png=$false; measuredMs=220}
+  # Direction B（人物故事方向·B）：auto story album (place + time-window clustering).
+  # Pure-function StoryGen::build over synthetic QVector<Photo> (no DB, no UI):
+  # (A) conservation -- outputCount == inputCount and every path appears exactly once;
+  # (B) full coverage -- every non-private input path is placed in some story (honest,
+  #     no silent drop), including "未标注日期" single-photo stories for date-less shots;
+  # (C) grouping shape -- Beijing splits into 2 trips (gap>5d), Shanghai 1, 2 date-less
+  #     singles -> 5 stories total; (D) retrieval contract -- GalleryModel.setStoryFilter
+  #     of one story's paths yields rowCount == that story's photoCount.
+  # Counter-example LA_STORY_QA_FORCE_BROKEN=1 makes StoryGen drop one photo, so the
+  # conservation assertion (A) turns RED -- same assertion is measured green positive.
+  # Tier: FULL (new feature gate, sibling of LA_FACE_CLUSTER_QA). Pure in-memory, no
+  # write, so it is also cheap. measuredMs=162 from qa_runner -Timing (rule 13).
+  @{n="LA_STORY_QA"; png=$false; tier="full"; measuredMs=162}
   # 2.22.0 client experience: lightbox FULL image + thumbnail skeleton +
   # animation pure-function contract. Pure offscreen self-exit, no MainWindow,
   # no external env. Renders cards into QImage and asserts at the PIXEL level:

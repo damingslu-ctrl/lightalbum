@@ -58,6 +58,8 @@ private:
     void restyleChips();        // 选中态高亮当前 chip
     void buildClusterBar();     // 方向 C：按当前维度重建聚类条（维度切换 + 簇 chips）
     void restyleClusterChips(); // 方向 C：聚类 chip 选中态
+    void buildStoryBar();       // 人物故事方向·B：按 StoryGen 聚合结果重建故事入口条
+    void restyleStoryChips();   // 人物故事方向·B：故事 chip 选中态
 
     const QVector<Photo>* photos_ = nullptr;
     QString      thumbsDir_;
@@ -70,6 +72,13 @@ private:
     QVector<QPushButton*> catChips_;
     QWidget*     personBar_ = nullptr;        // P16 人物 chips（无人物数据时隐藏）
     QVector<QPushButton*> personChips_;
+    // 人物故事方向·B：故事相册入口条（纯视图态分组，不写库）
+    QWidget*     storyBar_ = nullptr;
+    QVector<QPushButton*> storyChips_;
+    QString      activeStoryId_;     // 当前故事 id（空=全部）
+    QString      activeStoryTitle_;  // 当前故事标题（计数注记用）
+    QHash<QString, QStringList> storyPaths_;   // 人物故事方向·B：id → 该故事照片路径
+    QHash<QString, QString>      storyTitles_; // 人物故事方向·B：id → 标题（计数注记）
     QString      activeCat_;                  // 当前分类（空=全部；GalleryModel::kNoCategory=未分类）
     QString      activePerson_;
     // 方向 C：聚类条（维度下拉 + 簇 chips；与分类/人物筛选并存叠加）

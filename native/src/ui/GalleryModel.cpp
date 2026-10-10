@@ -33,6 +33,8 @@ void GalleryModel::rebuild()
         const bool hasProv   = !provFilter_.isEmpty();
         const bool hasCat    = !categoryFilter_.isEmpty();
         const bool hasPerson = !personFilter_.isEmpty();
+        // 故事相册（方向·B）：仅显示某故事的照片路径集合（与其它筛选并存叠加）
+        const bool hasStory  = !storyFilterPaths_.isEmpty();
         // 方向 C：聚类筛选与其它筛选并存叠加
         const bool hasCluster = !clusterKey_.isEmpty() && clusterDim_ >= 0;
         const QString region = regionFilter_.toLower();
@@ -51,6 +53,8 @@ void GalleryModel::rebuild()
             }
             if (hasPerson && !p.person.split(',', Qt::SkipEmptyParts)
                                  .contains(personFilter_))      // P16 人物
+                continue;
+            if (hasStory && !storyFilterPaths_.contains(p.path)) // 故事相册（方向·B）
                 continue;
             if (hasCluster) {   // 方向 C：簇键比较（真源在 core/PhotoCluster）
                 if (PhotoCluster::clusterKey(p, static_cast<PhotoCluster::Dim>(clusterDim_)) != clusterKey_)
@@ -77,6 +81,8 @@ void GalleryModel::setRegionFilter(const QString& r){ regionFilter_ = r; rebuild
 void GalleryModel::setProvFilter(const QString& p) { provFilter_ = p;   rebuild(); }
 void GalleryModel::setCategoryFilter(const QString& c){ categoryFilter_ = c; rebuild(); }
 void GalleryModel::setPersonFilter(const QString& n){ personFilter_ = n; rebuild(); }
+// 故事相册（方向·B）：setStoryFilter(空列表) = 清除（与 setPersonFilter 口径一致）
+void GalleryModel::setStoryFilter(const QStringList& paths){ storyFilterPaths_ = paths; rebuild(); }
 // 方向 C：聚类筛选（key 空串 = 清除，与其余 setter 口径一致）
 void GalleryModel::setClusterFilter(int dim, const QString& key)
 {

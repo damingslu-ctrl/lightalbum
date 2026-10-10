@@ -3,7 +3,49 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
-## [2.31.0] - 未发布
+## [2.32.0] - 未发布
+
+### 新增 - 自动故事相册（人物故事方向·B）
+
+把「同一趟旅程 / 同一地点同一时段」的照片自动聚合成**故事**，图库页顶栏新增
+「故事」筛选条，一键只看某个故事的照片（纯视图态聚合，不写库，遵从铁律 5）。
+
+- **`core/StoryGen.{h,cpp}` 纯函数**：`build(photos, gapDays=5, hidePrivate=true)`
+  按「地点（prov→city→region→未知地点）+ 时间窗口（同地点相邻拍摄日间隔 >
+  gapDays 拆新故事）」聚合。复用 MapPage 三式日期解析；无日期照片诚实保留为
+  「未标注日期」单张故事，绝不丢弃。
+- **★守恒契约（核心，铁律 6）**：`Result{inputCount, outputCount}` 断言
+  `outputCount==inputCount`；每张照片恰好落入一个故事。`setForceDropForQa`
+  QA 钩子注入「丢一张」以证反例转红。
+- **`GalleryModel` 接入**：新增 `storyFilterPaths_` 成员 + `setStoryFilter(paths)`，
+  `rebuild()` 内 `hasStory && !storyFilterPaths_.contains(p.path)` 跳过；与既有
+  personFilter / cluster 等筛选**并存叠加**（不破坏既有语义）。
+- **`GalleryPage` UI**：
+  - `buildStoryBar()` 建「全部故事」+ 各故事 chip（`build()` 结果），点击
+    `model_.setStoryFilter(storyPaths_[id])`；自动解除失效故事。
+  - 规模安全：真实库 6425 张可能聚合出成千上万故事，每故事一个 `QPushButton`
+    会拖垮首屏并让规模门崩在构造期 → 故事 chip 按 `photoCount` 降序封顶
+    `kCap=60`，超出加「…共 M 个故事」禁用提示；`storyPaths_`/`storyTitles_`
+    仍全量写入所有故事（点可见 chip 始终可用）。
+  - A 增强：人物 chip 改 34×34 圆形首字母头像（`border-radius:17px`、`:checked`
+    绿环、`storyAvatarColor()` 用 FNV-1a 哈希 → 8 色板确定性主题色，诚实不伪装
+    脸代表图，FaceCluster 仅存 embedding、磁盘无现成脸图）。
+  - `updateCount()` 加故事注记「故事：<标题>」。
+- **门禁（gates 63 → 64）**：`LA_STORY_QA`（full、`measuredMs=162`、无外部素材、
+  合成 `QVector<Photo>`）。正例：守恒 `input==output==7`、每路径恰一次 + 全量覆盖、
+  `stories==5`/`nodateSingles==2`、挑上海故事 `setStoryFilter` 后 `rowCount==2`、
+  清除后 `==7`。反例 `LA_STORY_QA_FORCE_BROKEN=1` 经 `setForceDropForQa(true)` 令
+  `build()` 丢一张 → 守恒/覆盖/分组/无日期**同步**转红（期望值不随 broken 切换，
+  铁律 22/41，非空心）。
+
+### 回归
+
+- 全量 `PASS=53 FAIL=0 SKIP=11`（64 门并集）；`LA_STORY_QA [OK]`。
+- 规模门 `LA_SCALE_SMOKE`/`LA_SCALE_PERF` 复跑 `galleryCtrls=233` 绿（封顶修复前
+  成千上万控件会令 `GalleryPage` 构造期崩、规模门无输出 FAIL）。
+- 既有门禁 `LA_CLUSTER_QA`/`LA_FACE_CLUSTER_QA`/`LA_GALLERY_*` 无回归。
+
+## [2.31.0] - 2026-10-09
 
 ### 新增 - 视频抽帧磁盘缓存
 

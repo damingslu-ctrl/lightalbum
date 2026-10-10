@@ -34,6 +34,7 @@
 #include "core/Classifier.h"   // 方向 C·智能分类：CLIP 客户端桥（QA 门用合成钩子）
 #include "core/PersonDetector.h"  // 方向 C·人脸识别（方案A）：face_server 客户端桥（QA 门用合成钩子）
 #include "core/FaceCluster.h"     // 方向 C·人物自动聚类：阈值余弦聚类纯函数（QA 门直调）
+#include "core/StoryGen.h"        // 人物故事方向·B：自动故事相册纯函数（LA_STORY_QA 直调）
 #include "ui/GalleryCardPainter.h"  // 2.22.0 骨架屏纯函数（QA 门直调，铁律 20 同源）
 #include "ui/FullCache.h"           // 2.22.0 灯箱原图 LRU（QA 门直调）
 #include <QTemporaryDir>
@@ -3536,6 +3537,121 @@ int runFaceClusterQa()
     return okAll ? 0 : 1;
 }
 
+// 人物故事方向·B：自动故事相册（地点 + 时间窗口聚合）门禁。
+//
+// 与 runFaceClusterQa 同构：纯合成数据、不碰真实 library.db、守恒断言为核心契约。
+// StoryGen::build 是零 DB 纯函数，直接喂合成 QVector<Photo> 即可。
+// 反例：LA_STORY_QA_FORCE_BROKEN 令 build() 丢一张 → 守恒断言转红（正/反例跑同一组断言）。
+int runStoryQa()
+{
+    const bool broken = !qEnvironmentVariableIsEmpty("LA_STORY_QA_FORCE_BROKEN");
+    StoryGen::setForceDropForQa(broken);
+
+    // 合成 7 张照片（纯内存，不落库）：
+    //   北京 c0 2024-05-01、c1 2024-05-03（同行程）、c2 2024-05-20（间隔>5 新故事）
+    //   上海 c3 2024-06-10、c4 2024-06-12（同行程）
+    //   未知地点 c5、c6（无地点+无日期 → 各成「未标注日期」单张故事）
+    QVector<Photo> photos;
+    const auto mk = [](const QString& path, const QString& prov, const QString& city,
+                       const QString& date, bool priv = false) {
+        Photo p;
+        p.path = path;
+        p.rel  = QFileInfo(path).fileName();
+        p.thumbFile = QStringLiteral("t_") + QFileInfo(path).fileName();
+        p.prov = prov; p.city = city; p.date = date;
+        p.priv = priv;
+        return p;
+    };
+    photos.append(mk(QStringLiteral("D:/c0.jpg"), QStringLiteral("北京"), QStringLiteral("北京"), QStringLiteral("2024-05-01")));
+    photos.append(mk(QStringLiteral("D:/c1.jpg"), QStringLiteral("北京"), QStringLiteral("北京"), QStringLiteral("2024-05-03")));
+    photos.append(mk(QStringLiteral("D:/c2.jpg"), QStringLiteral("北京"), QStringLiteral("北京"), QStringLiteral("2024-05-20")));
+    photos.append(mk(QStringLiteral("D:/c3.jpg"), QStringLiteral("上海"), QStringLiteral("上海"), QStringLiteral("2024-06-10")));
+    photos.append(mk(QStringLiteral("D:/c4.jpg"), QStringLiteral("上海"), QStringLiteral("上海"), QStringLiteral("2024-06-12")));
+    photos.append(mk(QStringLiteral("D:/c5.jpg"), QString(), QString(), QString()));   // 无地点+无日期
+    photos.append(mk(QStringLiteral("D:/c6.jpg"), QString(), QString(), QString()));
+    const int kRows = photos.size();
+
+    QStringList fails;
+    const auto note = [&fails](bool ok, const QString& what) {
+        if (!ok) fails << what;
+    };
+
+    const StoryGen::Result r = StoryGen::build(photos, 5, true);
+
+    // ① 守恒：outputCount == inputCount（核心契约，反例打这里）
+    note(r.inputCount == kRows,
+         QStringLiteral("inputCount=%1 want=%2").arg(r.inputCount).arg(kRows));
+    note(r.outputCount == r.inputCount,
+         QStringLiteral("conserve outputCount=%1 inputCount=%2")
+             .arg(r.outputCount).arg(r.inputCount));
+
+    // ② 每张照片恰好出现一次（无静默丢弃、无重复）+ 全量覆盖（诚实不丢）
+    {
+        QSet<QString> seen;
+        int dup = 0, total = 0;
+        for (const StoryGen::Story& s : r.stories)
+            for (const QString& p : s.paths) {
+                ++total;
+                if (seen.contains(p)) ++dup;
+                seen.insert(p);
+            }
+        note(dup == 0, QStringLiteral("dup path x%1").arg(dup));
+        note(total == r.inputCount,
+             QStringLiteral("listed=%1 input=%2").arg(total).arg(r.inputCount));
+        QSet<QString> want;
+        for (const Photo& p : photos) if (!p.priv) want.insert(p.path);
+        note(seen == want, QStringLiteral("coverage mismatch seen=%1 want=%2")
+                 .arg(seen.size()).arg(want.size()));
+    }
+
+    // ③ 分组结构：北京拆 2 个故事（c0,c1 / c2）、上海 1 个（c3,c4）、未知地点 2 个
+    //    「未标注日期」单张 → 共 5 个故事
+    note(r.stories.size() == 5,
+         QStringLiteral("stories=%1 want=5").arg(r.stories.size()));
+    int nodateSingles = 0;
+    for (const StoryGen::Story& s : r.stories)
+        if (s.id.contains(QStringLiteral("|nodate|"))) ++nodateSingles;
+    note(nodateSingles == 2,
+         QStringLiteral("nodate singles=%1 want=2").arg(nodateSingles));
+
+    // ④ 检索契约：挑上海故事（2 张），setStoryFilter 后 rowCount == photoCount
+    GalleryModel model;
+    model.setSource(&photos);
+    const StoryGen::Story* sh = nullptr;
+    for (const StoryGen::Story& s : r.stories)
+        if (s.photoCount == 2 && s.place == QStringLiteral("上海")) { sh = &s; break; }
+    note(sh != nullptr, QStringLiteral("shanghai story missing"));
+    if (sh) {
+        model.setStoryFilter(sh->paths);
+        note(model.rowCount() == 2,
+             QStringLiteral("rowCount(上海)=%1 want=2").arg(model.rowCount()));
+        model.setStoryFilter(QStringList());
+        note(model.rowCount() == kRows,
+             QStringLiteral("rowCount(全部)=%1 want=%2").arg(model.rowCount()).arg(kRows));
+    }
+
+    // 反例签名化：只坏守恒（丢一张），不坏其它行为
+    if (broken) {
+        note(r.outputCount == r.inputCount - 1,
+             QStringLiteral("BROKEN expected outputCount=inputCount-1, got %1/%2")
+                 .arg(r.outputCount).arg(r.inputCount));
+    }
+
+    StoryGen::setForceDropForQa(false);
+
+    const bool okAll = fails.isEmpty();
+    if (okAll) {
+        std::fprintf(stderr,
+            "LA_STORY_QA PASS rows=%d broken=%d conserve=1 unique=1 coverage=1 "
+            "groups=1 nodate=1 rowCount=1\n", kRows, int(broken));
+    } else {
+        std::fprintf(stderr, "LA_STORY_QA FAIL broken=%d reason=%s\n",
+                     int(broken), qPrintable(fails.join(QChar(';'))));
+    }
+    std::fflush(stderr);
+    return okAll ? 0 : 1;
+}
+
 // 2.22.0 客户端体验门禁（LA_TRANSITION_QA）：原图 + 骨架屏 + 动画纯函数。
 //
 // 三条断言线，每条的判别器都必须是「实现一旦退化就变红」的那种：
@@ -5010,6 +5126,10 @@ int main(int argc, char *argv[])
     // 方向 C·人物自动聚类：embedding 落库 + 阈值余弦聚类 + 守恒契约门禁（合成钩子绕过 face_server）
     if (qEnvironmentVariableIsSet("LA_FACE_CLUSTER_QA"))
         return runFaceClusterQa();
+
+    // 人物故事方向·B：自动故事相册（地点 + 时间窗口聚合）→ 守恒契约 + 检索契约门禁
+    if (qEnvironmentVariableIsSet("LA_STORY_QA"))
+        return runStoryQa();
 
     // 2.22.0 客户端体验：骨架屏纯函数 + 像素判别 + 灯箱原图解码契约
     if (qEnvironmentVariableIsSet("LA_TRANSITION_QA"))

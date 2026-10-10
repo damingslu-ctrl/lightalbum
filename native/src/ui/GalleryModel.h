@@ -31,6 +31,7 @@ public:
     void setProvFilter(const QString& provEn);     // 地理筛选（省，空=清除）
     void setCategoryFilter(const QString& cat);    // P16 分类（空=全部；kNoCategory=未分类）
     void setPersonFilter(const QString& name);     // P16 人物（空=全部）
+    void setStoryFilter(const QStringList& paths);  // 故事相册（人物故事方向·B）：只显示某故事的若干照片（空=不启用）
     // 方向 C：聚类筛选（与上面各筛选**并存叠加**，互不清除；空=不启用）
     // dim 同时决定比较用哪个字段；clusterKeyOf(p) 给出该照片在此维度的键。
     void setClusterFilter(int dim, const QString& key);
@@ -63,6 +64,7 @@ private:
     QString provFilter_;     // 省 en 名（Photo.prov 命中）
     QString categoryFilter_; // P16 分类标签（空=全部）
     QString personFilter_;   // P16 人物名（空=全部）
+    QStringList storyFilterPaths_; // 故事相册（方向·B）：仅显示这些路径（空=不启用）
     int    clusterDim_  = -1;      // 方向 C：聚类维度（-1=未启用）
     QString clusterKey_;           // 方向 C：簇键（空=不筛选）
     bool   hidePrivate_ = true;   // P16 锁定时隐藏私密照片（默认锁）
