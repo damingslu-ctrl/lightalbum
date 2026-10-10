@@ -7,6 +7,8 @@
 #include <QImage>
 #include <QByteArray>
 #include <QString>
+#include <QElapsedTimer>
+#include <QProcess>
 #include <cstring>
 
 namespace LaEraseProto {
@@ -79,7 +81,23 @@ inline bool readResponse(QIODevice* io, quint32 expectId, QImage& outImage, QStr
     const int no = tk[4].toInt();
     if (id != expectId) { if (err) *err = QStringLiteral("resp id mismatch"); return false; }
     if (no != w * h * 3) { if (err) *err = QStringLiteral("resp size mismatch"); return false; }
-    QByteArray rgb = io->read(no);
+    // 体读循环：Windows 管道会把 120KB 应答拆成多段，单次 io->read(no) 短读不是错误而是
+    // 常态（2.36.0 全量套件里以 short rgb 间歇复现）。凑满 no 字节或到达期限/进程退出为止。
+    QByteArray rgb;
+    QElapsedTimer budget; budget.start();
+    while (rgb.size() < no) {
+        const qint64 have = rgb.size();
+        const qint64 need = no - have;
+        rgb.resize(int(have + need));
+        const qint64 r = io->read(rgb.data() + have, need);
+        rgb.resize(int(have + (r > 0 ? r : 0)));
+        if (r > 0) continue;
+        if (r < 0) break;                                  // 管道错误
+        QProcess* p = qobject_cast<QProcess*>(io);
+        if (p && p->state() == QProcess::NotRunning) break; // 子进程死体中途 = 永远凑不满
+        if (!io->waitForReadyRead(20000)) break;
+        if (budget.elapsed() > 20000) break;
+    }
     if (rgb.size() != no) { if (err) *err = QStringLiteral("short rgb"); return false; }
     QImage img(w, h, QImage::Format_RGB888);
     const uchar* s = reinterpret_cast<const uchar*>(rgb.constData());

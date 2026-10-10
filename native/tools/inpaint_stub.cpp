@@ -38,7 +38,22 @@ int main(int argc, char** argv)
             if ((uchar)msk[i] == 255) { res[i*3+0]=128; res[i*3+1]=128; res[i*3+2]=128; }
         }
         fprintf(out, "OK %u %d %d %d\n", id, w, h, res.size());
-        fwrite(res.constData(), 1, res.size(), out);
+        // 分块应答（仅 QA 复现装置）：真 Windows 管道本就会把 120KB 应答拆成多块
+        // （全量套件里以 short rgb 形态间歇复现）。LA_ERASE_STUB_CHUNK_KB 令桩确定性地
+        // 每 K KiB 写一次并 flush，把拆包变成必现，供宿主无关的门测协议健壮性。0/未设=单块。
+        const long chunkKb = QByteArray(qgetenv("LA_ERASE_STUB_CHUNK_KB")).toLong();
+        const long chunkMs = QByteArray(qgetenv("LA_ERASE_STUB_CHUNK_MS")).toLong();
+        if (chunkKb > 0) {
+            const int step = int(chunkKb * 1024);
+            for (int off = 0; off < res.size(); off += step) {
+                const int len = qMin(step, res.size() - off);
+                fwrite(res.constData() + off, 1, len, out);
+                fflush(out);
+                if (chunkMs > 0 && off + step < res.size()) QThread::msleep(chunkMs);
+            }
+        } else {
+            fwrite(res.constData(), 1, res.size(), out);
+        }
         fflush(out);
     }
     return 0;
