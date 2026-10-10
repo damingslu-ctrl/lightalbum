@@ -48,43 +48,106 @@ double FaceCluster::cosine(const QByteArray& a, const QByteArray& b)
     return dot / std::sqrt(na * nb);
 }
 
+// 一遍质心精炼：重算每簇质心（成员单位向量均值再单位化）→ 每 item 重分配到最近
+// 质心（>=threshold），否则新建 singleton 簇。返回本轮 reassignment 数。
+static int fcRefine(const QVector<QByteArray>& norm, int dim, double threshold,
+                    QVector<int>& assign, QVector<QByteArray>& cents)
+{
+    const int g0 = cents.size();
+    QVector<QVector<double>> sum(g0, QVector<double>(dim, 0.0));
+    QVector<int> cnt(g0, 0);
+    for (int i = 0; i < norm.size(); ++i) {
+        const int g = assign[i];
+        if (g < 0 || g >= g0) continue;
+        const float* f = reinterpret_cast<const float*>(norm[i].constData());
+        for (int d = 0; d < dim; ++d) sum[g][d] += f[d];
+        ++cnt[g];
+    }
+    QVector<QByteArray> newCent(g0);
+    for (int g = 0; g < g0; ++g) {
+        if (cnt[g] == 0) { newCent[g] = cents[g]; continue; }
+        QByteArray b(dim * 4, '\0');
+        float* o = reinterpret_cast<float*>(b.data());
+        double s = 0.0;
+        for (int d = 0; d < dim; ++d) { const double v = sum[g][d] / cnt[g]; o[d] = float(v); s += v * v; }
+        const double inv = s > 0.0 ? 1.0 / std::sqrt(s) : 0.0;
+        for (int d = 0; d < dim; ++d) o[d] = float(o[d] * inv);
+        newCent[g] = b;
+    }
+    cents = newCent;
+    int changed = 0;
+    for (int i = 0; i < norm.size(); ++i) {
+        if (assign[i] == -2) continue;              // 维度非法：singleton 固定，不参与
+        const float* f = reinterpret_cast<const float*>(norm[i].constData());
+        int best = -1; double bestc = -1.0;
+        for (int g = 0; g < cents.size(); ++g) {
+            const double c = fcDotN(f, reinterpret_cast<const float*>(cents[g].constData()), dim);
+            if (c >= threshold && c > bestc) { bestc = c; best = g; }
+        }
+        if (best < 0) { best = cents.size(); cents.append(norm[i]); }
+        if (assign[i] != best) { assign[i] = best; ++changed; }
+    }
+    return changed;
+}
+
 ClusterResult FaceCluster::cluster(const QVector<ClusterInput>& items,
                                    double threshold, int startIndex)
 {
     ClusterResult r;
     r.inputCount = items.size();
+    const int dim = items.isEmpty() ? 0 : items.at(0).emb.size() / 4;
 
-    // 群首 emb（按簇出现顺序），用于余弦匹配。
-    QVector<QByteArray> reps;
-    for (const ClusterInput& it : items) {
-        int gid = -1;
-        for (int g = 0; g < reps.size(); ++g) {
-            if (cosine(it.emb, reps[g]) >= threshold) { gid = g; break; }
+    QVector<QByteArray> norm;
+    norm.reserve(items.size());
+    for (const ClusterInput& it : items) norm.append(fcNormalize(it.emb));
+
+    // ---- 种子：贪心 leader（与旧行为一致，仅用于给精环一个好起点）----
+    QVector<int> assign(items.size(), -2);          // -2 = 维度非法 singleton
+    QVector<QByteArray> cents;
+    for (int i = 0; i < items.size(); ++i) {
+        if (dim <= 0 || norm[i].size() / 4 != dim) { assign[i] = -2; continue; }
+        const float* f = reinterpret_cast<const float*>(norm[i].constData());
+        int best = -1; double bestc = -1.0;
+        for (int g = 0; g < cents.size(); ++g) {
+            const double c = fcDotN(f, reinterpret_cast<const float*>(cents[g].constData()), dim);
+            if (c >= threshold && c > bestc) { bestc = c; best = g; }
         }
-        if (gid < 0) {                     // 新建簇，本张为群首代表脸
-            gid = reps.size();
-            reps.append(it.emb);
-            ClusterGroup grp;
-            grp.id    = gid;
-            grp.label = QStringLiteral("人物%1").arg(startIndex + gid);
-            r.groups.append(grp);
-        }
-        r.groups[gid].paths.append(it.path);   // 天然保证每 path 恰一次
+        if (best < 0) { best = cents.size(); cents.append(norm[i]); }
+        assign[i] = best;
     }
 
-    // 守恒计数
+    // ---- 精炼：≤3 轮，收敛早停 ----
+    for (int iter = 0; iter < 3; ++iter)
+        if (fcRefine(norm, dim, threshold, assign, cents) == 0) break;
+
+    // ---- 落簇 + 守恒 ----
+    const int nGroups = cents.size();
+    for (int g = 0; g < nGroups; ++g) {
+        ClusterGroup grp; grp.id = g;
+        grp.label = QStringLiteral("人物%1").arg(startIndex + g);
+        r.groups.append(grp);
+    }
+    // 维度非法项：每项自成一簇（追加在末尾，label 顺延），保持旧「非法 emb→新簇」语义。
+    int extra = 0;
+    for (int i = 0; i < items.size(); ++i) {
+        int g = assign[i];
+        if (g == -2) g = nGroups + (extra++);
+        while (r.groups.size() <= g) {
+            ClusterGroup grp; grp.id = r.groups.size();
+            grp.label = QStringLiteral("人物%1").arg(startIndex + grp.id);
+            r.groups.append(grp);
+        }
+        r.groups[g].paths.append(items.at(i).path);   // 天然保证每 path 恰一次
+    }
+
     int out = 0;
     for (const ClusterGroup& g : r.groups) out += g.paths.size();
     r.outputCount = out;
 
-    // QA 反例：从首个非空簇移除首张，使 outputCount = inputCount - 1 → 守恒断言转红。
+    // QA 反例 1（原有语义）：从首个非空簇丢一张 → 守恒转红。
     if (g_forceBroken) {
         for (ClusterGroup& g : r.groups) {
-            if (!g.paths.isEmpty()) {
-                g.paths.removeFirst();
-                --r.outputCount;
-                break;
-            }
+            if (!g.paths.isEmpty()) { g.paths.removeFirst(); --r.outputCount; break; }
         }
     }
     return r;
