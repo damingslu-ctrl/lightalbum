@@ -5,7 +5,7 @@
 #   powershell -File release.ps1 -TrimNetwork    # also drop Qt6Network+tls+networkinformation+generic
 #   powershell -File release.ps1 -SelfTest      # contract self-test (QA gate LA_RELEASE_QA)
 #
-# Contracts C1..C7, all enforced inline below AND driven by -SelfTest:
+# Contracts C1..C9, all enforced inline below AND driven by -SelfTest:
 #   C1 version sync (CHANGELOG <-> CMakeLists <-> requested)
 #   C2 user manual in the dist AND it describes the version being packaged
 #   C3 core artifacts present and non-empty
@@ -43,7 +43,7 @@ $BUILDINFO_NAME = "BUILDINFO.txt"
 $DERIVED_SOURCES = @("src/core/CullEngine.cpp", "src/core/CullEngine.h")
 
 # =====================================================================
-# Release contracts (C1..C7)
+# Release contracts (C1..C9)
 #
 # These are deliberately factored out as standalone functions that take
 # explicit paths, so that -SelfTest can drive them against a throwaway
