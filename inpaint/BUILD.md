@@ -1,18 +1,19 @@
-# inpaint.exe 构建指南（MSVC + ONNX Runtime）
+# inpaint.exe 构建指南（ONNX Runtime，MSVC 或 MinGW）
 
 独立于 `native/`（MinGW Qt 父进程）的**发布用**消除执行器：读 TASK 帧 → LaMa ONNX 推理 →
 写 OK/ERR 帧。协议即契约（铁律 20），帧字节与 `native/src/core/EraseProto.h`、
-`native/tools/inpaint_stub.cpp` 完全对齐。本目录只在 Windows + MSVC 下构建；
-本仓库 CI 与 QA 主机（无 MSVC / 无 ORT）**不编译它**——QA 门绿靠 MinGW stub，真实 exe
-由构建者按下述步骤本地构建后用 Task 9 的 LA_ERASE_MODEL_QA 门验证。
+`native/tools/inpaint_stub.cpp` 完全对齐。ORT 是稳定 C ABI，**MSVC 与 MinGW g++ 都能构建**
+（2026-10-11 本仓库 QA 主机即以 MinGW 完成构建 + LA_ERASE_MODEL_QA 首绿，见 §4）。
+真 exe 就位且同目录有 lama.onnx 时，`EraseRunner::findExe` 候选 1 会命中它——**跑桩门
+（LA_ERASE_QA）或全量套件前必须移走 build 树里的真 exe 三件套**，否则桩的时序钩子被劫持。
 
 ## 0. 前置一览
 
 | 依赖 | 版本钉 | 来源 | 许可 |
 |---|---|---|---|
-| Visual Studio 2022 (MSVC v143) + CMake ≥ 3.21 | 任意近期版 | microsoft.com | 免费社区版可用 |
+| CMake ≥ 3.21 + 编译器（二选一：VS2022 MSVC v143，或 Qt 自带 MinGW g++ 13.1） | 任意近期版 | microsoft.com / qt.io | 免费社区版可用 |
 | ONNX Runtime C/C++ win-x64 | **v1.19.2**（zip 包） | github.com/microsoft/onnxruntime/releases | MIT（见 THIRD_PARTY-NOTICE.md） |
-| lama.onnx（LaMa 推理权重 ONNX 导出） | Carve/LaMa-ONNX 的 `lama_fp32.onnx`，本地重命名 `lama.onnx`（约 191MB） | HuggingFace，由 Task 7 `tools/fetch_lama.ps1` 统一下发+校验 | 见 §3 与 NOTICE |
+| lama.onnx（LaMa 推理权重 ONNX 导出） | Carve/LaMa-ONNX 的 `lama_fp32.onnx`，本地重命名 `lama.onnx`（约 191MB） | HuggingFace，由 Task 7 `tools/fetch_lama.ps1` 统一下发+校验 | 见 §2 与 NOTICE |
 
 零云端铁律：以上全部由**人**在构建期下载核对；`inpaint.exe` 运行期不访问任何网络。
 
@@ -22,7 +23,10 @@
 2. 下载 `onnxruntime-win-x64-1.19.2.zip`（C/C++ API 构建，非 GPU 包即可；CPU provider 足够）。
 3. 解包到固定路径，例如 `C:\dev\onnxruntime-win-x64-1.19.2`。目录应含：
    - `include\onnxruntime_cxx_api.h`
-   - `lib\onnxruntime.lib` + `lib\onnxruntime.dll`（+ `onnxruntime_config.cmake` 等 config 包文件）
+   - `lib\onnxruntime.lib`（MSVC 导入库）+ `lib\onnxruntime.dll`（+ `onnxruntime_providers_shared.dll`）。
+   ⚠️ 该 zip **不含任何 CMake config 文件**（v1.19.2 实测目录只有 `include/` 与 `lib/`）——
+   `find_package(onnxruntime CONFIG)` 走不通；CMakeLists 已改为按 `ONNXRUNTIME_ROOT` 直接引用
+   头文件与 lib/dll（旧版对 config 包的引用是纸面假设，2026-10-11 修正）。
 4. 版本若升级（1.19.x 之内可接受），同步更新本表与 Task 7 fetch 脚本的 ORT dll 版本，保持一致。
 
 ## 2. lama.onnx 就位
@@ -33,32 +37,55 @@
 - 源：<https://huggingface.co/Carve/LaMa-ONNX/resolve/main/lama_fp32.onnx>
 - 本地文件名固定为 `lama.onnx`，与 `inpaint.exe` **同目录**部署。
 - 计算并记录 SHA-256：`certutil -hashfile lama.onnx SHA256`，与 fetch_lama.ps1 的 pin 一致。
-- Also fetch `LICENSE` from the same repo; it lands at `native\3rdparty\lama\LICENSE` (one level ABOVE `bin\`, per the libraw/ffmpeg precedent; shared contract of fetch_lama.ps1 and release.ps1 block 3.67 -- NOT inside `bin\`).
+- The HF repo Carve/LaMa-ONNX ships **no LICENSE file**（2026-10-11 API 树核对；其 card 元数据
+  声明 license:apache-2.0）。Apache-2.0 正文取自导出方仓库 `Carve-Photos/lama` 的 LICENSE
+  （fetch_lama.ps1 `$urlLicense` 已指向 raw 地址）。Also lands at
+  `native\3rdparty\lama\LICENSE` (one level ABOVE `bin\`, per the libraw/ffmpeg precedent;
+  shared contract of fetch_lama.ps1 and release.ps1 block 3.67 -- NOT inside `bin\`).
 
 运行时路径解析：父端 `EraseRunner` 把子进程 cwd 设为 exe 所在目录，代码里用相对路径
 `L"lama.onnx"` 打开——即 `<exe目录>\lama.onnx`。
 
-## 3. Netron / 节点名核对表（构建前必做）
+## 3. 模型张量契约核对表（换模型时必做；2026-10-11 已对钉死模型实测核对）
 
-代码在 session 建立后**查询第 0 输入/第 0 输出的实际节点名**
-（`GetInputNameAllocated`/`GetOutputNameAllocated`），因此不依赖导出命名，任意 lama.onnx
-均可用；`inpaint.cpp` 顶部常量 `IN_NAME_DOC="input"`、`OUT_NAME_DOC="output"` 仅是
-SAIC-MLP/LaMa-ONNX 导出惯例的**文档**。但张量**布局**是硬契约，第一次对某个 lama.onnx
-构建/运行前，用 Netron（<https://netron.app> 本地打开 lama.onnx）或
-`python -c "import onnx; m=onnx.load('lama.onnx'); print([(i.name,[d.dim_value or d.dim_param for d in i.type.tensor_type.shape.dim]) for i in m.graph.input])"`
-逐项核对：
+代码在 session 建立后**运行时查询全部输入/输出节点名**（`GetInputNameAllocated` 等），
+不硬编码名字；对钉死的 Carve `lama_fp32.onnx` 实测布局为**双输入**（早期文档假设的单张
+`(1,5,H,W)` 五通道输入是另一派 SAIC 导出的惯例，对本模型是错的——首喂即被 ORT 以
+`Got: 5 Expected: 3` 拒绝，2026-10-11 契约修正）：
 
-- [ ] 唯一输入：名字（惯例 `input`），shape `(1,5,H,W)` 或 `(batch,5,height,width)`，dtype **float32**。
-- [ ] H、W 为**动态轴**（symbolic，如 `height`/`width`）。⚠️ 若导出钉死 512×512 固定分辨率，
-      本执行器的任意尺寸喂入会由 ORT 在 `Run` 抛异常 → 父端收到 `ERR <id> INFER`，任务诚实失败。
-      此时必须换动态轴导出或改代码做分块/缩放——核对后在 Task 9 门里用非 512 尺寸图片实测。
-- [ ] 通道语义（本实现约定，若与你的导出不同须改 `runInpaint` 的组装段并同步此处）：
-      ch0..2 = RGB÷255，ch3 = mask÷255（255=消除区），ch4 = 全 1。
-- [ ] 唯一输出：名字（惯例 `output`），shape `(1,3,H,W)`，dtype **float32**，值域约定 [0,1]
-      （代码做 ×255 + clamp，若模型输出本身是 0..255 则结果会饱和成白——用样例图目测验证）。
-- [ ] 首跑看 stderr：代码会打印 `model loaded, input="..." output="..."`，与实际名一致即通过。
+- [x] 输入 0（实测名 `image`）：`(batch,3,mh,mw)` float32，RGB，值 **÷255 归一 [0,1]**。
+- [x] 输入 1（实测名 `mask`）：`(batch,1,mh,mw)` float32，白=1=待修复区。
+- [x] 空间轴 **固定**（本导出 512×512，batch 动态）。执行器因此对任意尺寸帧做
+      **确定性半像素 bilinear 往返缩放**（缩到模型尺寸推理、缩回原生分辨率合成），
+      不再要求动态轴导出；换 512 以外固定尺寸的模型无需改代码（运行时读取 mh/mw）。
+- [x] 输出（实测名 `output`）：`(batch,3,mh,mw)` float32，**值域 0..255（非 [0,1]！）**。
+      归一化方向以官方样例对复现验证（image.jpg+mask.png → output_onnx_fp32.png，
+      本布局合成 MAE≈0.015；错一个归一化因子 MAE≥0.28，脚本见台账）。若你的导出输出
+      [0,1] 而本代码按 0..255 处理，结果会几乎全黑——用样例图目测即可发现。
+- [x] 首跑看 stderr：打印 `model loaded, image="..." mask="..." output="..." fixed WxH`。
+      输入数≠2 或通道布局不符 → initModel 诚实返回 false（READY 0 + 每 TASK 回 ERR），
+      不会带错误布局硬跑。
 
 ## 4. 构建步骤
+
+**MinGW（本仓库 QA 主机实测路径，无需 MSVC）：**
+
+```bat
+cmake -S inpaint -B inpaint\build -G "MinGW Makefiles" ^
+  -DCMAKE_CXX_COMPILER="D:/Qt/Tools/mingw1310_64/bin/g++.exe" ^
+  -DCMAKE_MAKE_PROGRAM="D:/Qt/Tools/mingw1310_64/bin/mingw32-make.exe" ^
+  -DONNXRUNTIME_ROOT="D:/onnxruntime-win-x64-1.19.2"
+cmake --build inpaint\build
+```
+
+MinGW 分支要点（CMakeLists 已内置）：
+- `-include ort_mingw_shim.h`：ORT 头在 `_WIN32` 下用 MSVC 方言写 `_stdcall`/SAL 注解，
+  MinGW 的 specstrings.h 缺这些 token，用 shim 兜平（纯空宏，C ABI 语义不变）。
+- `-static`：否则 g++ 默认动态链 `libgcc_s_seh-1.dll`/`libstdc++-6.dll`/`libwinpthread-1.dll`，
+  终端用户机器没有 Qt MinGW 运行时→发布包起不来。加 `-static` 后 `objdump -p` 实测仅剩
+  KERNEL32/msvcrt/onnxruntime 三项导入（2026-10-11）。
+
+**MSVC：**
 
 ```bat
 cd /d <repo>\inpaint
@@ -70,12 +97,11 @@ cmake --build build --config Release
 
 说明：
 - `-A x64`：VS 生成器默认 win32，必须显式 x64 以匹配 ORT win-x64 包。
-- `find_package(onnxruntime CONFIG REQUIRED)` 命中 ORT zip 包内的 config 文件，得到
-  `onnxruntime::onnxruntime` 导入目标；若你改用系统安装版 ORT，把安装前缀放进
-  `CMAKE_PREFIX_PATH` 亦可（`ONNXRUNTIME_ROOT` 只是便捷别名，同时用于 POST_BUILD 拷 dll）。
-- 产物：`build\Release\inpaint.exe` + 同目录自动拷入的 `onnxruntime.dll`
+- CMakeLists 按 `ONNXRUNTIME_ROOT` 直接引用 include/ 与 lib/onnxruntime.lib|.dll（zip 无
+  CMake config 包，`find_package CONFIG` 走不通，见 §1 警告）。
+- 产物：`inpaint.exe` + 同目录自动拷入的 `onnxruntime.dll`
   （及 `onnxruntime_providers_shared.dll`，若包内含）。
-- 源文件含 UTF-8 中文注释，target 已加 `/utf-8`；请勿删除该编译选项。
+- 源文件含 UTF-8 中文注释：MSVC 必须 `/utf-8`（target 已加），请勿删除该编译选项。
 
 ## 5. 部署布局（与 Task 8 release.ps1 对齐）
 
@@ -100,15 +126,19 @@ cmake --build build --config Release
 - 启动握手：先建 session 再打印 `READY 1`；**模型缺失/加载失败不退出**，打印 `READY 0`
   并保持循环，之后每个 TASK 回 `ERR <id> no model`。父端 `ensureStarted` 只要求首行
   以 `READY` 开头，`applyResult` 把任务标失败——无崩溃、无挂起、可换模型后由父端自动重启恢复。
-- 父端预算：`waitForStarted/ReadyRead` 各 **5000ms**——冷盘加载 ~191MB ONNX + 图优化
-  若超 5s 会导致父端首启失败（下一任务会重试）。若实测超时，可把 `ORT_ENABLE_ALL` 降为
-  `ORT_ENABLE_BASIC` 换启动速度（推理性能略降），并在 Task 9 门记录实测。
+- 父端预算（2026-10-11 真机校准）：`waitForStarted` **5000ms**、首帧 READY `waitForReadyRead`
+  **30000ms**——真模型冷启动（191MB session 加载+图优化）本机实测 READY 于 8.1~8.5s
+  到达（`ORT_ENABLE_ALL`；降 `ORT_ENABLE_BASIC` 也只到 6.7s），旧的 5000ms 拍脑袋预算
+  正是 LA_ERASE_MODEL_QA 首跑的失败根因（executor unavailable）。2.36.0 异步化后该等待
+  在 owner(worker) 线程，不阻塞 GUI。单任务应答预算仍 **20000ms**：推理耗时与输入尺寸
+  无关（固定 512 往返缩放），本机实测 3.7~3.9s/帧。
 - 帧错误路径：TASK 头解析失败/短读 → 直接退出循环返回 0（父端 QProcess 侦测结束并重启）；
   nb/nm 与 w·h 不符 → `ERR <id> BADSIZE`；推理异常 → `ERR <id> INFER`。OK 响应恒 `no == w*h*3`。
 
-## 7. 构建者自检清单（首次出包）
+## 7. 构建者自检清单
 
-- [ ] `cmake` 配置 + 编译零 error（本仓库 QA 主机无 MSVC，编译验证**由构建者执行**）。
+- [x] `cmake` 配置 + 编译零 error —— MinGW 路径已在 QA 主机实测（2026-10-11）；
+      MSVC 路径仍由构建者自行执行（本机无 MSVC，保持诚实记录）。
 - [ ] ORT C++ API 面核对：本文件用到的调用为 `Env(ORT_LOGGING_LEVEL_ERROR)`、
       `SessionOptions::SetIntraOpNumThreads/SetGraphOptimizationLevel`、
       `Session(env, L"lama.onnx", opt)`（Windows 宽字符路径构造）、

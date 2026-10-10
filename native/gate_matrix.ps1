@@ -440,7 +440,7 @@ $GateTable = @(
   # M-C idempotence. measuredMs=0 = never yet run opted-in (precedent: LA_SCAN_SMOKE
   # carries 0); E8 demands the KEY, not a guessed number. Backfill from -Timing the
   # first time the gate is actually run with a fetched model (rule 25/31: data, not a guess).
-  @{n="LA_ERASE_MODEL_QA"; png=$false; need=@("LA_LAMA_MODEL"); measuredMs=0}
+  @{n="LA_ERASE_MODEL_QA"; png=$false; need=@("LA_LAMA_MODEL"); measuredMs=18377; timeoutSec=90}
 )
 # Resolve a gate's tier. Absent key means "full" - the fail-safe default.
 function Get-GateTier {

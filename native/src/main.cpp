@@ -4130,8 +4130,9 @@ int runEraseQa()
 // 2.35.0 真模型质量门（opt-in）。前提由名册 need=@("LA_LAMA_MODEL") 把关：变量缺失时
 // qa_runner 直接 [SKIP]，不启动本门。启动即意味着用户声称模型已 fetch：
 // 此时若执行器仍不存在、或解析到的是 stub，都必须诚实 FAIL（绝不空心放行，铁律34）。
-// M-A mask 外（1px 膨胀容差外）逐字节守恒；M-B mask 内确有合理改动；
-// M-C 同输入两次提交逐通道 ±1 幂等。反例 LA_ERASE_MODEL_QA_FORCE_BROKEN=1 → 全部转红。
+// M-A mask 外（1px 膨胀容差外）逐字节守恒；M-B mask 内确有改动且填充非随机垃圾
+// （平滑度判据，见下方 2026-10-11 实测注）；M-C 同输入两次提交逐通道 ±1 幂等。
+// 反例 LA_ERASE_MODEL_QA_FORCE_BROKEN=1 → 全部转红。
 int runEraseModelQa()
 {
     const bool broken = !qEnvironmentVariableIsEmpty("LA_ERASE_MODEL_QA_FORCE_BROKEN");
@@ -4178,23 +4179,36 @@ int runEraseModelQa()
         }
         return false;
     };
-    int farDiff = 0, inDiff = 0, inTot = 0; double inAbs = 0.0;
+    int farDiff = 0, inDiff = 0, inTot = 0;
     for (int y = 0; y < h; ++y) for (int x = 0; x < w; ++x) {
         const QRgb a = base.pixel(x, y), b = out1.pixel(x, y);
         const bool inside = qAlpha(mask.pixel(x, y)) == 255;
         if (inside) {
             ++inTot;
-            inAbs += (qAbs(qRed(a) - qRed(b)) + qAbs(qGreen(a) - qGreen(b)) + qAbs(qBlue(a) - qBlue(b))) / 3.0;
             if (a != b) ++inDiff;
         } else if (!dilated(mask, x, y) && a != b) {
             ++farDiff;
         }
     }
+    // M-B 第二判据=填充平滑度（mask 内水平相邻对的平均通道绝对差）。
+    // 校准史（2026-10-11 真模型首测）：原写法是"mask 内与底图平均距离<40"，但那对
+    // inpainting 认识论上就错——mask 内原内容已被抹除、无 ground truth，真模型对合成
+    // 渐变底的合理填充距底图实测 71（随机噪声也只有 85，40 阈值毫无判别力）。平滑度
+    // 方向才成立：真模型合理填充相邻差实测 3.9（该底图自身 3.6），随机垃圾 84.8，
+    // 同一数值 40 变为有 10x+ 裕度的"非乱填"守卫。反例臂不受影响（BADSIZE 首跑即败）。
+    double fillSmooth = 0.0; int smoothCnt = 0;
+    for (int y = 0; y < h; ++y) for (int x = 0; x + 1 < w; ++x) {
+        if (qAlpha(mask.pixel(x, y)) != 255 || qAlpha(mask.pixel(x + 1, y)) != 255) continue;
+        const QRgb l = out1.pixel(x, y), r = out1.pixel(x + 1, y);
+        fillSmooth += (qAbs(qRed(l) - qRed(r)) + qAbs(qGreen(l) - qGreen(r)) + qAbs(qBlue(l) - qBlue(r))) / 3.0;
+        ++smoothCnt;
+    }
     note(farDiff == 0, QStringLiteral("M-A conservation outside dilated mask, diffs=%1").arg(farDiff));
     note(inTot > 0 && double(inDiff) / inTot >= 0.6,
          QStringLiteral("M-B mask-in change ratio=%1").arg(inTot ? double(inDiff) / inTot : -1.0));
-    note(inTot > 0 && inAbs / inTot < 40.0,
-         QStringLiteral("M-B mask-in mean-abs-diff=%1 (wild fill?)").arg(inAbs / (inTot ? inTot : 1)));
+    note(smoothCnt > 0 && fillSmooth / smoothCnt < 40.0,
+         QStringLiteral("M-B fill smoothness mean-abs-neighbor-delta=%1 (wild fill?)")
+             .arg(smoothCnt ? fillSmooth / smoothCnt : -1.0));
 
     // M-C 幂等：同输入两次，逐通道 ±1
     int maxCh = 0;

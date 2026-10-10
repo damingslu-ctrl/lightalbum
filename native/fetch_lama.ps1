@@ -7,14 +7,20 @@
       - lama.onnx  : HuggingFace Carve/LaMa-ONNX, file lama_fp32.onnx, saved
                      locally AS lama.onnx (canonical free ONNX port of advimman
                      big-lama; local name must match EraseRunner / BUILD.md).
-      - LICENSE    : same HF repo; placed at 3rdparty\lama\LICENSE (one level
-                     ABOVE bin, mirroring the libraw/ffmpeg precedent).
+      - LICENSE    : the HF repo Carve/LaMa-ONNX ships NO LICENSE file (its
+                     card metadata declares apache-2.0 but there is no blob to
+                     fetch there). The export was produced by the
+                     Carve-Photos/lama GitHub repo, which carries the Apache-2.0
+                     LICENSE text; download THAT as the model's license file.
+                     Placed at 3rdparty\lama\LICENSE (one level ABOVE bin,
+                     mirroring the libraw/ffmpeg precedent).
       - onnxruntime.dll : Microsoft official GitHub release, pinned v1.19.2
                      win-x64 zip; the dll is copied out of the expanded zip.
       - inpaint.exe: NEVER downloaded. It must be built per inpaint/BUILD.md
-                     (MSVC + ONNX Runtime). This script only checks existence
-                     and optionally copies it in from a local build directory
-                     passed via -InpaintDir.
+                     (ONNX Runtime C ABI -- MSVC or MinGW g++ both work, the
+                     ORT C API is cross-compiler stable). This script only
+                     checks existence and optionally copies it in from a local
+                     build directory passed via -InpaintDir.
 
     Fail-closed provenance (data-never-guess):
       $expectedSha below starts as the sentinel 'PIN-ON-FIRST-FETCH'. A real
@@ -50,13 +56,18 @@ $inpaintDest = Join-Path $binDest 'inpaint.exe'
 if (-not $InpaintDir) { $InpaintDir = $binDest }
 
 # --- provenance pins ---------------------------------------------------------
-# Sentinel: a real fetch run throws until a human pastes the verified SHA-256
-# of lama_fp32.onnx from https://huggingface.co/Carve/LaMa-ONNX here.
-$expectedSha = 'PIN-ON-FIRST-FETCH'
+# Pinned 2026-10-11 by the first human fetch of lama_fp32.onnx from
+# https://huggingface.co/Carve/LaMa-ONNX (certutil -hashfile SHA256 over the
+# downloaded bytes, 208044816 total). The sentinel 'PIN-ON-FIRST-FETCH' is now
+# retired BY this value: every real fetch must reproduce this exact digest or
+# the script throws and no byte lands in the deployment dir.
+$expectedSha = '1FAEF5301D78DB7DDA502FE59966957EC4B79DD64E16F03ED96913C7A4EB68D6'
 
 $hfTreeHint = 'https://huggingface.co/Carve/LaMa-ONNX/tree/main'
 $urlModel = 'https://huggingface.co/Carve/LaMa-ONNX/resolve/main/lama_fp32.onnx'
-$urlLicense = 'https://huggingface.co/Carve/LaMa-ONNX/resolve/main/LICENSE'
+# HF repo has no LICENSE blob (verified via its API file tree); Apache-2.0 text
+# comes from the exporting repo Carve-Photos/lama (see header notes).
+$urlLicense = 'https://raw.githubusercontent.com/Carve-Photos/lama/main/LICENSE'
 $urlOrtZip = 'https://github.com/microsoft/onnxruntime/releases/download/v1.19.2/onnxruntime-win-x64-1.19.2.zip'
 
 # --- shared check mechanism (production AND -SelfTest use these) ------------

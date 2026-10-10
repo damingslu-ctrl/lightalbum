@@ -67,7 +67,12 @@ bool EraseRunner::ensureStarted()
     proc_->setWorkingDirectory(QFileInfo(exePath_).absolutePath());   // lama.onnx 同目录解析
     proc_->start(exePath_, {});
     if (!proc_->waitForStarted(5000)) { pidCache_ = 0; return false; }
-    if (!proc_->waitForReadyRead(5000)) { pidCache_ = 0; return false; }
+    // READY 预算=真模型冷启动实测校准（2026-10-11）：inpaint.exe 首帧 READY 前要完成
+    // 191MB ORT session 加载+图优化，本机实测 8.1~8.5s（ORT_ENABLE_ALL；降 BASIC 也只到
+    // 6.7s），旧 5000ms 是无模型主机时代拍的预算——真机必超时（首绿门即以此红过）。
+    // 2.36.0 异步化后本等待发生在 owner(worker) 线程，不阻塞 GUI，放宽无副作用；
+    // stub 首帧仍是毫秒级，行为不变。
+    if (!proc_->waitForReadyRead(30000)) { pidCache_ = 0; return false; }
     const QByteArray line = proc_->readLine();
     if (!line.startsWith("READY")) { pidCache_ = 0; return false; }
     ready_ = true;
