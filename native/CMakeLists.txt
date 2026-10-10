@@ -135,6 +135,11 @@ target_compile_definitions(LightAlbum PRIVATE LA_VERSION="${PROJECT_VERSION}")
 # add_subdirectory(src/retouch)
 # add_subdirectory(src/engine/lumen)
 
+# 2.35.0 AI 消除契约门用的确定性 stub（无模型、非发布产物）。见 EraseProto.h 协议。
+add_executable(inpaint_stub tools/inpaint_stub.cpp)
+target_include_directories(inpaint_stub PRIVATE src)
+target_link_libraries(inpaint_stub PRIVATE Qt6::Core Qt6::Gui)  # Gui：EraseProto.h include <QImage>，仅 Core 不够（偏离 brief 一行，编译必需）
+
 # [2.28.0] RAW 支持：把 LibRaw 预编译产物拷到构建树，使 RawDecode::available()
 # 在开发态与打包态走**同一条查找路径**（<exe 同级>/3rdparty/libraw/bin）。
 # 仓库零二进制 —— 产物由 fetch_libraw.ps1 下载；未下载时静默跳过，
