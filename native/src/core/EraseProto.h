@@ -78,6 +78,7 @@ inline bool readResponse(QIODevice* io, quint32 expectId, QImage& outImage, QStr
     const int w = tk[2].toInt(), h = tk[3].toInt();
     const int no = tk[4].toInt();
     if (id != expectId) { if (err) *err = QStringLiteral("resp id mismatch"); return false; }
+    if (no != w * h * 3) { if (err) *err = QStringLiteral("resp size mismatch"); return false; }
     QByteArray rgb = io->read(no);
     if (rgb.size() != no) { if (err) *err = QStringLiteral("short rgb"); return false; }
     QImage img(w, h, QImage::Format_RGB888);

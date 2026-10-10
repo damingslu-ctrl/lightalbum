@@ -38,6 +38,8 @@
 #include "core/StoryGen.h"        // 人物故事方向·B：自动故事相册纯函数（LA_STORY_QA 直调）
 #include "ui/GalleryCardPainter.h"  // 2.22.0 骨架屏纯函数（QA 门直调，铁律 20 同源）
 #include "ui/FullCache.h"           // 2.22.0 灯箱原图 LRU（QA 门直调）
+#include "core/EraseBridge.h"   // 2.35.0 AI 消除契约门（LA_ERASE_QA 直调）
+#include "core/EraseRunner.h"   // 2.35.0 执行器 QA 钩子（qaInjectBadSize）
 #include <QTemporaryDir>
 #include <QPainter>
 #include <QSet>
@@ -3961,6 +3963,86 @@ int runTransitionQa()
     return okAll ? 0 : 1;
 }
 
+// 2.35.0 AI 消除契约门（离屏，走真 QProcess+帧协议，执行器=确定性 inpaint_stub）。
+// A 状态机 queued→running→done；B mask 外逐字节守恒 + mask 内确有改动；
+// C 子进程常驻（两次任务同 PID）；D kill 后下一任务自动重启恢复。
+// 反例 LA_ERASE_QA_FORCE_BROKEN=1 → run() 返回越界 copy 的 null 结果 →
+// applyResult 诚实拒收 → A/B/D 断言同红（期望值恒为规格值，铁律22；非空心，铁律34）。
+int runEraseQa()
+{
+    const bool broken = !qEnvironmentVariableIsEmpty("LA_ERASE_QA_FORCE_BROKEN");
+    QStringList fails;
+    const auto note = [&fails](bool ok, const QString& w){ if (!ok) fails << w; };
+
+    EraseBridge bridge;
+    // 契约门不允许"静默放行"：stub 缺席 = 开发构建坏了 → 诚实 FAIL（return 非 0 即 RED）。
+    if (!bridge.modelReady()) {
+        std::fprintf(stderr, "LA_ERASE_QA FAIL executor unavailable -- build target inpaint_stub first\n");
+        std::fflush(stderr);
+        return 1;
+    }
+    if (broken) EraseRunner::qaInjectBadSize(true);   // 必须在首次 submit 之前打开
+
+    const int w = 200, h = 200;
+    QImage base(w, h, QImage::Format_RGB32);
+    for (int y = 0; y < h; ++y) for (int x = 0; x < w; ++x)
+        base.setPixel(x, y, qRgb((x * 2) & 0xff, (y * 2) & 0xff, 0x40));
+    QImage mask(w, h, QImage::Format_ARGB32);
+    mask.fill(qRgba(0, 0, 0, 0));
+    for (int y = 60; y <= 140; ++y) for (int x = 60; x <= 140; ++x) {
+        const double dx = x - 100, dy = y - 100;
+        if (dx * dx + dy * dy <= 40 * 40) mask.setPixel(x, y, qRgba(0, 0, 0, 255));
+    }
+
+    // ---- A 状态机 + B 像素守恒 ----
+    const int id = bridge.submit(base, mask);
+    note(bridge.task(id) != nullptr, QStringLiteral("A: task missing after submit"));
+    QCoreApplication::processEvents();               // flush singleShot(0) 的 running→run→回填链
+    const EraseTask* ct = bridge.task(id);
+    note(ct && ct->status == QLatin1String("done"),
+         QStringLiteral("A state machine reaches done, got=%1").arg(ct ? ct->status : QStringLiteral("?")));
+    if (ct && ct->status == QLatin1String("done") && !ct->result.isNull() && ct->result.size() == base.size()) {
+        int outDiff = 0, inDiff = 0, inTot = 0;
+        for (int y = 0; y < h; ++y) for (int x = 0; x < w; ++x) {
+            const bool inside = qAlpha(mask.pixel(x, y)) == 255;
+            if (base.pixel(x, y) != ct->result.pixel(x, y)) { inside ? ++inDiff : ++outDiff; }
+            if (inside) ++inTot;
+        }
+        note(outDiff == 0, QStringLiteral("B mask-out byte conservation, leak=%1").arg(outDiff));
+        note(inTot > 0 && inDiff * 10 >= inTot,
+             QStringLiteral("B mask-in changed ratio=%1").arg(inTot ? double(inDiff) / inTot : -1.0));
+    } else {
+        note(false, QStringLiteral("B: done result present for pixel check"));
+    }
+
+    // ---- C 子进程常驻（同 PID 跨两次 submit）----
+    qint64 pidA = 0, pidB = 0;
+    bridge.qaPeekRunnerPid(pidA);
+    const int id2 = bridge.submit(base, mask);
+    QCoreApplication::processEvents();
+    bridge.qaPeekRunnerPid(pidB);
+    note(pidA != 0 && pidA == pidB,
+         QStringLiteral("C child process persists, pidA=%1 pidB=%2").arg(pidA).arg(pidB));
+
+    // ---- D 崩溃恢复（kill 后下一任务自动重启并走完状态机）----
+    bridge.qaKillExecutorForTest();
+    const int id3 = bridge.submit(base, mask);
+    QCoreApplication::processEvents();
+    const EraseTask* t3 = bridge.task(id3);
+    note(t3 && t3->status == QLatin1String("done"),
+         QStringLiteral("D after child kill next task recovers, got=%1").arg(t3 ? t3->status : QStringLiteral("?")));
+
+    EraseRunner::qaInjectBadSize(false);             // 静态钩子复位（不得泄漏给后续门）
+
+    if (fails.isEmpty())
+        std::fprintf(stderr, "LA_ERASE_QA PASS broken=%d state=1 conserve=1 persist=1 recover=1\n", int(broken));
+    else
+        std::fprintf(stderr, "LA_ERASE_QA FAIL broken=%d reason=%s\n",
+                     int(broken), qPrintable(fails.join(QChar(';'))));
+    std::fflush(stderr);
+    return fails.isEmpty() ? 0 : 1;
+}
+
 // 方向 C·人脸识别（方案A）门禁（LA_PERSON_QA）。
 // 不依赖外部 face_server：用 PersonDetector::setSyntheticForQa 注入确定结果，测
 // 「写回 + 检索契约 + 重命名契约」。反例 LA_PERSON_QA_FORCE_BROKEN=1 令 Library 写库但
@@ -5264,6 +5346,9 @@ int main(int argc, char *argv[])
     // 2.22.0 客户端体验：骨架屏纯函数 + 像素判别 + 灯箱原图解码契约
     if (qEnvironmentVariableIsSet("LA_TRANSITION_QA"))
         return runTransitionQa();
+
+    if (qEnvironmentVariableIsSet("LA_ERASE_QA"))
+        return runEraseQa();
 
     // 方向 D 第五步 b：图库多选 + 批量工具条门禁
     if (qEnvironmentVariableIsSet("LA_GALLERY_BATCH_QA"))

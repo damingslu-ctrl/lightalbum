@@ -416,7 +416,16 @@ $GateTable = @(
   # via the real FullCache hook, so the SAME C assertions turn red (expected
   # values never switch on the broken flag -- rule 22).
   # Tier: FULL. measuredMs=400 from qa_runner -Timing (rule 13), non-zero for E8.
-  @{n="LA_TRANSITION_QA";  png=$false; measuredMs=400}
+  @{n="LA_TRANSITION_QA";  png=$false; measuredMs=400},
+  # 2.35.0 EraseBridge: hermetic contract gate (uses deterministic inpaint_stub.exe).
+  # Asserts (A) state machine queued->running->done; (B) mask-out byte conservation
+  # + mask-in change ratio >= 10%; (C) child process PID persists across submissions;
+  # (D) after qaKillChild crash, next submit auto-restarts and completes. Counterexample
+  # LA_ERASE_QA_FORCE_BROKEN=1 arms EraseRunner::qaInjectBadSize BEFORE the first submit;
+  # run() then returns an out-of-bounds-copy (null) QImage, applyResult rejects it, and the
+  # done/pixel/recovery assertions turn RED together (rule 22: expectations never branch).
+  # Tier: FULL (QProcess lifecycle, no external env). measuredMs=2205 from qa_runner -Timing (rule 13).
+  @{n="LA_ERASE_QA"; png=$false; measuredMs=2205}
 )
 # Resolve a gate's tier. Absent key means "full" - the fail-safe default.
 function Get-GateTier {
