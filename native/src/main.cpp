@@ -3426,14 +3426,47 @@ int runFaceClusterQa()
 
     // ---- O 顺序不变性 ----
     {
-        const QVector<ClusterInput> base = build({{"A1",A},{"A2",Ap},{"A3",App},{"B1",B},{"B2",Bp},{"A4",A},{"C1",blob({0.5,0.5,0,0,0,0,0,0})},{"C2",blob({0.5,0.5,0.02,0,0,0,0,0})},{"B3",B},{"A5",Ap},{"B4",Bp},{"A6",App}});
+        // 近阈值平面链 P1..P6（铁律29 确定性）：单位向量嵌入 dim3/dim4（既有 fixture 的
+        // 空平面 → 与 A/C(dim0-2)、B(dim6-7) 全部正交 cos≈0，离阈值 0.4 裕量 ≥0.1），
+        // 角度 25°/35°/60° | 100°/110°/120°。判别机制：桥接项 P3@60° 的归附在 seed-only
+        // 下取决于 leader 顺序——正向 {P1P2P3}|{P4P5P6}，反向 P6@120° 先入 leader
+        // （cos(P3,P6)=cos60°=0.5≥0.4）→ {P1P2}|{P3P4P5P6} → 三排列分区不等（RED，旧算法
+        // 必红）；精炼遍用均值质心替代 leader 向量：P3 对 A 侧质心30° cos=0.866 > 对含己
+        // 混合质心98° cos=0.788 → 三排列全部收敛同一分区 {P1P2P3}|{P4P5P6}（GREEN）。
+        // ⚠ 控制器原定 3 链 0°/40°/80° 不可行（复刻实验证实）：贪心落单的 straggler 自成
+        // 单例簇，精炼质心=其自身向量（cos=1 恒最大）→ 永不吸收 → 3 链在 refine ON 下
+        // 仍顺序敏感（{P1P2}|{P3} vs {P1}|{P2P3}），O 会假红。6 点双段链是最小可判别形。
+        auto chain = [&blob](double deg) { const double r = deg * 3.14159265358979323846 / 180.0;
+                                           return blob({0,0,0,std::cos(r),std::sin(r),0,0,0}); };
+        const QVector<ClusterInput> base = build({
+            {"A1",A},{"A2",Ap},{"A3",App},{"B1",B},{"B2",Bp},{"A4",A},
+            {"C1",blob({0.5,0.5,0,0,0,0,0,0})},{"C2",blob({0.5,0.5,0.02,0,0,0,0,0})},
+            {"B3",B},{"A5",Ap},{"B4",Bp},{"A6",App},
+            {"P1",chain(25)},{"P2",chain(35)},{"P3",chain(60)},
+            {"P4",chain(100)},{"P5",chain(110)},{"P6",chain(120)}});
         const QVector<ClusterInput> p1 = base;
         QVector<ClusterInput> p2 = base; std::reverse(p2.begin(), p2.end());
         QVector<ClusterInput> p3 = base; for (int i=1;i<p3.size();++i) std::swap(p3[i], p3[i-1]); // 定步乱排
-        const QString k1 = partitionKey(FaceCluster::cluster(p1, kThr, 1));
-        const QString k2 = partitionKey(FaceCluster::cluster(p2, kThr, 1));
+        const ClusterResult r1 = FaceCluster::cluster(p1, kThr, 1);
+        const QString k1 = partitionKey(r1);
+        const ClusterResult r2 = FaceCluster::cluster(p2, kThr, 1);
+        const QString k2 = partitionKey(r2);
         const QString k3 = partitionKey(FaceCluster::cluster(p3, kThr, 1));
         note(k1 == k2 && k2 == k3, QStringLiteral("O order-invariance: partition differs across permutations"));
+        // 链形断言（铁律34 防空心门）：refine ON 的期望终局 = 唯一链分裂
+        // {P1,P2,P3} 与 {P4,P5,P6}（P3 被 A 侧均值质心收编）。seed-only 下反向排列
+        // 给出 {P1,P2}|{P3..P6} → 本断言与顺序断言双双转红，正算法下双双为绿。
+        auto chainShapeOk = [](const ClusterResult& r){
+            bool left = false, right = false;
+            for (const ClusterGroup& g : r.groups) {
+                if (g.paths.size() == 3 && g.paths.contains(QStringLiteral("P1"))
+                    && g.paths.contains(QStringLiteral("P2")) && g.paths.contains(QStringLiteral("P3"))) left = true;
+                if (g.paths.size() == 3 && g.paths.contains(QStringLiteral("P4"))
+                    && g.paths.contains(QStringLiteral("P5")) && g.paths.contains(QStringLiteral("P6"))) right = true;
+            }
+            return left && right; };
+        note(chainShapeOk(r1) && chainShapeOk(r2),
+             QStringLiteral("O chain: straggler P3 must be centroid-absorbed into {P1,P2} (seed-only splits)"));
     }
 
     // ---- C 质心优于头 ----
