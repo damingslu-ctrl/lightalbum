@@ -7,6 +7,29 @@
 static bool g_forceBroken = false;
 void FaceCluster::setForceBrokenForQa(bool on) { g_forceBroken = on; }
 
+// 单位化一份 float32 embedding（长度非 4 倍数或零向量原样返回）。
+static QByteArray fcNormalize(const QByteArray& emb)
+{
+    QByteArray out = emb;
+    const int n = out.size() / 4;
+    if (n <= 0) return out;
+    float* f = reinterpret_cast<float*>(out.data());
+    double s = 0.0;
+    for (int i = 0; i < n; ++i) s += double(f[i]) * double(f[i]);
+    if (s <= 0.0) return out;                     // 零向量：不除，保持原样
+    const double inv = 1.0 / std::sqrt(s);
+    for (int i = 0; i < n; ++i) f[i] = float(double(f[i]) * inv);
+    return out;
+}
+
+// 两个已单位化向量的点积（== 余弦）。长度须一致。
+static double fcDotN(const float* a, const float* b, int n)
+{
+    double d = 0.0;
+    for (int i = 0; i < n; ++i) d += double(a[i]) * double(b[i]);
+    return d;
+}
+
 double FaceCluster::cosine(const QByteArray& a, const QByteArray& b)
 {
     const int n = a.size() / 4;            // float32 元素数
