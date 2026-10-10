@@ -41,13 +41,13 @@
 
 ### 新增 - ★AI 消除真引擎：EraseBridge 桩→独立执行器（路线 1）
 
-- **进程边界**：新增独立 MSVC 项目 `inpaint/`（ONNX Runtime C++ + SAIC-MLP LaMa ONNX 模型，
-  约 191MB），不进 MinGW 主构建、主程序零新链接依赖；宿主侧新增 `core/EraseRunner`
+- **进程边界**：新增独立 MSVC/MinGW 双工具链项目 `inpaint/`（ONNX Runtime C++ + Carve/LaMa-ONNX 模型，
+  实测 208,044,816B≈198MiB），不进 MinGW 主构建、主程序零新链接依赖；宿主侧新增 `core/EraseRunner`
   （常驻 QProcess 子进程封装）以帧协议通信：握手 `READY 1`（就绪）/ `READY 0`（模型文件在场但加载
   失败——子进程逐任务诚实 `ERR`，修复模型后可重试；模型整体缺失则由宿主侧 spawn 前拦截，保持
   `blocked_no_model`）→ `TASK <id> <w> <h> <nb> <nm>` + 裸 RGB888 底图 + 裸 alpha-mask
-  字节流 → 应答 `OK <id> <w> <h> <no>`（+ 裸 RGB888 结果）/ `ERR <id> <原因>`。**三重隔离**：ABI（MSVC CRT 与
-  宿主 MinGW 彻底解耦）、崩溃半径（子进程挂掉只影响当次任务，下一任务自动重拉）、许可
+  字节流 → 应答 `OK <id> <w> <h> <no>`（+ 裸 RGB888 结果）/ `ERR <id> <原因>`。**三重隔离**：ABI（子进程 CRT 与
+  宿主 MinGW 彻底解耦，MSVC 或 MinGW 构建均成立）、崩溃半径（子进程挂掉只影响当次任务，下一任务自动重拉）、许可
   （模型分发独立于主程序）——沿用 dcraw/ffmpeg 的独立进程先例。
 - **契约变真**：`modelReady()` 从桩的恒 false 改为「inpaint.exe 与 lama.onnx 均在（stub 除外）
   且 `READY` 握手成功」；任务状态机 `queued → running → done | failed`（新增 `running`）；未取模型时保持
@@ -56,7 +56,7 @@
   零改动（早已 100% 接线）。
 - **零云端 + 隐私**：inpaint.exe 不发起任何网络请求；模型由用户在构建期主动运行
   `fetch_lama.ps1` 获取（LICENSE 硬校验，无许可即 fetch 失败；SHA 哨兵 `PIN-ON-FIRST-FETCH`
-  钉死之前拒绝真实下载，fail-closed）。送进子进程的是编辑态图，继承修图页注入点的
+  钉死之前拒绝真实下载，fail-closed；2026-10-11 已以实测 SHA-256=1FAEF530…EB68D6 钉死）。送进子进程的是编辑态图，继承修图页注入点的
   私密过滤，本层不再二次遍历。
 - **门禁第 70 门 `LA_ERASE_QA`（full）**：契约门走确定性 MinGW 桩 `inpaint_stub.exe`
   （常绿、宿主无关）：A 状态机全序 / B 守恒像素判别（蒙版外逐字节 == 底图 + 蒙版内
@@ -64,7 +64,7 @@
   （任务间 kill → 当前任务 failed、下一任务自动重 spawn 并 done）。反例
   `LA_ERASE_QA_FORCE_BROKEN=1` 故意错配结果尺寸 → A/B 双转红（期望式一字不改，非空心）。
 - **质量第 71 门 `LA_ERASE_MODEL_QA`（full，opt-in）**：仅当 `LA_LAMA_MODEL` 指向真实
-  lama.onnx 时才跑真模型质量断言；本机从未持有模型 → `[SKIP]`（诚实缺席，不计回归）。
+  lama.onnx 时才跑真模型质量断言；初版门文写"本机从未持有模型"，2026-10-11 首持模型实测即暴露三处潜在缺陷（双输入 image+mask 张量契约、LICENSE 源 URL、READY 握手预算）并全部修正，随后该门在本机 MinGW -static 真 exe 上首绿（-Timing 实测 18377ms）；默认全量因未设 `LA_LAMA_MODEL` 仍 `[SKIP]`（诚实缺席，不计回归）。
 - **发布许可契约 C9**：staging 内出现 inpaint.exe 而缺 `LICENSE` 即 throw 拒打包；
   `release.ps1 -SelfTest` 注入「删 LICENSE → C9 转红」。默认包**不含模型**——仅当用户
   主动 fetch 后，release 打包才含 4 件 lama 产物（inpaint.exe / onnxruntime.dll /

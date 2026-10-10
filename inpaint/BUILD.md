@@ -13,7 +13,7 @@
 |---|---|---|---|
 | CMake ≥ 3.21 + 编译器（二选一：VS2022 MSVC v143，或 Qt 自带 MinGW g++ 13.1） | 任意近期版 | microsoft.com / qt.io | 免费社区版可用 |
 | ONNX Runtime C/C++ win-x64 | **v1.19.2**（zip 包） | github.com/microsoft/onnxruntime/releases | MIT（见 THIRD_PARTY-NOTICE.md） |
-| lama.onnx（LaMa 推理权重 ONNX 导出） | Carve/LaMa-ONNX 的 `lama_fp32.onnx`，本地重命名 `lama.onnx`（约 191MB） | HuggingFace，由 Task 7 `tools/fetch_lama.ps1` 统一下发+校验 | 见 §2 与 NOTICE |
+| lama.onnx（LaMa 推理权重 ONNX 导出） | Carve/LaMa-ONNX 的 `lama_fp32.onnx`，本地重命名 `lama.onnx`（实测 208,044,816B≈198MiB） | HuggingFace，由 Task 7 `tools/fetch_lama.ps1` 统一下发+校验 | 见 §2 与 NOTICE |
 
 零云端铁律：以上全部由**人**在构建期下载核对；`inpaint.exe` 运行期不访问任何网络。
 
@@ -127,7 +127,7 @@ cmake --build build --config Release
   并保持循环，之后每个 TASK 回 `ERR <id> no model`。父端 `ensureStarted` 只要求首行
   以 `READY` 开头，`applyResult` 把任务标失败——无崩溃、无挂起、可换模型后由父端自动重启恢复。
 - 父端预算（2026-10-11 真机校准）：`waitForStarted` **5000ms**、首帧 READY `waitForReadyRead`
-  **30000ms**——真模型冷启动（191MB session 加载+图优化）本机实测 READY 于 8.1~8.5s
+  **30000ms**——真模型冷启动（198MiB session 加载+图优化）本机实测 READY 于 8.1~8.5s
   到达（`ORT_ENABLE_ALL`；降 `ORT_ENABLE_BASIC` 也只到 6.7s），旧的 5000ms 拍脑袋预算
   正是 LA_ERASE_MODEL_QA 首跑的失败根因（executor unavailable）。2.36.0 异步化后该等待
   在 owner(worker) 线程，不阻塞 GUI。单任务应答预算仍 **20000ms**：推理耗时与输入尺寸

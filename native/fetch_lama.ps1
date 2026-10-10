@@ -169,7 +169,7 @@ if ($SelfTest) {
 
 # --- Real fetch mode (the ONLY network path in this script) ------------------
 
-# Fail-closed gate FIRST: never start a 191MB download we cannot verify.
+# Fail-closed gate FIRST: never start a ~198MiB download we cannot verify.
 if ($expectedSha -eq 'PIN-ON-FIRST-FETCH') {
     throw ('lama.onnx SHA-256 is not pinned: the sentinel PIN-ON-FIRST-FETCH is still in fetch_lama.ps1. ' +
         'A human must download lama_fp32.onnx once from ' + $urlModel + ', compute ' +
@@ -190,10 +190,10 @@ New-Item -ItemType Directory -Path $binDest -Force | Out-Null
 $stage = Join-Path ([IO.Path]::GetTempPath()) ('la_lama_' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $stage -Force | Out-Null
 try {
-    # 1. Model weights (~191MB) land in STAGING first; they are saved AS lama.onnx only AFTER
+    # 1. Model weights (~198MiB / 208,044,816B) land in STAGING first; they are saved AS lama.onnx only AFTER
     #    verification, so a SHA-mismatch throw can never leave bad bytes in the deploy dir (Minor#1).
     $tmpModel = Join-Path $stage 'lama_fp32.onnx'
-    Write-Host "Downloading model (about 191MB, please wait): $urlModel"
+    Write-Host "Downloading model (about 198 MiB, please wait): $urlModel"
     Invoke-DownloadToTemp -Url $urlModel -OutFile $tmpModel -HintUrl $hfTreeHint
 
     # 2. Model LICENSE (one level above bin, alongside the other 3rdparty licenses).
