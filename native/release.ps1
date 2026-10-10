@@ -14,6 +14,7 @@
 #   C6 license: THIRD_PARTY-NOTICE.md ships + derived sources keep SPDX
 #   C7 MANIFEST is reproducible (twice == same bytes) and totally ordered
 #   C8 build type is Release (a Debug artifact must never be shipped)
+#   C9 lama model license (inpaint.exe present in staging without LICENSE is a hard error)
 # Plus BUILDINFO.txt (SBOM: commit, build type, Qt/compiler versions).
 #
 # Clean approach: copy only the exe, then windeployqt deploys exactly the
@@ -350,6 +351,26 @@ function Assert-ReleaseBuildType($cache) {
   return $t
 }
 
+# C9: the lama AI-erase executor must ship WITH its license texts. Mirrors the
+# LibRaw/FFmpeg staged-license hard checks in 3.65/3.66: a shipped binary whose
+# attribution did not travel is exactly what LGPL/GPL/MIT forbid, and fetch +
+# staging can half-succeed (exe copied, license lost), so the assertion runs on
+# the STAGED tree, not on the source dir. inpaint.exe not staged is a graceful
+# no-op -- the fetch is an optional pre-build step and the staging block already
+# WARNs on that path (RAW/ffmpeg precedent); one contract that can never fail
+# is no contract, so -SelfTest injects the missing-license cases to prove the
+# throws below actually fire.
+function Assert-LamaLicense($staging) {
+  $binP = Join-Path $staging "3rdparty/lama/bin/inpaint.exe"
+  if (-not (Test-Path $binP)) { return }   # not staged (graceful skip)
+  $lic = Join-Path $staging "3rdparty/lama/LICENSE"
+  if (-not (Test-Path $lic)) { throw "C9 inpaint.exe staged but 3rdparty/lama/LICENSE missing" }
+  if ((Get-Item $lic).Length -le 0) { throw "C9 lama LICENSE is empty" }
+  # onnxruntime MIT notice must travel too
+  $mit = Join-Path $staging "3rdparty/lama/THIRD_PARTY-NOTICE.md"
+  if (-not (Test-Path $mit)) { throw "C9 onnxruntime MIT notice missing from 3rdparty/lama" }
+}
+
 # =====================================================================
 # -SelfTest: prove the contracts actually fire.
 #
@@ -362,7 +383,7 @@ function Assert-ReleaseBuildType($cache) {
 # The contract roster: single source of truth for how many contracts exist.
 # Adding C8 here is enough -- Get-ContractTags, the baseline loop and the PASS
 # report all count this list instead of repeating a literal.
-$script:contractIds = @("C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8")
+$script:contractIds = @("C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8", "C9")
 
 function Get-ContractTags($want, $cmPath, $clPath, $staging, $manName, $zipPath, $noticeName, $srcRoot, $derivedRel, $cachePath = "") {
   $tags = @()
@@ -374,7 +395,8 @@ function Get-ContractTags($want, $cmPath, $clPath, $staging, $manName, $zipPath,
     @{ t = "C5"; f = { Assert-ZipIntegrity $zipPath } },
     @{ t = "C6"; f = { Assert-LicenseCompliance $staging $noticeName $srcRoot $derivedRel } },
     @{ t = "C7"; f = { Assert-ManifestReproducible $staging $manName } },
-    @{ t = "C8"; f = { Assert-ReleaseBuildType $cachePath } }
+    @{ t = "C8"; f = { Assert-ReleaseBuildType $cachePath } },
+    @{ t = "C9"; f = { Assert-LamaLicense $staging } }
   )
   foreach ($p in $probes) {
     # Assign to $null: several Assert-* return values (entry count, hash)
@@ -508,6 +530,25 @@ function Invoke-ReleaseSelfTest($noInject) {
         } },
       @{ id = "C8"; apply = {
           Set-Content -Path $sandboxCache -Encoding ASCII -Value "CMAKE_CXX_COMPILER:FILEPATH=cxx`n"
+        } },
+      # C9: a staged lama executor without its license texts, both halves
+      # falsified separately. (1) inpaint.exe staged, LICENSE never staged ->
+      # the missing-model-license throw. (2) inpaint.exe + LICENSE staged but
+      # the onnxruntime MIT notice absent -> the missing-notice throw. Each
+      # injection rebuilds the sandbox first (dist has no lama tree), so
+      # "staged" here is exactly the touch-the-executor case the staging
+      # block would produce if the copy of a license half failed.
+      @{ id = "C9"; apply = {
+          $lb = Join-Path $dist "3rdparty/lama/bin"
+          New-Item -ItemType Directory -Force -Path $lb | Out-Null
+          Set-Content -Path (Join-Path $lb "inpaint.exe") -Encoding ASCII -Value "fake-inpaint-payload"
+        } },
+      @{ id = "C9"; apply = {
+          $lr = Join-Path $dist "3rdparty/lama"
+          $lb = Join-Path $lr "bin"
+          New-Item -ItemType Directory -Force -Path $lb | Out-Null
+          Set-Content -Path (Join-Path $lb "inpaint.exe") -Encoding ASCII -Value "fake-inpaint-payload"
+          Set-Content -Path (Join-Path $lr "LICENSE") -Encoding ASCII -Value "fake lama license (sandbox)"
         } }
     )
     foreach ($inj in $injections) {
@@ -773,6 +814,41 @@ if (Test-Path (Join-Path $ffBin "ffmpeg.exe")) {
   Write-Host "3rdparty/ffmpeg staged (video decode runtime + GPL-3.0 license)"
 } else {
   Write-Host "WARN: FFmpeg not fetched -- video support degrades to not-imported in this build"
+}
+
+# 3.67) AI erase runtime (LaMa ONNX executor) + its license texts.
+# inpaint.exe is invoked as a SEPARATE PROCESS (see core/EraseRunner), so the
+# executor + ONNX Runtime dll + model travel next to the exe -- the exact layout
+# fetch_lama.ps1 produces at native/3rdparty/lama/{bin,.}, so dev and release
+# resolve identically (<exe dir>/3rdparty/lama/bin/inpaint.exe).
+# Licenses: the model LICENSE lives ONE LEVEL ABOVE bin (fetch_lama.ps1 places
+# it at 3rdparty/lama/LICENSE, mirroring the libraw/ffmpeg precedent). The
+# onnxruntime MIT notice is NOT downloadable by fetch_lama.ps1 -- its only
+# copy is the version-controlled ../inpaint/THIRD_PARTY-NOTICE.md (relative to
+# this script's dir, same idiom as $docsDir above), so stage it from there.
+# Absent-notice with a staged exe is an honest C9 throw: a shipped binary
+# without its MIT attribution is exactly what the license rules forbid.
+$lamaBin = Join-Path $root "3rdparty/lama/bin"
+$lamaDocs = Join-Path $root "3rdparty/lama"
+if (Test-Path (Join-Path $lamaBin "inpaint.exe")) {
+  $dst = Join-Path $staging "3rdparty/lama/bin"
+  New-Item -ItemType Directory -Path $dst -Force | Out-Null
+  foreach ($f in @("inpaint.exe", "onnxruntime.dll", "lama.onnx")) {
+    $src = Join-Path $lamaBin $f
+    if (Test-Path $src) { Copy-Item $src $dst -Force }
+  }
+  New-Item -ItemType Directory -Path (Join-Path $staging "3rdparty/lama") -Force | Out-Null
+  foreach ($pair in @(
+    @{ src = (Join-Path $lamaDocs "LICENSE"); dst = (Join-Path $staging "3rdparty/lama") },
+    @{ src = (Join-Path $root "..\inpaint\THIRD_PARTY-NOTICE.md"); dst = (Join-Path $staging "3rdparty/lama") }
+  )) {
+    if (Test-Path $pair.src) { Copy-Item $pair.src $pair.dst -Force }
+    else { Write-Host ("WARN: lama license source not found: " + $pair.src) }
+  }
+  Assert-LamaLicense $staging
+  Write-Host "3rdparty/lama staged (LaMa executor + model LICENSE + ORT MIT notice)"
+} else {
+  Write-Host "WARN: lama not fetched -- AI erase degrades to blocked_no_model in this build"
 }
 
 # 3.7) contracts C2/C6 on the staged tree, before anything is zipped.

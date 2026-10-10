@@ -33,7 +33,7 @@
 - 源：<https://huggingface.co/Carve/LaMa-ONNX/resolve/main/lama_fp32.onnx>
 - 本地文件名固定为 `lama.onnx`，与 `inpaint.exe` **同目录**部署。
 - 计算并记录 SHA-256：`certutil -hashfile lama.onnx SHA256`，与 fetch_lama.ps1 的 pin 一致。
-- 同仓库一并取 `LICENSE` 文件放同目录（Task 8 release 打包时随附）。
+- Also fetch `LICENSE` from the same repo; it lands at `native\3rdparty\lama\LICENSE` (one level ABOVE `bin\`, per the libraw/ffmpeg precedent; shared contract of fetch_lama.ps1 and release.ps1 block 3.67 -- NOT inside `bin\`).
 
 运行时路径解析：父端 `EraseRunner` 把子进程 cwd 设为 exe 所在目录，代码里用相对路径
 `L"lama.onnx"` 打开——即 `<exe目录>\lama.onnx`。
@@ -84,7 +84,8 @@ cmake --build build --config Release
     inpaint.exe
     onnxruntime.dll                     (及包内其它 onnxruntime*.dll)
     lama.onnx                           (fetch_lama.ps1 落盘)
-    LICENSE                             (模型许可，随包)
+
+<appdir>\3rdparty\lama\LICENSE          (model license, one level ABOVE bin, not inside bin\)
 ```
 
 父端 `EraseRunner::findExe()` 第一候选即 `<appdir>/3rdparty/lama/bin/inpaint.exe`；
