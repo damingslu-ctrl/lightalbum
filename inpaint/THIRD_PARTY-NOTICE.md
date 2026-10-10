@@ -43,8 +43,11 @@ SOFTWARE.
 - 上游代码：advimman/lama（LaMa: Resolution-robust Large Mask Inpainting with
   Convolutions, WACV 2022），其仓库代码为 MIT 许可；本仓库不编译、不链接该代码。
 - 运行时权重：Carve/LaMa-ONNX 的 `lama_fp32.onnx`（重命名 `lama.onnx`），为上述模型的
-  ONNX 导出。**权重文件自身的许可证以 HuggingFace 仓库内 LICENSE 文件为准**，由
-  Task 7 的 fetch_lama.ps1 强制与模型同目录落盘，Task 8 release 打包时随附。
-- 构建者义务：首次定版 SHA-256 时（fetch_lama.ps1 fail-closed pin），人工核对 HF 仓库页
-  声明的权重许可是否允许随 LightAlbum 发行包再分发；若不允许，改为用户自取模式并更新
-  release 打包口径。本 NOTICE 不替模型权重背书许可。
+  ONNX 导出。**权重许可：Apache-2.0**（HF 模型卡声明 `license: apache-2.0`；仓库内并无
+  LICENSE blob，故许可文本取自导出方官方 GitHub 源 `Carve-Photos/lama`），由
+  fetch_lama.ps1 硬校验后落盘为 `3rdparty/lama/LICENSE`（`bin/` 上一级），发行打包时
+  随附（契约 C9）。
+- 构建者义务（**2026-10-11 已履行**）：SHA-256 已以实测钉死
+  `1FAEF530…EB68D6`（208,044,816 B）；已人工核对 Apache-2.0 再分发条款——允许随
+  LightAlbum 发行包再分发，条件为随附许可文本并保留归属，由 C9 与 fetch 落盘纪律
+  满足；无需改为用户自取模式。本 NOTICE 不替模型权重之外的任何内容背书许可。

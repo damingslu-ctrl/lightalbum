@@ -132,6 +132,45 @@
 
 ---
 
+## ONNX Runtime + LaMa 模型（AI 消除执行器，2.35.0 起）
+
+- 项目：
+  1. **Microsoft ONNX Runtime** — https://github.com/microsoft/onnxruntime ，
+     版本钉死 **v1.19.2**（Windows x64 C/C++ 发行包）；许可 **MIT**，全文见
+     `inpaint/THIRD_PARTY-NOTICE.md`（打包时随附为 `3rdparty/lama/THIRD_PARTY-NOTICE.md`）。
+  2. **LaMa 图像修复模型权重** — HuggingFace `Carve/LaMa-ONNX` 的
+     `lama_fp32.onnx`（advimman/lama, WACV 2022 的 ONNX 导出），本地落名 `lama.onnx`；
+     实测 208,044,816 B，SHA-256 已钉死于 `native/fetch_lama.ps1`。许可 **Apache-2.0**
+     （模型卡 `license: apache-2.0`；HF 仓库内无 LICENSE blob，文本取自导出方官方
+     GitHub 源 `Carve-Photos/lama`），全文随包 `3rdparty/lama/LICENSE`。
+
+### 为什么以「独立进程」方式使用（合规要点）
+
+`inpaint.exe`（仓库根 `inpaint/` 独立项目，MSVC 或 MinGW 构建）经 QProcess 帧协议与
+宿主通信（`native/src/core/EraseRunner.cpp`）：
+
+- ONNX Runtime **只链进子进程映像**，`LightAlbum.exe` 零新增链接依赖——与 FFmpeg/LibRaw
+  同理属 *mere aggregation*；MIT 义务由「声明随子进程产物分发」满足。
+- 模型权重是**运行期数据文件**，不链接进任何可执行映像；Apache-2.0 允许随发行包再分发，
+  条件是附许可文本并保留归属（由打包契约 C9 保障）。
+- 零云端：`inpaint.exe` 不发起任何网络请求；权重与 dll 由用户/构建者**主动运行
+  `fetch_lama.ps1` 才落盘**（fail-closed：SHA 未钉死拒绝真实下载、LICENSE 缺失拒绝落盘），
+  未 fetch 则发行包不含这 4 件 lama 产物。
+
+### 随包分发
+
+- `native/release.ps1` 契约 **C9**：staging 内出现 `3rdparty/lama/bin/inpaint.exe` 则必须
+  同场携带 `3rdparty/lama/LICENSE` 与 `3rdparty/lama/THIRD_PARTY-NOTICE.md`，缺一即
+  **打包中止并 throw**（`-SelfTest` 注入臂已证明该契约能触发）。
+- `fetch_lama.ps1` 为纯 ASCII（PS 5.1 兼容，同 `fetch_libraw.ps1` 教训）。
+
+### 仓库不收录二进制
+
+`native/3rdparty/lama/bin/` 与 `inpaint/build/` 均已列入 `.gitignore`（零二进制惯例）；
+`inpaint.exe` 只能由构建者按 `inpaint/BUILD.md` 本地构建，任何脚本不下载它。
+
+---
+
 ## 随包分发
 
 - `docs/THIRD_PARTY_NOTICE.md` 在打包时复制为 dist 根目录的 **`THIRD_PARTY-NOTICE.md`**，
