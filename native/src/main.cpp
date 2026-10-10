@@ -24,6 +24,7 @@
 #include <QLocale>
 #include <cstdio>
 #include <cmath>
+#include <algorithm>          // 2.35.0 std::reverse / std::rotate（O 组顺序不变性排列）
 #include "core/Library.h"
 #include "core/LumenEngine.h"
 #include "core/LumenAgent.h"
@@ -3391,6 +3392,100 @@ int runFaceClusterQa()
         if (!ok) fails << what;
     };
 
+    // ---- 2.35.0 两遍聚类纯函数判别组（O/C/S/D，铁律34：O 在旧贪心下必红）----
+    // ---- 合成 embedding（确定性，无随机，铁律29）----
+    // ⚠ 打包必须走本机 float 字节序（与 FaceCluster::cosine 的 reinterpret_cast 读法
+    //   同源）。禁用 QDataStream（默认大端会把小端读法打成乱序）。见 unitVec 注释同款坑。
+    auto blob = [](std::initializer_list<double> v) {
+        QByteArray b;
+        for (double x : v) { const float f = float(x);
+                             b.append(reinterpret_cast<const char*>(&f), 4); }
+        return b;
+    };
+    // 两个"不同人"方向（正交）+ 各自近重复（同向量+固定微扰），dim=8 足够证算法
+    const QByteArray A  = blob({1,0,0,0,0,0,0,0});
+    const QByteArray Ap = blob({0.999,0.02,0,0,0,0,0,0});     // 同人噪声代表
+    const QByteArray App= blob({0.998,0.03,-0.01,0,0,0,0,0});
+    const QByteArray B  = blob({0,0,0,0,0,0,0,1});
+    const QByteArray Bp = blob({0,0,0,0,0,0,0.02,0.999});
+    const double kThr = 0.4;
+
+    struct CI { QString p; QByteArray e; };
+    auto build = [](QVector<CI> in){
+        QVector<ClusterInput> o; for (auto& x : in){ ClusterInput c; c.path=x.p; c.emb=x.e; o<<c; } return o; };
+
+    // 集合意义分区（不依赖簇序）：path→成员集合，规范化后比较
+    auto partitionKey = [](const ClusterResult& r){
+        QStringList parts;
+        for (const ClusterGroup& g : r.groups) {
+            QStringList m = g.paths; m.sort();
+            if (!m.isEmpty()) parts << m.join(QChar('|'));
+        }
+        parts.sort(); return parts.join(QChar(';'));
+    };
+
+    // ---- O 顺序不变性 ----
+    {
+        const QVector<ClusterInput> base = build({{"A1",A},{"A2",Ap},{"A3",App},{"B1",B},{"B2",Bp},{"A4",A},{"C1",blob({0.5,0.5,0,0,0,0,0,0})},{"C2",blob({0.5,0.5,0.02,0,0,0,0,0})},{"B3",B},{"A5",Ap},{"B4",Bp},{"A6",App}});
+        const QVector<ClusterInput> p1 = base;
+        QVector<ClusterInput> p2 = base; std::reverse(p2.begin(), p2.end());
+        QVector<ClusterInput> p3 = base; for (int i=1;i<p3.size();++i) std::swap(p3[i], p3[i-1]); // 定步乱排
+        const QString k1 = partitionKey(FaceCluster::cluster(p1, kThr, 1));
+        const QString k2 = partitionKey(FaceCluster::cluster(p2, kThr, 1));
+        const QString k3 = partitionKey(FaceCluster::cluster(p3, kThr, 1));
+        note(k1 == k2 && k2 == k3, QStringLiteral("O order-invariance: partition differs across permutations"));
+    }
+
+    // ---- C 质心优于头 ----
+    {
+        const QVector<ClusterInput> in = build({{"A1",A},{"A2",Ap},{"A3",App},{"B1",B},{"B2",Bp}});
+        const ClusterResult r = FaceCluster::cluster(in, kThr, 1);
+        bool better = true;
+        for (const ClusterGroup& g : r.groups) {
+            if (g.paths.size() < 2) continue;
+            // 成员向量集合
+            QVector<QByteArray> memb; for (const QString& p : g.paths) for (const ClusterInput& c : in) if (c.path==p) memb<<c.emb;
+            const QByteArray& head = memb.first();
+            // 质心 = 成员均值再单位化
+            const int n = memb.first().size()/4;
+            QVector<double> acc(n, 0.0);
+            for (const QByteArray& e : memb){ const float* f=(const float*)e.constData(); for(int d=0;d<n;++d) acc[d]+=f[d]; }
+            double s=0; QByteArray cb(n*4,'\0'); float* o=(float*)cb.data();
+            for(int d=0;d<n;++d){ double v=acc[d]/memb.size(); o[d]=(float)v; s+=v*v; }
+            double inv = s>0?1.0/std::sqrt(s):0.0; for(int d=0;d<n;++d) o[d]=(float)(o[d]*inv);
+            double sumCent=0, sumHead=0;
+            for (const QByteArray& e : memb){ sumCent += FaceCluster::cosine(e, cb); sumHead += FaceCluster::cosine(e, head); }
+            if (!(sumCent/memb.size() >= sumHead/memb.size() - 1e-9)) better = false;
+        }
+        note(better, QStringLiteral("C centroid must not be worse than head-rep per cluster"));
+    }
+
+    // ---- S 同人必同簇（3 排列）----
+    {
+        const QVector<ClusterInput> base = build({{"A1",A},{"A2",Ap},{"A3",App},{"B1",B},{"B2",Bp}});
+        bool ok = true;
+        auto sameCluster = [](const ClusterResult& r, const QString& x, const QString& y){
+            for (const ClusterGroup& g : r.groups) if (g.paths.contains(x) && g.paths.contains(y)) return true; return false; };
+        for (int rot = 0; rot < 3; ++rot) {
+            QVector<ClusterInput> in = base; std::rotate(in.begin(), in.begin()+rot, in.end());
+            const ClusterResult r = FaceCluster::cluster(in, kThr, 1);
+            if (!sameCluster(r,"A1","A2") || !sameCluster(r,"A2","A3") || !sameCluster(r,"B1","B2")) ok = false;
+        }
+        note(ok, QStringLiteral("S same-person must cluster together across permutations"));
+    }
+
+    // ---- D 异人必分簇 ----
+    {
+        const QVector<ClusterInput> in = build({{"A1",A},{"A2",Ap},{"B1",B},{"B2",Bp}});
+        const ClusterResult r = FaceCluster::cluster(in, kThr, 1);
+        bool seps = true;
+        for (const ClusterGroup& g : r.groups)
+            if (g.paths.contains("A1") && (g.paths.contains("B1")||g.paths.contains("B2"))) seps = false;
+        note(seps, QStringLiteral("D different-person must not share a cluster"));
+    }
+
+    const bool pureOk = fails.isEmpty();   // 纯组判别快照（供 PASS 行四个标志）
+
     // ① 索引自检 + 守恒基线
     note(lib.verifyPathIndex(), QStringLiteral("verifyPathIndex false"));
     note(lib.photos().size() == kRows,
@@ -3527,8 +3622,8 @@ int runFaceClusterQa()
     const bool okAll = fails.isEmpty();
     if (okAll) {
         std::fprintf(stderr,
-            "LA_FACE_CLUSTER_QA PASS rows=%d broken=%d emb=1 conserve=1 group=1 write=1 sync=1 retrieve=1 rename=1\n",
-            kRows, int(broken));
+            "LA_FACE_CLUSTER_QA PASS rows=%d broken=%d emb=1 conserve=1 group=1 write=1 sync=1 retrieve=1 rename=1 order=%d centroid=%d sameper=%d diffper=%d\n",
+            kRows, int(broken), int(pureOk), int(pureOk), int(pureOk), int(pureOk));
     } else {
         std::fprintf(stderr, "LA_FACE_CLUSTER_QA FAIL broken=%d reason=%s\n",
                      int(broken), qPrintable(fails.join(QChar(';'))));
