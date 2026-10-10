@@ -4043,6 +4043,99 @@ int runEraseQa()
     return fails.isEmpty() ? 0 : 1;
 }
 
+// 2.35.0 真模型质量门（opt-in）。前提由名册 need=@("LA_LAMA_MODEL") 把关：变量缺失时
+// qa_runner 直接 [SKIP]，不启动本门。启动即意味着用户声称模型已 fetch：
+// 此时若执行器仍不存在、或解析到的是 stub，都必须诚实 FAIL（绝不空心放行，铁律34）。
+// M-A mask 外（1px 膨胀容差外）逐字节守恒；M-B mask 内确有合理改动；
+// M-C 同输入两次提交逐通道 ±1 幂等。反例 LA_ERASE_MODEL_QA_FORCE_BROKEN=1 → 全部转红。
+int runEraseModelQa()
+{
+    const bool broken = !qEnvironmentVariableIsEmpty("LA_ERASE_MODEL_QA_FORCE_BROKEN");
+    QStringList fails;
+    const auto note = [&fails](bool ok, const QString& w){ if (!ok) fails << w; };
+
+    EraseRunner runner;
+    if (!runner.ready()) {
+        std::fprintf(stderr, "LA_ERASE_MODEL_QA FAIL executor unavailable though LA_LAMA_MODEL set\n");
+        std::fflush(stderr); return 1;
+    }
+    if (!runner.exePath().endsWith(QStringLiteral("inpaint.exe"))) {
+        std::fprintf(stderr, "LA_ERASE_MODEL_QA FAIL resolved executor is stub, not real inpaint.exe: %s\n",
+                     qPrintable(runner.exePath()));
+        std::fflush(stderr); return 1;
+    }
+    if (broken) EraseRunner::qaInjectBadSize(true);   // 首次提交前打开
+
+    const int w = 256, h = 256;
+    QImage base(w, h, QImage::Format_RGB32);          // 确定性渐变（宿主无关，铁律29）
+    for (int y = 0; y < h; ++y) for (int x = 0; x < w; ++x)
+        base.setPixel(x, y, qRgb((x + y) & 0xff, (x * 2) & 0xff, (y * 3) & 0xff));
+    QImage mask(w, h, QImage::Format_ARGB32);
+    mask.fill(qRgba(0, 0, 0, 0));
+    for (int y = 96; y <= 160; ++y) for (int x = 96; x <= 160; ++x)
+        mask.setPixel(x, y, qRgba(0, 0, 0, 255));     // 65x65 实心方块
+
+    QImage out1; QString err;
+    if (!runner.run(1, base, mask, out1, &err) || out1.isNull() || out1.size() != base.size()) {
+        std::fprintf(stderr, "LA_ERASE_MODEL_QA FAIL first run: %s\n", qPrintable(err));
+        std::fflush(stderr);
+        EraseRunner::qaInjectBadSize(false);
+        return 1;
+    }
+    QImage out2;
+    const bool ok2 = runner.run(2, base, mask, out2, &err);
+
+    // mask 3x3 膨胀（真模型羽化可能轻推紧邻像素；膨胀环带之外必须逐字节相同）
+    auto dilated = [](const QImage& m, int x, int y) {
+        for (int dy = -1; dy <= 1; ++dy) for (int dx = -1; dx <= 1; ++dx) {
+            const int xx = x + dx, yy = y + dy;
+            if (xx < 0 || yy < 0 || xx >= m.width() || yy >= m.height()) continue;
+            if (qAlpha(m.pixel(xx, yy)) == 255) return true;
+        }
+        return false;
+    };
+    int farDiff = 0, inDiff = 0, inTot = 0; double inAbs = 0.0;
+    for (int y = 0; y < h; ++y) for (int x = 0; x < w; ++x) {
+        const QRgb a = base.pixel(x, y), b = out1.pixel(x, y);
+        const bool inside = qAlpha(mask.pixel(x, y)) == 255;
+        if (inside) {
+            ++inTot;
+            inAbs += (qAbs(qRed(a) - qRed(b)) + qAbs(qGreen(a) - qGreen(b)) + qAbs(qBlue(a) - qBlue(b))) / 3.0;
+            if (a != b) ++inDiff;
+        } else if (!dilated(mask, x, y) && a != b) {
+            ++farDiff;
+        }
+    }
+    note(farDiff == 0, QStringLiteral("M-A conservation outside dilated mask, diffs=%1").arg(farDiff));
+    note(inTot > 0 && double(inDiff) / inTot >= 0.6,
+         QStringLiteral("M-B mask-in change ratio=%1").arg(inTot ? double(inDiff) / inTot : -1.0));
+    note(inTot > 0 && inAbs / inTot < 40.0,
+         QStringLiteral("M-B mask-in mean-abs-diff=%1 (wild fill?)").arg(inAbs / (inTot ? inTot : 1)));
+
+    // M-C 幂等：同输入两次，逐通道 ±1
+    int maxCh = 0;
+    if (ok2 && !out2.isNull() && out2.size() == out1.size()) {
+        for (int y = 0; y < h; ++y) for (int x = 0; x < w; ++x) {
+            const QRgb p = out1.pixel(x, y), q = out2.pixel(x, y);
+            maxCh = qMax(maxCh, qAbs(qRed(p) - qRed(q)));
+            maxCh = qMax(maxCh, qAbs(qGreen(p) - qGreen(q)));
+            maxCh = qMax(maxCh, qAbs(qBlue(p) - qBlue(q)));
+        }
+        note(maxCh <= 1, QStringLiteral("M-C idempotence max channel delta=%1").arg(maxCh));
+    } else {
+        note(false, QStringLiteral("M-C second run unavailable: %1").arg(err));
+    }
+
+    EraseRunner::qaInjectBadSize(false);
+    if (fails.isEmpty())
+        std::fprintf(stderr, "LA_ERASE_MODEL_QA PASS broken=%d conserve=1 fill=1 idempotent=1\n", int(broken));
+    else
+        std::fprintf(stderr, "LA_ERASE_MODEL_QA FAIL broken=%d reason=%s\n",
+                     int(broken), qPrintable(fails.join(QChar(';'))));
+    std::fflush(stderr);
+    return fails.isEmpty() ? 0 : 1;
+}
+
 // 方向 C·人脸识别（方案A）门禁（LA_PERSON_QA）。
 // 不依赖外部 face_server：用 PersonDetector::setSyntheticForQa 注入确定结果，测
 // 「写回 + 检索契约 + 重命名契约」。反例 LA_PERSON_QA_FORCE_BROKEN=1 令 Library 写库但
@@ -5349,6 +5442,9 @@ int main(int argc, char *argv[])
 
     if (qEnvironmentVariableIsSet("LA_ERASE_QA"))
         return runEraseQa();
+
+    if (qEnvironmentVariableIsSet("LA_ERASE_MODEL_QA"))
+        return runEraseModelQa();
 
     // 方向 D 第五步 b：图库多选 + 批量工具条门禁
     if (qEnvironmentVariableIsSet("LA_GALLERY_BATCH_QA"))

@@ -425,7 +425,15 @@ $GateTable = @(
   # run() then returns an out-of-bounds-copy (null) QImage, applyResult rejects it, and the
   # done/pixel/recovery assertions turn RED together (rule 22: expectations never branch).
   # Tier: FULL (QProcess lifecycle, no external env). measuredMs=2205 from qa_runner -Timing (rule 13).
-  @{n="LA_ERASE_QA"; png=$false; measuredMs=2205}
+  @{n="LA_ERASE_QA"; png=$false; measuredMs=2205},
+  # 2.35.0 opt-in real LaMa quality gate. need=LA_LAMA_MODEL (path to fetched lama.onnx):
+  # absent -> qa_runner [SKIP] (non-regression, same as LA_SCAN_SMOKE/LA_RAW_QA). When the
+  # env IS set but inpaint.exe is missing/resolves to the stub -> honest FAIL (rule 34).
+  # Asserts M-A mask-out conservation (1px dilate tolerance), M-B plausible mask-in fill,
+  # M-C idempotence. measuredMs=0 = never yet run opted-in (precedent: LA_SCAN_SMOKE
+  # carries 0); E8 demands the KEY, not a guessed number. Backfill from -Timing the
+  # first time the gate is actually run with a fetched model (rule 25/31: data, not a guess).
+  @{n="LA_ERASE_MODEL_QA"; png=$false; need=@("LA_LAMA_MODEL"); measuredMs=0}
 )
 # Resolve a gate's tier. Absent key means "full" - the fail-safe default.
 function Get-GateTier {
