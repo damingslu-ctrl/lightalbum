@@ -3963,9 +3963,25 @@ int runTransitionQa()
     return okAll ? 0 : 1;
 }
 
+// 事件循环等待器：转 processEvents 直到谓词成立或超时（异步任务的门侧观察点；
+// 超时不放行——返回谓词终值交给 note 记红，绝不无声等待）。
+static bool eraseWaitUntil(const std::function<bool()>& pred, int timeoutMs)
+{
+    QElapsedTimer et; et.start();
+    while (!pred()) {
+        if (et.elapsed() >= timeoutMs) return pred();
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+    }
+    return true;
+}
+
 // 2.35.0 AI 消除契约门（离屏，走真 QProcess+帧协议，执行器=确定性 inpaint_stub）。
 // A 状态机 queued→running→done；B mask 外逐字节守恒 + mask 内确有改动；
-// C 子进程常驻（两次任务同 PID）；D kill 后下一任务自动重启恢复。
+// C 子进程常驻（两次任务同 PID）；D kill 后下一任务自动重启恢复；
+// E 非阻塞判别：桩飞行 220ms（LA_ERASE_STUB_DELAY_MS 模拟真模型秒级耗时）期间
+//   5ms QTimer 于 running→终态窗口内的 tick 增量 >=20——同步实现整段等待冻在
+//   singleShot 回调里 tick≈0 必红（RED 阶段对旧同步实现实测转红，判别力有凭据），
+//   线程化后 GUI 事件循环持续转必绿。期望式不随 broken 分支（铁律22）。
 // 反例 LA_ERASE_QA_FORCE_BROKEN=1 → run() 返回越界 copy 的 null 结果 →
 // applyResult 诚实拒收 → A/B/D 断言同红（期望值恒为规格值，铁律22；非空心，铁律34）。
 int runEraseQa()
@@ -3973,6 +3989,7 @@ int runEraseQa()
     const bool broken = !qEnvironmentVariableIsEmpty("LA_ERASE_QA_FORCE_BROKEN");
     QStringList fails;
     const auto note = [&fails](bool ok, const QString& w){ if (!ok) fails << w; };
+    qputenv("LA_ERASE_STUB_DELAY_MS", "220");     // E 组判别窗口（须在桩首次 spawn 前布防）
 
     EraseBridge bridge;
     // 契约门不允许"静默放行"：stub 缺席 = 开发构建坏了 → 诚实 FAIL（return 非 0 即 RED）。
@@ -3997,7 +4014,8 @@ int runEraseQa()
     // ---- A 状态机 + B 像素守恒 ----
     const int id = bridge.submit(base, mask);
     note(bridge.task(id) != nullptr, QStringLiteral("A: task missing after submit"));
-    QCoreApplication::processEvents();               // flush singleShot(0) 的 running→run→回填链
+    eraseWaitUntil([&]{ const EraseTask* t = bridge.task(id);     // 等终态（同步实现回调内即完成；异步靠 queued 送达）
+                       return t && (t->status == QLatin1String("done") || t->status == QLatin1String("failed")); }, 8000);
     const EraseTask* ct = bridge.task(id);
     note(ct && ct->status == QLatin1String("done"),
          QStringLiteral("A state machine reaches done, got=%1").arg(ct ? ct->status : QStringLiteral("?")));
@@ -4019,7 +4037,8 @@ int runEraseQa()
     qint64 pidA = 0, pidB = 0;
     bridge.qaPeekRunnerPid(pidA);
     const int id2 = bridge.submit(base, mask);
-    QCoreApplication::processEvents();
+    eraseWaitUntil([&]{ const EraseTask* t = bridge.task(id2);
+                        return t && (t->status == QLatin1String("done") || t->status == QLatin1String("failed")); }, 8000);
     bridge.qaPeekRunnerPid(pidB);
     note(pidA != 0 && pidA == pidB,
          QStringLiteral("C child process persists, pidA=%1 pidB=%2").arg(pidA).arg(pidB));
@@ -4027,10 +4046,44 @@ int runEraseQa()
     // ---- D 崩溃恢复（kill 后下一任务自动重启并走完状态机）----
     bridge.qaKillExecutorForTest();
     const int id3 = bridge.submit(base, mask);
-    QCoreApplication::processEvents();
+    eraseWaitUntil([&]{ const EraseTask* t = bridge.task(id3);
+                        return t && (t->status == QLatin1String("done") || t->status == QLatin1String("failed")); }, 8000);
     const EraseTask* t3 = bridge.task(id3);
     note(t3 && t3->status == QLatin1String("done"),
          QStringLiteral("D after child kill next task recovers, got=%1").arg(t3 ? t3->status : QStringLiteral("?")));
+
+    // ---- E 非阻塞判别（任务飞行期间 GUI 事件循环必须持续运转）----
+    // 判别式：running→终态窗口内 5ms tick 增量 >=20。同步实现该窗口整体冻在
+    // singleShot 回调（tick 增量为 0，必红）；线程化实现 worker 干活、GUI 转圈
+    // （220ms 窗口 ≈40+ tick，必绿）。期望值不随 broken 分支（铁律22）。
+    {
+        int ticks = 0;
+        QTimer tickTimer;
+        tickTimer.setInterval(5);
+        QObject::connect(&tickTimer, &QTimer::timeout, [&ticks]{ ++ticks; });
+        bool runningSeen = false;
+        int ticksAtRunning = -1, ticksAtTerminal = -1;
+        QObject::connect(&bridge, &EraseBridge::taskUpdated, &bridge, [&](int tid){
+            const EraseTask* t = bridge.task(tid);
+            if (!t) return;
+            if (t->status == QLatin1String("running")) {
+                if (!runningSeen) { runningSeen = true; ticksAtRunning = ticks; }
+            } else if (t->status == QLatin1String("done") || t->status == QLatin1String("failed")) {
+                if (ticksAtTerminal < 0) ticksAtTerminal = ticks;
+            }
+        });
+        tickTimer.start();
+        const int id4 = bridge.submit(base, mask);
+        const bool fin = eraseWaitUntil([&]{ const EraseTask* t = bridge.task(id4);
+                                 return t && (t->status == QLatin1String("done") || t->status == QLatin1String("failed")); }, 8000);
+        tickTimer.stop();
+        if (ticksAtTerminal < 0) ticksAtTerminal = ticks;
+        note(fin, QStringLiteral("E: task reached terminal within 8s"));
+        note(runningSeen && ticksAtRunning >= 0 && ticksAtTerminal >= ticksAtRunning,
+             QStringLiteral("E running observed before terminal, runT=%1 termT=%2").arg(ticksAtRunning).arg(ticksAtTerminal));
+        note(ticksAtTerminal - ticksAtRunning >= 20,
+             QStringLiteral("E event-loop ticks in flight=%1 (<20 => GUI was blocked)").arg(ticksAtTerminal - ticksAtRunning));
+    }
 
     // ---- A 补：无执行器时任务必须落 blocked_no_model（spec §2.3/§2.4-A 覆盖缺口）。----
     // qaSetForceNoExecutor 令 findExe 直接返回空 -> 全新 EraseBridge.modelReady()==false
@@ -4051,9 +4104,10 @@ int runEraseQa()
     EraseRunner::qaSetForceNoExecutor(false);            // QA 钩子复位（不得泄漏给后续门）
 
     EraseRunner::qaInjectBadSize(false);             // 静态钩子复位（不得泄漏给后续门）
+    qputenv("LA_ERASE_STUB_DELAY_MS", QByteArray()); // 桩延迟复位（同上纪律）
 
     if (fails.isEmpty())
-        std::fprintf(stderr, "LA_ERASE_QA PASS broken=%d state=1 conserve=1 persist=1 recover=1 blocked=1\n", int(broken));
+        std::fprintf(stderr, "LA_ERASE_QA PASS broken=%d state=1 conserve=1 persist=1 recover=1 blocked=1 nonblock=1\n", int(broken));
     else
         std::fprintf(stderr, "LA_ERASE_QA FAIL broken=%d reason=%s\n",
                      int(broken), qPrintable(fails.join(QChar(';'))));

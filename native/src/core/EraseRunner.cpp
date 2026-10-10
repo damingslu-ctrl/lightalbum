@@ -8,14 +8,15 @@
 #include <QStringList>
 
 // ---- QA 反例状态（打开→run() 返回越界 copy 得到的 null QImage）----
-static bool g_bad = false;
-void EraseRunner::qaInjectBadSize(bool on) { g_bad = on; }
+// 2.36.0：atomic——钩子由 GUI 线程写、owner(worker) 线程读，普通 bool 是数据竞争。
+static std::atomic<bool> g_bad{false};
+void EraseRunner::qaInjectBadSize(bool on) { g_bad.store(on); }
 
-// ---- QA 钩子：置 true 令 findExe 直接返回空 -> ensureStarted 失败 -> modelReady false
+// ---- QA 钩子：置 true 令探针/findExe 判空 -> ensureStarted 失败 -> modelReady false
 //      -> EraseBridge 把任务挂成 blocked_no_model（LA_ERASE_QA 的 spec §2.4-A 断言用）。
 //      复位纪律同 qaInjectBadSize：每次布防必显式解除，不得泄漏给后续门。----
-static bool g_forceNoExecutor = false;
-void EraseRunner::qaSetForceNoExecutor(bool on) { g_forceNoExecutor = on; }
+static std::atomic<bool> g_forceNoExecutor{false};
+void EraseRunner::qaSetForceNoExecutor(bool on) { g_forceNoExecutor.store(on); }
 
 EraseRunner::EraseRunner(QObject* parent) : QObject(parent) {}
 EraseRunner::~EraseRunner()
@@ -25,7 +26,7 @@ EraseRunner::~EraseRunner()
 
 static QString findExe()
 {
-    if (g_forceNoExecutor) return QString();               // QA：强制无执行器（blocked_no_model 断言用）
+    if (g_forceNoExecutor.load()) return QString();       // QA：强制无执行器（blocked_no_model 断言用）
     const QString appDir = QCoreApplication::applicationDirPath();
     QStringList candidates = {
         appDir + "/3rdparty/lama/bin/inpaint.exe",
@@ -36,30 +37,41 @@ static QString findExe()
     return QString();
 }
 
+// spec §2.3「exe 且 lama.onnx 均在」：真 inpaint.exe 缺同目录 lama.onnx = 执行器不可用，
+// 绝不 spawn 进程。待用户稍后运行 fetch_lama.ps1 补上模型，下一次 submit 自动重试
+// （executorAvailable 探针与 ensureStarted 共用本函数，每次调用重跑校验——热替换语义保留）。
+// MinGW 开发桩（候选 2，扁平 inpaint_stub.exe）无需模型，按文件名精确豁免。
+static bool modelOkFor(const QString& exe)
+{
+    if (exe.isEmpty()) return false;
+    if (QFileInfo(exe).fileName().compare(QStringLiteral("inpaint.exe"), Qt::CaseInsensitive) == 0
+        && !QFileInfo::exists(QDir(QFileInfo(exe).absolutePath()).filePath(QStringLiteral("lama.onnx"))))
+        return false;
+    return true;
+}
+
+bool EraseRunner::executorAvailable()
+{
+    const QString exe = findExe();                        // 纯文件存在性探测：不 spawn、不握手
+    return modelOkFor(exe);
+}
+
 bool EraseRunner::ensureStarted()
 {
-    if (ready_ && proc_ && proc_->state() == QProcess::Running) return true;
+    if (ready_ && proc_ && proc_->state() == QProcess::Running) { pidCache_ = proc_->processId(); return true; }
     if (exePath_.isEmpty()) exePath_ = findExe();
-    if (exePath_.isEmpty()) return false;
-    // spec §2.3「exe 且 lama.onnx 均在」：真 inpaint.exe 缺同目录 lama.onnx = 执行器不可用，
-    // 直接返回 false 且绝不 spawn 进程（ready_ 保持 false）。EraseBridge 据此把任务挂成
-    // blocked_no_model；待用户稍后运行 fetch_lama.ps1 补上模型，下一次 submit 自动重试
-    // （热替换保留：ensureStarted 每次调用都重跑下面这道 onnx 校验，所以即便 exePath_ 已缓存，
-    // 模型出现与否仍逐次复查，而非只在首查时判定一次）。MinGW 开发桩（候选 2，扁平
-    // inpaint_stub.exe）无需模型，按文件名精确豁免。
-    if (QFileInfo(exePath_).fileName().compare(QStringLiteral("inpaint.exe"), Qt::CaseInsensitive) == 0
-        && !QFileInfo::exists(QDir(QFileInfo(exePath_).absolutePath()).filePath(QStringLiteral("lama.onnx"))))
-        return false;
+    if (!modelOkFor(exePath_)) return false;              // 逐次复查（fetch 后自动可用，无需重启应用）
     if (!proc_) proc_ = new QProcess(this);
     if (proc_->state() != QProcess::NotRunning) { proc_->kill(); proc_->waitForFinished(1000); }
     proc_->setProcessChannelMode(QProcess::SeparateChannels);
     proc_->setWorkingDirectory(QFileInfo(exePath_).absolutePath());   // lama.onnx 同目录解析
     proc_->start(exePath_, {});
-    if (!proc_->waitForStarted(5000)) return false;
-    if (!proc_->waitForReadyRead(5000)) return false;
+    if (!proc_->waitForStarted(5000)) { pidCache_ = 0; return false; }
+    if (!proc_->waitForReadyRead(5000)) { pidCache_ = 0; return false; }
     const QByteArray line = proc_->readLine();
-    if (!line.startsWith("READY")) return false;
+    if (!line.startsWith("READY")) { pidCache_ = 0; return false; }
     ready_ = true;
+    pidCache_ = proc_->processId();
     return true;
 }
 
@@ -67,14 +79,32 @@ bool EraseRunner::ready() { return ensureStarted(); }
 
 bool EraseRunner::processId(qint64& pid) const
 {
-    if (proc_ && proc_->state() == QProcess::Running) { pid = proc_->processId(); return true; }
-    pid = 0; return false;
+    pid = pidCache_.load();                               // atomic 缓存：GUI 线程读，owner 线程写
+    return pid != 0;
 }
 
 void EraseRunner::qaKillChild()
 {
     if (proc_) proc_->kill();
     ready_ = false;
+    pidCache_ = 0;
+}
+
+void EraseRunner::shutdownOwned()
+{
+    if (proc_) {
+        proc_->terminate();
+        if (!proc_->waitForFinished(2000)) proc_->kill();
+        pidCache_ = 0;
+    }
+    ready_ = false;
+}
+
+void EraseRunner::submitAsync(quint32 id, QImage base, QImage mask)
+{
+    QImage out; QString err;
+    const bool ok = run(id, base, mask, out, &err);
+    emit taskFinished(id, ok, out, err);                  // 跨线程：queued 回调用方（Bridge 在 GUI）
 }
 
 bool EraseRunner::run(quint32 id, const QImage& base, const QImage& mask, QImage& out, QString* err)
@@ -85,6 +115,6 @@ bool EraseRunner::run(quint32 id, const QImage& base, const QImage& mask, QImage
     if (!proc_->waitForReadyRead(20000)) { if (err) *err = QStringLiteral("timeout"); qaKillChild(); return false; }
     if (!LaEraseProto::readResponse(proc_, id, out, err)) { qaKillChild(); return false; }
     // QA 反例：越界 copy → null QImage → applyResult 诚实拒收（期望值不动，铁律22）。
-    if (g_bad && !out.isNull()) out = out.copy(0, 0, out.width() + 1, out.height());
+    if (g_bad.load() && !out.isNull()) out = out.copy(0, 0, out.width() + 1, out.height());
     return true;
 }

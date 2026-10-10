@@ -4,11 +4,13 @@
 // （status=blocked_no_model），绝不伪造「消除成功」的结果。
 // 模型接入后的契约：执行器消费 queued 任务 → 产出 result → applyResult() 回填
 // → taskUpdated(id) 通知 UI 回填预览。
+// 2.36.0 线程化契约：对 GUI 侧调用方（RetouchPage 等）API 一字不变；modelReady()
+// 变为纯文件探针（零 spawn 零阻塞），任务经专属 QThread 上的 EraseRunner 异步执行，
+// 终态 queued 回 GUI 线程回填（tasks_ 表仍由 GUI 线程独占——AiWriter 单写者先例）。
 #include <QObject>
 #include <QVector>
 #include <QImage>
 #include <QString>
-#include "EraseRunner.h"  // 编译必需偏离：下方 QA 钩子为内联转发，需要 EraseRunner 完整类型（仅前置声明不够）
 
 struct EraseTask {
     int id = 0;
@@ -20,18 +22,21 @@ struct EraseTask {
 };
 
 class EraseRunner;
+class QThread;
 
 class EraseBridge : public QObject {
     Q_OBJECT
 public:
     explicit EraseBridge(QObject* parent = nullptr);
+    ~EraseBridge() override;
 
-    // 模型槽位：路径由环境变量/设置注入；执行器未接入前 isReady() 恒 false。
+    // 模型槽位：路径由环境变量/设置注入。
     void setModelSlot(const QString& path) { modelPath_ = path; }
     QString modelPath() const { return modelPath_; }
-    bool modelReady() const;
+    bool modelReady() const;      // 纯探针：执行器与模型文件在场即 true，不 spawn 不握手
 
     // 提交消除任务：返回 taskId（>0）。无模型 → status=blocked_no_model（任务保留、不执行）。
+    // 有执行器 → queued→running（GUI 即时可见）→ worker 完成后 done | failed。
     int submit(const QImage& base, const QImage& mask);
 
     // 回填通道（模型接入后由本地执行器调用）：result 尺寸须与 base 一致。
@@ -40,15 +45,19 @@ public:
     const EraseTask* task(int id) const;
 
     // QA 钩子（LA_ERASE_QA 专用，不在正式 UI 路径上调用）：
-    void qaKillExecutorForTest() { if (runner_) runner_->qaKillChild(); }
-    void qaPeekRunnerPid(qint64& pid) const { if (runner_) runner_->processId(pid); }
+    void qaKillExecutorForTest();
+    void qaPeekRunnerPid(qint64& pid) const;
 
 signals:
-    void taskUpdated(int id);   // 状态变化（入列 / 挂起 / 完成 / 失败）
+    void taskUpdated(int id);   // 状态变化（入列 / 开跑 / 挂起 / 完成 / 失败）
 
 private:
+    void ensureThread();                                        // 懒建专属线程 + runner 搬迁
+    void onTaskFinished(quint32 id, bool ok, QImage out, QString err);   // queued 回 GUI 线程
+
     QString modelPath_;          // 槽位（空 = 未配置）
     QVector<EraseTask> tasks_;
     int nextId_ = 1;
-    class EraseRunner* runner_ = nullptr;
+    EraseRunner* runner_ = nullptr;   // owner 线程 = thread_（懒创建，无父子搬迁限制）
+    QThread* thread_ = nullptr;
 };

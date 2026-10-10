@@ -1,10 +1,50 @@
 #include "EraseBridge.h"
 #include "EraseRunner.h"
-#include <QTimer>
+#include <QMetaObject>
+#include <QThread>
 
-EraseBridge::EraseBridge(QObject* parent) : QObject(parent), runner_(new EraseRunner(this)) {}
+EraseBridge::EraseBridge(QObject* parent) : QObject(parent) {}
 
-bool EraseBridge::modelReady() const { return runner_ && runner_->ready(); }
+EraseBridge::~EraseBridge()
+{
+    if (thread_) {
+        // 拆除顺序：queued 让 owner 线程自尽子进程（terminate+waitForFinished 必须在
+        // owner 线程做），再 quit+wait。飞行中任务至多 20s：拆桥等它跑完，诚实代价。
+        QMetaObject::invokeMethod(runner_, [r = runner_]{ r->shutdownOwned(); }, Qt::QueuedConnection);
+        thread_->quit();
+        thread_->wait();
+        // 线程已结束，对象销毁无竞争（Qt 惯例：finished 后跨线程 delete 安全）
+        delete runner_;
+        delete thread_;
+        runner_ = nullptr;
+        thread_ = nullptr;
+    }
+}
+
+bool EraseBridge::modelReady() const { return EraseRunner::executorAvailable(); }
+
+void EraseBridge::ensureThread()
+{
+    if (thread_) return;
+    thread_ = new QThread(this);
+    thread_->setObjectName(QStringLiteral("EraseRunnerThread"));
+    runner_ = new EraseRunner;                    // 无父子：moveToThread 要求
+    runner_->moveToThread(thread_);
+    connect(runner_, &EraseRunner::taskFinished, this, &EraseBridge::onTaskFinished);  // queued 回 GUI
+    thread_->start();
+}
+
+void EraseBridge::onTaskFinished(quint32 id, bool ok, QImage out, QString err)
+{
+    EraseTask* q = nullptr;
+    for (EraseTask& x : tasks_) if (x.id == int(id)) { q = &x; break; }
+    if (!q) return;                               // 任务表里已无此 id（防御；正常不发生）
+    applyResult(int(id), ok ? out : QImage());    // 内部置 done/failed 并 emit taskUpdated
+    if (!ok) {
+        for (EraseTask& y : tasks_) if (y.id == int(id)) y.note = err;
+        emit taskUpdated(int(id));
+    }
+}
 
 int EraseBridge::submit(const QImage& base, const QImage& mask)
 {
@@ -18,19 +58,33 @@ int EraseBridge::submit(const QImage& base, const QImage& mask)
     emit taskUpdated(t.id);
 
     if (t.status == QLatin1String("queued")) {
-        QTimer::singleShot(0, this, [this, id = t.id]() {
-            EraseTask* q = nullptr;
-            for (EraseTask& x : tasks_) if (x.id == id) { q = &x; break; }
-            if (!q) return;
-            q->status = QStringLiteral("running");
-            emit taskUpdated(id);
-            QImage out; QString err;
-            const bool ok = runner_->run(quint32(id), q->base, q->mask, out, &err);
-            applyResult(id, ok ? out : QImage());
-            if (!ok) { for (EraseTask& y : tasks_) if (y.id == id) y.note = err; emit taskUpdated(id); }
-        });
+        ensureThread();
+        // GUI 线程即时置 running 并通知——2.35.0 之前 running 设在同步回调内经常来不及
+        // 绘制；现在 worker 慢慢干，UI 先拿到 running 态。多任务天然 FIFO：worker 事件
+        // 队列串行消费，协议顺序字节流不受并发影响。
+        for (EraseTask& x : tasks_) if (x.id == t.id) x.status = QStringLiteral("running");
+        emit taskUpdated(t.id);
+        const int id = t.id;
+        const QImage b = t.base, m = t.mask;
+        QMetaObject::invokeMethod(runner_, [r = runner_, id, b, m]{ r->submitAsync(quint32(id), b, m); },
+                                  Qt::QueuedConnection);
     }
     return t.id;
+}
+
+void EraseBridge::qaKillExecutorForTest()
+{
+    if (runner_) {
+        QMetaObject::invokeMethod(runner_, [r = runner_]{ r->qaKillChild(); }, Qt::QueuedConnection);
+        // 同线程事件队列 FIFO：紧随其后 queued 的 submitAsync 必先见到 kill 结果
+        // （ensureStarted 对 NotRunning 自动重启），D 组崩溃恢复语义不变。
+    }
+}
+
+void EraseBridge::qaPeekRunnerPid(qint64& pid) const
+{
+    if (runner_) runner_->processId(pid);         // atomic 缓存读，跨线程安全
+    else pid = 0;
 }
 
 bool EraseBridge::applyResult(int taskId, const QImage& result)
