@@ -4032,10 +4032,28 @@ int runEraseQa()
     note(t3 && t3->status == QLatin1String("done"),
          QStringLiteral("D after child kill next task recovers, got=%1").arg(t3 ? t3->status : QStringLiteral("?")));
 
+    // ---- A 补：无执行器时任务必须落 blocked_no_model（spec §2.3/§2.4-A 覆盖缺口）。----
+    // qaSetForceNoExecutor 令 findExe 直接返回空 -> 全新 EraseBridge.modelReady()==false
+    // -> submit() 不 spawn 任何进程、只把任务挂成 blocked_no_model。正/反例双臂皆成立：
+    // executor-forcing 缝先于 g_bad 生效（根本没有进程可 spawn，越界 copy 反例无从触发），
+    // 故此断言双臂恒 PASS、不进 fails、不随 broken 切换（铁律22 期望值不动）。
+    EraseRunner::qaSetForceNoExecutor(true);
+    {
+        EraseBridge blockedBridge;                        // 本地作用域，独立于上面的 bridge
+        note(blockedBridge.modelReady() == false,
+             QStringLiteral("A modelReady false when executor forced absent"));
+        const int blockedId = blockedBridge.submit(base, mask);
+        QCoreApplication::processEvents();                // blocked 态不起跑，状态应恒为 blocked_no_model
+        const EraseTask* bt = blockedBridge.task(blockedId);
+        note(bt && bt->status == QLatin1String("blocked_no_model"),
+             QStringLiteral("A blocked_no_model park without executor, got=%1").arg(bt ? bt->status : QStringLiteral("?")));
+    }
+    EraseRunner::qaSetForceNoExecutor(false);            // QA 钩子复位（不得泄漏给后续门）
+
     EraseRunner::qaInjectBadSize(false);             // 静态钩子复位（不得泄漏给后续门）
 
     if (fails.isEmpty())
-        std::fprintf(stderr, "LA_ERASE_QA PASS broken=%d state=1 conserve=1 persist=1 recover=1\n", int(broken));
+        std::fprintf(stderr, "LA_ERASE_QA PASS broken=%d state=1 conserve=1 persist=1 recover=1 blocked=1\n", int(broken));
     else
         std::fprintf(stderr, "LA_ERASE_QA FAIL broken=%d reason=%s\n",
                      int(broken), qPrintable(fails.join(QChar(';'))));

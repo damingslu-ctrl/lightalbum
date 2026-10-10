@@ -13,12 +13,13 @@
 
 - **进程边界**：新增独立 MSVC 项目 `inpaint/`（ONNX Runtime C++ + SAIC-MLP LaMa ONNX 模型，
   约 191MB），不进 MinGW 主构建、主程序零新链接依赖；宿主侧新增 `core/EraseRunner`
-  （常驻 QProcess 子进程封装）以帧协议通信：握手 `READY <w> <h> <maxbytes>` → `TASK` +
-  PPM(P6) 底图 + PGM(P5) 蒙版 → `OK/ERR` + PPM(P6) 结果。**三重隔离**：ABI（MSVC CRT 与
+  （常驻 QProcess 子进程封装）以帧协议通信：握手 `READY 1`（就绪）/ `READY 0`（模型缺失，任务诚实
+  失败且支持稍后 fetch 重试）→ `TASK <id> <w> <h> <nb> <nm>` + 裸 RGB888 底图 + 裸 alpha-mask
+  字节流 → 应答 `OK <id> <w> <h> <no>`（+ 裸 RGB888 结果）/ `ERR <id> <原因>`。**三重隔离**：ABI（MSVC CRT 与
   宿主 MinGW 彻底解耦）、崩溃半径（子进程挂掉只影响当次任务，下一任务自动重拉）、许可
   （模型分发独立于主程序）——沿用 dcraw/ffmpeg 的独立进程先例。
-- **契约变真**：`modelReady()` 从桩的恒 false 改为「inpaint.exe 与 lama.onnx 均在且握手
-  成功」；任务状态机 `queued → running → done | failed`（新增 `running`）；未取模型时保持
+- **契约变真**：`modelReady()` 从桩的恒 false 改为「inpaint.exe 与 lama.onnx 均在（stub 除外）
+  且 `READY` 握手成功」；任务状态机 `queued → running → done | failed`（新增 `running`）；未取模型时保持
   诚实 `blocked_no_model`（note 注明零云端/未接入，绝不伪报 done）；失败判定 = 进程非零
   退出 / `ERR` / 结果为空或尺寸 ≠ 底图 → 走既有 `failed` 分支。`RetouchPage` UI 本轮
   零改动（早已 100% 接线）。
@@ -37,6 +38,9 @@
   `release.ps1 -SelfTest` 注入「删 LICENSE → C9 转红」。默认包**不含模型**——仅当用户
   主动 fetch 后，release 打包才含 4 件 lama 产物（inpaint.exe / onnxruntime.dll /
   lama.onnx / LICENSE）。
+- **已知限制**：消除推理当前是 GUI 线程同步调用（`EraseRunner::run()` 内 `waitForReadyRead`
+  20s 超时，由 `EraseBridge` 的 `QTimer::singleShot(0)` 在 GUI 线程触发）——真模型下单张任务可能
+  让 UI 秒级冻结、`running` 态可能来不及刷新；异步化（后台线程投递 + 进度回报）列为下一迭代。
 
 ### 新增 - 人脸聚类两遍精炼（路线 2）
 

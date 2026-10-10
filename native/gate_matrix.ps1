@@ -424,8 +424,9 @@ $GateTable = @(
   # LA_ERASE_QA_FORCE_BROKEN=1 arms EraseRunner::qaInjectBadSize BEFORE the first submit;
   # run() then returns an out-of-bounds-copy (null) QImage, applyResult rejects it, and the
   # done/pixel/recovery assertions turn RED together (rule 22: expectations never branch).
-  # Tier: FULL (QProcess lifecycle, no external env). measuredMs=2205 from qa_runner -Timing (rule 13).
-  @{n="LA_ERASE_QA"; png=$false; measuredMs=2205},
+  # Tier: FULL (QProcess lifecycle, no external env). measuredMs=2210 from qa_runner -Timing (rule 13).
+  # E1-group sub-assert: qaSetForceNoExecutor(true) -> fresh bridge parks its task as blocked_no_model (modelReady false, no process spawn); passes in both arms (rule 22).
+  @{n="LA_ERASE_QA"; png=$false; measuredMs=2210},
   # 2.35.0 opt-in real LaMa quality gate. need=LA_LAMA_MODEL (path to fetched lama.onnx):
   # absent -> qa_runner [SKIP] (non-regression, same as LA_SCAN_SMOKE/LA_RAW_QA). When the
   # env IS set but inpaint.exe is missing/resolves to the stub -> honest FAIL (rule 34).
