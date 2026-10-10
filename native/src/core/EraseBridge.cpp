@@ -1,18 +1,10 @@
 #include "EraseBridge.h"
-#include <QFileInfo>
+#include "EraseRunner.h"
+#include <QTimer>
 
-EraseBridge::EraseBridge(QObject* parent)
-    : QObject(parent)
-{
-}
+EraseBridge::EraseBridge(QObject* parent) : QObject(parent), runner_(new EraseRunner(this)) {}
 
-bool EraseBridge::modelReady() const
-{
-    // 表单壳：执行器未接入 → 即使槽位配置了路径也恒 false（诚实状态）。
-    // 模型接入后改为：QFileInfo::exists(modelPath_) && runner 可加载。
-    Q_UNUSED(modelPath_);
-    return false;
-}
+bool EraseBridge::modelReady() const { return runner_ && runner_->ready(); }
 
 int EraseBridge::submit(const QImage& base, const QImage& mask)
 {
@@ -20,15 +12,24 @@ int EraseBridge::submit(const QImage& base, const QImage& mask)
     t.id = nextId_++;
     t.base = base;
     t.mask = mask.convertToFormat(QImage::Format_ARGB32);
-    if (modelReady()) {
-        t.status = QStringLiteral("queued");
-        t.note = QStringLiteral("任务已入列，等待本地模型执行");
-    } else {
-        t.status = QStringLiteral("blocked_no_model");
-        t.note = QStringLiteral("模型槽位空 · 任务挂起（本地模型未接入，零云端）");
-    }
+    if (modelReady()) { t.status = QStringLiteral("queued"); t.note = QStringLiteral("任务已入列，等待本地模型执行"); }
+    else { t.status = QStringLiteral("blocked_no_model"); t.note = QStringLiteral("模型槽位空 · 任务挂起（零云端）"); }
     tasks_.append(t);
     emit taskUpdated(t.id);
+
+    if (t.status == QLatin1String("queued")) {
+        QTimer::singleShot(0, this, [this, id = t.id]() {
+            EraseTask* q = nullptr;
+            for (EraseTask& x : tasks_) if (x.id == id) { q = &x; break; }
+            if (!q) return;
+            q->status = QStringLiteral("running");
+            emit taskUpdated(id);
+            QImage out; QString err;
+            const bool ok = runner_->run(quint32(id), q->base, q->mask, out, &err);
+            applyResult(id, ok ? out : QImage());
+            if (!ok) { for (EraseTask& y : tasks_) if (y.id == id) y.note = err; emit taskUpdated(id); }
+        });
+    }
     return t.id;
 }
 
