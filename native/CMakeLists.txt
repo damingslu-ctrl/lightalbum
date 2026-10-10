@@ -113,6 +113,8 @@ set(LA_SOURCES
     src/core/FaceCluster.cpp
     src/core/EraseBridge.h
     src/core/EraseBridge.cpp
+    src/core/EraseRunner.h
+    src/core/EraseRunner.cpp
 )
 
 # P2 地图数据（零外链编进 exe）
