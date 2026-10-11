@@ -1395,5 +1395,173 @@ Errors: %1 — %2</translation>
         <source>标记其余为待删</source>
         <translation>Mark the rest as to-remove</translation>
     </message>
+    <message>
+        <source>%1 · %2 张</source>
+        <translation>%1 · %2 photos</translation>
+    </message>
+    <message>
+        <source>%1 · %2年%3月</source>
+        <translation>%1 · %2-%3</translation>
+    </message>
+    <message>
+        <source>%1 · %2年%3月%4日</source>
+        <translation>%1 · %2-%3-%4</translation>
+    </message>
+    <message>
+        <source>%1 · %2年%3月-%4年%5月</source>
+        <translation>%1 · %2-%3 ~ %4-%5</translation>
+    </message>
+    <message>
+        <source>%1 · %2年%3月-%4月</source>
+        <translation>%1 · %2-%3 ~ %2-%4</translation>
+    </message>
+    <message>
+        <source>%1 · 未标注日期</source>
+        <translation>%1 · Undated</translation>
+    </message>
+    <message>
+        <source>%1年%2月</source>
+        <translation>%1-%2</translation>
+    </message>
+    <message>
+        <source>&lt;br&gt;&lt;span style=&apos;color:#8da996;&apos;&gt;（该区域暂无 GPS 作品，可导入带 GPS 的照片）&lt;/span&gt;</source>
+        <translation>&lt;br&gt;&lt;span style='color:#8da996;'&gt;(No GPS photos in this region yet; import photos with GPS)&lt;/span&gt;</translation>
+    </message>
+    <message>
+        <source>&lt;br&gt;&lt;span style=&apos;color:#8da996;&apos;&gt;（该国暂无 GPS 作品）&lt;/span&gt;</source>
+        <translation>&lt;br&gt;&lt;span style='color:#8da996;'&gt;(No GPS photos in this country yet)&lt;/span&gt;</translation>
+    </message>
+    <message>
+        <source>AI 分类</source>
+        <translation>AI Classify</translation>
+    </message>
+    <message>
+        <source>AI 分类服务未就绪</source>
+        <translation>AI Classification Service Not Ready</translation>
+    </message>
+    <message>
+        <source>AI 正在分类…</source>
+        <translation>AI is classifying…</translation>
+    </message>
+    <message>
+        <source>上一帧</source>
+        <translation>Previous Frame</translation>
+    </message>
+    <message>
+        <source>下一帧</source>
+        <translation>Next Frame</translation>
+    </message>
+    <message>
+        <source>人脸服务未就绪</source>
+        <translation>Face Service Not Ready</translation>
+    </message>
+    <message>
+        <source>全部故事 %1</source>
+        <translation>All Stories %1</translation>
+    </message>
+    <message>
+        <source>分类过程中断（可能已部分写入）。</source>
+        <translation>Classification interrupted (partial results may have been written).</translation>
+    </message>
+    <message>
+        <source>只看视频</source>
+        <translation>Videos Only</translation>
+    </message>
+    <message>
+        <source>将“%1”重命名为：</source>
+        <translation>Rename “%1” to:</translation>
+    </message>
+    <message>
+        <source>已为 %1 张照片写入场景分类。</source>
+        <translation>Wrote scene categories for %1 photos.</translation>
+    </message>
+    <message>
+        <source>已为 %1 张照片标注人物。</source>
+        <translation>Tagged people in %1 photos.</translation>
+    </message>
+    <message>
+        <source>已取消相似照片分析</source>
+        <translation>Similar-photo analysis cancelled</translation>
+    </message>
+    <message>
+        <source>已聚类 %1 张照片为不同人物。</source>
+        <translation>Clustered %1 photos into distinct people.</translation>
+    </message>
+    <message>
+        <source>库内照片均已分类，无需再跑。</source>
+        <translation>All photos are already classified; nothing left to run.</translation>
+    </message>
+    <message>
+        <source>库内照片均已标注人物，无需再聚类。要重新聚类请先清空人物标注。</source>
+        <translation>All photos already have people tags; nothing to re-cluster. To re-cluster, clear the people tags first.</translation>
+    </message>
+    <message>
+        <source>库内照片均已标注人物，无需再跑。</source>
+        <translation>All photos are already tagged with people; nothing left to run.</translation>
+    </message>
+    <message>
+        <source>故事：%1</source>
+        <translation>Story: %1</translation>
+    </message>
+    <message>
+        <source>智能聚类</source>
+        <translation>Smart Clustering</translation>
+    </message>
+    <message>
+        <source>正在查找相似照片…</source>
+        <translation>Finding similar photos…</translation>
+    </message>
+    <message>
+        <source>正在查找相似照片（%1 张）…</source>
+        <translation>Finding similar photos (%1)…</translation>
+    </message>
+    <message>
+        <source>正在编辑视频的一帧 · 导出为图片</source>
+        <translation>Editing a video frame · export as image</translation>
+    </message>
+    <message>
+        <source>正在聚类人物…</source>
+        <translation>Clustering people…</translation>
+    </message>
+    <message>
+        <source>正在识别人物…</source>
+        <translation>Detecting people…</translation>
+    </message>
+    <message>
+        <source>第 %1 秒 / 共 %2 秒</source>
+        <translation>Second %1 / %2</translation>
+    </message>
+    <message>
+        <source>聚类过程中断（可能已部分写入）。</source>
+        <translation>Clustering interrupted (partial results may have been written).</translation>
+    </message>
+    <message>
+        <source>视频</source>
+        <translation>Video</translation>
+    </message>
+    <message>
+        <source>识别人物</source>
+        <translation>Detect People</translation>
+    </message>
+    <message>
+        <source>识别过程中断（可能已部分写入）。</source>
+        <translation>Detection interrupted (partial results may have been written).</translation>
+    </message>
+    <message>
+        <source>请先启动本地 CLIP 分类服务（D:\lightalbum_ai\start_classifier.bat），再点「AI 分类」。仅支持本机回环地址，照片不会外传。</source>
+        <translation>Please start the local CLIP service (D:\lightalbum_ai\start_classifier.bat), then click “AI Classify”. Loopback only; photos are never sent out.</translation>
+    </message>
+    <message>
+        <source>请先启动本地人脸服务（D:\lightalbum_ai\face_server.py），再点「智能聚类」。仅支持本机回环地址，照片不会外传。</source>
+        <translation>Please start the local face service (D:\lightalbum_ai\face_server.py), then click “Smart Clustering”. Loopback only; photos are never sent out.</translation>
+    </message>
+    <message>
+        <source>请先启动本地人脸服务（D:\lightalbum_ai\face_server.py），再点「识别人物」。仅支持本机回环地址，照片不会外传。</source>
+        <translation>Please start the local face service (D:\lightalbum_ai\face_server.py), then click “Detect People”. Loopback only; photos are never sent out.</translation>
+    </message>
+    <message>
+        <source>重命名人物</source>
+        <translation>Rename Person</translation>
+    </message>
 </context>
 </TS>

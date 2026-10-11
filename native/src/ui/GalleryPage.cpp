@@ -2,6 +2,8 @@
 #include "Theme.h"
 #include "../core/PhotoCluster.h"
 #include "../core/StoryGen.h"
+#include "../core/MotionKit.h"     // 2.34.0 动效引擎预设
+#include "../core/MotionFX.h"      // 2.34.0 引擎 UI 侧唯一封装
 #include "DedupDialog.h"
 #include "EditorialView.h"
 #include "GalleryCardPainter.h"
@@ -249,7 +251,13 @@ void GalleryPage::buildBatchBar()
         auto* b = new QPushButton(QStringLiteral("★%1").arg(i), batchBar_);
         b->setCursor(Qt::PointingHandCursor);
         b->setStyleSheet(btnCss);
-        connect(b, &QPushButton::clicked, this, [this, i] { emitBatchRating(i); });
+        connect(b, &QPushButton::clicked, this, [this, i, b] {
+            // 2.34 StarBounce：CSS 固定了字号 → 走辉光通道（曲线/时长仍出自引擎预设）。
+            MotionFx::glow(b, QColor(0x8d, 0xa9, 0x96), QColor(0xf4, 0xf7, 0xf4),
+                           Motion::kStarBounce, Motion::kPropGlow,
+                           qEnvironmentVariableIsEmpty("LA_GATE"));
+            emitBatchRating(i);
+        });
         bl->addWidget(b);
         starBtns_.append(b);
     }
@@ -317,14 +325,10 @@ void GalleryPage::qaFirePersonDetect() { emit personDetectRequested(); }
 void GalleryPage::qaFireFaceCluster() { emit faceClusterRequested(); }
 
 // ---- P16 chips：按数据 + 隐私门状态重建（空分类不展示，全空隐藏整条）----
+// 2.33 收纳：分类/人物/聚类/故事四条统一走 Lumen::fillChipRow
+// （前 kMaxVisibleChips=8 个平铺 + 「▾ N」溢出下拉），选中项自动提升可见。
 void GalleryPage::buildChips()
 {
-    // 清空旧 chips
-    for (QPushButton* b : catChips_) b->deleteLater();
-    catChips_.clear();
-    for (QPushButton* b : personChips_) b->deleteLater();
-    personChips_.clear();
-
     const QString chipCss = QStringLiteral(
         "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:999px;"
         "padding:4px 12px;color:#8da996;font-size:12px;}"
@@ -344,139 +348,94 @@ void GalleryPage::buildChips()
             persons.insert(n.trimmed());
     }
 
-    auto* chipLay = static_cast<QHBoxLayout*>(chipsBar_->layout());
-    auto addChip = [this, chipLay, chipCss](QVector<QPushButton*>& dst,
-                                            const QString& tag, const QString& label) {
-        auto* b = new QPushButton(label, chipsBar_);
-        b->setCheckable(true);
-        b->setCursor(Qt::PointingHandCursor);
-        b->setStyleSheet(chipCss);
-        b->setProperty("catTag", tag);
-        connect(b, &QPushButton::clicked, this, [this, b] {
-            const QString tag = b->property("catTag").toString();
-            activeCat_ = (activeCat_ == tag) ? QString() : tag;
-            model_.setCategoryFilter(activeCat_);
-            restyleChips();
-            updateCount();
-        });
-        chipLay->addWidget(b);
-        dst.append(b);
-    };
-
-    // 全部
-    {
-        auto* b = new QPushButton(QCoreApplication::translate("LightAlbum", "全部 %1").arg(nVisible), chipsBar_);
-        b->setCheckable(true);
-        b->setCursor(Qt::PointingHandCursor);
-        b->setStyleSheet(chipCss);
-        b->setProperty("catTag", QString());
-        connect(b, &QPushButton::clicked, this, [this] {
-            activeCat_.clear();
-            model_.setCategoryFilter(QString());
-            restyleChips();
-            updateCount();
-        });
-        chipLay->addWidget(b);
-        catChips_.append(b);
-    }
+    // —— 分类条：前 8 个平铺，其余收进「▾ N」溢出下拉 ——
+    QVector<Lumen::ChipDef> defs;
+    defs.append(Lumen::chipDef(QString(),
+        QCoreApplication::translate("LightAlbum", "全部 %1").arg(nVisible),
+        activeCat_.isEmpty()));
     // 固定次序 8 类（空分类不展示）
     for (const QString& cat : catOrder()) {
         const int c = catCnt.value(cat, 0);
-        if (c > 0) addChip(catChips_, cat,
-                           QStringLiteral("%1 %2").arg(cat).arg(c));
+        if (c > 0)
+            defs.append(Lumen::chipDef(cat,
+                QStringLiteral("%1 %2").arg(cat).arg(c), activeCat_ == cat));
     }
     // 其他（低置信度）与 未分类
     {
         const int c = catCnt.value(QStringLiteral("其他"), 0);
-        if (c > 0) addChip(catChips_, QCoreApplication::translate("LightAlbum", "其他"),
-                           QCoreApplication::translate("LightAlbum", "其他 %1").arg(c));
+        if (c > 0)
+            defs.append(Lumen::chipDef(QCoreApplication::translate("LightAlbum", "其他"),
+                QCoreApplication::translate("LightAlbum", "其他 %1").arg(c),
+                activeCat_ == QCoreApplication::translate("LightAlbum", "其他")));
     }
     {
         int unc = 0;
         for (const Photo& p : *photos_)
             if (!(hidePrivate_ && p.priv) && p.category.isEmpty()) ++unc;
-        if (unc > 0) addChip(catChips_, GalleryModel::kNoCategory,
-                             QCoreApplication::translate("LightAlbum", "未分类 %1").arg(unc));
+        if (unc > 0)
+            defs.append(Lumen::chipDef(GalleryModel::kNoCategory,
+                QCoreApplication::translate("LightAlbum", "未分类 %1").arg(unc),
+                activeCat_ == GalleryModel::kNoCategory));
     }
-    chipLay->addStretch(1);
-    chipsBar_->setVisible(catChips_.size() > 1);   // 只有「全部」= 无分类数据
-    restyleChips();
-
-    // 人物 chips（有数据才显示整条）
-    auto* personLay = static_cast<QHBoxLayout*>(personBar_->layout());
-    if (!persons.isEmpty()) {
-        auto* allBtn = new QPushButton(QCoreApplication::translate("LightAlbum", "全部人物"), personBar_);
-        allBtn->setCheckable(true);
-        allBtn->setCursor(Qt::PointingHandCursor);
-        allBtn->setStyleSheet(chipCss);
-        allBtn->setProperty("personTag", QString());
-        connect(allBtn, &QPushButton::clicked, this, [this] {
-            activePerson_.clear();
-            model_.setPersonFilter(QString());
-            restyleChips();
+    Lumen::fillChipRow(static_cast<QHBoxLayout*>(chipsBar_->layout()), chipsBar_, defs,
+        chipCss, QString(),
+        [this](const Lumen::ChipDef& d) {
+            activeCat_ = (activeCat_ == d.key) ? QString() : d.key;
+            model_.setCategoryFilter(activeCat_);
+            buildChips();     // 重建（选中项提升 / 取消后回落；人物/聚类/故事条随数据重建）
             updateCount();
         });
-        personLay->addWidget(allBtn);
-        personChips_.append(allBtn);
+    chipsBar_->setVisible(defs.size() > 1);   // 只有「全部」= 无分类数据
+
+    // —— 人物条：彩色姓名 chips，同样「前 8 + 溢出」；可见 chip 保留右键重命名，
+    //    隐藏人物先经菜单选中（自动提升进可见区）后再右键重命名 ——
+    auto* personLay = static_cast<QHBoxLayout*>(personBar_->layout());
+    if (!persons.isEmpty()) {
+        QVector<Lumen::ChipDef> pdefs;
+        pdefs.append(Lumen::chipDef(QString(),
+            QCoreApplication::translate("LightAlbum", "全部人物"), activePerson_.isEmpty()));
         QStringList sorted = QStringList(persons.cbegin(), persons.cend());
         std::sort(sorted.begin(), sorted.end());
         for (const QString& n : sorted) {
-            // A 轻增强：圆形头像徽标（首字母 + 确定性主题配色），替代纯文字 chip。
-            auto* b = new QPushButton(n.left(1), personBar_);
-            b->setFixedSize(34, 34);
-            b->setCheckable(true);
-            b->setCursor(Qt::PointingHandCursor);
-            b->setStyleSheet(QStringLiteral(
-                "QPushButton{background:%1;border:none;border-radius:17px;"
-                "color:#f4f7f4;font-size:14px;font-weight:bold;}"
-                "QPushButton:hover{border:2px solid #4fc08a;}"
-                "QPushButton:checked{border:2px solid #4fc08a;background:%1;}")
-                .arg(storyAvatarColor(n)));
-            b->setProperty("personTag", n);
-            b->setToolTip(n);
-            connect(b, &QPushButton::clicked, this, [this, b] {
-                const QString n = b->property("personTag").toString();
-                activePerson_ = (activePerson_ == n) ? QString() : n;
-                model_.setPersonFilter(activePerson_);
-                restyleChips();
-                updateCount();
-            });
-            // 方向 C·人脸识别（方案A）：右键重命名（视图不持写能力，只发信号）
-            b->setContextMenuPolicy(Qt::CustomContextMenu);
-            connect(b, &QPushButton::customContextMenuRequested, this, [this, b] {
-                const QString oldName = b->property("personTag").toString();
-                bool ok = false;
-                const QString newName = QInputDialog::getText(
-                    this,
-                    QCoreApplication::translate("LightAlbum", "重命名人物"),
-                    QCoreApplication::translate("LightAlbum", "将“%1”重命名为：").arg(oldName),
-                    QLineEdit::Normal, oldName, &ok);
-                if (!ok || newName.trimmed().isEmpty() || newName.trimmed() == oldName) return;
-                emit renamePersonRequested(oldName, newName.trimmed());
-            });
-            personLay->addWidget(b);
-            personChips_.append(b);
+            // 人物 chip：圆角标签显示完整姓名 + 确定性主题配色背景，
+            // 替代原先只显示首字母的圆形头像（用户无法辨识人物）。
+            Lumen::ChipDef d = Lumen::chipDef(n, n, activePerson_ == n);
+            d.bg = storyAvatarColor(n);
+            d.tooltip = n;
+            pdefs.append(d);
         }
-        personLay->addStretch(1);
+        const QString personCssTpl = QStringLiteral(
+            "QPushButton{background:%1;border:none;border-radius:11px;"
+            "padding:4px 12px;color:#f4f7f4;font-size:12px;font-weight:bold;}"
+            "QPushButton:hover{border:2px solid #4fc08a;padding:2px 10px;}"
+            "QPushButton:checked{border:2px solid #f4f7f4;padding:2px 10px;background:%1;}");
+        // 方向 C·人脸识别（方案A）：右键重命名（视图不持写能力，只发信号）
+        Lumen::fillChipRow(personLay, personBar_, pdefs, chipCss, personCssTpl,
+            [this](const Lumen::ChipDef& d) {
+                activePerson_ = (activePerson_ == d.key) ? QString() : d.key;
+                model_.setPersonFilter(activePerson_);
+                buildChips();
+                updateCount();
+            },
+            [this](QPushButton* b, const Lumen::ChipDef& d) {
+                b->setContextMenuPolicy(Qt::CustomContextMenu);
+                connect(b, &QPushButton::customContextMenuRequested, this, [this, d] {
+                    bool ok = false;
+                    const QString newName = QInputDialog::getText(
+                        this,
+                        QCoreApplication::translate("LightAlbum", "重命名人物"),
+                        QCoreApplication::translate("LightAlbum", "将“%1”重命名为：").arg(d.key),
+                        QLineEdit::Normal, d.key, &ok);
+                    if (!ok || newName.trimmed().isEmpty() || newName.trimmed() == d.key) return;
+                    emit renamePersonRequested(d.key, newName.trimmed());
+                });
+            });
         personBar_->setVisible(true);
     } else {
         personBar_->setVisible(false);
     }
     buildClusterBar();   // 方向 C：聚类条随数据/隐私门一并重建
     buildStoryBar();     // 人物故事方向·B：故事条随数据/隐私门一并重建
-    restyleChips();
-}
-
-void GalleryPage::restyleChips()
-{
-    for (QPushButton* b : catChips_) {
-        const QString tag = b->property("catTag").toString();
-        b->setChecked(activeCat_ == tag);
-    }
-    for (QPushButton* b : personChips_) {
-        const QString tag = b->property("personTag").toString();
-        b->setChecked(activePerson_ == tag);
-    }
 }
 
 // 方向 C 第一步：按当前维度重建聚类条。
@@ -485,8 +444,6 @@ void GalleryPage::restyleChips()
 void GalleryPage::buildClusterBar()
 {
     if (!clusterChipsBar_ || !photos_) return;
-    for (QPushButton* b : clusterChips_) b->deleteLater();
-    clusterChips_.clear();
     auto* lay = static_cast<QHBoxLayout*>(clusterChipsBar_->layout());
     if (!lay) {
         lay = new QHBoxLayout(clusterChipsBar_);
@@ -503,58 +460,40 @@ void GalleryPage::buildClusterBar()
     const QVector<PhotoCluster::Cluster> cs =
         PhotoCluster::cluster(*photos_, static_cast<PhotoCluster::Dim>(clusterDim_), hidePrivate_);
 
-    // 「全部」chip
+    // 2.33 收纳：簇 chips 统一「前 8 平铺 + 溢出下拉」（count 降序已在 core 层排好）
+    QVector<Lumen::ChipDef> defs;
     {
         int total = 0;
         for (const PhotoCluster::Cluster& c : cs) total += c.count;
-        auto* b = new QPushButton(
-            QCoreApplication::translate("LightAlbum", "全部 %1").arg(total), clusterChipsBar_);
-        b->setCheckable(true);
-        b->setCursor(Qt::PointingHandCursor);
-        b->setStyleSheet(chipCss);
-        b->setProperty("clusterKey", QString());
-        connect(b, &QPushButton::clicked, this, [this, b] {
-            activeClusterKey_ = b->property("clusterKey").toString();
-            if (activeClusterKey_.isEmpty()) model_.clearClusterFilter();
-            else model_.setClusterFilter(clusterDim_, activeClusterKey_);
-            restyleClusterChips();
-            updateCount();
-        });
-        lay->addWidget(b);
-        clusterChips_.append(b);
+        defs.append(Lumen::chipDef(QString(),
+            QCoreApplication::translate("LightAlbum", "全部 %1").arg(total),
+            activeClusterKey_.isEmpty()));
     }
-    // 各簇（count 降序已在 core 层排好；此处只呈现）
     for (const PhotoCluster::Cluster& c : cs) {
-        auto* b = new QPushButton(
+        Lumen::ChipDef d = Lumen::chipDef(c.key,
             QCoreApplication::translate("LightAlbum", "%1 %2").arg(c.label).arg(c.count),
-            clusterChipsBar_);
-        b->setCheckable(true);
-        b->setCursor(Qt::PointingHandCursor);
-        b->setStyleSheet(chipCss);
-        b->setProperty("clusterKey", c.key);
-        b->setToolTip(c.label);
-        connect(b, &QPushButton::clicked, this, [this, b] {
-            const QString k = b->property("clusterKey").toString();
-            activeClusterKey_ = (activeClusterKey_ == k) ? QString() : k;   // 再点=取消
+            activeClusterKey_ == c.key);
+        d.tooltip = c.label;
+        defs.append(d);
+    }
+    Lumen::fillChipRow(lay, clusterChipsBar_, defs, chipCss, QString(),
+        [this](const Lumen::ChipDef& d) {
+            activeClusterKey_ = (activeClusterKey_ == d.key) ? QString() : d.key;   // 再点=取消
             if (activeClusterKey_.isEmpty()) model_.clearClusterFilter();
             else model_.setClusterFilter(clusterDim_, activeClusterKey_);
-            restyleClusterChips();
+            buildClusterBar();   // 选中项提升 / 取消后回落
             updateCount();
         });
-        lay->addWidget(b);
-        clusterChips_.append(b);
-    }
-    lay->addStretch(1);
     // 只有「全部」= 当前维度无任何可分簇数据（如整库都没写省/市）→ 整条隐藏
-    clusterBar_->setVisible(clusterChips_.size() > 1);
-    restyleClusterChips();
+    clusterBar_->setVisible(defs.size() > 1);
 }
 
 // 方向 C：打开"相似照片"去重对话框。对话框发 markRequested → 本页转发为
 // batchMarkRequested（视图不持写能力，统一交给 MainWindow 落库）。
+// 隐私门：把当前锁态透传给对话框，锁定态下私密照片不进分析输入集。
 void GalleryPage::openDedup()
 {
-    DedupDialog dlg(photos_, thumbsDir_, this);
+    DedupDialog dlg(photos_, thumbsDir_, hidePrivate_, this);
     connect(&dlg, &DedupDialog::markRequested, this,
             [this](const QStringList& paths) {
                 emit batchMarkRequested(paths, QStringLiteral("skip"));
@@ -562,21 +501,15 @@ void GalleryPage::openDedup()
     dlg.exec();
 }
 
-void GalleryPage::restyleClusterChips()
-{
-    for (QPushButton* b : clusterChips_)
-        b->setChecked(activeClusterKey_ == b->property("clusterKey").toString());
-}
-
 // 人物故事方向·B：按 StoryGen 纯函数聚合结果重建故事入口条。
 // 铁律：故事分组来自 core/StoryGen 纯函数（唯一真源），本函数只做「故事 → chip」呈现；
 // 分组的**排序与拆分规则不在 UI 层重写**（否则会与 LA_STORY_QA 各算一套）。
 // 纯视图态：点击 chip 只调 model_.setStoryFilter（path 集合包含匹配），不写库（铁律5）。
+// 2.33 收纳：不再建 60 个可见 chip（kCap 方案），统一「前 8 平铺 + 溢出下拉」；
+//   菜单项带完整「地点 · 时间 · 张数」，选中隐藏故事自动提升进可见区。
 void GalleryPage::buildStoryBar()
 {
     if (!storyBar_ || !photos_) return;
-    for (QPushButton* b : storyChips_) b->deleteLater();
-    storyChips_.clear();
     storyPaths_.clear();
     storyTitles_.clear();
     auto* lay = static_cast<QHBoxLayout*>(storyBar_->layout());
@@ -593,99 +526,62 @@ void GalleryPage::buildStoryBar()
         "color:#0c100d;font-weight:bold;}");
 
     const StoryGen::Result r = StoryGen::build(*photos_, 5, hidePrivate_);
-    if (r.stories.isEmpty()) { storyBar_->setVisible(false); return; }
+    if (r.stories.isEmpty()) { Lumen::clearChipRow(lay); storyBar_->setVisible(false); return; }
     for (const StoryGen::Story& s : r.stories) {
         storyPaths_.insert(s.id, s.paths);
         storyTitles_.insert(s.id, s.title);
     }
 
-    // 「全部故事」chip（清除故事筛选）
-    {
-        auto* b = new QPushButton(
-            QCoreApplication::translate("LightAlbum", "全部故事 %1").arg(r.stories.size()), storyBar_);
-        b->setCheckable(true);
-        b->setCursor(Qt::PointingHandCursor);
-        b->setStyleSheet(chipCss);
-        b->setProperty("storyId", QString());
-        connect(b, &QPushButton::clicked, this, [this, b] {
-            if (b->property("storyId").toString().isEmpty()) {
-                activeStoryId_.clear(); activeStoryTitle_.clear();
-                model_.setStoryFilter(QStringList());
-            }
-            restyleStoryChips();
-            updateCount();
-        });
-        lay->addWidget(b);
-        storyChips_.append(b);
-    }
-    // 各故事（点击→只看该故事的照片）。
-    // ★ 规模安全：真实库可能聚合出成千上万个故事，若每个故事都建一个 QWidget，
-    //   会瞬间创建数千控件、拖垮首屏并让规模门崩在构造期（铁律20 对拍实证）。
-    //   故按照片数降序取前 kCap 个展示，其余用「…共 M 个故事」提示；所有故事的
-    //   路径/标题仍全量写入 storyPaths_/storyTitles_，点可见 chip 始终可用。
+    // 按照片数降序（同 2.32 口径：大故事排前，平铺区优先露出）
     QVector<StoryGen::Story> ordered = r.stories;
     std::sort(ordered.begin(), ordered.end(), [](const StoryGen::Story& a, const StoryGen::Story& b) {
         if (a.photoCount != b.photoCount) return a.photoCount > b.photoCount;
         return a.begin < b.begin;
     });
-    const int kCap = 60;
-    const int shown = qMin(kCap, ordered.size());
-    for (int i = 0; i < shown; ++i) {
-        const StoryGen::Story& s = ordered[i];
-        auto* b = new QPushButton(
-            QCoreApplication::translate("LightAlbum", "%1 · %2 张").arg(s.title).arg(s.photoCount),
-            storyBar_);
-        b->setCheckable(true);
-        b->setCursor(Qt::PointingHandCursor);
-        b->setStyleSheet(chipCss);
-        b->setProperty("storyId", s.id);
-        b->setToolTip(s.title);
-        connect(b, &QPushButton::clicked, this, [this, b] {
-            const QString id = b->property("storyId").toString();
-            if (activeStoryId_ == id) {           // 再点=取消
+
+    QVector<Lumen::ChipDef> defs;
+    defs.append(Lumen::chipDef(QString(),
+        QCoreApplication::translate("LightAlbum", "全部故事 %1").arg(r.stories.size()),
+        activeStoryId_.isEmpty()));
+    for (const StoryGen::Story& s : ordered) {
+        Lumen::ChipDef d = Lumen::chipDef(s.id, s.place, activeStoryId_ == s.id);
+        d.tooltip = QCoreApplication::translate("LightAlbum", "%1 · %2 张").arg(s.title).arg(s.photoCount);
+        d.menuLabel = d.tooltip;   // 菜单里空间足，显示完整「地点 · 时间 · 张数」
+        defs.append(d);
+    }
+    Lumen::fillChipRow(lay, storyBar_, defs, chipCss, QString(),
+        [this](const Lumen::ChipDef& d) {
+            if (activeStoryId_ == d.key) {           // 再点=取消
                 activeStoryId_.clear(); activeStoryTitle_.clear();
-                model_.setStoryFilter(QStringList());
+                model_.clearStoryFilter();
             } else {
-                activeStoryId_ = id;
-                activeStoryTitle_ = storyTitles_.value(id);
-                model_.setStoryFilter(storyPaths_.value(id));
+                activeStoryId_ = d.key;
+                activeStoryTitle_ = storyTitles_.value(d.key);
+                model_.setStoryFilter(storyPaths_.value(d.key));
             }
-            restyleStoryChips();
+            buildStoryBar();   // 选中项提升 / 取消后回落
             updateCount();
+        },
+        [](QPushButton* b, const Lumen::ChipDef& d) {
+            // 2.34 ChipPop 入场：辉光弹一下（ChipPop 预设 glow 键；CSS 固定字号故不走字体）。
+            MotionFx::glow(b, d.checked ? QColor(0x0c, 0x10, 0x0d) : QColor(0x8d, 0xa9, 0x96),
+                           QColor(0xf4, 0xf7, 0xf4),
+                           Motion::kChipPop, Motion::kPropGlow,
+                           qEnvironmentVariableIsEmpty("LA_GATE"));
         });
-        lay->addWidget(b);
-        storyChips_.append(b);
-    }
-    if (ordered.size() > kCap) {
-        auto* more = new QPushButton(
-            QCoreApplication::translate("LightAlbum", "… 共 %1 个故事").arg(ordered.size()), storyBar_);
-        more->setEnabled(false);
-        more->setCursor(Qt::ArrowCursor);
-        more->setStyleSheet(QStringLiteral(
-            "QPushButton{background:transparent;border:none;color:#5d6b62;font-size:12px;}"));
-        lay->addWidget(more);
-    }
-    lay->addStretch(1);
     // 故事可能随隐私门/数据变化而消失，若当前激活故事已不存在则自动解除过滤
     if (!activeStoryId_.isEmpty() && !storyPaths_.contains(activeStoryId_)) {
         activeStoryId_.clear(); activeStoryTitle_.clear();
-        model_.setStoryFilter(QStringList());
+        model_.clearStoryFilter();
     }
     storyBar_->setVisible(true);
-    restyleStoryChips();
-}
-
-void GalleryPage::restyleStoryChips()
-{
-    for (QPushButton* b : storyChips_)
-        b->setChecked(activeStoryId_ == b->property("storyId").toString());
 }
 
 void GalleryPage::applyCategoryFilter(const QString& cat)
 {
     activeCat_ = cat;
     model_.setCategoryFilter(cat);
-    restyleChips();
+    buildChips();      // 2.33：选中态随重建给出，不再单独 restyle
     updateCount();
 }
 

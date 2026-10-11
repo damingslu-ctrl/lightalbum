@@ -1,6 +1,8 @@
 #include "CullPage.h"
 #include "../core/qaExit.h"   // 2.7.0 门禁自退契约（禁裸调 quit）
 #include "../core/RawDecode.h"  // 2.29.0 RAW 判据唯一真源（禁在本文件另立表）
+#include "../core/MotionKit.h"  // 2.34.0 动效引擎
+#include "../core/MotionFX.h"   // 2.34.0 心形粒子爆开
 #include "GalleryCardPainter.h" // 2.31.0 视频徽标统一绘制
 #include "Theme.h"
 #include <QVBoxLayout>
@@ -97,6 +99,7 @@ QVariant CullModel::data(const QModelIndex& idx, int role) const
         case MediaTypeRole: return r.item.mediaType;
         case DurRole:      return r.item.durSec;
         case IsVideoRole:  return r.item.isVideo;
+        case PrivRole:     return r.item.priv;
         case Qt::DecorationRole: return r.pm;
         default: break;
     }
@@ -114,16 +117,20 @@ void CullModel::setMark(int row, const QString& mark)
 QMap<QString,int> CullModel::categoryCounts() const
 {
     QMap<QString,int> m;
-    for (const Row& r : items_)
+    for (const Row& r : items_) {
+        if (hidePrivate_ && r.item.priv) continue;   // 2.33.0 锁定项不计入 chips 数字
         if (!r.item.category.isEmpty()) m[r.item.category]++;
+    }
     return m;
 }
 
 QVector<QString> CullModel::markedThumbs(const QString& mark) const
 {
     QVector<QString> v;
-    for (const Row& r : items_)
+    for (const Row& r : items_) {
+        if (hidePrivate_ && r.item.priv) continue;   // 2.33.0 锁定项不进锁定区/胶片条
         if (r.mark == mark) v.append(r.item.thumbPath);
+    }
     return v;
 }
 
@@ -167,6 +174,9 @@ bool CullProxy::filterAcceptsRow(int srow, const QModelIndex& sparent) const
     }
     if (videoOnly_) {
         if (!idx.data(CullModel::IsVideoRole).toBool()) return false;
+    }
+    if (hidePrivate_) {   // 2.33.0 隐私门：锁定时私密卡片不进结果网格（与图库同口径）
+        if (idx.data(CullModel::PrivRole).toBool()) return false;
     }
     return true;
 }
@@ -803,6 +813,12 @@ void CullPage::onMark(const QString& mark)
     if (!cur.isValid()) return;
     const QModelIndex src = proxy_->mapToSource(cur);
     model_->setMark(src.row(), mark);
+    if (mark == QStringLiteral("like") && qEnvironmentVariableIsEmpty("LA_GATE")) {
+        // 2.34 HeartBurst：心形粒子在卡片中心爆开（轨迹=引擎纯函数，瞬时层自毁）。
+        const QRect vr = view_->visualRect(cur);
+        MotionFx::heartBurst(view_->viewport(),
+                             vr.center() - view_->viewport()->geometry().topLeft());
+    }
     onSelectionChanged(cur, QModelIndex());
     rebuildLockArea();
     rebuildFilmstrip();
@@ -871,10 +887,13 @@ void CullPage::updateRadar()
     QVector<const Photo*> set;
     if (photos_) {
         if (keep.isEmpty()) {
-            for (const Photo& ph : *photos_)
+            for (const Photo& ph : *photos_) {
+                if (hidePrivate_ && ph.priv) continue;   // 2.33.0 隐私门
                 if (!ph.thumbFile.isEmpty()) set.append(&ph);
+            }
         } else {
             for (const Photo& ph : *photos_) {
+                if (hidePrivate_ && ph.priv) continue;   // 2.33.0 隐私门
                 if (ph.thumbFile.isEmpty()) continue;
                 if (keep.contains(QDir(thumbsDir_).filePath(ph.thumbFile))) set.append(&ph);
             }
@@ -924,12 +943,16 @@ void CullPage::selectByThumb(const QString& thumbPath)
     if (p.isValid()) { view_->setCurrentIndex(p); view_->scrollTo(p); }
 }
 
-void CullPage::onAnalyze()
+// 2.33.0：分析输入唯一收集口（onAnalyze / autoRun 共用）。
+// ★铁律 21：隐私过滤在**注入点**做 —— 锁定时私密照根本不进 CullEngine，
+//   因此报告、KPI、雷达、对决组员全都不含私密内容，无须各处再各判一次。
+QVector<CullInput> CullPage::collectInputs() const
 {
-    if (!photos_) return;
     QVector<CullInput> inputs;
+    if (!photos_) return inputs;
     inputs.reserve(photos_->size());
     for (const Photo& ph : *photos_) {
+        if (hidePrivate_ && ph.priv) continue;   // P16 隐私门
         if (ph.thumbFile.isEmpty()) continue;
         CullInput in;
         in.thumbPath = QDir(thumbsDir_).filePath(ph.thumbFile);
@@ -939,8 +962,24 @@ void CullPage::onAnalyze()
         in.isVideo = (ph.mediaType == QLatin1String("video"));
         in.durSec  = ph.durSec;     // 2.31.0 视频时长透传
         in.category = ph.category;
+        in.priv     = ph.priv;      // 2.33.0 透传：解锁态跑的报告，重新上锁后要能识别
         inputs.append(in);
     }
+    return inputs;
+}
+
+void CullPage::setHidePrivate(bool hide)
+{
+    hidePrivate_ = hide;
+    model_->setHidePrivate(hide);       // 锁定区 / 胶片条（markedThumbs）
+    proxy_->setHidePrivate(hide);       // 结果网格
+    updateRadar();                      // 样本数与分布随可见集合重算
+}
+
+void CullPage::onAnalyze()
+{
+    if (!photos_) return;
+    const QVector<CullInput> inputs = collectInputs();
     if (inputs.isEmpty()) {
         progress_->setText(QCoreApplication::translate("LightAlbum", "无可用缩略图"));
         return;
@@ -959,21 +998,7 @@ void CullPage::onAnalyze()
 
 void CullPage::autoRun(int cap)
 {
-    if (!photos_) return;
-    QVector<CullInput> inputs;
-    inputs.reserve(photos_->size());
-    for (const Photo& ph : *photos_) {
-        if (ph.thumbFile.isEmpty()) continue;
-        CullInput in;
-        in.thumbPath = QDir(thumbsDir_).filePath(ph.thumbFile);
-        parseDim(ph.dim, in.origW, in.origH);
-        // 2.29.0：isRaw 走唯一真源；isVideo 由 mediaType 驱动（不靠扩展名二次判定）
-        in.isRaw   = RawDecode::isRawExt(ph.path);
-        in.isVideo = (ph.mediaType == QLatin1String("video"));
-        in.durSec  = ph.durSec;     // 2.31.0 视频时长透传
-        in.category = ph.category;
-        inputs.append(in);
-    }
+    QVector<CullInput> inputs = collectInputs();
     if (inputs.isEmpty()) { progress_->setText(QCoreApplication::translate("LightAlbum", "无可用缩略图")); return; }
     if (cap > 0 && inputs.size() > cap) inputs = inputs.mid(0, cap);
     CullOptions opts;
@@ -1087,6 +1112,12 @@ void CullPage::buildDuelSession()
         g.members.append(kept);
         for (const QString& t : dg.similar)
             if (extra.contains(t)) g.members.append(extra.value(t));
+        // 2.33.0 隐私门：解锁时跑出的报告，重新上锁后对决组员必须剔掉私密项
+        //   （否则私密缩略图绕过锁定继续显示在 PK 面板上）
+        if (hidePrivate_) {
+            for (int i = g.members.size() - 1; i >= 0; --i)
+                if (g.members[i].priv) g.members.removeAt(i);
+        }
         if (g.members.size() < 2) continue;   // 单员不成对决
         for (int i = 0; i < g.members.size(); ++i) g.alive.append(i);
         duelGroups_.append(g);
@@ -1109,9 +1140,19 @@ void CullPage::duelExitMode()
     gridStack_->setCurrentIndex(model_->rowCount() > 0 ? 1 : 0);
 }
 
+// 反例钩子（铁律35）：LA_CULL_DUEL_QA_FORCE_BROKEN=1 让对决裁决根本不落标 —— 这正
+//   是「选了胜者、忘了标败者」的真实缺陷形状（败者会留在候选里被继续带走）。
+//   它只破坏数据通路，不碰 runDuelQa 里的判定式（铁律22）。
+static bool duelMarkBrokenForQa()
+{
+    static const bool broken = !qEnvironmentVariableIsEmpty("LA_CULL_DUEL_QA_FORCE_BROKEN");
+    return broken;
+}
+
 // 对决标记落库：被拒相似项不在模型 → 先升格入模再标记（总览/胶片条/雷达全联动）
 void CullPage::markDuelItem(const CullItem& it, const QString& mark)
 {
+    if (duelMarkBrokenForQa()) return;
     int row = model_->rowOfThumb(it.thumbPath);
     if (row < 0) row = model_->upsertItem(it, thumbsDir_);
     if (row >= 0) model_->setMark(row, mark);
@@ -1241,12 +1282,20 @@ void CullPage::runDuelQa(const QString& png)
                 ++gold;
         }
     }
-    img.save(png);
+    // ★判定必须存在：此前只打印数字并 requestExit(0)，而 runner 的 greenPat
+    //   含 "OK"（子串、大小写不敏感），markOk=0 里的小写 ok 也算绿 → 门永远不可能
+    //   红（铁律34：不可失败的断言即缺陷）。
+    //   阈值口径与其它离屏像素门一致：对决面板必须真画出金框（gold>0）、仲裁必须
+    //   真落一次 skip 标记、组队素材必须够两人对决、png 必须写成功。
+    const bool pass = groups > 0 && members0 >= 2 && markOk && gold > 0 && saveOk;
     std::fprintf(stderr,
-        "LA_CULL_DUEL_QA groups=%d members0=%d skipDelta=%d markOk=%d gold=%ld png=%s\n",
-        groups, members0, skipAfter - skipBefore, int(markOk), gold, qPrintable(png));
+        "LA_CULL_DUEL_QA %s groups=%d members0=%d skipDelta=%d markOk=%d gold=%ld\n",
+        pass ? "PASS" : "FAIL", groups, members0, skipAfter - skipBefore,
+        int(markOk), gold);
+    if (!pass)
+        std::fprintf(stderr, "LA_CULL_DUEL_QA FAIL png=%s\n", qPrintable(png));
     std::fflush(stderr);
-    QaExit::requestExit(0);   // 2.7.0：收敛到自退契约
+    QaExit::requestExit(0);   // 2.7.0：收敛到自退契约（红/绿由 FAIL 令牌判定）
 }
 
 #include "CullPage.moc"

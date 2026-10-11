@@ -6,6 +6,8 @@
 #include "HomePage.h"
 #include <QCoreApplication>
 #include "Theme.h"
+#include "../core/MotionKit.h"
+#include "../core/MotionDriver.h"
 #include <QLabel>
 #include <QToolButton>
 #include <QPushButton>
@@ -415,20 +417,24 @@ private:
             shown_ = (shown_ == 0) ? 1 : 0;
             return;
         }
-        // 横滑：入图从 dir 侧滑入并盖住静置的出图（只动 pos，出图不必动）
+        // 横滑：入图从 dir 侧滑入并盖住静置的出图（只动 pos，出图不必动）。
+        // 2.34：位移幅度=整宽×预设 offsetY 归一键（LightboxSlide 唯一真源），
+        // OutExpo 急起步长尾收，比原 OutCubic 更贴「翻页跟手」手感。
         const QRect r = imgRect();
         const int w = r.width();
         const QPoint dst = r.topLeft();
         incoming->move(dir > 0 ? dst.x() + w : dst.x() - w, dst.y());
-        auto* slide = new QPropertyAnimation(incoming, "pos");
-        slide->setDuration(420);
-        slide->setStartValue(incoming->pos());
-        slide->setEndValue(dst);
-        slide->setEasingCurve(QEasingCurve::OutCubic);
-        connect(slide, &QPropertyAnimation::finished, this, [outgoing] {
-            outgoing->hide();
+        auto* slide = new Motion::Driver(Motion::kLightbox, !animate, this);
+        connect(slide, &Motion::Driver::valueFor, this,
+                [incoming, dst, w, dir](const QByteArray& prop, double v) {
+            if (prop == Motion::kPropOffsetX)
+                incoming->move(int(dst.x() + v * w * dir), dst.y());
         });
-        slide->start(QAbstractAnimation::DeleteWhenStopped);
+        connect(slide, &Motion::Driver::finishedSignal, this, [outgoing, slide] {
+            outgoing->hide();
+            slide->deleteLater();
+        });
+        slide->start();
         shown_ = (shown_ == 0) ? 1 : 0;
     }
     QVector<const Photo*> photos_;

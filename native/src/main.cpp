@@ -4,6 +4,9 @@
 // 冒烟：LA_SMOKE=1 + QT_QPA_PLATFORM=offscreen → 载入真库后自动退出并打 LA_P1_SMOKE_OK
 #include <QApplication>
 #include <QCoreApplication>
+#include <QThread>                          // 2.33.0 LA_GUI_THREAD_QA：写回线程归属断言
+#include <QtConcurrent/QtConcurrentRun>     // 2.33.0 LA_GUI_THREAD_QA：起真实 worker 线程
+#include <QFuture>
 #include <QScreen>
 #include <QTimer>
 #include <QDateTime>
@@ -31,13 +34,17 @@
 #include "core/GeoIndex.h"
 #include "core/PhotoCluster.h"
 #include "core/PhotoDedup.h"
+#include "core/BrowseScope.h"   // 2.33.0 灯箱翻图作用域纯函数（LA_PRIVACY_QA 直调）
 #include "core/GeoHotspot.h"     // 方向 C·联动：地理热点聚合（与渲染/筛选同源）
 #include "core/Classifier.h"   // 方向 C·智能分类：CLIP 客户端桥（QA 门用合成钩子）
 #include "core/PersonDetector.h"  // 方向 C·人脸识别（方案A）：face_server 客户端桥（QA 门用合成钩子）
+#include "core/AiWriter.h"     // 单写者投递器：门在主线程，写回经 QueuedConnection + processEvents 落地
 #include "core/FaceCluster.h"     // 方向 C·人物自动聚类：阈值余弦聚类纯函数（QA 门直调）
 #include "core/StoryGen.h"        // 人物故事方向·B：自动故事相册纯函数（LA_STORY_QA 直调）
 #include "ui/GalleryCardPainter.h"  // 2.22.0 骨架屏纯函数（QA 门直调，铁律 20 同源）
 #include "ui/FullCache.h"           // 2.22.0 灯箱原图 LRU（QA 门直调）
+#include "core/MotionKit.h"         // 2.34.0 动效引擎纯函数（LA_MOTION_QA 直调，铁律 20 同源）
+#include "core/MotionDriver.h"      // 2.34.0 引擎 Qt 驱动器（LA_MOTION_QA 直调）
 #include "core/EraseBridge.h"   // 2.35.0 AI 消除契约门（LA_ERASE_QA 直调）
 #include "core/EraseRunner.h"   // 2.35.0 执行器 QA 钩子（qaInjectBadSize）
 #include <QTemporaryDir>
@@ -62,6 +69,7 @@
 #include "ui/GalleryModel.h"
 #include "ui/GalleryCardPainter.h"
 #include "ui/CullPage.h"
+#include "ui/DedupDialog.h"   // 2.33.0 隐私门：去重对话框私密照隔离（LA_DEDUP_PRIVACY_QA 直调）
 #include "core/CullEngine.h"
 #include "ui/RetouchPage.h"
 #include "ui/HomePage.h"
@@ -2163,6 +2171,8 @@ int runGeoLinkQa()
 //   E 缺失：缩略图缺失的图不入任何组、不崩溃
 //   F 保留最优：每组的保留者分辨率最高
 //   G ★守恒：每张合法照片恰好出现一次（反例令同一张被重复计入 → RED）
+//   H 两阶段契约（2.33.0）：describe()+group() 拆分后与 findGroups 等价，
+//     进度逐张上报、缺图诚实标 ok=false、取消即刻停下
 // 反例 LA_DEDUP_QA_FORCE_BROKEN=1 令 findGroups 把第 1 组保留者再塞进第 2 组
 //   dupPaths → 破坏守恒 → RED（打真实实现，非空心）。
 int runDedupQa()
@@ -2258,13 +2268,214 @@ int runDedupQa()
     chk(seen.contains(a1p) && seen.contains(a2p)
         && seen.contains(b1p) && seen.contains(b2p), "seenSet");
 
+    // H 两阶段拆分（2.33.0）：describe() 可进 worker 线程，group() 留在 GUI 线程取译文。
+    //   拆开后必须与一体式 findGroups 完全一致（同组数、同保留者、同重复集）。
+    //   断言只比 path/pixels，不比 reason 文案（铁律22：断言不依赖被测开关的语言环境）。
+    int progCalls = 0, progLast = -1;
+    const QVector<DedupDesc> descs = PhotoDedup::describe(
+        phs, dir, true, [&](int d) { ++progCalls; progLast = d; });
+    chk(progCalls == phs.size(), "progCalls");                  // 每张回调一次，不多不少
+    chk(progLast == phs.size(), "progLast");                    // 末次进度 = 总张数
+    chk(descs.size() == phs.size(), "descSize");
+    bool missingHonest = false;
+    for (const DedupDesc& d : descs)
+        if (d.path == d1p)
+            missingHonest = !d.ok && d.phash == 0 && d.md5.isEmpty() && d.pixels == 1000000;
+    chk(missingHonest, "descMissingHonest");                    // 缺图不得伪造特征
+    const QVector<DupGroup> split = PhotoDedup::group(descs, 8);
+    bool same = (split.size() == groups.size());
+    for (int i = 0; same && i < split.size(); ++i)
+        same = split[i].keptPath == groups[i].keptPath
+            && split[i].dupPaths == groups[i].dupPaths
+            && split[i].keptPixels == groups[i].keptPixels;
+    chk(same, "splitEqualsFused");
+    //   取消即刻停下：残缺结果不可继续用于分组（否则半个数据集就能"发现"重复）
+    const QVector<DedupDesc> cancelled = PhotoDedup::describe(
+        phs, dir, true, nullptr, [] { return true; });
+    chk(cancelled.isEmpty(), "cancelStops");
+
     PhotoDedup::setForceDoubleCountForQa(false);   // 还原（探针不污染环境）
 
     const bool pass = (checks > 0) && (marks == checks);
-    std::fprintf(stderr, "LA_DEDUP_QA %s marks=%d checks=%d groups=%d dups=%d broken=%d\n",
-                 pass ? "PASS" : "FAIL", marks, checks, groups.size(), dupTotal, int(broken));
+    std::fprintf(stderr, "LA_DEDUP_QA %s marks=%d checks=%d groups=%d dups=%d descs=%d broken=%d\n",
+                 pass ? "PASS" : "FAIL", marks, checks, groups.size(), dupTotal,
+                 descs.size(), int(broken));
     if (!pass)
         std::fprintf(stderr, "LA_DEDUP_QA failed: %s\n", qPrintable(failed.join(',')));
+    std::fflush(stderr);
+    return pass ? 0 : 1;
+}
+
+// 2.33.0 隐私门门禁（LA_PRIVACY_QA）：vault 锁态必须贯穿三个此前漏网的入口。
+//   A 灯箱翻图（BrowseScope::nextVisible 纯函数，与 PhotoLightbox::navigate 同源）
+//   B 选片页（CullModel/CullProxy：chips 计数、锁定区、结果网格、标记列表）
+//   C 相似照片去重对话框（DedupDialog：私密照必须在「注入点」就不进分析输入集，
+//     否则不分组、不渲染、还会被「标记其余为待删」误伤）
+// ★每条都成对断言「锁定态排除 + 解锁态照常」：只断言前者会退化成人人皆空的假绿
+//   （铁律34：不可失败的断言即缺陷）。正因这对角断言互相制衡，A/B 两段无需注入钩子；
+//   C 段另备真缺陷钩子，反例 LA_PRIVACY_QA_FORCE_BROKEN=1 令注入点过滤失效 → RED。
+// C 段同时守护去重后台化改造：分析必须能在超时内落地（qaWaitFinished 为真）。
+int runPrivacyQa()
+{
+    const bool broken = !qEnvironmentVariableIsEmpty("LA_PRIVACY_QA_FORCE_BROKEN");
+    DedupDialog::setForcePrivacyLeakForQa(broken);
+
+    int marks = 0, checks = 0;
+    QStringList failed;
+    auto chk = [&](bool ok, const char* tag = "") {
+        ++checks; if (ok) ++marks; else if (tag && *tag) failed << QString::fromLatin1(tag);
+    };
+
+    // ================= A 灯箱翻图：作用域 + 锁态 =================
+    {
+        auto slot = [](const char* p, bool priv) {
+            BrowseSlot s; s.path = QString::fromLatin1(p); s.priv = priv; return s;
+        };
+        // 公开/私密交替，任何「忽略锁态」或「把集合掏空」的实现都会在这里露馅
+        const QVector<BrowseSlot> seq = {
+            slot("p0", false), slot("v1", true), slot("p2", false),
+            slot("v3", true),  slot("p4", false) };
+        chk(BrowseScope::nextVisible(seq, 0, +1, true) == 2, "A1_lockedFwdSkipsPriv");
+        chk(BrowseScope::nextVisible(seq, 2, +1, true) == 4, "A2_lockedFwdAgain");
+        chk(BrowseScope::nextVisible(seq, 4, -1, true) == 2, "A3_lockedBackSkipsPriv");
+        chk(BrowseScope::nextVisible(seq, 4, +1, true) == -1, "A4_endNoWrap");
+        chk(BrowseScope::nextVisible(seq, 0, -1, true) == -1, "A5_startNoWrap");
+        chk(BrowseScope::nextVisible(seq, 0, +1, false) == 1, "A6_unlockedReachesPriv");
+        chk(BrowseScope::nextVisible(seq, 1, +1, false) == 2, "A7_unlockedFwd");
+        // 边界诚实：越界下标 / 0 步长 / 空集合 / 全私密集合都不得"退而求其次"
+        chk(BrowseScope::nextVisible(seq, -1, +1, true) == -1, "A8_negativeCur");
+        chk(BrowseScope::nextVisible(seq, seq.size(), +1, true) == -1, "A9_curOutOfRange");
+        chk(BrowseScope::nextVisible(seq, 0, 0, true) == -1, "A10_zeroDelta");
+        chk(BrowseScope::nextVisible(QVector<BrowseSlot>(), 0, 1, true) == -1, "A11_empty");
+        const QVector<BrowseSlot> allPriv = { slot("a", true), slot("b", true) };
+        chk(BrowseScope::nextVisible(allPriv, 0, +1, true) == -1, "A12_allPrivHidden");
+        chk(BrowseScope::nextVisible(allPriv, 0, +1, false) == 1, "A13_allPrivShown");
+    }
+
+    // ================= B 选片页：模型 + 代理 =================
+    {
+        auto item = [](const char* thumb, const char* cat, bool priv) {
+            CullItem it;
+            it.thumbPath = QString::fromLatin1(thumb);
+            it.category  = QString::fromLatin1(cat);
+            it.priv      = priv;
+            it.status    = QStringLiteral("candidate");
+            return it;
+        };
+        CullModel model;
+        model.setItems(QVector<CullItem>{
+            item("b0.jpg", "person", false), item("b1.jpg", "person", true),
+            item("b2.jpg", "travel", false), item("b3.jpg", "travel", true) },
+            QStringLiteral("."));
+        // 角色如实透传（隐私门的前提是数据本身诚实）
+        chk(model.data(model.index(1, 0), CullModel::PrivRole).toBool(), "B1_privRole");
+        chk(!model.data(model.index(0, 0), CullModel::PrivRole).toBool(), "B2_pubRole");
+        // ★默认锁：新构造的模型/代理不经任何 set 也必须排除私密（fail-safe）
+        model.setMark(0, QStringLiteral("like"));
+        model.setMark(1, QStringLiteral("like"));
+        const QStringList lockedMarks = model.markedThumbs(QStringLiteral("like"));
+        chk(lockedMarks == QStringList{ QStringLiteral("b0.jpg") }, "B3_markedLocked");
+        const QMap<QString,int> lockedCounts = model.categoryCounts();
+        chk(lockedCounts.value(QStringLiteral("person")) == 1
+            && lockedCounts.value(QStringLiteral("travel")) == 1, "B4_chipsLocked");
+        CullProxy proxy;
+        proxy.setSourceModel(&model);
+        chk(proxy.rowCount() == 2, "B5_proxyLocked");
+        // —— 解锁态：同一份数据必须全数回来（证明上面的 2 不是空集合）——
+        model.setHidePrivate(false);
+        proxy.setHidePrivate(false);
+        chk(model.markedThumbs(QStringLiteral("like")).size() == 2, "B6_markedUnlocked");
+        const QMap<QString,int> freeCounts = model.categoryCounts();
+        chk(freeCounts.value(QStringLiteral("person")) == 2
+            && freeCounts.value(QStringLiteral("travel")) == 2, "B7_chipsUnlocked");
+        chk(proxy.rowCount() == 4, "B8_proxyUnlocked");
+    }
+
+    // ================= C 去重对话框：注入点隔离 + 后台落地 =================
+    QTemporaryDir td;
+    const QString dir = td.path();
+    auto disc = [](int bg, int fg) {
+        QImage im(64, 64, QImage::Format_ARGB32);
+        im.fill(QColor(bg, bg, bg));
+        QPainter p(&im); p.setPen(Qt::NoPen); p.setBrush(QColor(fg, fg, fg));
+        p.drawEllipse(16, 16, 32, 32);
+        return im;
+    };
+    // 三对「字节完全相同」的重复：公开 x/y 各一对，私密 v 一对。
+    // 私密对是否成组 = 隐私门是否生效的可观测信号。
+    const QImage x = disc(255, 0), y = disc(0, 200), v = disc(120, 40);
+    x.save(QDir(dir).filePath(QStringLiteral("x1.png")), "PNG");
+    x.save(QDir(dir).filePath(QStringLiteral("x2.png")), "PNG");
+    y.save(QDir(dir).filePath(QStringLiteral("y1.png")), "PNG");
+    y.save(QDir(dir).filePath(QStringLiteral("y2.png")), "PNG");
+    v.save(QDir(dir).filePath(QStringLiteral("v1.png")), "PNG");
+    v.save(QDir(dir).filePath(QStringLiteral("v2.png")), "PNG");
+
+    auto mk = [](const QString& key, const QString& dim, bool priv) {
+        Photo p;
+        p.path      = QStringLiteral("D:/dup/%1.jpg").arg(key);
+        p.thumbFile = QStringLiteral("%1.png").arg(key);
+        p.dim       = dim;
+        p.priv      = priv;
+        return p;
+    };
+    QVector<Photo> ps;
+    ps.append(mk(QStringLiteral("x1"), QStringLiteral("4000x3000"), false));
+    ps.append(mk(QStringLiteral("x2"), QStringLiteral("2000x1500"), false));
+    ps.append(mk(QStringLiteral("v1"), QStringLiteral("3000x2000"), true));
+    ps.append(mk(QStringLiteral("v2"), QStringLiteral("3000x2000"), true));
+    ps.append(mk(QStringLiteral("y1"), QStringLiteral("1000x800"),  false));
+    ps.append(mk(QStringLiteral("y2"), QStringLiteral("1000x800"),  false));
+
+    auto privLeaked = [](const QVector<DupGroup>& gs) {
+        for (const DupGroup& g : gs) {
+            if (g.keptPath.contains(QStringLiteral("/v"))) return true;
+            for (const QString& d : g.dupPaths)
+                if (d.contains(QStringLiteral("/v"))) return true;
+        }
+        return false;
+    };
+    auto groupedCount = [](const QVector<DupGroup>& gs) {
+        int n = 0; for (const DupGroup& g : gs) n += 1 + g.dupPaths.size(); return n;
+    };
+
+    int lockedGroups = 0, unlockedGroups = 0, lockedInputs = 0, unlockedInputs = 0;
+    {   // —— 锁定态（hidePrivate=true）：私密照根本不该被看见，更不该被分析 ——
+        DedupDialog dlg(&ps, dir, true);
+        chk(dlg.qaWaitFinished(), "C1_lockedLanded");
+        const QStringList in = dlg.qaInputPaths();
+        lockedInputs = in.size();
+        chk(lockedInputs == 4, "C2_lockedInputCount");
+        chk(!in.contains(QStringLiteral("D:/dup/v1.jpg"))
+            && !in.contains(QStringLiteral("D:/dup/v2.jpg")), "C3_lockedInputNoPriv");
+        const QVector<DupGroup>& gs = dlg.qaGroups();
+        lockedGroups = gs.size();
+        chk(lockedGroups == 2, "C4_lockedGroups");
+        chk(!privLeaked(gs), "C5_lockedNoPrivGroup");
+        chk(groupedCount(gs) == 4, "C6_lockedConserve");   // 4 张公开照恰好各归组一次
+    }
+    {   // —— 解锁态：私密照照常参与（证明上面的绿不是空心绿）——
+        DedupDialog dlg(&ps, dir, false);
+        chk(dlg.qaWaitFinished(), "C7_unlockedLanded");
+        unlockedInputs = dlg.qaInputPaths().size();
+        chk(unlockedInputs == 6, "C8_unlockedInputCount");
+        const QVector<DupGroup>& gs = dlg.qaGroups();
+        unlockedGroups = gs.size();
+        chk(unlockedGroups == 3, "C9_unlockedGroups");
+        chk(privLeaked(gs), "C10_unlockedPrivGrouped");
+        chk(groupedCount(gs) == 6, "C11_unlockedConserve");
+    }
+
+    DedupDialog::setForcePrivacyLeakForQa(false);   // 还原（探针不污染环境）
+
+    const bool pass = (checks > 0) && (marks == checks);
+    std::fprintf(stderr,
+                 "LA_PRIVACY_QA %s marks=%d checks=%d lockedIn=%d unlockedIn=%d "
+                 "lockedGrp=%d unlockedGrp=%d broken=%d\n",
+                 pass ? "PASS" : "FAIL", marks, checks, lockedInputs, unlockedInputs,
+                 lockedGroups, unlockedGroups, int(broken));
+    if (!pass)
+        std::fprintf(stderr, "LA_PRIVACY_QA failed: %s\n", qPrintable(failed.join(',')));
     std::fflush(stderr);
     return pass ? 0 : 1;
 }
@@ -3207,8 +3418,12 @@ int runClassifyQa()
     note(lib.photos().size() == kRows,
          QStringLiteral("conserve size=%1 want=%2").arg(lib.photos().size()).arg(kRows));
 
-    // ② 跑分类（合成钩子 → 绕过网络，内部调 setCategories 写回）
-    const bool ok = Classifier::classify(&lib, thumbsDir);
+    // ② 跑分类（合成钩子 → 绕过网络，经 AiWriter 投递 setCategories 写回）。
+    //   门在主线程：AiWriter 以 QueuedConnection 把写回投递到 qaCtx，跑完 processEvents 落地。
+    QObject qaCtx;
+    AiWriter writer(&lib, &qaCtx);
+    const bool ok = Classifier::classify(lib.photos(), writer, thumbsDir);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 200);
     note(ok, QStringLiteral("classify returned false"));
 
     // DB / 内存读助手（独立连接读真实落盘值）
@@ -3297,6 +3512,185 @@ int runClassifyQa()
             kRows, int(broken));
     } else {
         std::fprintf(stderr, "LA_CLASSIFY_QA FAIL broken=%d reason=%s\n",
+                     int(broken), qPrintable(fails.join(QChar(';'))));
+    }
+    std::fflush(stderr);
+    return okAll ? 0 : 1;
+}
+
+// 方向 C·单写者线程归属门禁（LA_GUI_THREAD_QA，2.33.0 线程安全修复）。
+// 从**真实 worker 线程**经 AiWriter 投递写回，断言：① 写回落地（DB+内存）
+// ② 最后写库线程 == GUI 线程（Library::lastWriteThreadId 探针）
+// ③ 事件循环跑之前尚未落地（证明确实「排队」而非「当场写」，非空心）。
+// 四类写回各测一遍：categories / persons / Classifier 合成 / PersonDetector 合成。
+// 反例 LA_GUI_THREAD_QA_FORCE_BROKEN=1 → AiWriter 在调用线程当场写（即修复前形态）：
+//   期望式（==GUI 线程、落地前未泄漏）一字不改（铁律22），仅实现改变 → 变红。
+int runGuiThreadQa()
+{
+    const bool broken = !qEnvironmentVariableIsEmpty("LA_GUI_THREAD_QA_FORCE_BROKEN");
+
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::TempLocation)
+        + QStringLiteral("/la_gui_thread_qa");
+    QDir(dir).removeRecursively();
+    QDir().mkpath(dir);
+    const QString dbPath = QDir(dir).filePath(QStringLiteral("gui.db"));
+    QFile::remove(dbPath);
+    const QString thumbsDir = dir;   // 合成钩子不读盘，目录仅占位
+
+    // 造库：4 行，category/person 全空（字段对齐 Library::open 的 SELECT）
+    {
+        QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"),
+                                                   QStringLiteral("la_gt_seed"));
+        db.setDatabaseName(dbPath);
+        if (!db.open()) {
+            std::fprintf(stderr, "LA_GUI_THREAD_QA FAIL seedopen\n");
+            std::fflush(stderr);
+            return 2;
+        }
+        QSqlQuery q(db);
+        q.exec(QStringLiteral(
+            "CREATE TABLE photos (path TEXT PRIMARY KEY, rel TEXT, thumb TEXT, "
+            "missing INTEGER DEFAULT 0, exif_json TEXT, category TEXT, person TEXT, "
+            "private INTEGER DEFAULT 0, rating INTEGER DEFAULT 0, mark TEXT)"));
+        q.exec(QStringLiteral("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)"));
+        for (int i = 0; i < 4; ++i) {
+            q.prepare(QStringLiteral(
+                "INSERT INTO photos(path,rel,thumb,missing,exif_json,category,person,private,rating,mark) "
+                "VALUES(?,?,?,0,?,'','',0,0,'')"));
+            q.addBindValue(QStringLiteral("D:/g%1.jpg").arg(i));
+            q.addBindValue(QStringLiteral("g%1.jpg").arg(i));
+            q.addBindValue(QStringLiteral("t%1.jpg").arg(i));
+            q.addBindValue(QStringLiteral("{}"));
+            q.exec();
+        }
+        db.close();
+        QSqlDatabase::removeDatabase(QStringLiteral("la_gt_seed"));
+    }
+
+    QString err;
+    Library lib;
+    if (!lib.open(dbPath, &err)) {
+        std::fprintf(stderr, "LA_GUI_THREAD_QA FAIL open=%s\n", qPrintable(err));
+        std::fflush(stderr);
+        return 2;
+    }
+    // 本门只测线程归属；内存同步保持正常（同步缺陷由 CLASSIFY/PERSON_QA 覆盖）
+    Library::setForceCategoryNoSyncForQa(false);
+    Library::setForcePersonNoSyncForQa(false);
+
+    QObject guiCtx;   // 所在线程 = GUI 线程 = AiWriter 的目标写线程
+    const quintptr guiTid = reinterpret_cast<quintptr>(QThread::currentThread());
+    AiWriter::setForceInlineForQa(broken);   // 反例：调用线程当场写（修复前形态）
+
+    QStringList fails;
+    const auto note = [&fails](bool cond, const QString& what) { if (!cond) fails << what; };
+
+    const auto dbStr = [&dbPath](const QString& col, const QString& p) {
+        QString v;
+        QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"),
+                                                   QStringLiteral("la_gt_read"));
+        db.setDatabaseName(dbPath);
+        if (db.open()) {
+            QSqlQuery q(db);
+            q.prepare(QStringLiteral("SELECT %1 FROM photos WHERE path=?").arg(col));
+            q.addBindValue(p);
+            if (q.exec() && q.next()) v = q.value(0).toString();
+            db.close();
+        }
+        QSqlDatabase::removeDatabase(QStringLiteral("la_gt_read"));
+        return v;
+    };
+    const auto memCat = [&lib](const QString& p) {
+        for (const Photo& ph : lib.photos()) { if (ph.path == p) return ph.category; }
+        return QString();
+    };
+    const auto memPerson = [&lib](const QString& p) {
+        for (const Photo& ph : lib.photos()) { if (ph.path == p) return ph.person; }
+        return QString();
+    };
+
+    note(lib.verifyPathIndex(), QStringLiteral("verifyPathIndex false"));
+
+    // ---- A：AiWriter::categories 从 worker 线程投递 ----
+    {
+        QVector<CatItem> syn;
+        syn.append({QStringLiteral("D:/g0.jpg"), QStringLiteral("风光"), 0.9});
+        AiWriter writer(&lib, &guiCtx);
+        QtConcurrent::run([&writer, syn] { writer.categories(syn); }).waitForFinished();
+        note(memCat(QStringLiteral("D:/g0.jpg")).isEmpty(),
+             QStringLiteral("A leaked before event loop (inline write)"));
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 200);
+        note(memCat(QStringLiteral("D:/g0.jpg")) == QStringLiteral("风光"),
+             QStringLiteral("A mem g0=%1").arg(memCat(QStringLiteral("D:/g0.jpg"))));
+        note(dbStr(QStringLiteral("category"), QStringLiteral("D:/g0.jpg")) == QStringLiteral("风光"),
+             QStringLiteral("A db g0=%1").arg(dbStr(QStringLiteral("category"), QStringLiteral("D:/g0.jpg"))));
+        note(lib.lastWriteThreadId() == guiTid,
+             QStringLiteral("A lastWriteThread!=GUI tid=%1 gui=%2")
+                 .arg(lib.lastWriteThreadId()).arg(guiTid));
+    }
+
+    // ---- B：AiWriter::persons 从 worker 线程投递 ----
+    {
+        QVector<PersonItem> syn;
+        syn.append({QStringLiteral("D:/g1.jpg"), QStringLiteral("张三")});
+        AiWriter writer(&lib, &guiCtx);
+        QtConcurrent::run([&writer, syn] { writer.persons(syn); }).waitForFinished();
+        note(memPerson(QStringLiteral("D:/g1.jpg")).isEmpty(),
+             QStringLiteral("B leaked before event loop"));
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 200);
+        note(memPerson(QStringLiteral("D:/g1.jpg")) == QStringLiteral("张三"),
+             QStringLiteral("B mem g1=%1").arg(memPerson(QStringLiteral("D:/g1.jpg"))));
+        note(lib.lastWriteThreadId() == guiTid, QStringLiteral("B lastWriteThread!=GUI"));
+    }
+
+    // ---- C：Classifier::classify（合成钩子）在 worker 里跑，写回仍应落 GUI 线程 ----
+    {
+        QVector<CatItem> syn;
+        syn.append({QStringLiteral("D:/g2.jpg"), QStringLiteral("人像"), 0.9});
+        Classifier::setSyntheticForQa(syn);
+        const QVector<Photo> snap = lib.photos();
+        AiWriter writer(&lib, &guiCtx);
+        QtConcurrent::run([&writer, snap, thumbsDir] {
+            Classifier::classify(snap, writer, thumbsDir);
+        }).waitForFinished();
+        Classifier::clearSyntheticForQa();
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 200);
+        note(memCat(QStringLiteral("D:/g2.jpg")) == QStringLiteral("人像"),
+             QStringLiteral("C mem g2=%1").arg(memCat(QStringLiteral("D:/g2.jpg"))));
+        note(lib.lastWriteThreadId() == guiTid, QStringLiteral("C lastWriteThread!=GUI"));
+    }
+
+    // ---- D：PersonDetector::detect（合成钩子）在 worker 里跑，写回仍应落 GUI 线程 ----
+    {
+        QVector<PersonItem> syn;
+        syn.append({QStringLiteral("D:/g3.jpg"), PersonDetector::defaultPerson()});
+        PersonDetector::setSyntheticForQa(syn);
+        const QVector<Photo> snap = lib.photos();
+        AiWriter writer(&lib, &guiCtx);
+        QtConcurrent::run([&writer, snap] {
+            PersonDetector::detect(snap, writer, QStringLiteral("http://127.0.0.1:8767"));
+        }).waitForFinished();
+        PersonDetector::clearSyntheticForQa();
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 200);
+        note(memPerson(QStringLiteral("D:/g3.jpg")) == PersonDetector::defaultPerson(),
+             QStringLiteral("D mem g3=%1").arg(memPerson(QStringLiteral("D:/g3.jpg"))));
+        note(lib.lastWriteThreadId() == guiTid, QStringLiteral("D lastWriteThread!=GUI"));
+    }
+
+    // 复位钩子（各门独立进程，仍显式清理）
+    AiWriter::setForceInlineForQa(false);
+    Library::setForceCategoryNoSyncForQa(false);
+    Library::setForcePersonNoSyncForQa(false);
+    if (!qEnvironmentVariableIsSet("LA_GUI_THREAD_QA_KEEP"))
+        QDir(dir).removeRecursively();
+
+    const bool okAll = fails.isEmpty();
+    if (okAll) {
+        std::fprintf(stderr,
+            "LA_GUI_THREAD_QA PASS rows=4 broken=%d defer=1 write=1 thread=1 classifier=1 person=1\n",
+            int(broken));
+    } else {
+        std::fprintf(stderr, "LA_GUI_THREAD_QA FAIL broken=%d reason=%s\n",
                      int(broken), qPrintable(fails.join(QChar(';'))));
     }
     std::fflush(stderr);
@@ -3527,8 +3921,12 @@ int runFaceClusterQa()
     note(lib.photos().size() == kRows,
          QStringLiteral("conserve size=%1 want=%2").arg(lib.photos().size()).arg(kRows));
 
-    // ② 抽 embedding 并落库 face_emb（合成钩子 → 绕过网络）
-    const bool okEmb = PersonDetector::detectEmbeddings(&lib, QStringLiteral("http://127.0.0.1:8767"));
+    // ② 抽 embedding 并落库 face_emb（合成钩子 → 绕过网络，经 AiWriter 投递写回）。
+    //   门在主线程：processEvents 让 QueuedConnection 写回落地后，③ 才能读回。
+    QObject qaCtx;
+    AiWriter writer(&lib, &qaCtx);
+    const bool okEmb = PersonDetector::detectEmbeddings(lib.photos(), writer, QStringLiteral("http://127.0.0.1:8767"));
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 200);
     note(okEmb, QStringLiteral("detectEmbeddings returned false"));
 
     // ③ (A) 聚类输入集读回 = 6
@@ -3757,9 +4155,74 @@ int runStoryQa()
         model.setStoryFilter(sh->paths);
         note(model.rowCount() == 2,
              QStringLiteral("rowCount(上海)=%1 want=2").arg(model.rowCount()));
-        model.setStoryFilter(QStringList());
+        // 2.33.0 对称 API（与 clearClusterFilter/hasClusterFilter 同口径）：
+        // UI 侧「取消筛选」必须走 clearStoryFilter，且 hasStoryFilter 如实反映状态
+        note(model.hasStoryFilter(), QStringLiteral("hasStoryFilter want=1 after set"));
+        model.clearStoryFilter();
+        note(!model.hasStoryFilter(), QStringLiteral("hasStoryFilter want=0 after clear"));
         note(model.rowCount() == kRows,
              QStringLiteral("rowCount(全部)=%1 want=%2").arg(model.rowCount()).arg(kRows));
+    }
+
+    // ⑤ 标题契约（2.33.0 补）。2.32.0 两处对用户撒谎：
+    //    · `begin == end` 与「无日期」共用一支 → 同一天拍的有 EXIF 照片被标成
+    //      「未标注日期」（合成集里 c2 = 北京 2024-05-20 单张，正是此形态）；
+    //    · 跨年月标题只写起始年 → 2023-12~2024-01 显示成「2023年12月-1月」。
+    //    期望值由本门**独立写死**的规格串算出（铁律 22：绝不从被测实现反推期望），
+    //    但同样过 translate() 取词 → 与主机系统语言无关（铁律 29：英文系统上不误红）。
+    {
+        const QString bj = QStringLiteral("北京");
+        const QDate d20(2024, 5, 20), dA(2024, 5, 1), dB(2024, 5, 3),
+                    dC(2024, 6, 2), dY1(2023, 12, 20), dY2(2024, 1, 2);
+        note(StoryGen::titleFor(bj, QDate(), QDate())
+                 == QCoreApplication::translate("LightAlbum", "%1 · 未标注日期").arg(bj),
+             QStringLiteral("T1 nodate title=%1").arg(StoryGen::titleFor(bj, QDate(), QDate())));
+        note(StoryGen::titleFor(bj, d20, d20)
+                 == QCoreApplication::translate("LightAlbum", "%1 · %2年%3月%4日")
+                        .arg(bj).arg(2024).arg(5).arg(20),
+             QStringLiteral("T2 single-day title=%1").arg(StoryGen::titleFor(bj, d20, d20)));
+        note(StoryGen::titleFor(bj, dA, dB)
+                 == QCoreApplication::translate("LightAlbum", "%1 · %2年%3月")
+                        .arg(bj).arg(2024).arg(5),
+             QStringLiteral("T3 same-month title=%1").arg(StoryGen::titleFor(bj, dA, dB)));
+        note(StoryGen::titleFor(bj, dA, dC)
+                 == QCoreApplication::translate("LightAlbum", "%1 · %2年%3月-%4月")
+                        .arg(bj).arg(2024).arg(5).arg(6),
+             QStringLiteral("T4 cross-month title=%1").arg(StoryGen::titleFor(bj, dA, dC)));
+        note(StoryGen::titleFor(bj, dY1, dY2)
+                 == QCoreApplication::translate("LightAlbum", "%1 · %2年%3月-%4年%5月")
+                        .arg(bj).arg(2023).arg(12).arg(2024).arg(1),
+             QStringLiteral("T5 cross-year title=%1").arg(StoryGen::titleFor(bj, dY1, dY2)));
+        // 四支规格串必须两两不同：若实现把两支合并（正是 2.32 的缺陷形态），
+        // 上面的逐支比对会红；这里再加一道「规格本身不塌缩」的保险。
+        {
+            const QStringList four = {
+                QCoreApplication::translate("LightAlbum", "%1 · 未标注日期").arg(bj),
+                QCoreApplication::translate("LightAlbum", "%1 · %2年%3月%4日").arg(bj).arg(2024).arg(5).arg(20),
+                QCoreApplication::translate("LightAlbum", "%1 · %2年%3月").arg(bj).arg(2024).arg(5),
+                QCoreApplication::translate("LightAlbum", "%1 · %2年%3月-%4年%5月").arg(bj).arg(2023).arg(12).arg(2024).arg(1),
+            };
+            QSet<QString> u;
+            for (const QString& t : four) u.insert(t);
+            note(u.size() == four.size(), QStringLiteral("T6 title specs collapsed=%1").arg(u.size()));
+        }
+    }
+
+    // ⑥ 语言无关的结构判别器：有日期的故事标题必须含起始年份数字，
+    //    无日期的标题必须**不含任何数字**（丢年份 / 误标日期都会在此转红）。
+    {
+        int datedNoYear = 0, nodateWithDigit = 0;
+        for (const StoryGen::Story& s : r.stories) {
+            bool anyDigit = false;
+            for (const QChar& c : s.title) if (c.isDigit()) { anyDigit = true; break; }
+            const bool isNodate = s.id.contains(QStringLiteral("|nodate|"));
+            if (isNodate) { if (anyDigit) ++nodateWithDigit; }
+            else if (!s.title.contains(QString::number(s.begin.year()))) ++datedNoYear;
+        }
+        note(nodateWithDigit == 0,
+             QStringLiteral("S1 nodate titles carrying digits=%1").arg(nodateWithDigit));
+        note(datedNoYear == 0,
+             QStringLiteral("S2 dated titles missing year=%1").arg(datedNoYear));
     }
 
     // 反例签名化：只坏守恒（丢一张），不坏其它行为
@@ -3775,7 +4238,7 @@ int runStoryQa()
     if (okAll) {
         std::fprintf(stderr,
             "LA_STORY_QA PASS rows=%d broken=%d conserve=1 unique=1 coverage=1 "
-            "groups=1 nodate=1 rowCount=1\n", kRows, int(broken));
+            "groups=1 nodate=1 rowCount=1 title=1 spec=1 shape=1\n", kRows, int(broken));
     } else {
         std::fprintf(stderr, "LA_STORY_QA FAIL broken=%d reason=%s\n",
                      int(broken), qPrintable(fails.join(QChar(';'))));
@@ -3957,6 +4420,205 @@ int runTransitionQa()
             int(broken));
     } else {
         std::fprintf(stderr, "LA_TRANSITION_QA FAIL broken=%d reason=%s\n",
+                     int(broken), qPrintable(fails.join(QChar(';'))));
+    }
+    std::fflush(stderr);
+    return okAll ? 0 : 1;
+}
+
+// 2.34.0 动效引擎门禁（LA_MOTION_QA）。纯函数真源直测（铁律 20：产品与门禁同源），
+// 无外部素材、全离屏。断言分五组：
+//   A 曲线契约：端点 f(0)==0/f(1)==1、单调曲线值域不减、OutBack 过冲 >1、
+//     Pulse 周期 f(0)==f(1) 且值域 [0.25,1]、skeletonPulse 逐点委托引擎 Pulse（接线未漂移）、
+//     减动效兜底 qaForceTerminal → 全曲线塌成终值 1。
+//   B 错峰 stagger：stagger(0)==0、单调不减、末位 <=1、total<=1 恒 0。
+//   C 预设表完整性：>=5 预设、时长 >0、键非空、evaluate 输出维度==键数、未知名回退非空。
+//   D 过冲回归段：StarBounce 的 glow 键 evaluate(f=2)==return_to（弹完归位），
+//     主段中点已离开起点（真在弹）。
+//   E 粒子轨迹纯函数 + 像素判别：f=0 在中心、f=1 散开、alpha 递减；两相位渲染必不同；
+//     减动效下（forceTerminal）两相位渲染恒等（不闪）。
+// 反例 LA_MOTION_QA_FORCE_BROKEN=1 经 Motion::qaSetForceTerminal(true) 令引擎全曲线
+// 塌成终值 → A「起点 f(0)==0」与「Pulse min==0.25」等**同一批**断言转红（期望值不随
+// broken 切换，铁律 22；正例实测为绿 → 非空心）。
+int runMotionQa()
+{
+    const bool broken = !qEnvironmentVariableIsEmpty("LA_MOTION_QA_FORCE_BROKEN");
+    QStringList fails;
+    const auto note = [&fails](bool ok, const QString& what) { if (!ok) fails << what; };
+
+    // 反例注入：全曲线塌成终值（模拟「减动效接线断链 / 引擎被旁路」形态）。
+    // 此后所有 A 组端点断言在 broken 下必红；正常态 forceTerminal=false 全绿。
+    Motion::qaSetForceTerminal(broken);
+    const bool savedTerm = Motion::qaForceTerminal();   // 供 E 组临时切换后复原
+
+    // ---- A 曲线契约 ----
+    for (int c = Motion::Linear; c < Motion::kCurveCount; ++c) {
+        const auto cc = static_cast<Motion::Curve>(c);
+        if (cc == Motion::Pulse) continue;   // Pulse 周期波，f(1)==0.25 非终值，另行断言
+        note(qAbs(Motion::evalCurve(cc, 1.0) - 1.0) < 1e-6,
+             QStringLiteral("A endpoint f(1)==1 curve=%1 got=%2")
+                 .arg(c).arg(Motion::evalCurve(cc, 1.0), 0, 'f', 4));
+    }
+    for (int c = Motion::Linear; c < Motion::kCurveCount; ++c) {
+        const auto cc = static_cast<Motion::Curve>(c);
+        if (cc == Motion::Pulse) continue;   // Pulse 起点=峰值 1（周期波），不适用 f(0)==0
+        note(qAbs(Motion::evalCurve(cc, 0.0)) < 1e-6,
+             QStringLiteral("A start f(0)==0 curve=%1 got=%2")
+                 .arg(c).arg(Motion::evalCurve(cc, 0.0), 0, 'f', 4));
+    }
+    {
+        const Motion::Curve mono[] = { Motion::Linear, Motion::InQuad, Motion::OutQuad,
+                                       Motion::InOutCubic, Motion::OutCubic, Motion::OutExpo };
+        for (auto cc : mono) {
+            double prev = Motion::evalCurve(cc, 0.0);
+            bool ok = true;
+            for (int i = 1; i <= 200; ++i) {
+                const double v = Motion::evalCurve(cc, i / 200.0);
+                if (v < prev - 1e-9) { ok = false; break; }
+                prev = v;
+            }
+            note(ok, QStringLiteral("A monotone curve=%1").arg(int(cc)));
+        }
+    }
+    {
+        bool over = false;
+        for (int i = 1; i < 200; ++i)
+            if (Motion::evalCurve(Motion::OutBack, i / 200.0) > 1.0) over = true;
+        note(over, QStringLiteral("A OutBack must overshoot >1 mid-flight"));
+    }
+    {
+        double lo = 9.0, hi = -9.0;
+        for (int i = 0; i <= 100; ++i) {
+            const double v = Motion::evalCurve(Motion::Pulse, i / 100.0);
+            lo = qMin(lo, v); hi = qMax(hi, v);
+        }
+        note(qAbs(Motion::evalCurve(Motion::Pulse, 0.0)
+                  - Motion::evalCurve(Motion::Pulse, 1.0)) < 1e-9,
+             QStringLiteral("A Pulse periodic f(0)==f(1)"));
+        note(lo >= 0.249 && lo <= 0.251,
+             QStringLiteral("A Pulse min=%1 want 0.25").arg(lo, 0, 'f', 4));
+        note(qAbs(hi - 1.0) < 1e-6,
+             QStringLiteral("A Pulse max=%1 want 1.0").arg(hi, 0, 'f', 4));
+    }
+    {   // 接线未漂移：Lumen::skeletonPulse(t,false) 必须逐点等于引擎 Pulse
+        bool same = true;
+        for (int i = 0; i <= 100; ++i) {
+            const double t = i / 100.0;
+            if (qAbs(Lumen::skeletonPulse(t, false)
+                     - Motion::evalCurve(Motion::Pulse, t)) > 1e-9) same = false;
+        }
+        note(same, QStringLiteral("A skeletonPulse must delegate to engine Pulse exactly"));
+    }
+    {   // 减动效兜底：forceTerminal → 全曲线任意 t 塌成 1
+        Motion::qaSetForceTerminal(true);
+        bool allTerm = true;
+        for (int c = Motion::Linear; c < Motion::kCurveCount; ++c)
+            if (qAbs(Motion::evalCurve(static_cast<Motion::Curve>(c), 0.3) - 1.0) > 1e-9)
+                allTerm = false;
+        Motion::qaSetForceTerminal(savedTerm);
+        note(allTerm, QStringLiteral("A forceTerminal must collapse all curves to 1"));
+    }
+
+    // ---- B 错峰 stagger ----
+    note(qAbs(Motion::staggerStart(0, 5, 0.6)) < 1e-9,
+         QStringLiteral("B stagger(0,n,*)==0"));
+    {
+        bool mono = true; double prev = -1.0;
+        for (int i = 0; i < 8; ++i) {
+            const double s = Motion::staggerStart(i, 8, 0.7);
+            if (s < prev - 1e-9) mono = false;
+            prev = s;
+        }
+        note(mono, QStringLiteral("B stagger monotone non-decreasing"));
+    }
+    note(Motion::staggerStart(7, 8, 0.7) <= 1.0 + 1e-9,
+         QStringLiteral("B stagger last<=1"));
+    note(qAbs(Motion::staggerStart(3, 1, 0.5)) < 1e-9,
+         QStringLiteral("B stagger total<=1 must be 0"));
+
+    // ---- C 预设表完整性 ----
+    {
+        const QVector<QByteArray> names = Motion::presetNames();
+        note(names.size() >= 5,
+             QStringLiteral("C preset count=%1 want>=5").arg(names.size()));
+        for (const QByteArray& nm : names) {
+            const Motion::Preset& p = Motion::preset(nm);
+            const QString q = QString::fromLatin1(nm);
+            note(p.durationMs > 0, QStringLiteral("C duration>0 %1").arg(q));
+            note(!p.keys.isEmpty(), QStringLiteral("C keys nonempty %1").arg(q));
+            const QVector<double> v0 = Motion::evaluate(p, 0.0);
+            const QVector<double> v1 = Motion::evaluate(p, 1.0);
+            note(v0.size() == p.keys.size() && v1.size() == p.keys.size(),
+                 QStringLiteral("C evaluate dim==keys %1").arg(q));
+        }
+        const Motion::Preset& fb = Motion::preset("NoSuchPreset");
+        note(fb.durationMs > 0 && !fb.keys.isEmpty(),
+             QStringLiteral("C unknown name falls back to nonempty preset"));
+    }
+
+    // ---- D 过冲回归段 ----
+    {
+        const Motion::Preset& p = Motion::preset(Motion::kStarBounce);
+        int ix = -1;
+        for (int i = 0; i < p.keys.size(); ++i)
+            if (p.keys[i].prop == Motion::kPropGlow) { ix = i; break; }
+        note(ix >= 0, QStringLiteral("D StarBounce must have a glow key"));
+        if (ix >= 0) {
+            const double at2 = Motion::evaluate(p, 2.0)[ix];
+            note(qAbs(at2 - p.keys[ix].return_to) < 1e-6,
+                 QStringLiteral("D glow(f=2)=%1 want return_to=%2")
+                     .arg(at2, 0, 'f', 4).arg(p.keys[ix].return_to, 0, 'f', 4));
+            const double mid = Motion::evaluate(p, 0.5)[ix];
+            note(mid > 0.2,
+                 QStringLiteral("D glow(f=0.5)=%1 must leave start (real bounce)")
+                     .arg(mid, 0, 'f', 4));
+        }
+    }
+
+    // ---- E 粒子轨迹纯函数 + 像素判别 ----
+    {
+        const QPointF c0 = Motion::heartBurstPos(0, 9, 0.0, 40);
+        note(qAbs(c0.x()) < 1e-6 && qAbs(c0.y()) < 1e-6,
+             QStringLiteral("E burst f=0 must sit at center"));
+        const QPointF e1 = Motion::heartBurstPos(0, 9, 1.0, 40);
+        note(std::hypot(e1.x(), e1.y()) > 1.0,
+             QStringLiteral("E burst f=1 must spread out (r=%1)")
+                 .arg(std::hypot(e1.x(), e1.y()), 0, 'f', 3));
+        note(Motion::heartBurstAlpha(9, 0.0) > Motion::heartBurstAlpha(9, 1.0),
+             QStringLiteral("E burst alpha must decay"));
+
+        // 像素判别走 NavFade 的 offsetY（整段路由过 evalCurve → forceTerminal 下恒终值）
+        const Motion::Preset& nav = Motion::preset(Motion::kNavFade);
+        int oy = -1;
+        for (int i = 0; i < nav.keys.size(); ++i)
+            if (nav.keys[i].prop == Motion::kPropOffsetY) { oy = i; break; }
+        const auto renderBar = [&](double f) {
+            QImage img(160, 40, QImage::Format_ARGB32);
+            img.fill(Qt::black);
+            QPainter g(&img);
+            const double v = Motion::evaluate(nav, f).value(oy, 0.0);
+            g.fillRect(QRect(int(v * 4), 10, 12, 20), QColor(0x4f, 0xc0, 0x8a));
+            g.end();
+            return img;
+        };
+        note(renderBar(0.2) != renderBar(0.8),
+             QStringLiteral("E two motion phases must render differently"));
+        // 减动效：forceTerminal → 两相位像素恒等（终值不闪）
+        Motion::qaSetForceTerminal(true);
+        const QImage t0 = renderBar(0.2), t1 = renderBar(0.8);
+        Motion::qaSetForceTerminal(savedTerm);
+        note(t0 == t1, QStringLiteral("E reduceMotion must render identical frames"));
+    }
+
+    Motion::qaSetForceTerminal(false);   // 复原全局钩子（进程单发，仅卫生）
+
+    const bool okAll = fails.isEmpty();
+    if (okAll) {
+        std::fprintf(stderr,
+            "LA_MOTION_QA PASS broken=%d curves=1 stagger=1 presets=1 return=1 pixel=1\n",
+            int(broken));
+    } else {
+        std::fprintf(stderr, "LA_MOTION_QA FAIL broken=%d reason=%s\n",
                      int(broken), qPrintable(fails.join(QChar(';'))));
     }
     std::fflush(stderr);
@@ -4314,8 +4976,12 @@ int runPersonQa()
     note(lib.photos().size() == kRows,
          QStringLiteral("conserve size=%1 want=%2").arg(lib.photos().size()).arg(kRows));
 
-    // ② 跑检测（合成钩子 → 绕过网络，内部调 setPersons 写回）
-    const bool ok = PersonDetector::detect(&lib, QStringLiteral("http://127.0.0.1:8767"));
+    // ② 跑检测（合成钩子 → 绕过网络，经 AiWriter 投递 setPersons 写回）。
+    //   门在主线程：processEvents 让 QueuedConnection 写回落地。
+    QObject qaCtx;
+    AiWriter writer(&lib, &qaCtx);
+    const bool ok = PersonDetector::detect(lib.photos(), writer, QStringLiteral("http://127.0.0.1:8767"));
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 200);
     note(ok, QStringLiteral("detect returned false"));
 
     // DB / 内存读助手（独立连接读真实落盘值）
@@ -5236,8 +5902,11 @@ int main(int argc, char *argv[])
 
         bool ok = true;
         QStringList fails;
+        int checked = 0;
         const auto i18nCheck = [&](const char* src, const QString& expect) {
+            ++checked;
             const QString got = QCoreApplication::translate("LightAlbum", src);
+            // 三态判别：① ==期望英文 ② !=源码（缺译时 Qt 回落源码）③ 二者同时成立才算命中。
             if (got != expect || got == QString::fromUtf8(src)) {
                 ok = false;
                 fails << QStringLiteral("%1 got=%2 expect=%3")
@@ -5248,6 +5917,16 @@ int main(int argc, char *argv[])
         i18nCheck("原图", QStringLiteral("Original"));
         i18nCheck("修后", QStringLiteral("Edited"));
         i18nCheck("摄影日志", QStringLiteral("Photo Log"));
+        // 2.33.0 补全的 CJK 串各抽一枚代表做命中断言（缺译→回落源码→变红），
+        // 覆盖新入册的方向 C / 故事 / 选片去重 / 视频 四条线。
+        i18nCheck("识别人物", QStringLiteral("Detect People"));
+        i18nCheck("智能聚类", QStringLiteral("Smart Clustering"));
+        i18nCheck("全部故事 %1", QStringLiteral("All Stories %1"));
+        i18nCheck("已取消相似照片分析", QStringLiteral("Similar-photo analysis cancelled"));
+        i18nCheck("正在查找相似照片（%1 张）…", QStringLiteral("Finding similar photos (%1)…"));
+        i18nCheck("只看视频", QStringLiteral("Videos Only"));
+        i18nCheck("重命名人物", QStringLiteral("Rename Person"));
+        i18nCheck("人脸服务未就绪", QStringLiteral("Face Service Not Ready"));
 
         // 默认路径语言决策断言（2.11.1）：构造 locale 跨机确定性——
         // zh 系显示语言必须不加载 en（本事故根因）；en 系必须加载；forced 覆盖优先。
@@ -5273,7 +5952,7 @@ int main(int argc, char *argv[])
         }
 
         if (ok) {
-            std::fprintf(stderr, "LA_I18N_QA PASS entries=9\n");
+            std::fprintf(stderr, "LA_I18N_QA PASS entries=%d\n", checked);
         } else {
             std::fprintf(stderr, "LA_I18N_QA FAIL %s\n", qPrintable(fails.join(QLatin1Char(' '))));
         }
@@ -5497,6 +6176,10 @@ int main(int argc, char *argv[])
     if (qEnvironmentVariableIsSet("LA_DEDUP_QA"))
         return runDedupQa();
 
+    // 2.33.0 隐私门：灯箱翻图 / 选片页 / 去重对话框三处锁态契约（offscreen 直调）
+    if (qEnvironmentVariableIsSet("LA_PRIVACY_QA"))
+        return runPrivacyQa();
+
     // 方向 D 第一步：真实库回归门禁（规模化与流畅性，默认可跑 6425 张合成 fixture）
     if (qEnvironmentVariableIsSet("LA_SCALE_SMOKE"))
         return runScaleSmoke();
@@ -5530,6 +6213,10 @@ int main(int argc, char *argv[])
     if (qEnvironmentVariableIsSet("LA_FACE_CLUSTER_QA"))
         return runFaceClusterQa();
 
+    // 2.33.0 线程安全：AI 异步写回的单写者线程归属门禁（从真实 worker 线程经 AiWriter 投递）
+    if (qEnvironmentVariableIsSet("LA_GUI_THREAD_QA"))
+        return runGuiThreadQa();
+
     // 人物故事方向·B：自动故事相册（地点 + 时间窗口聚合）→ 守恒契约 + 检索契约门禁
     if (qEnvironmentVariableIsSet("LA_STORY_QA"))
         return runStoryQa();
@@ -5537,6 +6224,10 @@ int main(int argc, char *argv[])
     // 2.22.0 客户端体验：骨架屏纯函数 + 像素判别 + 灯箱原图解码契约
     if (qEnvironmentVariableIsSet("LA_TRANSITION_QA"))
         return runTransitionQa();
+
+    // 2.34.0 动效引擎：曲线/错峰/预设/回归段/粒子像素契约（纯函数同源）
+    if (qEnvironmentVariableIsSet("LA_MOTION_QA"))
+        return runMotionQa();
 
     if (qEnvironmentVariableIsSet("LA_ERASE_QA"))
         return runEraseQa();
@@ -5712,6 +6403,7 @@ int main(int argc, char *argv[])
         && !qEnvironmentVariableIsSet("LA_RETOUCH_SMOKE")
         && !qEnvironmentVariableIsSet("LA_RETOUCH_A_QA")
         && !qEnvironmentVariableIsSet("LA_MAP_A_QA")
+        && !qEnvironmentVariableIsSet("LA_MAP_SMOKE")
         && !qEnvironmentVariableIsSet("LA_MAP_REGION_QA")
         && !qEnvironmentVariableIsSet("LA_MAP_CLICK_QA")
         && !qEnvironmentVariableIsSet("LA_MAP_BURST_QA")
@@ -5740,7 +6432,20 @@ int main(int argc, char *argv[])
         ;
 
     QRect avail = QApplication::primaryScreen()->availableGeometry();
-    QRect fullRect((avail.width() - 1440) / 2, (avail.height() - 940) / 2, 1440, 940);
+    // 2.33 屏幕适配：默认 1440×940，但**绝不超出屏幕可用区**。HiDPI 缩放
+    // （125%/150%）与小屏下逻辑可用区常不足 1440×940，原实现硬按默认尺寸
+    // 居中会把窗口底部/右侧顶出屏幕，用户必须手动最大化才能看清（实测反馈）。
+    // 规则：窗口 clamp 到可用区（留 16px 呼吸边）；可用区不足默认 3/4 时
+    // 视为小屏，放弃展开动画直接最大化启动（几何动画会把 showMaximized
+    // 拉回固定 rect，两者不能混用，故 tiny 屏不走动画路径）。
+    const QSize want(1440, 940);
+    const bool tinyScreen = avail.width()  < want.width()  * 3 / 4
+                         || avail.height() < want.height() * 3 / 4;
+    const QSize fit(qMin(want.width(),  qMax(320, avail.width()  - 16)),
+                    qMin(want.height(), qMax(240, avail.height() - 16)));
+    QRect fullRect((avail.width() - fit.width()) / 2,
+                   (avail.height() - fit.height()) / 2,
+                   fit.width(), fit.height());
 
     // P13 开场动画探针：LA_SPLASH_SHOT=<dir> 时抓 3 帧（开合/停留/成缝）存 PNG 后退出。
     if (qEnvironmentVariableIsSet("LA_SPLASH_SHOT")) {
@@ -5765,7 +6470,7 @@ int main(int argc, char *argv[])
         return app.exec();
     }
 
-    if (animOk) {
+    if (animOk && !tinyScreen) {
         // 系统「减弱动效」：静态收尾 splash，客户端立即全尺寸显示（无展开动画）。
         if (Lumen::systemReducedMotion()) {
             SplashWindow splash(fullRect);
@@ -5797,9 +6502,13 @@ int main(int argc, char *argv[])
         return app.exec();
     }
 
-    // 非动画（冒烟/截图）：直接显示并保留原有门控
-    win.setGeometry(fullRect);
-    win.show();
+    // 非动画（冒烟/截图/小屏）：直接显示并保留原有门控
+    if (tinyScreen) {
+        win.showMaximized();   // 小屏：直接最大化，绝不让窗口出屏
+    } else {
+        win.setGeometry(fullRect);
+        win.show();
+    }
 
     // P15 沉浸式灯箱探针：LA_LIGHTBOX_SHOT=<dir> 时打开首张照片的灯箱 → grab 存 PNG 后退出。
     if (qEnvironmentVariableIsSet("LA_LIGHTBOX_SHOT")) {
@@ -5879,6 +6588,15 @@ int main(int argc, char *argv[])
         QDir().mkpath(QFileInfo(p).absolutePath());
         if (MapView* mv = win.mapView()) mv->qaShootCountry(p, nm);
         std::fprintf(stderr, "LA_MAP_COUNTRY_QA_DONE\n");
+        std::fflush(stderr);
+        return 0;
+    }
+
+    // 结构烟雾：地理数据装载断言在 MapView::loadGeoJson 内已打印（带 PASS/FAIL 判定），
+    // 这里只负责收口自退 —— 此前它打印完继续进 app.exec() 永久空转，所以 2.2.1 把它从
+    // runner 里摘了；现在两条缺陷（无判定 + 不自退）都已补齐，重新入门禁名册。
+    if (!qEnvironmentVariableIsEmpty("LA_MAP_SMOKE")) {
+        std::fprintf(stderr, "LA_MAP_SMOKE_DONE\n");
         std::fflush(stderr);
         return 0;
     }

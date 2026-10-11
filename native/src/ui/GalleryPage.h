@@ -25,6 +25,8 @@ public:
     int  qaShootE(const QString& png);   // P23 E 像素/几何 + 缺陷① reflow 自测（offscreen），返回 0=绿
     QScrollBar* qaScrollBar() const;   // 方向 D2：offscreen 性能门访问 EditorialView 滚动条
     bool hidePrivate() const { return hidePrivate_; }   // D5b：批量私密后据此重跑隐私过滤
+    // 隐私门（2.33.0）：当前网格可见（含全部筛选后）的路径集，供灯箱限定 ←/→ 范围
+    QStringList visiblePaths() const { return model_.visiblePaths(); }
     // ---- D5b QA 入口（批量多选门用；等价于用户 Ctrl/Shift 点击）----
     QStringList qaSelectedPaths() const;
     int  qaSelectCount() const;
@@ -55,11 +57,10 @@ signals:
 private:
     void buildChips();          // P16：按当前数据 + 隐私门状态重建分类/人物 chips
     void updateCount();         // 统一计数文案（含各筛选状态注记）
-    void restyleChips();        // 选中态高亮当前 chip
     void buildClusterBar();     // 方向 C：按当前维度重建聚类条（维度切换 + 簇 chips）
-    void restyleClusterChips(); // 方向 C：聚类 chip 选中态
     void buildStoryBar();       // 人物故事方向·B：按 StoryGen 聚合结果重建故事入口条
-    void restyleStoryChips();   // 人物故事方向·B：故事 chip 选中态
+    // 2.33 收纳：四条选项条统一走 Lumen::fillChipRow（前 8 平铺 + 「▾ N」溢出下拉），
+    // 选中态在构建时由 ChipDef.checked 给出，点击回调内重建整条，不再需要 restyle。
 
     const QVector<Photo>* photos_ = nullptr;
     QString      thumbsDir_;
@@ -69,12 +70,9 @@ private:
     QLabel*      count_ = nullptr;
     QTimer*      prefetchTimer_ = nullptr;
     QWidget*     chipsBar_ = nullptr;         // P16 分类 chips（无分类数据时整条隐藏）
-    QVector<QPushButton*> catChips_;
     QWidget*     personBar_ = nullptr;        // P16 人物 chips（无人物数据时隐藏）
-    QVector<QPushButton*> personChips_;
     // 人物故事方向·B：故事相册入口条（纯视图态分组，不写库）
     QWidget*     storyBar_ = nullptr;
-    QVector<QPushButton*> storyChips_;
     QString      activeStoryId_;     // 当前故事 id（空=全部）
     QString      activeStoryTitle_;  // 当前故事标题（计数注记用）
     QHash<QString, QStringList> storyPaths_;   // 人物故事方向·B：id → 该故事照片路径
@@ -85,7 +83,6 @@ private:
     QWidget*     clusterBar_ = nullptr;
     QComboBox*   clusterDimBox_ = nullptr;
     QWidget*     clusterChipsBar_ = nullptr;
-    QVector<QPushButton*> clusterChips_;
     int          clusterDim_ = 0;             // 对应 PhotoCluster::Dim（默认 ByProvince）
     QString      activeClusterKey_;           // 当前簇键（空=全部）
     QString      searchText_;                 // 搜索框状态（计数注记用）

@@ -27,6 +27,9 @@ struct CullInput {
     bool    isVideo = false;
     double  durSec = 0;         // 2.31.0 视频时长（秒，非视频为 0），透传到 CullItem 供 UI 显示
     QString category;           // CLIP 场景分类标签（空 = 未分类），供选片页筛选
+    // 2.33.0 隐私门：私密标记透传（与 category 同为「UI 需要据以过滤的透传字段」）。
+    //   ★铁律 21：过滤在注入点做，UI 不得另立一份照片遍历。
+    bool    priv = false;
 
     // 2.29.0：RAW / 视频是否豁免质量淘汰（只查分辨率）。
     // ★ 唯一真源：UI 层不得再另立扩展名表（原 isRawSuffix 16 种 vs RawDecode 24 种，
@@ -54,6 +57,8 @@ struct CullItem {
     QString mediaType = QStringLiteral("image");
     double  durSec = 0;
     bool    isVideo = false;
+    // 2.33.0 隐私门：透传自 CullInput，供选片页在锁定时隐藏该卡片（铁律 21）
+    bool    priv = false;
     QString rejectReason;
     QString dupOf;               // 去重时被指向的保留者缩略图
     int     dupGroup = 0;

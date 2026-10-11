@@ -17,7 +17,7 @@ qint64 FullCache::defaultBudgetBytes()
 {
     // 实测依据：4032x3024 解码后 46.5MB（见头注释）。取 3 张 ≈ 140MB，
     // 够覆盖灯箱「上一张/当前/下一张」预取，又不至于吃穿内存。
-    // 可被 LA_FULL_CACHE_QA 环境变量覆盖以做边界测试。
+    // 可被 LA_FULL_CACHE_BUDGET 环境变量覆盖以做边界测试。
     const qint64 override_ = qEnvironmentVariable("LA_FULL_CACHE_BUDGET").toLongLong();
     if (override_ > 0) return override_;
     return qint64(140) * 1024 * 1024;

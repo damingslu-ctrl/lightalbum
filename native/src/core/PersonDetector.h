@@ -17,6 +17,7 @@
 #include <QString>
 #include <QVector>
 #include <functional>
+#include "AiWriter.h"
 #include "Library.h"
 
 class PersonDetector {
@@ -24,15 +25,17 @@ public:
     // 探测人脸服务是否就绪（仅回环）。返回 ok && loaded。
     static bool probe(const QString& url = QStringLiteral("http://127.0.0.1:8767"));
 
-    // 给库内「尚未标注人物」的照片检测人脸并写回 person。
-    //   lib        : 本机库（读 photos()，写 setPersons）
-    //   url        : face_server 基址（默认回环 8767）
-    //   limit      : 最大处理张数（<0=不限；QA 用小值）
-    //   progress   : (done,total,name) 进度回调
-    //   cancel     : 返回 true 即尽快中止（在途请求跑完）
+    // 给「尚未标注人物」的照片检测人脸并写回 person。
+    //   photos   : 库内照片**快照**（调用方在 GUI 线程取好副本；本函数可在 worker 线程跑，
+    //              全程不碰 Library —— 见 core/AiWriter.h 的线程归属约束）
+    //   writer   : 写回投递器（落库恒在 GUI 线程）
+    //   url      : face_server 基址（默认回环 8767）
+    //   limit    : 最大处理张数（<0=不限；QA 用小值）
+    //   progress : (done,total,name) 进度回调
+    //   cancel   : 返回 true 即尽快中止（在途请求跑完）
     // 守恒：只写 person 列，不增删照片。失败即放行（坏图不中断整批）。
     // 已标注（person 非空）的照片跳过，避免覆盖用户重命名结果。
-    static bool detect(Library* lib,
+    static bool detect(const QVector<Photo>& photos, AiWriter& writer,
                        const QString& url = QStringLiteral("http://127.0.0.1:8767"),
                        int limit = -1,
                        std::function<void(int, int, const QString&)> progress = {},
@@ -43,9 +46,9 @@ public:
 
     // ---- 方向 C·人物自动聚类：抽取代表脸 embedding 并落库 ----
     // 遍历 person 为空照片，POST /face/detect，取 faces[] 中 score 最大者 embedding
-    // （512-d）→ float32 小端 BLOB，经 lib->setFaceEmbeddings 写回 face_emb 列。
+    // （512-d）→ float32 小端 BLOB，经 AiWriter 写回 face_emb 列。
     // 已标注（person 非空）照片跳过；无脸/失败整张放过（不中断整批）。守恒：只写 face_emb 列。
-    static bool detectEmbeddings(Library* lib,
+    static bool detectEmbeddings(const QVector<Photo>& photos, AiWriter& writer,
                                  const QString& url = QStringLiteral("http://127.0.0.1:8767"),
                                  int limit = -1,
                                  std::function<void(int, int, const QString&)> progress = {},

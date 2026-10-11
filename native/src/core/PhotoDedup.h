@@ -10,6 +10,7 @@
 // 并补齐「图库级可发现 + 可逆标记」缺口。
 #include <QString>
 #include <QVector>
+#include <functional>
 #include "CullEngine.h"
 
 struct DedupPhoto {
@@ -25,6 +26,17 @@ struct DupGroup {
     qint64            keptPixels = 0;  // 保留者 origW*origH（"保留最优"断言用）
 };
 
+// 阶段 1 的产物：单张照片的可比特征，不含任何本地化文案。
+// 线程契约（2.33.0）：describe() 要在 worker 线程跑，QTranslator 并非线程安全，
+// 所以可翻译字符串（reason）一律留到 GUI 线程的 group() 里再取。
+struct DedupDesc {
+    QString    path;
+    QByteArray md5;        // 空 = 未计算（exactMd5=false 或文件不可读）
+    quint64    phash = 0;  // 0 = 缩略图不可用（与 computePhash 的「全零即无效」一致）
+    qint64     pixels = 0;
+    bool       ok = false; // 缩略图可解码
+};
+
 class PhotoDedup {
 public:
     // 在 photos 上做去重分组；thumbsDir 为缩略图目录。
@@ -33,10 +45,24 @@ public:
     // 失败即放行：缩略图缺失/解码失败 → 该照片不参与分组（不报错、不丢失）。
     // 守恒契约：每张合法照片恰好出现一次（要么作某组 keptPath，要么在某组
     //           dupPaths；绝不出现在两组、也绝不被静默丢弃）。
+    // 等价于 describe() + group()，保留给不需要进度的调用方与 LA_DEDUP_QA。
     static QVector<DupGroup> findGroups(const QVector<DedupPhoto>& photos,
                                         const QString& thumbsDir,
                                         int phashThreshold = 8,
                                         bool exactMd5 = true);
+
+    // ---- 2.33.0 两阶段拆分（把 IO+解码从 GUI 线程挪走）----
+    // 阶段 1：逐张解码缩略图并算 MD5/pHash（纯 IO/CPU，不取译文，可在 worker 线程跑）。
+    //   progress(done) 每完成一张回调一次（done = 已处理张数，可空）。
+    //   cancel() 返回 true 时提前停下；调用方须丢弃部分结果（残缺集分组会造假分组）。
+    static QVector<DedupDesc> describe(const QVector<DedupPhoto>& photos,
+                                       const QString& thumbsDir,
+                                       bool exactMd5 = true,
+                                       const std::function<void(int)>& progress = nullptr,
+                                       const std::function<bool()>& cancel = nullptr);
+    // 阶段 2：由描述符分组（纯内存，取 reason 译文 → 必须在 GUI 线程调用）。
+    // md5 全为空时精确去重环节自然无组，故不再单列 exactMd5 开关。
+    static QVector<DupGroup> group(const QVector<DedupDesc>& descs, int phashThreshold = 8);
 
     // ---- QA 钩子（反例用，注入真实实现而非测试侧伪造）----
     // 打开后 findGroups 故意把第 1 组的保留者再塞进第 2 组的 dupPaths，

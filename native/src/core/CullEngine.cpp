@@ -211,6 +211,7 @@ CullReport CullEngine::analyze(const QVector<CullInput>& inputs,
         it.mediaType = in.isVideo ? QStringLiteral("video") : QStringLiteral("image");
         it.isVideo = in.isVideo;
         it.durSec = in.durSec;
+        it.priv   = in.priv;         // 2.33.0 透传私密标记，供选片页锁定隐藏
 
         // MD5（文件字节；解码失败时仍能算）
         {

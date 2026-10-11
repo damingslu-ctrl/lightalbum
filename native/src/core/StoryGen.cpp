@@ -1,5 +1,6 @@
 // 自动故事相册生成器（人物故事方向·B）。见 StoryGen.h 设计说明。
 #include "StoryGen.h"
+#include <QCoreApplication>
 #include <algorithm>
 
 namespace StoryGen {
@@ -29,15 +30,25 @@ static QDate parseDate(const Photo& p)
     return d;
 }
 
-// 故事标题：地点 + 年月范围（单月则只写月；跨月则起止月）
-static QString storyTitle(const QString& place, const QDate& begin, const QDate& end)
+// 故事标题见 StoryGen.h 注释。铁律 16：面向用户的串必须以 translate() + 字面量
+// 直调，lupdate 才抽得到（本模块虽在 core，PhotoDedup 已有同例）。
+QString titleFor(const QString& place, const QDate& begin, const QDate& end)
 {
-    if (!begin.isValid() || !end.isValid() || begin == end)
-        return QStringLiteral("%1 · 未标注日期").arg(place);
-    if (begin.year() == end.year() && begin.month() == end.month())
-        return QStringLiteral("%1 · %2年%3月").arg(place).arg(begin.year()).arg(begin.month());
-    return QStringLiteral("%1 · %2年%3月-%4月")
-        .arg(place).arg(begin.year()).arg(begin.month()).arg(end.month());
+    if (!begin.isValid() || !end.isValid())
+        return QCoreApplication::translate("LightAlbum", "%1 · 未标注日期").arg(place);
+    if (begin == end)
+        return QCoreApplication::translate("LightAlbum", "%1 · %2年%3月%4日")
+            .arg(place).arg(begin.year()).arg(begin.month()).arg(begin.day());
+    if (begin.year() == end.year()) {
+        if (begin.month() == end.month())
+            return QCoreApplication::translate("LightAlbum", "%1 · %2年%3月")
+                .arg(place).arg(begin.year()).arg(begin.month());
+        return QCoreApplication::translate("LightAlbum", "%1 · %2年%3月-%4月")
+            .arg(place).arg(begin.year()).arg(begin.month()).arg(end.month());
+    }
+    return QCoreApplication::translate("LightAlbum", "%1 · %2年%3月-%4年%5月")
+        .arg(place).arg(begin.year()).arg(begin.month())
+        .arg(end.year()).arg(end.month());
 }
 
 Result build(const QVector<Photo>& photos, int gapDays, bool hidePrivate)
@@ -76,7 +87,7 @@ Result build(const QVector<Photo>& photos, int gapDays, bool hidePrivate)
             s.place  = place;
             s.begin  = curBegin;
             s.end    = curEnd;
-            s.title  = storyTitle(place, curBegin, curEnd);
+            s.title  = titleFor(place, curBegin, curEnd);
             s.id     = QStringLiteral("%1|%2").arg(place).arg(curBegin.toString("yyyy-MM-dd"));
             for (const Entry& e : cur) s.paths.append(e.path);
             s.photoCount = s.paths.size();
@@ -92,7 +103,7 @@ Result build(const QVector<Photo>& photos, int gapDays, bool hidePrivate)
                 s.place = place;
                 s.begin = QDate();
                 s.end   = QDate();
-                s.title = storyTitle(place, QDate(), QDate());
+                s.title = titleFor(place, QDate(), QDate());
                 s.id    = QStringLiteral("%1|nodate|%2").arg(place).arg(e.path);
                 s.paths.append(e.path);
                 s.photoCount = 1;
@@ -136,13 +147,6 @@ Result build(const QVector<Photo>& photos, int gapDays, bool hidePrivate)
     }
 
     return res;
-}
-
-QStringList allPaths(const Result& r)
-{
-    QStringList out;
-    for (const Story& s : r.stories) out += s.paths;
-    return out;
 }
 
 } // namespace StoryGen

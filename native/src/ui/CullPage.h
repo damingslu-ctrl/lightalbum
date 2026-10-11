@@ -27,11 +27,15 @@ public:
     using QAbstractListModel::QAbstractListModel;  // 继承 QObject* 构造
     enum Role { ThumbRole = Qt::UserRole + 1, ScoreRole, GradeRole,
                 ReasonRole, StatusRole, CategoryRole, MarkRole,
-                MediaTypeRole, DurRole, IsVideoRole };  // 2.31.0 视频适配
+                MediaTypeRole, DurRole, IsVideoRole,
+                PrivRole };  // 2.33.0 隐私门（锁定时代理与标记列表据此排除）
     void setItems(const QVector<CullItem>& items, const QString& thumbsDir);
     int rowCount(const QModelIndex& = QModelIndex()) const override { return items_.size(); }
     QVariant data(const QModelIndex& idx, int role) const override;
     void setMark(int row, const QString& mark);    // mark: "" / "like" / "skip" / "lock"
+    // 2.33.0 隐私门：唯一入口在 CullPage::setHidePrivate（铁律 21），此处只接受其下发。
+    //   锁定态下 markedThumbs 必须跳过私密行 —— 锁定区/胶片条不得绕过隐私门。
+    void setHidePrivate(bool hide) { hidePrivate_ = hide; }
     QMap<QString,int> categoryCounts() const;     // 仅统计当前结果集
     QVector<QString> markedThumbs(const QString& mark) const;
     int rowOfThumb(const QString& thumbPath) const;
@@ -40,6 +44,7 @@ public:
 private:
     struct Row { CullItem item; QPixmap pm; QString mark; };
     QVector<Row> items_;
+    bool hidePrivate_ = true;    // P16 隐私门（默认锁，与 GalleryModel 口径一致）
 };
 
 // 代理：场景分类 + 标记态 双重过滤（chips 与「只看」下拉共用）
@@ -50,12 +55,14 @@ public:
     void setCategoryFilter(const QString& c) { cat_ = c; invalidateFilter(); }
     void setMarkFilter(const QString& m) { mark_ = m; invalidateFilter(); }
     void setVideoOnly(bool v) { videoOnly_ = v; invalidateFilter(); }
+    void setHidePrivate(bool h) { hidePrivate_ = h; invalidateFilter(); }  // 2.33.0 隐私门
 protected:
     bool filterAcceptsRow(int srow, const QModelIndex& sparent) const override;
 private:
     QString cat_;   // 空 = 全部
     QString mark_;  // 空 = 全部
     bool    videoOnly_ = false;
+    bool    hidePrivate_ = true;   // 2.33.0 私密照在锁定时不入视图
 };
 
 // 卡片委托：缩略图 + 分数/等级 + 拒绝理由 + 标记徽标
@@ -112,6 +119,11 @@ class CullPage : public QWidget {
 public:
     explicit CullPage(const QVector<Photo>* photos, const QString& thumbsDir,
                       QWidget* parent = nullptr);
+    // 2.33.0 隐私门（P16 补漏）：此前 vault 锁/解锁从不通知选片页，私密照在
+    //   「锁着」的状态下仍被分析、显示、可标记 —— 与图库/地图/日志页口径不一致。
+    //   ★铁律 21：锁定态由本入口一次下发（模型 + 代理 + 雷达），不在各处另判。
+    void setHidePrivate(bool hide);
+    bool hidePrivate() const { return hidePrivate_; }
     // 自测钩子：同步跑前 cap 张并直接出结果（LA_CULL_SMOKE / LA_UI_SHOT）
     void autoRun(int cap = 80);
 
@@ -147,8 +159,13 @@ private:
     void selectByThumb(const QString& thumbPath);
     void setKpi(int idx, const QString& v, const QString& label);
 
+    // 2.33.0：分析输入的**唯一收集口**（onAnalyze 与 autoRun 此前各写一份完全相同的
+    //   遍历，隐私门只能两边各补一遍 → 必然漂移）。隐私过滤在此一处完成。
+    QVector<CullInput> collectInputs() const;
+
     const QVector<Photo>* photos_ = nullptr;
     QString thumbsDir_;
+    bool    hidePrivate_ = true;    // P16 隐私门（默认锁，与 GalleryModel 同口径）
     CullModel*      model_ = nullptr;
     CullProxy*      proxy_ = nullptr;
     CullWorker*     worker_ = nullptr;

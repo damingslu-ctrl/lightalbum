@@ -122,16 +122,15 @@ QString Classifier::normalizeLabel(const QString& raw)
     return QStringLiteral("其他");
 }
 
-bool Classifier::classify(Library* lib, const QString& thumbsDir,
+bool Classifier::classify(const QVector<Photo>& photos, AiWriter& writer,
+                          const QString& thumbsDir,
                           const QString& url, int batch, int limit,
                           std::function<void(int, int, const QString&)> progress,
                           std::function<bool()> cancel)
 {
-    if (!lib) return false;
-
     // ---- QA 确定路径：直接套用合成结果，不触网、不探测 ----
     if (!g_synthetic.isEmpty()) {
-        lib->setCategories(g_synthetic);
+        writer.categories(g_synthetic);
         if (progress) progress(g_synthetic.size(), g_synthetic.size(), QString());
         return true;
     }
@@ -139,7 +138,6 @@ bool Classifier::classify(Library* lib, const QString& thumbsDir,
     // ---- 真路径：先探测服务（失败即返回 false，UI 据此提示启动服务）----
     if (!probe(url)) return false;
 
-    const QVector<Photo>& photos = lib->photos();
     QVector<const Photo*> missing;
     missing.reserve(photos.size());
     for (const Photo& p : photos)
@@ -206,7 +204,7 @@ bool Classifier::classify(Library* lib, const QString& thumbsDir,
                 const double score = r.value(QLatin1String("score")).toDouble();
                 items.append({paths[idx], label, score});
             }
-            if (!items.isEmpty()) lib->setCategories(items);
+            if (!items.isEmpty()) writer.categories(items);
         }
         done += chunk.size();
         if (progress) progress(done, total, QString());

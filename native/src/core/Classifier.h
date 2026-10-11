@@ -6,7 +6,8 @@
 //   · probe()   : GET {url}/health，仅回环地址（assert_local），返回 {ok&&loaded}
 //   · classify(): 取库内「未分类且已有缩略图」的照片，POST multipart 到 /classify
 //                 （字段名 files，batch=32，绝不碰原图），按 results[i] 映射回 path，
-//                 归一化标签后写回 lib->setCategories（单事务原子）。
+//                 归一化标签后经 AiWriter 写回（单事务原子；落库恒在 GUI 线程，
+//                 本函数可在 worker 线程跑——它只碰快照与网络，不碰 Library）。
 // 本地守卫：url 仅允许 127.0.0.1 / localhost / ::1，防止照片外泄。
 //
 // QA 钩子 setSyntheticForQa：非空时 classify 不走网络、不探测，直接套用结果，
@@ -14,6 +15,7 @@
 #include <QString>
 #include <QVector>
 #include <functional>
+#include "AiWriter.h"
 #include "Library.h"
 
 class Classifier {
@@ -22,7 +24,9 @@ public:
     static bool probe(const QString& url = QStringLiteral("http://127.0.0.1:8766"));
 
     // 给库内未分类照片批量打标并写回。
-    //   lib        : 本机库（读 photos()，写 setCategories）
+    //   photos     : 库内照片**快照**（调用方在 GUI 线程取 `QVector<Photo>` 副本后交给
+    //                worker；Library 无锁，worker 绝不持 Library* 读 photos()）
+    //   writer     : 写回投递器（core/AiWriter）——落库恒在 GUI 线程
     //   thumbsDir  : 缩略图目录（与 Photo.thumbFile 拼接取图）
     //   url        : CLIP 服务基址（默认回环 8766）
     //   batch      : 每批缩略图数（默认 32）
@@ -30,7 +34,8 @@ public:
     //   progress   : (done,total,name) 进度回调
     //   cancel     : 返回 true 即尽快中止（在途批次跑完）
     // 守恒：只写 category 列，不增删照片。失败即放行（坏图不中断整批）。
-    static bool classify(Library* lib, const QString& thumbsDir,
+    static bool classify(const QVector<Photo>& photos, AiWriter& writer,
+                         const QString& thumbsDir,
                          const QString& url = QStringLiteral("http://127.0.0.1:8766"),
                          int batch = 32, int limit = -1,
                          std::function<void(int, int, const QString&)> progress = {},

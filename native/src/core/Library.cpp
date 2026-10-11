@@ -6,6 +6,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSet>
+#include <QThread>
 #include <algorithm>
 
 // 方向 C·QA：反例开关（写库但跳过内存同步）
@@ -254,6 +255,14 @@ bool Library::setMark(const QString& path, const QString& mark)
 void Library::setForceCategoryNoSyncForQa(bool on) { g_forceCategoryNoSync = on; }
 void Library::setForcePersonNoSyncForQa(bool on) { g_forcePersonNoSync = on; }
 
+// 记下这次写发生在哪个线程。atomic 存指针值本身即可（QThread* 生命周期由 Qt 管），
+// 读侧（门禁）拿它和 QThread::currentThread() 比，不追逐指针背后的对象。
+void Library::noteWriteThread()
+{
+    lastWriteThread_.store(reinterpret_cast<quintptr>(QThread::currentThread()),
+                           std::memory_order_relaxed);
+}
+
 // ---- 方向 C·智能分类：批量写回场景标签（每条 path 各自 label）----
 // 沿用 applyBatch 的「单事务 + COMMIT 后才同步内存」语义，区别在于每条值不同
 // （rating/priv/mark 是统一值，category 是 per-path），故独立实现而非套用枚举。
@@ -262,6 +271,7 @@ BatchResult Library::setCategories(const QVector<CatItem>& items)
     BatchResult r;
     r.total = items.size();
     if (items.isEmpty()) { r.ok = true; return r; }   // 空批=成功空操作
+    noteWriteThread();
 
     QSqlDatabase db = rw();
     const QString sql = QStringLiteral("UPDATE photos SET category=? WHERE path=?");
@@ -316,6 +326,7 @@ BatchResult Library::setPersons(const QVector<PersonItem>& items)
     BatchResult r;
     r.total = items.size();
     if (items.isEmpty()) { r.ok = true; return r; }   // 空批=成功空操作
+    noteWriteThread();
 
     QSqlDatabase db = rw();
     const QString sql = QStringLiteral("UPDATE photos SET person=? WHERE path=?");
@@ -421,6 +432,7 @@ BatchResult Library::setFaceEmbeddings(const QVector<FaceItem>& items)
     BatchResult r;
     r.total = items.size();
     if (items.isEmpty()) { r.ok = true; return r; }   // 空批=成功空操作
+    noteWriteThread();
 
     QSqlDatabase db = rw();
     const QString sql = QStringLiteral("UPDATE photos SET face_emb=? WHERE path=?");
@@ -467,6 +479,7 @@ BatchResult Library::applyClusters(const QVector<ClusterItem>& items)
     BatchResult r;
     r.total = items.size();
     if (items.isEmpty()) { r.ok = true; return r; }   // 空批=成功空操作
+    noteWriteThread();
 
     QSqlDatabase db = rw();
     const QString sql = QStringLiteral(
@@ -548,6 +561,13 @@ void Library::rebuildPathIndex()
 }
 
 Photo* Library::findMutable(const QString& path)
+{
+    const auto it = pathIx_.constFind(path);
+    if (it == pathIx_.constEnd()) return nullptr;
+    return &photos_[it.value()];
+}
+
+const Photo* Library::find(const QString& path) const
 {
     const auto it = pathIx_.constFind(path);
     if (it == pathIx_.constEnd()) return nullptr;

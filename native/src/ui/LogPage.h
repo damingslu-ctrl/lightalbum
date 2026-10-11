@@ -50,6 +50,7 @@ public:
 private:
     void recompute();                 // 依据 photos_ + 筛选/隐私 重算所有图表
     void exportCsv();                 // P30-C：导出当前筛选范围的 EXIF CSV
+    void rebuildFilterChips();        // 2.33 收纳：年份/机身筛选条重建（前 8 平铺 + 溢出下拉）
     const QVector<Photo>* photos_ = nullptr;
     bool    hidePrivate_ = true;      // P16 隐私门（默认锁）
 
@@ -66,8 +67,10 @@ private:
     // P30-C 控制台风格
     int                 filtYear_ = 0;          // 0 = 全部
     QString             filtCam_;                // 空 = 全部
+    QStringList         yList_;                  // 2.33：可选年份（升序，rebuild 时复用）
+    QStringList         cList_;                  // 2.33：可选机身
     QWidget*            toolbar_   = nullptr;
-    QVector<QPushButton*> chips_;
+    QWidget*            chipsHost_ = nullptr;    // 2.33：筛选 chips 宿主（fillChipRow 重建）
     QPushButton*        exportBtn_ = nullptr;
     QLabel*             foot_      = nullptr;
 };

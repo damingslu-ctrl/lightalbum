@@ -183,8 +183,28 @@ void MapView::loadData()
             tot += it.value().toArray().size();
         int worldRings = 0;
         for (const WorldFeature& wf : worldFeatures_) worldRings += 1 + wf.holes.size();
-        std::fprintf(stderr, "LA_MAP_SMOKE rings=%d regions=%d provinces=%d zh=%d names=%d\n",
-                     worldRings, regions_.size(), tot, provZh_.size(), worldNames_.size());
+        // ★判定必须存在（铁律34）：此前只打数字，而 runner 的 greenPat 含 "rings="
+        //   → rings=0 也算绿，门永远不可能红。补两条真不变量：
+        //   ① 各层几何非空（数据文件缺项即红）；
+        //   ② provZh_ 按省英文名索引（zhOf 就查它），所以「中文名条目数 == 几何里
+        //      各省数组条目总数」是「每个省都有中文名」的可判定形式（漏译即红）。
+        //   注：Qt6 的 size() 返回 qsizetype，必须 int() 后再进 %d，否则 varargs 类型
+        //   不符是 UB（原实现即踩此坑，判定整行打不出来）。
+        // 反例（铁律35）：LA_MAP_SMOKE_FORCE_BROKEN=1 删掉一个省的中文名，这正是
+        //   「漏译一个省」的真实形状。它只破坏数据，不碰下面的判定式（铁律22）。
+        if (!qEnvironmentVariableIsEmpty("LA_MAP_SMOKE_FORCE_BROKEN") && !provZh_.isEmpty())
+            provZh_.remove(provZh_.constBegin().key());
+        const int zhKeys = int(provZh_.size());
+        const bool zhComplete = zhKeys == tot;
+        const bool pass = worldRings > 0 && !regions_.isEmpty()
+                       && tot > 0 && !provJson_.isEmpty() && zhComplete
+                       && !worldNames_.isEmpty();
+        std::fprintf(stderr,
+                     "LA_MAP_SMOKE %s rings=%d regions=%d provinces=%d provKeys=%d "
+                     "zhKeys=%d names=%d zhComplete=%d\n",
+                     pass ? "PASS" : "FAIL",
+                     worldRings, int(regions_.size()), tot, int(provJson_.size()),
+                     zhKeys, int(worldNames_.size()), int(zhComplete));
         std::fflush(stderr);
     }
 }
@@ -2483,9 +2503,13 @@ int MapView::qaPerf()
     QImage img(size(), QImage::Format_ARGB32_Premultiplied);
     img.fill(0xff0a1016);
     int fail = 0;
-    // 证据化宽松门槛（先测再改 + 铁律25）：world 原 2.30ms 来自每帧缩放 blit 固定 3000×1500，
-    // 修正为显示分辨率 1:1 blit 后预测 ~0.5ms，预算 1.2ms 既证伪回退又留 ~2× 余量；
-    // region/province/country 已是 1:1 blit（0.25–0.45ms），门槛 1.5ms 防回退且不 flaky。
+    // 证据化门槛（先测再定 + 铁律25/31）：world 每帧 = 世界层 1:1 blit + 图例/页脚。
+    // LA_MAP_PERF_DETAIL 实测本机稳态 world_base≈1.15ms、overlay≈0.15ms；跑完整套件、
+    // 多进程并发时 20 帧均值会因偶发调度/降频长帧飘到 ~1.5ms。原预算 1.2ms 距稳态仅
+    // ~4% 余量 → 在负载下必然 flaky。要防的真实回退是改回每帧缩放 blit 固定 3000×1500
+    // ≈2.30ms。预算取 1.6ms：高于含负载飘移的稳态均值，又明显低于 2.30 回退签名 →
+    // 真回退时每帧整体右移照样越线（判定不空心）。region/province/country 同为 1:1
+    // blit，基线 ≈0.25-0.55ms，预算 1.5ms 留足防回退余量。
     auto bench = [&](const char* name, double budgetMs, const std::function<void()>& enter) -> double {
         enter();
         {   // warmup：首帧含懒加载/缓存烘焙，不计入
@@ -2507,7 +2531,7 @@ int MapView::qaPerf()
         std::fflush(stderr);
         return ms;
     };
-    bench("world", 1.2, [] {});
+    bench("world", 1.6, [] {});
     // A 取证：拆出世界层「基础地图 blit + 图例 + 页脚」与「每帧覆盖层」各自耗时。
     // 覆盖层 = 大区锚点标签(10) + 地理热点徽章(N，各含 setFont+drawText)，当前未并入 worldPix_。
     if (!qEnvironmentVariableIsEmpty("LA_MAP_PERF_DETAIL")) {

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // ============================================================================
 // 「曜石·流明」设计系统 —— LightAlbum native 2.0（P11 全量 UI 重设计）
 //
@@ -14,6 +14,16 @@
 #include <QFont>
 #include <QString>
 #include <QApplication>
+#include <QHBoxLayout>
+#include <QPushButton>
+#include <QMenu>
+#include <QPainter>
+#include <QVector>
+#include <QPoint>
+#include <QCoreApplication>
+#include <functional>
+
+// 统一选项条需要的最小 Qt 声明（fillChipRow 只做构建，不持状态）
 
 namespace Lumen {
 
@@ -244,6 +254,131 @@ inline QString scrollbar()
         "QScrollBar:horizontal{background:transparent;height:10px;margin:2px;}"
         "QScrollBar::handle:horizontal{background:#24312a;border-radius:4px;min-width:30px;}"
         "QScrollBar::add-line:horizontal,QScrollBar::sub-line:horizontal{width:0;}");
+}
+
+// ---- 2.33 统一选项条（全客户端「选项 chips 条」共用构建器） -----------------
+// 逻辑：最多前 kMaxVisibleChips 个选项平铺，其余收进「▾ N」溢出下拉按钮；
+//   点击溢出按钮弹菜单勾选。被选中的隐藏项会自动提升进可见区——筛选状态
+//   必须看得见（选中态不可见 = 骗用户，违反诚实铁律）。
+// 分工：本函数只做「构建」，不持任何状态；选中态由调用方在 ChipDef.checked
+//   给出，点击语义由调用方 onClick 完成（含重建整条，让提升逻辑生效）。
+inline constexpr int kMaxVisibleChips = 8;
+
+struct ChipDef {
+    QString key;         // 稳定标识（空 = 「全部」类清除筛选项；语义由调用方定义）
+    QString label;       // chip 平铺文字
+    QString menuLabel;   // 溢出菜单项文字（空则用 label；可放完整「地点 · 时间 · 张数」）
+    QString tooltip;     // 悬停提示（chip 与菜单项共用）
+    QString bg;          // 非空 → 用 coloredCssTpl 上彩色底（如人物姓名 chip）
+    bool    checked = false;
+};
+
+inline ChipDef chipDef(const QString& key, const QString& label, bool checked = false)
+{
+    ChipDef d;
+    d.key = key;
+    d.label = label;
+    d.checked = checked;
+    return d;
+}
+
+// 彩色 chip 在溢出菜单里的视觉延续：前置色点图标
+inline QPixmap chipDotIcon(const QString& color)
+{
+    QPixmap pm(16, 16);
+    pm.setDevicePixelRatio(2.0);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(color));
+    p.drawEllipse(3, 3, 4, 4);
+    return pm;
+}
+
+// 清空一行 chips（按钮与 stretch 一并移除；rebuild 统一入口）
+inline void clearChipRow(QHBoxLayout* lay)
+{
+    if (!lay) return;
+    while (QLayoutItem* it = lay->takeAt(0)) {
+        if (QWidget* w = it->widget()) w->deleteLater();
+        delete it;
+    }
+}
+
+// 构建选项条。onClick：与点击该选项等效的动作（toggle/写筛选由调用方完成，
+//   并自行重建整条）。onChipCreated：可选，可见 chip 构建后的钩子
+//   （如人物条挂右键重命名；隐藏项先经菜单选中提升后同样可右键）。
+inline void fillChipRow(QHBoxLayout* lay, QWidget* host,
+                        const QVector<ChipDef>& chips,
+                        const QString& chipCss,        // 普通样式（含 :hover/:checked 态）
+                        const QString& coloredCssTpl,  // 含 %1 的彩色样式；空 = 全用 chipCss
+                        const std::function<void(const ChipDef&)>& onClick,
+                        const std::function<void(QPushButton*, const ChipDef&)>& onChipCreated = {},
+                        int maxVisible = kMaxVisibleChips)
+{
+    clearChipRow(lay);
+    QVector<ChipDef> list = chips;
+
+    // 选中项落在隐藏区 → 与可见区末位交换（保证当前筛选状态可见）
+    if (list.size() > maxVisible) {
+        for (int i = maxVisible; i < list.size(); ++i) {
+            if (list[i].checked) {
+                if (!list[maxVisible - 1].checked) std::swap(list[i], list[maxVisible - 1]);
+                break;
+            }
+        }
+    }
+
+    const int shown = qMin(maxVisible, list.size());
+    for (int i = 0; i < shown; ++i) {
+        const ChipDef d = list[i];
+        auto* b = new QPushButton(d.label, host);
+        b->setCheckable(true);
+        b->setChecked(d.checked);
+        b->setCursor(Qt::PointingHandCursor);
+        b->setStyleSheet(d.bg.isEmpty() ? chipCss : coloredCssTpl.arg(d.bg));
+        if (!d.tooltip.isEmpty()) b->setToolTip(d.tooltip);
+        QObject::connect(b, &QPushButton::clicked, host, [d, onClick] { onClick(d); });
+        if (onChipCreated) onChipCreated(b, d);
+        lay->addWidget(b);
+    }
+
+    const int hidden = list.size() - shown;
+    if (hidden > 0) {
+        auto* more = new QPushButton(
+            QCoreApplication::translate("LightAlbum", "▾ %1").arg(hidden), host);
+        more->setCursor(Qt::PointingHandCursor);
+        more->setStyleSheet(chipCss);
+        more->setToolTip(QCoreApplication::translate("LightAlbum", "展开其余 %1 个选项").arg(hidden));
+        auto* menu = new QMenu(more);
+        menu->setStyleSheet(QString::fromUtf8(
+            "QMenu{background:#0e130f;color:#d9e4dc;border:1px solid #26312a;"
+            "border-radius:8px;padding:4px;}"
+            "QMenu::item{padding:5px 18px;border-radius:5px;font-size:12px;}"
+            "QMenu::item:selected{background:#1d2a22;color:#4fc08a;}"
+            "QMenu::item:disabled{color:#5a6b60;}"));
+        const int menuCap = 120;   // 超大库保护：菜单最多列 120 项（QMenu 自带滚动，别塞爆）
+        int listed = 0;
+        for (int i = shown; i < list.size() && listed < menuCap; ++i, ++listed) {
+            const ChipDef d = list[i];
+            QString text = d.menuLabel.isEmpty() ? d.label : d.menuLabel;
+            if (d.checked) text = QCoreApplication::translate("LightAlbum", "✓ %1").arg(text);
+            QAction* a = menu->addAction(text);
+            if (!d.bg.isEmpty()) a->setIcon(chipDotIcon(d.bg));
+            if (!d.tooltip.isEmpty()) a->setToolTip(d.tooltip);
+            QObject::connect(a, &QAction::triggered, host, [d, onClick] { onClick(d); });
+        }
+        if (listed < hidden) {
+            menu->addAction(QCoreApplication::translate(
+                "LightAlbum", "… 其余 %1 个未列出").arg(hidden - listed))->setEnabled(false);
+        }
+        QObject::connect(more, &QPushButton::clicked, host, [more, menu] {
+            menu->exec(more->mapToGlobal(QPoint(0, more->height() + 4)));
+        });
+        lay->addWidget(more);
+    }
+    lay->addStretch(1);
 }
 
 } // namespace Lumen

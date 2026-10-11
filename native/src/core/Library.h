@@ -9,6 +9,7 @@
 #include <QHash>
 #include <QByteArray>
 #include <QSqlDatabase>
+#include <atomic>
 
 // 方向 D 第五步：批量写回结果。
 // 语义铁律：**原子** —— 任一条失败则整体回滚，done 归零、内存副本不动。
@@ -81,9 +82,16 @@ struct Kpi {
 
 class Library {
 public:
+    // ★线程归属（2.33.0）：本类**无锁**，只能在 GUI 线程读写。异步任务（AI 分类/人脸/
+    //   聚类）不得把 Library* 交给 worker —— la_rw 的 QSqlDatabase 连接与线程绑定，
+    //   且 mutator 会同步 photos_（模型正按引用读）。正解：worker 只算，写回经
+    //   core/AiWriter 投递回 GUI 线程。lastWriteThreadId() 把这条约束变成可断言的事实。
     bool open(const QString& dbPath, QString* err = nullptr);
     const QVector<Photo>& photos() const { return photos_; }
     const Kpi& kpi() const { return kpi_; }
+    // 2.33.0：只读 O(1) 路径查找（走已有 pathIx_）。此前 UI 多处为拿到一个 Photo*
+    //   线性扫全库（openLightbox 每次点击、灯箱翻图每次按键），D5 建的索引被绕过。
+    const Photo* find(const QString& path) const;
 
     // ---- P16 写回 API（独立读写连接；同时同步内存副本）----
     // 方向 D5：单条 = 长度为 1 的批量（统一走唯一事务入口，禁旁路直写）
@@ -127,6 +135,10 @@ public:
     static void setForceCategoryNoSyncForQa(bool on);
     // 索引自检（QA 门）：path <-> photos_ 下标双向一致，且大小 == photos_.size()
     bool verifyPathIndex() const;
+    // 最近一次**异步写回 mutator**（setCategories/setPersons/setFaceEmbeddings/applyClusters）
+    // 的调用线程 id；0 = 从未写过。恒等于 GUI 线程 id 才算守住了上面的线程归属约束
+    // （LA_GUI_THREAD_QA 据此判定，并自带「instrument 本身不是空的」负向对照）。
+    quintptr lastWriteThreadId() const { return lastWriteThread_.load(std::memory_order_relaxed); }
     // meta 表 KV（隐私库口令 salt/hash 存这里）
     QString metaValue(const QString& key) const;
     bool setMetaValue(const QString& key, const QString& value);
@@ -137,10 +149,12 @@ private:
 
     void rebuildPathIndex();                             // photos_ 变动后唯一重建入口
     Photo* findMutable(const QString& path);             // O(1) 走 pathIx_（禁线性扫描）
+    void noteWriteThread();                              // 记录调用线程（atomic 存 QThread*）
 
     QSqlDatabase rw();                                   // 惰性读写连接「la_rw」
     QVector<Photo> photos_;
     QHash<QString, int> pathIx_;                         // path -> photos_ 下标（D5：批量写回去 O(N²)）
     Kpi kpi_;
     QString dbPath_;
+    std::atomic<quintptr> lastWriteThread_{0};   // 异步写回 mutator 的调用线程（见 open() 上方约束）
 };

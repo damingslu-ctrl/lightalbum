@@ -186,7 +186,7 @@ LogPage::LogPage(const QVector<Photo>* photos, QWidget* parent)
     lay->addWidget(head);
 
     // —— P30-C 顶栏：筛选 chips（年份 / 机身）+ 导出 CSV ——
-    // 修复横向溢出：chips 放进内部横向滚动条，绝不撑宽整页
+    // 2.33 收纳：不再横向滚动，统一「前 8 平铺 + ▾ 溢出下拉」（Lumen::fillChipRow）
     toolbar_ = new QWidget(root);
     auto* tlb = new QHBoxLayout(toolbar_);
     tlb->setContentsMargins(0, 0, 0, 0);
@@ -197,48 +197,15 @@ LogPage::LogPage(const QVector<Photo>* photos, QWidget* parent)
         if (p.year > 0) yrs.insert(p.year);
         if (!p.cam.isEmpty()) cams.insert(p.cam);
     }
-    QStringList yList; for (int y : yrs) yList.append(QString::number(y));
-    QStringList cList; for (const QString& c : cams) cList.append(c);
-    std::sort(yList.begin(), yList.end());
+    for (int y : yrs) yList_.append(QString::number(y));
+    for (const QString& c : cams) cList_.append(c);
+    std::sort(yList_.begin(), yList_.end());
 
-    auto mkChip = [&](const QString& txt, bool on, QWidget* host) {
-        auto* b = new QPushButton(txt, host);
-        b->setCursor(Qt::PointingHandCursor);
-        b->setFixedHeight(28);
-        b->setStyleSheet(on ? QStringLiteral("QPushButton{background:#4fc08a;color:#06130c;border:none;"
-            "border-radius:999px;padding:0 14px;font-size:12px;font-weight:700;}")
-            : QStringLiteral("QPushButton{background:#0f1512;color:#8da396;border:1px solid #26312a;"
-            "border-radius:999px;padding:0 14px;font-size:12px;}"
-            "QPushButton:hover{color:#f4f7f4;border-color:#3a4a40;}"));
-        return b;
-    };
-
-    // P30-C 修正：chips 横向滚动条（内部滚动，整页不再溢出）
-    auto* chipsScroll = new QScrollArea(toolbar_);
-    chipsScroll->setWidgetResizable(false);
-    chipsScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    chipsScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    chipsScroll->setFrameShape(QFrame::NoFrame);
-    chipsScroll->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    chipsScroll->setFixedHeight(30);
-    chipsScroll->setMinimumWidth(40);
-    chipsScroll->setStyleSheet(QStringLiteral(
-        "QScrollArea{background:transparent;border:none;}"
-        "QScrollBar:horizontal{height:6px;background:transparent;margin:0;}"
-        "QScrollBar::handle:horizontal{background:#26312a;border-radius:3px;}"
-        "QScrollBar::add-line:horizontal,QScrollBar::sub-line:horizontal{width:0;height:0;}"));
-    auto* chipsWidget = new QWidget(chipsScroll);
-    auto* chipsLay = new QHBoxLayout(chipsWidget);
+    chipsHost_ = new QWidget(toolbar_);
+    auto* chipsLay = new QHBoxLayout(chipsHost_);
     chipsLay->setContentsMargins(0, 0, 0, 0);
     chipsLay->setSpacing(8);
-    chipsScroll->setWidget(chipsWidget);
-
-    auto* allChip = mkChip(QCoreApplication::translate("LightAlbum", "全部"), true, chipsWidget);
-    chips_.append(allChip);
-    chipsLay->addWidget(allChip);
-    for (const QString& y : yList) { auto* c = mkChip(y, false, chipsWidget); chips_.append(c); chipsLay->addWidget(c); }
-    for (const QString& c : cList) { auto* b = mkChip(c, false, chipsWidget); chips_.append(b); chipsLay->addWidget(b); }
-    tlb->addWidget(chipsScroll, 1);
+    tlb->addWidget(chipsHost_, 1);
 
     exportBtn_ = new QPushButton(QCoreApplication::translate("LightAlbum", "导出 CSV"), toolbar_);
     exportBtn_->setCursor(Qt::PointingHandCursor);
@@ -249,24 +216,7 @@ LogPage::LogPage(const QVector<Photo>* photos, QWidget* parent)
         "QPushButton:hover{background:rgba(217,169,78,0.12);}"));
     tlb->addWidget(exportBtn_);
 
-    // 单一激活筛选（全部 / 年份 / 机身）
-    for (int i = 0; i < chips_.size(); ++i) {
-        connect(chips_[i], &QPushButton::clicked, this, [this, i, yList, cList] {
-            if (i == 0) { filtYear_ = 0; filtCam_.clear(); }
-            else if (i <= yList.size()) { filtYear_ = yList[i - 1].toInt(); filtCam_.clear(); }
-            else { filtYear_ = 0; filtCam_ = cList[i - 1 - yList.size()]; }
-            for (int j = 0; j < chips_.size(); ++j) {
-                const bool on = (j == i);
-                chips_[j]->setStyleSheet(on
-                    ? QStringLiteral("QPushButton{background:#4fc08a;color:#06130c;border:none;"
-                        "border-radius:999px;padding:0 14px;font-size:12px;font-weight:700;}")
-                    : QStringLiteral("QPushButton{background:#0f1512;color:#8da396;border:1px solid #26312a;"
-                        "border-radius:999px;padding:0 14px;font-size:12px;}"
-                        "QPushButton:hover{color:#f4f7f4;border-color:#3a4a40;}"));
-            }
-            recompute();
-        });
-    }
+    rebuildFilterChips();
     connect(exportBtn_, &QPushButton::clicked, this, &LogPage::exportCsv);
     lay->addWidget(toolbar_);
 
@@ -352,6 +302,40 @@ LogPage::LogPage(const QVector<Photo>* photos, QWidget* parent)
     scroll->setWidget(root);
 
     recompute();
+}
+
+// 2.33 收纳：年份/机身筛选条（前 8 平铺 + ▾ 溢出下拉）。
+// key 编码：空 = 全部；"y:2024" = 年份；"c:机身名" = 机身（mid(2) 取余串，冒号无歧义）。
+// 单选语义与 2.32 一致：点年份/机身即选中，点「全部」清除；选中态随重建给出。
+void LogPage::rebuildFilterChips()
+{
+    if (!chipsHost_) return;
+    auto* lay = static_cast<QHBoxLayout*>(chipsHost_->layout());
+    if (!lay) return;
+    const QString chipCss = QStringLiteral(
+        "QPushButton{background:#0f1512;color:#8da396;border:1px solid #26312a;"
+        "border-radius:999px;padding:0 14px;font-size:12px;min-height:24px;}"
+        "QPushButton:hover{color:#f4f7f4;border-color:#3a4a40;}"
+        "QPushButton:checked{background:#4fc08a;color:#06130c;border:1px solid #4fc08a;"
+        "border-radius:999px;padding:0 14px;font-size:12px;font-weight:700;}");
+
+    QVector<Lumen::ChipDef> defs;
+    defs.append(Lumen::chipDef(QString(),
+        QCoreApplication::translate("LightAlbum", "全部"),
+        filtYear_ == 0 && filtCam_.isEmpty()));
+    for (const QString& y : yList_)
+        defs.append(Lumen::chipDef(QStringLiteral("y:%1").arg(y), y, filtYear_ == y.toInt()));
+    for (const QString& c : cList_)
+        defs.append(Lumen::chipDef(QStringLiteral("c:%1").arg(c), c, filtCam_ == c));
+
+    Lumen::fillChipRow(lay, chipsHost_, defs, chipCss, QString(),
+        [this](const Lumen::ChipDef& d) {
+            if (d.key.isEmpty())                       { filtYear_ = 0; filtCam_.clear(); }
+            else if (d.key.startsWith(QLatin1String("y:"))) { filtYear_ = d.key.mid(2).toInt(); filtCam_.clear(); }
+            else                                       { filtYear_ = 0; filtCam_ = d.key.mid(2); }
+            rebuildFilterChips();   // 选中态随重建给出；选中隐藏项自动提升
+            recompute();
+        });
 }
 
 void LogPage::setHidePrivate(bool hide)

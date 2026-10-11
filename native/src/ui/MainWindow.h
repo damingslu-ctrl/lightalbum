@@ -39,7 +39,9 @@ public:
     int shootPages(const QString& dir);
 
     // P15：打开沉浸式灯箱（图库点击 / 探针复用）
-    void openLightbox(const QString& path);
+    // 2.33.0：scope = 打开方的可见集合（图库页有筛选时传入），灯箱 ←/→ 只在其中走；
+    //   空 = 全库顺序。默认参数保持既有调用点（首页/地图/探针）语义不变。
+    void openLightbox(const QString& path, const QStringList& scope = {});
 
     // P13：导航切换联动动效（淡出→换页→淡入+轻微上滑）
     void onNav(int row);
@@ -66,8 +68,7 @@ private:
     void  importICloud();                        // 探测根 → 确认 → runImportInto
     void  runImportInto(const QString& dir, const QString& title);  // 导入主体（原 startImport 抽出）
 
-    // P16 隐私库：初始化密码 / 解锁 / 重新上锁（非破坏私密标记 + 密码门）
-    void setupVaultUi();         // 顶栏锁按钮
+    // P16 隐私库：解锁 / 重新上锁（非破坏私密标记 + 密码门）
     void onVaultButton();        // 点击行为随状态分流
     void refreshPrivateState();  // 解锁/上锁 → 图库/地图同步可见性
 

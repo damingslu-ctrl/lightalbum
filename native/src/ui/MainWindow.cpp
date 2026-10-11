@@ -9,6 +9,7 @@
 #include "RetouchPage.h"
 #include "VideoLightbox.h"
 #include "../core/Scanner.h"
+#include "../core/BrowseScope.h"   // 2.33.0 灯箱翻图作用域 + 隐私门（纯函数，与门禁同源）
 #include "../core/ICloudSource.h"
 #include "../core/qaExit.h"      // 2.7.0 门禁自退契约（禁裸调 quit）
 #include "../core/Classifier.h"   // 方向 C·智能分类：CLIP 客户端桥
@@ -16,6 +17,8 @@
 #include "../core/FaceCluster.h"     // 方向 C·人物自动聚类：阈值余弦聚类纯函数
 #include "FullCache.h"                // 2.22.0：原图字节预算 LRU（后台解码）
 #include "../core/MotionPref.h"
+#include "../core/MotionKit.h"        // 2.34.0 动效引擎：预设表/曲线唯一真源
+#include "../core/MotionDriver.h"     // 2.34.0 唯一 Qt 驱动器
 #include "../core/Vault.h"
 #include <QDialog>
 #include <QInputDialog>
@@ -65,6 +68,27 @@
 #endif
 
 namespace {
+// 2.33 浮岛分组分割线 delegate：在分组首项（row 3=选片, row 5=日志）顶部画细线。
+// 不加假 item，保持 QListWidget row 索引与 stack_ 索引一一对应。
+class NavGroupDelegate : public QStyledItemDelegate {
+public:
+    using QStyledItemDelegate::QStyledItemDelegate;
+    void paint(QPainter* p, const QStyleOptionViewItem& opt,
+               const QModelIndex& ix) const override
+    {
+        QStyledItemDelegate::paint(p, opt, ix);
+        // 分组分割线：row 3（编辑组首项）和 row 5（工具组首项）顶部
+        if (ix.row() == 3 || ix.row() == 5) {
+            p->save();
+            QPen sep(QColor(0x1a, 0x23, 0x1d), 1);
+            p->setPen(sep);
+            const int mx = 16;   // 线不拉满宽度，左右各留 16px（浮岛呼吸感）
+            p->drawLine(QPointF(opt.rect.left() + mx, opt.rect.top() + 1),
+                        QPointF(opt.rect.right() - mx, opt.rect.top() + 1));
+            p->restore();
+        }
+    }
+};
 struct NavItem { const char* label; const char* phase; };
 // 与 web 版导航一致：首页/足迹/图库 · 智能选片/修图 · 日志/关于（三组分隔在 P1 用间隔项体现）
 const NavItem kNav[] = {
@@ -331,16 +355,49 @@ public:
     bool hasChanges() const { return changed_; }
     void clearChanges() { changed_ = false; }
 
-    // F3 a11y：←/→ 沿 lib 照片序翻图（端点不回绕）
+    // 2.33.0 翻图作用域：空 = 全库顺序；非空 = 调用方（图库页）当前的可见集合。
+    //   此前 ←/→ 恒按全库走，用户在三张图的故事/人物/分类筛选里按右箭头，会直接
+    //   翻到筛选结果之外的照片上 —— 「看得见什么就走什么」是筛选的基本语义。
+    void setScope(const QStringList& paths)
+    {
+        slots_.clear();
+        slotPos_.clear();
+        if (!lib_) return;
+        auto add = [this](const Photo& p) {
+            BrowseSlot s;
+            s.path = p.path;
+            s.priv = p.priv;
+            slotPos_.insert(s.path, int(slots_.size()));
+            slots_.append(s);
+        };
+        const QVector<Photo>& ps = lib_->photos();
+        if (paths.isEmpty()) {
+            slots_.reserve(ps.size());
+            for (const Photo& p : ps) add(p);
+        } else {
+            slots_.reserve(paths.size());
+            for (const QString& path : paths) {
+                const Photo* ph = lib_->find(path);
+                if (ph) add(*ph);      // 作用域里的路径必须真实存在于库
+            }
+        }
+    }
+    // P16 隐私门：由 MainWindow 依 vaultUnlocked_ 下发（锁定态翻图须跳过私密照）
+    void setHidePrivate(bool hide) { hidePrivate_ = hide; }
+
+    // F3 a11y：←/→ 翻图（端点不回绕）。
+    // 2.33.0 两条补漏：① 沿 setScope 给的作用域翻，不再越出用户正在看的集合；
+    // ② 锁定态跳过私密照 —— 此前从一张公开照片连按 → 就能步进私密区
+    //   （灯箱只在全库序列上走，从不看 vaultUnlocked_）。
     void navigate(int delta) {
         if (!lib_) return;
-        const QVector<Photo>& ps = lib_->photos();
-        int idx = -1;
-        for (int i = 0; i < ps.size(); ++i) if (ps[i].path == path_) { idx = i; break; }
-        if (idx < 0) return;
-        const int ni = idx + delta;
-        if (ni < 0 || ni >= ps.size()) return;
-        setPhoto(&ps[ni], thumbsDir_);
+        // 判定本体在 BrowseScope::nextVisible（纯函数，与 LA_PRIVACY_QA 同源）
+        const int nx = BrowseScope::nextVisible(
+            slots_, slotPos_.value(path_, -1), delta, hidePrivate_);
+        if (nx < 0) return;
+        const Photo* ph = lib_->find(slots_[nx].path);
+        if (!ph) return;
+        setPhoto(ph, thumbsDir_);
         setFocus();
     }
 
@@ -415,6 +472,9 @@ private:
     QWidget* ctl_ = nullptr;
     QString  path_;
     QString  thumbsDir_;   // F3 a11y：翻图复用
+    QVector<BrowseSlot>  slots_;      // 2.33.0 翻图作用域槽（空 scope = 全库顺序）
+    QHash<QString,int>   slotPos_;    // path → 槽序号（O(1)，禁线性扫）
+    bool               hidePrivate_ = true;  // P16 隐私门（默认锁，与 GalleryModel 同口径）
     int      curRating_ = 0;
     bool     changed_ = false;
     QVector<QToolButton*> starBtns_;
@@ -431,14 +491,20 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
     root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(0);
 
-    // ---- P24 侧边栏 A「抛光图标轨」：固定 68px 纯图标轨（取消 P18 折叠双态）。
-    //      顶部衬线「光」字标；激活项金底胶囊（QSS 横向 margin 内缩 68-26=42px）
-    //      + 左缘金条 + 图标转金；hover 泛光。图标走 QListWidgetItem::setIcon
-    //      （激活态在 updateNavActive 重着色）；纯图标轨无文字 → tooltip 补位。----
-    navBox_ = new QWidget(central);
+    // ---- 2.33 侧边栏「悬浮浮岛」：脱离左缘 12px、圆角 16px 浮岛，三组用
+    //      细分割线分隔（浏览/编辑/工具），选中项金色光晕填充 + 图标转金。
+    //      取消 P24 的左缘金条（浮岛无「左缘」语义），改用光晕呼吸。----
+    auto* navWrap = new QWidget(central);           // 外层容器：12px 边距让浮岛「悬浮」
+    navWrap->setFixedWidth(92);                      // 68 浮岛 + 12*2 边距
+    navWrap->setStyleSheet(QStringLiteral("background:transparent;"));
+    auto* nwLay = new QVBoxLayout(navWrap);
+    nwLay->setContentsMargins(12, 14, 12, 14);
+    nwLay->setSpacing(0);
+
+    navBox_ = new QWidget(navWrap);
     navBox_->setFixedWidth(68);
     navBox_->setStyleSheet(QStringLiteral(
-        "background:#0c100d;border-right:1px solid #26312a;"));
+        "background:#0a0e0b;border-radius:16px;border:1px solid #1a231d;"));
     auto* nvLay = new QVBoxLayout(navBox_);
     nvLay->setContentsMargins(0, 14, 0, 12);
     nvLay->setSpacing(4);
@@ -456,38 +522,40 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
     nav_->setViewMode(QListView::IconMode);
     nav_->setFlow(QListView::TopToBottom);
     nav_->setWrapping(false);
-    nav_->setMovement(QListView::Static);          // IconMode 默认可拖拽，锁死
-    nav_->setGridSize(QSize(68, 48));
+    nav_->setMovement(QListView::Static);
+    nav_->setGridSize(QSize(68, 44));
     nav_->setUniformItemSizes(true);
     nav_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     nav_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     nav_->setFrameShape(QFrame::NoFrame);
+    // 2.33 浮岛选中态：金色光晕（径向渐变）替代纯色胶囊，更有「打光」感
     nav_->setStyleSheet(QStringLiteral(
         "QListWidget{background:transparent;outline:0;}"
-        "QListWidget::item{margin:2px 13px;border-radius:10px;}"          // 42px 胶囊
-        "QListWidget::item:hover{background:rgba(232,228,218,15);}"       // 泛光 .06
-        "QListWidget::item:selected{background:rgba(217,169,78,40);}"));  // 金底 .16
+        "QListWidget::item{margin:2px 10px;border-radius:12px;}"
+        "QListWidget::item:hover{background:rgba(79,192,138,18);}"
+        "QListWidget::item:selected{background:qradialgradient(cx:0.5,cy:0.5,"
+        "radius:0.6,fx:0.5,fy:0.5,stop:0 rgba(217,169,78,60),"
+        "stop:1 rgba(217,169,78,8));}"));
     nav_->setIconSize(QSize(22, 22));
+    // 三组：浏览(首页/足迹/图库) | 编辑(选片/修图) | 工具(日志/关于)
+    // 分割线由 delegate 在 row 3/5 顶部绘制（不加假 item，保持 row→stack 索引一致）
     for (int i = 0; i < int(sizeof(kNavIcons) / sizeof(kNavIcons[0])); ++i) {
         auto* it = new QListWidgetItem;
-        it->setSizeHint(QSize(68, 44));
+        it->setSizeHint(QSize(68, 42));
         it->setIcon(Icons::make(QString::fromLatin1(kNavIcons[i]),
                                 QColor(0x9f, 0xa8, 0xa3), 22));
         it->setToolTip(QString::fromUtf8(kNav[i].label));
         nav_->addItem(it);
         navItems_.append(it);
     }
-    // 激活金条：贴视口左缘（A 方案胶囊 left:-13px → 栏缘 x=0），呼吸由 tickBreath 驱动
-    navBar_ = new QFrame(nav_->viewport());
-    navBar_->setObjectName(QStringLiteral("navBar"));
-    navBar_->setFixedSize(3, 20);
-    navBar_->setStyleSheet(QStringLiteral("background:#d9a94e;border-radius:1px;"));
-    navBar_->hide();
-    auto* navBarEff = new QGraphicsOpacityEffect(navBar_);
-    navBarEff->setOpacity(0.9);
-    navBar_->setGraphicsEffect(navBarEff);
+    // 分组分割线 delegate：在 row 3（选片）和 row 5（日志）顶部画细线
+    nav_->setItemDelegate(new NavGroupDelegate(nav_));
+    // 浮岛模式取消左缘金条；选中态由 QSS 径向渐变光晕 + 图标转金表达
+    navBar_ = nullptr;
     nvLay->addWidget(nav_, 1);
-    root->addWidget(navBox_);
+    nwLay->addWidget(navBox_);
+    nwLay->addStretch(1);
+    root->addWidget(navWrap);
 
     // P19：顶栏渐显动画（底色层透明度同源驱动）
     topSolidAnim_ = new QVariantAnimation(this);
@@ -626,7 +694,8 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
     home_ = new HomePage(lib_, thumbsDir, stack_);
     connect(home_, &HomePage::navigateTo, this,
             [this](int row) { onNav(row); });
-    connect(home_, &HomePage::photoActivated, this, &MainWindow::openLightbox);
+    connect(home_, &HomePage::photoActivated, this,
+            [this](const QString& path) { openLightbox(path); });
     connect(home_, &HomePage::importRequested, this, &MainWindow::startImport);
     // 2.6.0：空态 iCloud 入口 → 与顶栏菜单同一个 importICloud（唯一实现）
     connect(home_, &HomePage::icloudImportRequested, this, &MainWindow::importICloud);
@@ -667,6 +736,17 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
 
     setCentralWidget(central);
     connect(nav_, &QListWidget::currentRowChanged, this, &MainWindow::onNav);
+    // 2.33 美术升级：导航选中态图标点亮为金色——选中反馈不应只靠底色胶囊，
+    // 图标本体变金才是「这里亮着」的视觉锚点（未选中保持雾灰）。
+    const auto restyleNavIcons = [this](int cur) {
+        for (int i = 0; i < navItems_.size(); ++i) {
+            const QColor c = (i == cur) ? QColor(0xd9, 0xa9, 0x4e)
+                                        : QColor(0x9f, 0xa8, 0xa3);
+            navItems_[i]->setIcon(Icons::make(QString::fromLatin1(kNavIcons[i]), c, 22));
+        }
+    };
+    connect(nav_, &QListWidget::currentRowChanged, this, restyleNavIcons);
+    restyleNavIcons(nav_->currentRow());
     connect(search_, &QLineEdit::textChanged, gallery_, &GalleryPage::applyFilter);
     // P15：图库卡片点击 → 沉浸式灯箱（无边框）→（可选）跳转修图台
     thumbsDir_ = thumbsDir;
@@ -716,9 +796,10 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
                 gallery_->refresh();   // 重建人物 chips（新名字生效）
             });
 
+    // 2.33.0：图库入口把「当前可见集合」交给灯箱作为翻图作用域 —— 用户正在看某个
+    //   故事/人物/分类筛选时，←/→ 必须只在这个集合里走。
     connect(gallery_, &GalleryPage::photoActivated, this,
-            [this](const QString& path) { openLightbox(path); });
-    // P15：地图「在图库查看」→ 按区域筛选并切到图库
+            [this](const QString& path) { openLightbox(path, gallery_->visiblePaths()); });
     connect(map_, &MapPage::requestGallery, this,
             [this](const QString& regionId, const QString& provEn) {
                 gallery_->applyGeoFilter(regionId, provEn);
@@ -985,16 +1066,17 @@ void MainWindow::refreshPrivateState()
     gallery_->setHidePrivate(!vaultUnlocked_);
     map_->setHidePrivate(!vaultUnlocked_);
     log_->setHidePrivate(!vaultUnlocked_);
+    cull_->setHidePrivate(!vaultUnlocked_);   // 2.33.0 补漏：选片页此前从不收到隐私门
     if (lightbox_ && lightbox_->isVisible())
         lightbox_->hide();   // 重新上锁时顺手收起灯箱
 }
 
 // P15：打开沉浸式灯箱（图库点击或探针复用）。P16：灯箱内改评分/私密 → 关闭后刷新图库。
-void MainWindow::openLightbox(const QString& path)
+// 2.33.0：`scope` 传入调用方的可见集合（图库页在有筛选时），←/→ 就只在这个集合里走；
+//   空 = 全库顺序（首页/地图入口保持原语义）。隐私门据 vaultUnlocked_ 下发。
+void MainWindow::openLightbox(const QString& path, const QStringList& scope)
 {
-    const Photo* ph = nullptr;
-    for (const Photo& p : lib_->photos())
-        if (p.path == path) { ph = &p; break; }
+    const Photo* ph = lib_->find(path);
     if (!ph) return;
     // ★2.30.0 视频走内嵌解码播放器（VideoLightbox）；照片仍走原 PhotoLightbox。
     //   复用同一 openLightbox 入口，故首页/图库/地图三处打开视频都自动生效。
@@ -1021,6 +1103,8 @@ void MainWindow::openLightbox(const QString& path)
             if (dirty) gallery_->refresh();
         });
     }
+    lightbox_->setScope(scope);
+    lightbox_->setHidePrivate(!vaultUnlocked_);
     lightbox_->setPhoto(ph, thumbsDir_);
     lightbox_->show();
     lightbox_->raise();
@@ -1049,33 +1133,30 @@ void MainWindow::onNav(int row)
         stack_->setGraphicsEffect(eff);
     }
     eff->setEnabled(true);   // 过渡期间启用
+    // 2.34：转场数值全部出自 MotionKit NavFade 预设（曲线/时长唯一真源）；
+    // 入场位移方向随导航方向 = 视差感（向下切页从下方进，向上切页从上方进）。
+    const int prevRow = stack_->currentIndex();
+    const double amp = (row > prevRow) ? 14.0 : -14.0;
     auto* fade = new QPropertyAnimation(eff, "opacity");
-    fade->setDuration(150);
+    fade->setDuration(int(Motion::preset(Motion::kNavFade).durationMs * 0.35));
     fade->setStartValue(1.0);
     fade->setEndValue(0.0);
-    fade->setEasingCurve(QEasingCurve::InQuad);
-    connect(fade, &QPropertyAnimation::finished, this, [this, row, eff] {
+    fade->setEasingCurve(QEasingCurve::InQuad);   // 与预设 exit 键同曲线（引擎表即用 InQuad）
+    connect(fade, &QPropertyAnimation::finished, this, [this, row, eff, amp] {
         stack_->setCurrentIndex(row);
         QWidget* nxt = stack_->widget(row);
         const QPoint home = nxt->pos();
-        nxt->move(home.x(), home.y() + 14);          // 轻微上滑入场
-        auto* slide = new QPropertyAnimation(nxt, "pos");
-        slide->setDuration(260);
-        slide->setStartValue(nxt->pos());
-        slide->setEndValue(home);
-        slide->setEasingCurve(QEasingCurve::OutCubic);
-        auto* in = new QPropertyAnimation(eff, "opacity");
-        in->setDuration(260);
-        in->setStartValue(0.0);
-        in->setEndValue(1.0);
-        in->setEasingCurve(QEasingCurve::OutCubic);
-        connect(in, &QPropertyAnimation::finished, this, [eff] {
-            eff->setEnabled(false);   // 静置恢复无损原生渲染
+        nxt->move(home.x(), home.y() + amp);
+        auto* drv = new Motion::Driver(Motion::kNavFade, !animEnabled_, this);
+        connect(drv, &Motion::Driver::valueFor, this, [nxt, home, eff](const QByteArray& prop, double v) {
+            if (prop == Motion::kPropOffsetY) nxt->move(home.x(), int(home.y() + v));
+            else if (prop == Motion::kPropOpacity) eff->setOpacity(v);
         });
-        auto* g = new QParallelAnimationGroup(this);
-        g->addAnimation(slide);
-        g->addAnimation(in);
-        g->start(QAbstractAnimation::DeleteWhenStopped);
+        connect(drv, &Motion::Driver::finishedSignal, this, [eff, drv] {
+            eff->setEnabled(false);   // 静置恢复无损原生渲染
+            drv->deleteLater();
+        });
+        drv->start();
     });
     fade->start(QAbstractAnimation::DeleteWhenStopped);
 }
@@ -1355,7 +1436,7 @@ void MainWindow::runImportInto(const QString& dir, const QString& title)
 
 // 方向 C·智能分类：收到图库「AI 分类」信号后，探测本地 CLIP 服务，
 // 异步跑分类（QtConcurrent 不阻塞 GUI），带进度对话框与取消；完成后重建 chips。
-// 视图不持写能力（规则5）：真正的 lib->setCategories 在 Classifier 内、MainWindow 持有的 lib_ 上执行。
+// 单写者（core/AiWriter.h）：worker 只跑网络与快照，落库经 AiWriter 恒回 GUI 线程执行。
 void MainWindow::runClassify()
 {
     if (!lib_) return;
@@ -1406,14 +1487,18 @@ void MainWindow::runClassify()
     };
     const auto cancelPred = [cancelled] { return cancelled->load(); };
     const QString td = thumbsDir_;
-    watcher->setFuture(QtConcurrent::run([this, td, url, prog, cancelPred] {
-        return Classifier::classify(lib_, td, url, 32, -1, prog, cancelPred);
+    // GUI 线程取快照：worker 只读此副本，绝不在 worker 线程碰 lib_->photos()
+    //（Library 无锁，GalleryModel 以引用读 photos_）；落库经 AiWriter 恒回 GUI 线程。
+    const QVector<Photo> snap = lib_->photos();
+    watcher->setFuture(QtConcurrent::run([this, snap, td, url, prog, cancelPred] {
+        AiWriter writer(lib_, this);
+        return Classifier::classify(snap, writer, td, url, 32, -1, prog, cancelPred);
     }));
 }
 
 // 方向 C·人脸识别（方案A）：收到图库「识别人物」信号后，探测本地 face_server，
 // 异步跑人脸检测（QtConcurrent 不阻塞 GUI），带进度对话框与取消；完成后重建 chips。
-// 视图不持写能力（规则5）：真正的 lib->setPersons 在 PersonDetector 内、MainWindow 持有的 lib_ 上执行。
+// 单写者（core/AiWriter.h）：worker 只碰快照与网络，setPersons 落库经 AiWriter 恒回 GUI 线程。
 void MainWindow::runPersonDetect()
 {
     if (!lib_) return;
@@ -1463,15 +1548,19 @@ void MainWindow::runPersonDetect()
         QMetaObject::invokeMethod(dlg, "setValue", Qt::QueuedConnection, Q_ARG(int, done));
     };
     const auto cancelPred = [cancelled] { return cancelled->load(); };
-    watcher->setFuture(QtConcurrent::run([this, url, prog, cancelPred] {
-        return PersonDetector::detect(lib_, url, -1, prog, cancelPred);
+    const QVector<Photo> snap = lib_->photos();   // GUI 线程快照，见 runClassify 同款约束
+    watcher->setFuture(QtConcurrent::run([this, snap, url, prog, cancelPred] {
+        AiWriter writer(lib_, this);
+        return PersonDetector::detect(snap, writer, url, -1, prog, cancelPred);
     }));
 }
 
 // 方向 C·人物自动聚类：收到图库「智能聚类」信号后，探测本地 face_server，异步
-// ① 抽取代表脸 embedding 并落库 face_emb ② FaceCluster 阈值余弦聚类 ③ applyClusters
-// 写回 person ④ 刷新人物 chips。QtConcurrent 不阻塞 GUI，带进度对话框与取消。
-// 视图不持写能力（规则5）：真正的写库在 PersonDetector/Library 内、MainWindow 持有的 lib_ 上执行。
+// ① worker 抽取代表脸 embedding（经 AiWriter 投递 face_emb 落库）②③④ finished
+// 处理器（GUI 线程）读回 embedding → FaceCluster 阈值余弦聚类 → applyClusters 写回 person
+// → 刷新人物 chips。QtConcurrent 不阻塞 GUI，带进度对话框与取消。
+// 单写者（core/AiWriter.h）：worker 只碰快照与网络；读回/聚类/写库恒在 GUI 线程，
+// 且 finished 晚于 detectEmbeddings 的投递入队，故能读到刚落库的 embedding。
 // 起始编号：扫描既有 person token 中的「人物N」取最大 N，startIndex=N+1，避免与用户
 // 已重命名的既有标签撞号（撞号会把两个人的照片混进同一人物 chips）。
 void MainWindow::runFaceCluster()
@@ -1521,13 +1610,32 @@ void MainWindow::runFaceCluster()
     auto* cancelled = new std::atomic<bool>(false);
     connect(dlg, &QProgressDialog::canceled, this, [cancelled] { cancelled->store(true); });
     connect(watcher, &QFutureWatcher<bool>::finished, this,
-            [this, dlg, watcher, cancelled, pending] {
+            [this, dlg, watcher, cancelled, pending, startIndex] {
                 dlg->close();
+                const bool extracted = watcher->result();
+                // ② 读回 embedding → 阈值余弦聚类 → ③ 簇标签写回 person，全部在 GUI 线程。
+                //   detectEmbeddings 的 face_emb 写回已经 AiWriter 投递到 GUI 事件队列，
+                //   且这些投递在 finished 之前入队，故此刻能读到刚写入的 embedding；
+                //   聚类是纯计算，applyClusters 恒在 GUI 线程（单写者，不覆盖非空）。
+                if (extracted && !cancelled->load()) {
+                    const QVector<FaceItem> embs = lib_->getFaceEmbeddings();
+                    if (!embs.isEmpty()) {
+                        QVector<ClusterInput> items;
+                        items.reserve(embs.size());
+                        for (const FaceItem& e : embs) items.append({e.path, e.emb});
+                        const ClusterResult cr = FaceCluster::cluster(items, 0.4, startIndex);
+                        QVector<ClusterItem> out;
+                        out.reserve(embs.size());
+                        for (const ClusterGroup& g : cr.groups)
+                            for (const QString& p : g.paths)
+                                out.append({p, g.label});
+                        lib_->applyClusters(out);
+                    }
+                }
                 gallery_->refresh();   // 重建人物 chips + 计数（聚类标签生效）
-                const bool ok = watcher->result();
                 QMessageBox::information(this,
                     QCoreApplication::translate("LightAlbum", "智能聚类"),
-                    ok ? QCoreApplication::translate("LightAlbum", "已聚类 %1 张照片为不同人物。").arg(pending)
+                    extracted ? QCoreApplication::translate("LightAlbum", "已聚类 %1 张照片为不同人物。").arg(pending)
                        : QCoreApplication::translate("LightAlbum", "聚类过程中断（可能已部分写入）。"));
                 watcher->deleteLater();
                 delete cancelled;
@@ -1537,26 +1645,11 @@ void MainWindow::runFaceCluster()
         QMetaObject::invokeMethod(dlg, "setValue", Qt::QueuedConnection, Q_ARG(int, done));
     };
     const auto cancelPred = [cancelled] { return cancelled->load(); };
-    watcher->setFuture(QtConcurrent::run([this, url, prog, cancelPred, startIndex] {
-        // ① 抽代表脸 embedding 并落库 face_emb（person 为空集）
-        if (!PersonDetector::detectEmbeddings(lib_, url, -1, prog, cancelPred))
-            return false;
-        if (cancelPred()) return false;
-        // ② 读回 embedding 集 → 阈值余弦聚类
-        const QVector<FaceItem> embs = lib_->getFaceEmbeddings();
-        if (embs.isEmpty()) return false;
-        QVector<ClusterInput> items;
-        items.reserve(embs.size());
-        for (const FaceItem& e : embs) items.append({e.path, e.emb});
-        const ClusterResult cr = FaceCluster::cluster(items, 0.4, startIndex);
-        // ③ 簇标签写回 person（不覆盖非空；用户可随后在 chips 右键重命名）
-        QVector<ClusterItem> out;
-        out.reserve(embs.size());
-        for (const ClusterGroup& g : cr.groups)
-            for (const QString& p : g.paths)
-                out.append({p, g.label});
-        lib_->applyClusters(out);
-        return true;
+    const QVector<Photo> snap = lib_->photos();   // GUI 线程快照，见 runClassify 同款约束
+    watcher->setFuture(QtConcurrent::run([this, snap, url, prog, cancelPred] {
+        // ① 抽代表脸 embedding 并经 AiWriter 投递 face_emb 写回（落库恒在 GUI 线程）
+        AiWriter writer(lib_, this);
+        return PersonDetector::detectEmbeddings(snap, writer, url, -1, prog, cancelPred);
     }));
 }
 

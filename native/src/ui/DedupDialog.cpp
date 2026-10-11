@@ -10,6 +10,13 @@
 #include <QPixmap>
 #include <QDir>
 #include <QCoreApplication>
+#include <QElapsedTimer>
+#include <QFutureWatcher>
+#include <QProgressDialog>
+#include <QTimer>
+#include <QtConcurrent/QtConcurrentRun>
+#include <atomic>
+#include <memory>
 
 static void parseDim(const QString& dim, int& w, int& h)
 {
@@ -27,8 +34,13 @@ static QPixmap loadThumb(const QString& thumbsDir, const QString& thumbFile, int
     return pm.scaled(sz, sz, Qt::KeepAspectRatio, Qt::SmoothTransformation);
 }
 
-DedupDialog::DedupDialog(const QVector<Photo>* photos, const QString& thumbsDir, QWidget* parent)
-    : QDialog(parent), photos_(photos), thumbsDir_(thumbsDir)
+// QA 反例钩子：令注入点隐私过滤失效（私密照照常入分析集）→ 门禁隐私断言变红。
+static bool g_forcePrivacyLeak = false;
+void DedupDialog::setForcePrivacyLeakForQa(bool on) { g_forcePrivacyLeak = on; }
+
+DedupDialog::DedupDialog(const QVector<Photo>* photos, const QString& thumbsDir,
+                         bool hidePrivate, QWidget* parent)
+    : QDialog(parent), photos_(photos), thumbsDir_(thumbsDir), hidePrivate_(hidePrivate)
 {
     setWindowTitle(QCoreApplication::translate("LightAlbum", "相似照片"));
     resize(760, 580);
@@ -51,39 +63,106 @@ DedupDialog::DedupDialog(const QVector<Photo>* photos, const QString& thumbsDir,
     sa->setWidget(list);
     root->addWidget(sa, 1);
 
+    // 注入点过滤（铁律6：过滤只做一次、做在数据进来之处）：私密照片在锁定态下
+    // 根本不进 inputs_，也不进 thumbOf_ → 后续分组/渲染/标记全链路无从泄漏。
     if (photos_) {
-        for (const Photo& p : *photos_)
+        inputs_.reserve(photos_->size());
+        for (const Photo& p : *photos_) {
+            if (hidePrivate_ && p.priv && !g_forcePrivacyLeak) continue;
+            DedupPhoto d;
+            d.path      = p.path;
+            d.thumbFile = p.thumbFile;
+            parseDim(p.dim, d.origW, d.origH);
+            inputs_.append(d);
             thumbOf_.insert(p.path, p.thumbFile);
-        scan();
-    } else {
-        summary_->setText(QCoreApplication::translate("LightAlbum", "未找到相似照片"));
+        }
     }
+    if (inputs_.isEmpty()) {
+        summary_->setText(QCoreApplication::translate("LightAlbum", "未找到相似照片"));
+        analysisDone_ = true;      // 无输入不起线程，直接算落地（QA 不必等待）
+        return;
+    }
+    startScan();
 }
 
-void DedupDialog::scan()
+QStringList DedupDialog::qaInputPaths() const
 {
-    QVector<DedupPhoto> dps;
-    dps.reserve(photos_->size());
-    for (const Photo& p : *photos_) {
-        DedupPhoto d;
-        d.path     = p.path;
-        d.thumbFile = p.thumbFile;
-        parseDim(p.dim, d.origW, d.origH);
-        dps.append(d);
-    }
-    const QVector<DupGroup> groups = PhotoDedup::findGroups(dps, thumbsDir_, 8, true);
+    QStringList out;
+    out.reserve(inputs_.size());
+    for (const DedupPhoto& d : inputs_) out.append(d.path);
+    return out;
+}
 
-    int dupTotal = 0;
-    for (const DupGroup& g : groups) {
-        dupTotal += g.dupPaths.size();
-        buildGroup(g, listLay_);
-    }
-    if (groups.isEmpty())
-        summary_->setText(QCoreApplication::translate("LightAlbum", "未找到相似照片"));
-    else
-        summary_->setText(QCoreApplication::translate(
-            "LightAlbum", "发现 %1 组相似照片，共 %2 张可清理")
-                .arg(groups.size()).arg(dupTotal));
+bool DedupDialog::qaWaitFinished(int timeoutMs) const
+{
+    QElapsedTimer et;
+    et.start();
+    while (!analysisDone_ && et.elapsed() < timeoutMs)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    return analysisDone_;
+}
+
+// 后台分析：重活（逐张解码缩略图 + 算 MD5/pHash）交给 worker 线程，
+// 分组与文案留在 GUI 线程的 finished 回调里做。
+// 线程边界：worker 只读 inputs_ 的拷贝、只写两个原子量，任何 QWidget 指针都不进 worker。
+void DedupDialog::startScan()
+{
+    const int total = inputs_.size();
+    summary_->setText(QCoreApplication::translate(
+        "LightAlbum", "正在查找相似照片（%1 张）…").arg(total));
+
+    auto* prog = new QProgressDialog(
+        QCoreApplication::translate("LightAlbum", "正在查找相似照片…"),
+        QCoreApplication::translate("LightAlbum", "取消"), 0, total, this);
+    prog->setWindowModality(Qt::WindowModal);
+    prog->setMinimumDuration(0);
+    // 关掉自删：由本对话框统一收尾（prog 是 this 的子对象，this 存活期即其存活期）
+    prog->setAutoClose(false);
+
+    auto done = std::make_shared<std::atomic<int>>(0);
+    auto cancelled = std::make_shared<std::atomic<bool>>(false);
+    connect(prog, &QProgressDialog::canceled, this,
+            [cancelled] { cancelled->store(true); });
+
+    auto* poll = new QTimer(this);
+    poll->setInterval(60);
+    connect(poll, &QTimer::timeout, prog, [done, prog] { prog->setValue(done->load()); });
+    poll->start();
+
+    auto* watcher = new QFutureWatcher<QVector<DedupDesc>>(this);
+    connect(watcher, &QFutureWatcher<QVector<DedupDesc>>::finished, this,
+            [this, prog, poll, watcher, done, cancelled, total] {
+                poll->stop();
+                watcher->deleteLater();
+                prog->deleteLater();
+                // 取消 → 结果是残缺集，残缺集分组会造假组，整份丢弃（数据诚实铁律）
+                if (cancelled->load() || done->load() < total) {
+                    summary_->setText(
+                        QCoreApplication::translate("LightAlbum", "已取消相似照片分析"));
+                } else {
+                    groups_ = PhotoDedup::group(watcher->result());
+                    int dupTotal = 0;
+                    for (const DupGroup& g : groups_) {
+                        dupTotal += g.dupPaths.size();
+                        buildGroup(g, listLay_);
+                    }
+                    summary_->setText(groups_.isEmpty()
+                        ? QCoreApplication::translate("LightAlbum", "未找到相似照片")
+                        : QCoreApplication::translate(
+                              "LightAlbum", "发现 %1 组相似照片，共 %2 张可清理")
+                              .arg(groups_.size()).arg(dupTotal));
+                }
+                analysisDone_ = true;
+            });
+
+    const QVector<DedupPhoto> inputs = inputs_;    // 拷进 worker，GUI 线程不再触碰
+    const QString thumbsDir = thumbsDir_;
+    watcher->setFuture(QtConcurrent::run([inputs, thumbsDir, done, cancelled] {
+        return PhotoDedup::describe(
+            inputs, thumbsDir, true,
+            [done](int d) { done->store(d); },
+            [cancelled] { return cancelled->load(); });
+    }));
 }
 
 void DedupDialog::buildGroup(const DupGroup& g, QVBoxLayout* parent)

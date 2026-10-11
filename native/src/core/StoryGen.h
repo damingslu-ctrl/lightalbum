@@ -38,8 +38,15 @@ struct Result {
 // hidePrivate：跳过私密照片（与 GalleryModel 口径一致）。
 Result build(const QVector<Photo>& photos, int gapDays = 5, bool hidePrivate = true);
 
-// 便捷：把 Result 中所有故事的路径展开成一个列表（含「未标注日期」单张故事）。
-QStringList allPaths(const Result& r);
+// 故事标题：地点 + 时间范围。四种诚实形态，逐条由 LA_STORY_QA 断言（2.33.0）。
+//  · 无日期        → 「地点 · 未标注日期」
+//  · 单日有日期    → 「地点 · 2024年5月20日」
+//    （2.32.0 误把 `begin == end` 也归进「未标注日期」，等于对明明有 EXIF 的照片
+//     撒谎，违反数据诚实铁律 —— 单日故事与无日期故事是两回事，不可合并判定）
+//  · 同年跨月      → 「地点 · 2024年5月-6月」
+//  · 跨年          → 「地点 · 2023年12月-2024年1月」
+//    （2.32.0 省略结束年 → 2023-12~2024-01 读成「2023年12月-1月」，跨年事实被吞）
+QString titleFor(const QString& place, const QDate& begin, const QDate& end);
 
 // QA 反例钩子：置 true 后 build() 会**丢弃**最后一张照片（模拟「故事聚合骗用户」
 // 的真实缺陷形态：总数不守恒）。生产路径永不调用；仅供 LA_STORY_QA_FORCE_BROKEN

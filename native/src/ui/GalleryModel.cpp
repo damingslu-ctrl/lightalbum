@@ -34,7 +34,7 @@ void GalleryModel::rebuild()
         const bool hasCat    = !categoryFilter_.isEmpty();
         const bool hasPerson = !personFilter_.isEmpty();
         // 故事相册（方向·B）：仅显示某故事的照片路径集合（与其它筛选并存叠加）
-        const bool hasStory  = !storyFilterPaths_.isEmpty();
+        const bool hasStory  = !storyFilter_.isEmpty();
         // 方向 C：聚类筛选与其它筛选并存叠加
         const bool hasCluster = !clusterKey_.isEmpty() && clusterDim_ >= 0;
         const QString region = regionFilter_.toLower();
@@ -54,7 +54,7 @@ void GalleryModel::rebuild()
             if (hasPerson && !p.person.split(',', Qt::SkipEmptyParts)
                                  .contains(personFilter_))      // P16 人物
                 continue;
-            if (hasStory && !storyFilterPaths_.contains(p.path)) // 故事相册（方向·B）
+            if (hasStory && !storyFilter_.contains(p.path))  // 故事相册（方向·B）
                 continue;
             if (hasCluster) {   // 方向 C：簇键比较（真源在 core/PhotoCluster）
                 if (PhotoCluster::clusterKey(p, static_cast<PhotoCluster::Dim>(clusterDim_)) != clusterKey_)
@@ -82,7 +82,13 @@ void GalleryModel::setProvFilter(const QString& p) { provFilter_ = p;   rebuild(
 void GalleryModel::setCategoryFilter(const QString& c){ categoryFilter_ = c; rebuild(); }
 void GalleryModel::setPersonFilter(const QString& n){ personFilter_ = n; rebuild(); }
 // 故事相册（方向·B）：setStoryFilter(空列表) = 清除（与 setPersonFilter 口径一致）
-void GalleryModel::setStoryFilter(const QStringList& paths){ storyFilterPaths_ = paths; rebuild(); }
+void GalleryModel::setStoryFilter(const QStringList& paths)
+{
+    storyFilter_.clear();
+    for (const QString& p : paths) storyFilter_.insert(p);
+    rebuild();
+}
+void GalleryModel::clearStoryFilter() { storyFilter_.clear(); rebuild(); }
 // 方向 C：聚类筛选（key 空串 = 清除，与其余 setter 口径一致）
 void GalleryModel::setClusterFilter(int dim, const QString& key)
 {
@@ -97,6 +103,16 @@ const Photo* GalleryModel::photoAt(int row) const
 {
     if (!all_ || row < 0 || row >= idx_.size()) return nullptr;
     return &(*all_)[idx_[row]];
+}
+
+QStringList GalleryModel::visiblePaths() const
+{
+    QStringList out;
+    if (!all_) return out;
+    out.reserve(idx_.size());
+    for (int row = 0; row < idx_.size(); ++row)
+        out.append((*all_)[idx_[row]].path);
+    return out;
 }
 
 int GalleryModel::rowCount(const QModelIndex& parent) const

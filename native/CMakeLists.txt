@@ -105,16 +105,26 @@ set(LA_SOURCES
     src/core/StoryGen.cpp
     src/core/PhotoDedup.h
     src/core/PhotoDedup.cpp
+    src/core/BrowseScope.h
+    src/core/BrowseScope.cpp
     src/core/Classifier.h
     src/core/Classifier.cpp
     src/core/PersonDetector.h
     src/core/PersonDetector.cpp
+    src/core/AiWriter.h
+    src/core/AiWriter.cpp
     src/core/FaceCluster.h
     src/core/FaceCluster.cpp
     src/core/EraseBridge.h
     src/core/EraseBridge.cpp
     src/core/EraseRunner.h
     src/core/EraseRunner.cpp
+    src/core/MotionKit.h
+    src/core/MotionKit.cpp
+    src/core/MotionDriver.h
+    src/core/MotionDriver.cpp
+    src/core/MotionFX.h
+    src/core/MotionFX.cpp
 )
 
 # P2 地图数据（零外链编进 exe）

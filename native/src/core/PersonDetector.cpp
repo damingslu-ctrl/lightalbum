@@ -68,16 +68,14 @@ bool PersonDetector::probe(const QString& url)
         && info.value(QLatin1String("loaded")).toBool(false);
 }
 
-bool PersonDetector::detect(Library* lib,
+bool PersonDetector::detect(const QVector<Photo>& photos, AiWriter& writer,
                             const QString& url, int limit,
                             std::function<void(int, int, const QString&)> progress,
                             std::function<bool()> cancel)
 {
-    if (!lib) return false;
-
     // ---- QA 确定路径：直接套用合成结果，不触网、不探测 ----
     if (!g_synthetic.isEmpty()) {
-        lib->setPersons(g_synthetic);
+        writer.persons(g_synthetic);
         if (progress) progress(g_synthetic.size(), g_synthetic.size(), QString());
         return true;
     }
@@ -85,7 +83,6 @@ bool PersonDetector::detect(Library* lib,
     // ---- 真路径：先探测服务（失败即返回 false，UI 据此提示启动服务）----
     if (!probe(url)) return false;
 
-    const QVector<Photo>& photos = lib->photos();
     QVector<const Photo*> pending;
     pending.reserve(photos.size());
     for (const Photo& p : photos)
@@ -128,7 +125,7 @@ bool PersonDetector::detect(Library* lib,
         if (progress) progress(done, total, p->path);
     }
     if (!batch.isEmpty())
-        lib->setPersons(batch);
+        writer.persons(batch);
     return true;
 }
 
@@ -144,16 +141,14 @@ static QByteArray toEmbBlob(const QJsonArray& arr)
     return b;
 }
 
-bool PersonDetector::detectEmbeddings(Library* lib,
+bool PersonDetector::detectEmbeddings(const QVector<Photo>& photos, AiWriter& writer,
                                        const QString& url, int limit,
                                        std::function<void(int, int, const QString&)> progress,
                                        std::function<bool()> cancel)
 {
-    if (!lib) return false;
-
     // ---- QA 确定路径：直接套用合成 embedding，不触网 ----
     if (!g_syntheticEmb.isEmpty()) {
-        lib->setFaceEmbeddings(g_syntheticEmb);
+        writer.faceEmbeddings(g_syntheticEmb);
         if (progress) progress(g_syntheticEmb.size(), g_syntheticEmb.size(), QString());
         return true;
     }
@@ -161,7 +156,6 @@ bool PersonDetector::detectEmbeddings(Library* lib,
     // ---- 真路径：先探测服务（失败即返回 false，UI 据此提示启动服务）----
     if (!probe(url)) return false;
 
-    const QVector<Photo>& photos = lib->photos();
     QVector<const Photo*> pending;
     pending.reserve(photos.size());
     for (const Photo& p : photos)
@@ -213,7 +207,7 @@ bool PersonDetector::detectEmbeddings(Library* lib,
         if (progress) progress(done, total, p->path);
     }
     if (!batch.isEmpty())
-        lib->setFaceEmbeddings(batch);
+        writer.faceEmbeddings(batch);
     return true;
 }
 
