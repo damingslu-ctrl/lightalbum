@@ -545,7 +545,13 @@ $GateTable = @(
   # M-C idempotence. measuredMs=0 = never yet run opted-in (precedent: LA_SCAN_SMOKE
   # carries 0); E8 demands the KEY, not a guessed number. Backfill from -Timing the
   # first time the gate is actually run with a fetched model (rule 25/31: data, not a guess).
-  @{n="LA_ERASE_MODEL_QA"; png=$false; need=@("LA_LAMA_MODEL"); measuredMs=18377; timeoutSec=90}
+  @{n="LA_ERASE_MODEL_QA"; png=$false; need=@("LA_LAMA_MODEL"); measuredMs=18377; timeoutSec=90},
+  # Design-language v2 ratchet gate (spec 2026-10-12 section 5). Static scan of
+  # src/ui + src/core against qa/palette_baseline.json; five counts, ceiling only
+  # descends. Script gate => FULL tier by rule E9d (fast script gates rejected).
+  # Counter-example env LA_PALETTE_QA_FORCE_BROKEN=1 injects +1 hex and must go
+  # RED. measuredMs=1900 from qa_runner -Timing (1869/1905/1939 ms x3, rule 13).
+  @{n="LA_PALETTE_QA"; png=$false; kind="ps1"; script="qa_palette_ratchet.ps1"; measuredMs=1900}
 )
 # Resolve a gate's tier. Absent key means "full" - the fail-safe default.
 function Get-GateTier {

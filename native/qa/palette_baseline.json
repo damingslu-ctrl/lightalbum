@@ -1,0 +1,53 @@
+﻿{
+    "exempt":  [
+                   "Theme.h",
+                   "DarkPalette.h",
+                   "GalleryCardPainter.cpp",
+                   "MapView.cpp",
+                   "Splash.cpp"
+               ],
+    "radiusWhitelist":  [
+                            4,
+                            6,
+                            10,
+                            14,
+                            20,
+                            999
+                        ],
+    "spaceWhitelist":  [
+                           0,
+                           4,
+                           8,
+                           12,
+                           16,
+                           24,
+                           32
+                       ],
+    "counts":  {
+                   "C3":  {
+                              "label":  "radius-offgrid",
+                              "current":  71,
+                              "ceiling":  71
+                          },
+                   "C4":  {
+                              "label":  "spacing-offgrid",
+                              "current":  117,
+                              "ceiling":  117
+                          },
+                   "C2":  {
+                              "label":  "font-size",
+                              "current":  68,
+                              "ceiling":  68
+                          },
+                   "C5":  {
+                              "label":  "emoji-in-tr",
+                              "current":  0,
+                              "ceiling":  0
+                          },
+                   "C1":  {
+                              "label":  "hex",
+                              "current":  415,
+                              "ceiling":  415
+                          }
+               }
+}
