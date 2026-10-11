@@ -3,7 +3,7 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
-## [2.36.0] - 未发布
+## [2.36.0] - 2026-10-11
 
 本轮为 AI 消除引擎的**异步化与协议健壮性收口**：解除 2.35.0 遗留已知限制
 「消除推理为 GUI 线程同步调用（真模型下 UI 秒级冻结、`running` 态来不及刷新）」，
@@ -30,10 +30,11 @@
 
 ### 回归
 
-- 全量 71 门（工作树名册语义）：`PASS=59 FAIL=0 CHECK=0 SKIP=12 KILL=0`（SKIP 皆需外部
+- 全量 71 门（名册 71 = fast 18 + full 53，2.33/2.34 整轨落地后提交态与工作树一致）：
+  `PASS=59 FAIL=0 CHECK=0 SKIP=12 KILL=0`（SKIP 皆需外部
   env / `LA_LAMA_MODEL`）；`LA_ERASE_QA` 正臂 6/6 稳 + 反例臂双测绿/红符合预期。
 
-## [2.35.0] - 未发布
+## [2.35.0] - 2026-10-11
 
 本轮为「引擎升级·双路线」合并发布：路线 1 把全仓唯一残缺引擎 EraseBridge 从诚实桩升级为
 **真引擎**（独立子进程 + LaMa ONNX，零云端）；路线 2 把人脸聚类从贪心单遍升级为**两遍精炼**
@@ -91,24 +92,24 @@
 
 ### 回归
 
-- 全量套件（tier=all，**工作树名册 71 门 = fast 18 + full 53**）：`PASS=59 FAIL=0 CHECK=0 KILL=0
+- 全量套件（fast+full 并集，**名册 71 门 = fast 18 + full 53**）：`PASS=59 FAIL=0 CHECK=0 KILL=0
   SKIP=12`，墙钟 63661 ms。12 道 SKIP 皆为需要外部环境变量的门（`LA_SCAN_*` 个人库 /
   `LA_RAW_SAMPLE`/`LA_VIDEO_SAMPLE` 素材 / `LA_ERASE_MODEL_QA` 需 `LA_LAMA_MODEL`），非回归。
-- ★门数溯源（诚实披露，铁律 34）：上句「71 门」是**含未提交名册修复的工作树** `gate_matrix.ps1`
-  的解析数。HEAD 提交态名册仍受既存 CJK/GBK 缺陷影响（含中文注释处 PS 5.1 静默吞注册），
-  `-SelfTest` 实测仅 **54 门 = fast 15 + full 39**（`fails=0`；E11/E12 纯 ASCII 自检亦只活在
-  工作树）。差值 ≈12 道是提交态被吞的**已实现**门（2.29–2.31 已提交），其余是工作树**新增且
-  实现未提交**的门（如 `LA_MOTION_QA`）；两类编辑在同一文件里纠缠，名册修复无法先行单独提交
-  （否则干净克隆上 qa_runner 引用缺失 dispatch 必红）。待 2.33/2.34 整轨落地，71 门方为提交态真值。
-- `gate_matrix.ps1 -SelfTest`：工作树态全绿 71 门（`fast=18 full=53`、`nonAsciiBytes=0`、
-  `textual=71==parsed`、`fails=0`）；提交态（HEAD 名册）全绿 54 门（`fails=0`）。
+- ★门数溯源（诚实披露，铁律 34）：「71 门」曾长期只是**工作树** `gate_matrix.ps1` 的解析数——
+  HEAD 提交态名册受既存 CJK/GBK 缺陷影响（含中文注释处 PS 5.1 静默吞注册，`-SelfTest` 实测仅
+  **54 门**，E11/E12 亦只活在工作树），两类编辑同文件纠缠、名册修复无法先行单独提交。
+  该差值已随 2.33/2.34 整轨落地闭合（提交 `605c22f`）：**提交态名册 = 工作树 = 71 门 =
+  fast 18 + full 53**，纯 ASCII 修复 + 5 道迟注册门 + E11/E12 一并入库，并在提交树上实测
+  `E11 nonAsciiBytes=0`、`E12 textual=71==parsed`、`fails=0`。
+- `gate_matrix.ps1 -SelfTest`：落地后提交态全绿 71 门（`fast=18 full=53`、`nonAsciiBytes=0`、
+  `textual=71==parsed`、`fails=0`）。
 - `release.ps1 -SelfTest`：`LA_RELEASE_QA PASS contracts=9 injected=15 caught=15 baseline=9
   zip=9`。
-- 版本 → **2.35.0**（新功能 = MINOR，单一真源 `CMakeLists.txt`；提交态由 2.32.0 系直接经本路线
-  收口为 2.35.0——2.33.0/2.34.0 两节与其 bump 活在未提交 WIP，已提交 CHANGELOG 中本节的前节
-  是 `[2.32.0]`）。
+- 版本 → **2.35.0**（新功能 = MINOR，单一真源 `CMakeLists.txt`；当时提交态由 2.32.0 系直接经本路线
+  收口为 2.35.0——`[2.33.0]`/`[2.34.0]` 两节当时活在未提交 WIP，现已随整轨落库（提交 `b75c7de`），
+  版本单源继续演进为 2.36.0，系谱注记保留以忠实反映当时的提交态）。
 
-## [2.34.0] - 未发布
+## [2.34.0] - 2026-10-11
 
 本轮为「动效引擎导入」：把此前散落在五处、各写各的 `QPropertyAnimation` 收敛到一个
 **纯函数动效引擎**（曲线族 + 错峰 + 多属性时间线 + 预设表 + 减动效单点兜底），并在其上
@@ -158,7 +159,7 @@
   `LA_VIDEO_SAMPLE`），非回归。`LA_MOTION_QA` 正例 rc=0、`FORCE_BROKEN` 反例 rc=1。
 - 版本 2.33.0 → **2.34.0**（新功能 = MINOR，单一真源 `CMakeLists.txt`）。
 
-## [2.33.0] - 未发布
+## [2.33.0] - 2026-10-11
 
 本轮为「业务逻辑梳理 + 补全 + 优化」收口版：修一处真实线程缺陷、清偿一批门禁/编码
 债、补齐 i18n 与死代码。以下均已在 offscreen 全量套件实测（见「回归」）。
