@@ -137,11 +137,30 @@ $GateTable = @(
   # Counter-example LA_SCALE_REAL_PERF_QA_FORCE_BROKEN=1 arms a ONE-SHOT +300ms paint
   # lag (EditorialView::qaSetPaintLagMsForQa) inside the scroll phase, so exactly one
   # scroll frame blows the 50ms budget -> gate RED without tripping the 20s watchdog.
-  # measuredMs≈8000. tier defaults to full (fail-safe).
+  # measuredMs ~8000. tier defaults to full (fail-safe).
   @{n="LA_SCALE_REAL_PERF_QA"; png=$false; need=@("LA_SCALE_REAL_DB"); measuredMs=8000},
   @{n="LA_EXIT_QA";         png=$false; measuredMs=5700},
   @{n="LA_RW_SMOKE";        png=$false; measuredMs=1017},
   @{n="LA_CULL_SMOKE";      png=$false; measuredMs=3210},
+  # P25 duel arbitration (implemented in CullPage::runDuelQa, dispatched by the
+  # CullPage ctor when the env var holds a png path). It existed but was NOT in
+  # the matrix, and it had no verdict at all: it printed raw numbers and called
+  # requestExit(0), while the runner's greenPat substring "OK" matched the
+  # lowercase "ok" of markOk=0 -> the gate could never go RED (E34). Now it
+  # prints PASS/FAIL over groups/members0/skipDelta/markOk/gold. Proven
+  # non-vacuous through the shipped hook: LA_CULL_DUEL_QA_FORCE_BROKEN=1 makes
+  # the duel verdict never write a mark -> "FAIL ... skipDelta=0 markOk=0".
+  @{n="LA_CULL_DUEL_QA";    png=$true; measuredMs=1910},
+  # Geo data structural smoke (MapView::loadGeoJson). Also pre-existing but
+  # unregistered, and doubly broken: no verdict (greenPat matched its "rings="
+  # so rings=0 passed) and no self-exit (it kept running into app.exec() and was
+  # killed -> that is why 2.2.1 dropped it from the runner). Now it asserts
+  # every layer non-empty AND zhKeys == province-geometry count (a missing
+  # Chinese province name goes RED), and main.cpp self-exits it. Proven
+  # non-vacuous through the shipped hook: LA_MAP_SMOKE_FORCE_BROKEN=1 drops one
+  # zh key (the real shape of an untranslated province) ->
+  # "FAIL ... zhKeys=232 zhComplete=0"; qa_runner reports [FAIL] for it.
+  @{n="LA_MAP_SMOKE";       png=$false; measuredMs=930},
   @{n="LA_RETOUCH_SMOKE";   png=$false; measuredMs=2567},
   @{n="LA_SMOKE";           png=$false; measuredMs=3171},
   @{n="LA_MAP_A_QA";        png=$true; measuredMs=3640},
@@ -224,92 +243,128 @@ $GateTable = @(
   # LA_GATE_MATRIX_QA E6 caught this -- keeping the tier="fast" guess would have
   # shipped a gate that fails its own budget rule on every CI run.
   @{n="LA_CLUSTER_QA";      png=$false; measuredMs=1424},
-  # 方向 C·联动：地图地理热点聚合 + 一键联动门禁（LA_GEO_LINK_QA）。
-  # 断言 GeoHotspot::compute 纯函数（World=按 region / Region=按 prov）的守恒与
-  # 「热点 key 过滤图库 == hotspot.count」联动契约，并离屏验证热点徽章点击 →
-  # hotspotActivated 带正确 key。Counter-example LA_GEO_LINK_QA_FORCE_BROKEN=1 令
-  # World 级误按 prov 聚合（key 不再是 region id）→ 上述断言变红（非空心）。
-  # tier 缺省=full（fail-safe）：进程同样支付 QApplication + offscreen 启动，且构造
-  # MapView 会 loadData 解析 mapdata.json，实测 >500ms，故不进 fast 层。
-  # measuredMs 待 -Timing 实测回填（初估 ~1450，与 LA_CLUSTER_QA 同量级）。
-  @{n="LA_GEO_LINK_QA";    png=$false; measuredMs=1450},
+  # Direction C, linkage: map geo-hotspot aggregation + one-click jump gate
+  # (LA_GEO_LINK_QA). Asserts GeoHotspot::compute as a pure function (World groups by
+  # region / Region groups by prov) for conservation, plus the contract "gallery filtered
+  # by the hotspot key == hotspot.count", and offscreen-verifies that clicking a hotspot
+  # badge emits hotspotActivated with the correct key.
+  # Counter-example LA_GEO_LINK_QA_FORCE_BROKEN=1 makes the World level aggregate by prov
+  # (the key is then no longer a region id) -> those assertions go RED (not vacuous).
+  # Tier defaults to FULL (fail-safe): the process pays QApplication + offscreen startup,
+  # and constructing MapView parses mapdata.json through loadData, measured >500 ms, so it
+  # cannot sit in the fast layer.
+  # measuredMs=287 from qa_runner -Timing after the 2.33.0 encoding fix (the earlier
+  # 1450 ms estimate was never measured -- this gate had been silently unregistered).
+  # It stays in the strict layer on purpose: one sample near half the fast budget is not
+  # evidence, and the fail-safe default is full (E3).
+  @{n="LA_GEO_LINK_QA";    png=$false; measuredMs=287},
   @{n="LA_MAP_CLICK_QA";    png=$false; measuredMs=2553},
-  # 方向 A·地图性能：帧耗时预算门。qaPerf 逐层（world/region/province/country）各渲染 20 帧
-  # 取平均 ms，超预算打印 LA_MAP_PERF FAIL 并经退出码非 0（门禁 scan FAIL 生效）。
-  # 证据化放宽门槛（先测再改 + 铁律25）：world <=1.2ms（修正后 1:1 blit 预测 ~0.5ms，
-  # 证伪「每帧缩放 3000x1500」回退）、region/province/country <=1.5ms。路线图 world/region
-  # <0.3ms 经实测为全屏必 blit 的物理不可达目标，已放弃。tier 缺省=full（墙钟预算门，
-  # 同 LA_SCALE_PERF 不进 fast 防 CI flake）。
-  @{n="LA_MAP_PERF";        png=$false; measuredMs=3735},
+  # Direction A, map performance: frame-cost budget gate. qaPerf renders 20 frames per layer
+  # (world/region/province/country) and averages ms; over budget it prints LA_MAP_PERF FAIL
+  # AND exits non-zero (so the runner FAIL scan bites).
+  # Evidence-based threshold relaxation (measure first, rule 25): world <=1.6 ms. Base-load
+  # world mean-of-20 measures ~1.15 ms; under a loaded cluster (parallel gates) it drifts to
+  # ~1.55 ms, so 1.6 leaves headroom for noise WITHOUT going hollow. The "scale 3000x1500
+  # every frame" regression signature is ~2.30 ms/frame, still caught. region/province/
+  # country <=1.5 ms. The roadmap target world/region <0.3 ms turned out physically
+  # unreachable (a full-screen blit is mandatory) and was dropped.
+  # Tier defaults to FULL: like LA_SCALE_PERF it is a wall-clock budget gate, kept out of
+  # fast to avoid CI flake.
+  @{n="LA_MAP_PERF";        png=$false; measuredMs=2438},
   @{n="LA_GALLERY_E_QA";    png=$true; measuredMs=2589},
 
-  # 2.28.0 RAW 格式支持门禁（LA_RAW_QA）。A 组纯函数契约零依赖恒可跑；B 组真实解码
-  # 需 LibRaw 产物 + 一个 RAW 样本。need= 声明式依赖（铁律 26）：两者缺一即优雅 SKIP，
-  # 绝不静默假通过；样本是外部素材，**绝不入库/进 CI**（仓库零二进制 + 无个人数据）。
-  # 反例 LA_RAW_QA_FORCE_BROKEN=1 令 decodeToTempPpm 改用「rc==0 即成功 + 产物名按
-  # 替换扩展名猜测」的缺陷形态 -> B2/B3 转红（实测两模式 dcraw_emu 的 rc 均为 0，
-  # exit code 不携带信息，产物校验是唯一判据）。期望值不随 broken 变（铁律 22）。
-  # tier 缺省=full：真实解码实测 ~0.6s/张，进程另付 QApplication 启动开销。
-  @{n="LA_RAW_QA"; png=$false; need=@("LA_RAW_SAMPLE"); measuredMs=1400},
-  # 2.28.0 视频支持门禁（LA_VIDEO_QA）。A 组纯函数契约零依赖恒可跑（含与 RAW 同款的
-  # needsExternalDecode 边界负向断言）；B 组真实抽帧/探测需 FFmpeg + 视频样本；
-  # C 组徽标像素门（离屏渲染 isVideo true/false 两卡，断言左上角有/无徽标差异）。
-  # need= 声明式依赖（铁律 26）：缺 FFmpeg 或样本即优雅 SKIP，样本绝不入库/进 CI。
-  # 反例 LA_VIDEO_QA_FORCE_BROKEN=1 令 extractPoster 改用「rc==0 即成功 + 猜错产物名」
-  # -> B2b 转红；徽标像素门不受影响（证明反例只打解码判定，不是一刀切）。
-  # tier 缺省=full：真实抽帧实测 ~0.3-0.8s，进程另付 QApplication 启动开销。
-  @{n="LA_VIDEO_QA"; png=$false; need=@("LA_VIDEO_SAMPLE"); measuredMs=1600},
-  # 2.30.0 视频播放（内嵌解码器）门禁（LA_VIDEO_PLAY_QA）。经 QProcess 调 ffmpeg rawvideo
-  # 管道逐帧解出**动态**画面：正例断言帧数>0、末帧非空且尺寸正确、**帧间像素确实不同**
-  # （真动态解码，静止图/占位图会红）、pts 递增。反例 LA_VIDEO_PLAY_QA_FORCE_BROKEN=1
-  # 令 ffmpeg 传入不存在的第二输入 -> 建不起输出流 -> 解出 0 帧，A1/A2/A3/A4/A5 转红
-  # （期望值不随 broken 切换，铁律22）。need=LA_VIDEO_SAMPLE（外部素材不入库/不进 CI）。
-  # tier 缺省=full：真实解码 ~1s，进程另付 QApplication 启动开销。
-  @{n="LA_VIDEO_PLAY_QA"; png=$false; need=@("LA_VIDEO_SAMPLE"); measuredMs=2500},
-  # 2.30.0 播放器 UI 渲染门禁（LA_VIDEO_UI_QA）。离屏渲染 VideoPlayerWidget 并 grab()
-  # 断言**画面区非空白**（铁律24：视觉必须实测，禁猜）——实测正例 nonBg=5689 采样像素、
-  # 反例仅 20（只剩「▶ 加载中…」占位文字）。含真动态断言（hasAdvanced）与帧解码断言。
-  # 反例同 FORCE_BROKEN 语义：D1/D4/D5 转红（期望值不随 broken 变）。need=LA_VIDEO_SAMPLE。
-  @{n="LA_VIDEO_UI_QA"; png=$false; need=@("LA_VIDEO_SAMPLE"); measuredMs=3500},
-  # 2.30.0 音频输出门禁（LA_AUDIO_QA）。验证「音轨→ffmpeg s16le PCM→winmm waveOut」
-  # 真送出非静音音频。★不靠「能听见」判定（离屏/无设备不可靠），而是断言
-  # 「waveOut 设备可开」+「解出 PCM 字节>0 且按块对齐」——二者合起来等价于有声，
-  # 且可离屏断言。反例FORCE_BROKEN：ffmpeg 建不起流 → 0 字节 → C2 转红。
-  #样本无音轨时优雅 SKIP（诚实前提，不硬编造）。need=LA_VIDEO_SAMPLE。
-  @{n="LA_AUDIO_QA"; png=$false; need=@("LA_VIDEO_SAMPLE"); measuredMs=2000},
-  # 2.31.0 视频选帧门禁（LA_VIDEO_FRAME_QA）。验证「按秒选帧」真取到**不同**帧。
-  # 背景：实测同视频 t=0/2/4s 三帧 md5 各异，故若抽帧忽略秒数或产物名共用就会
-  # 读到同一帧——这正是选帧器头号失败模式。正例断言三帧互不相同 + 第0秒边界可解；
-  # 反例 FORCE_BROKEN令 extractPoster 忽略 atSec（恒抽2s）→ E2/E3/E4 转红。
-  # need=LA_VIDEO_SAMPLE。tier 缺省=full（三次抽帧各起一次 ffmpeg，~1.5s）。
-  @{n="LA_VIDEO_FRAME_QA"; png=$false; need=@("LA_VIDEO_SAMPLE"); measuredMs=2500},
-  # 2.31.0 抽帧缓存门禁（LA_VIDEO_CACHE_QA）。验证 extractPoster 的磁盘缓存：
-  # 正例断言首次未命中写入缓存（count=1）、第二次命中（count 不变）、源文件 mtime 变化后
-  # 缓存失效产生新条目（count=2）、clear 后清空；反例 FORCE_BROKEN 绕过缓存，
-  # C2/C3/C5/C8 转红。need=LA_VIDEO_SAMPLE。实测约 2-3s（两次 ffmpeg 未命中）。
-  @{n="LA_VIDEO_CACHE_QA"; png=$false; need=@("LA_VIDEO_SAMPLE"); measuredMs=3500},
-  # 2.29.0 选片豁免契约门禁（LA_CULL_EXEMPT_QA）。纯函数 + 合成缩略图，**零外部依赖**,
-  # 故可进 fast 层（实测毫秒级）。A 组钉死「RAW/视频豁免」谓词，含曾经漂移的 8 种
-  # RAW 扩展名（fff/iiq/k25/kdc/mos/ptx/srf/srw —— Sigma/Phase One/Pentax/Mamiya/Ricoh/Sony）
-  # 与曾经漏掉的 10 种视频扩展名；B 组用**极暗合成图**对比 RAW/视频/普通照片三条路径：
-  # RAW 与视频必须 candidate（豁免生效），普通照片必须 rejected（证明非恒真，铁律 16）。
-  # 反例 LA_CULL_EXEMPT_QA_FORCE_BROKEN=1 令 RAW 豁免失效 -> B1 转红而 A 组仍绿。
-  @{n="LA_CULL_EXEMPT_QA"; png=$false; tier="fast"; measuredMs=120},
-  # 2.31.0 选片页视频适配门禁（LA_CULL_VIDEO_QA）。验证：CullEngine 透传 isVideo/durSec、
-  # CullModel 暴露角色、CullProxy「只看视频」过滤、CullCardDelegate 绘制播放徽标+时长。
-  # 纯合成缩略图，零外部依赖，进 fast 层（实测毫秒级）。
-  # 反例 LA_CULL_VIDEO_QA_FORCE_BROKEN=1 关闭徽标绘制 -> D1/D2 转红而 A/B/C 仍绿。
-  @{n="LA_CULL_VIDEO_QA"; png=$false; tier="fast"; measuredMs=80},
-  # 2.29.0 RAW/视频修图链路门禁（LA_EDIT_RAW_QA）。修图页原本用 QImage(ph.path) 直读
-  # 原图，实测对 RAW 返回 **0x0 null=1** → RAW 根本进不了修图页（2.28.0 漏了这条入口）。
-  # 现统一走 ImageLoad::loadForEdit（照片/RAW/视频三路收口）。need= 声明两个样本依赖：
-  # RAW 与视频各需一个素材，缺一即优雅 SKIP（样本绝不入库/进 CI）。
-  # ★B4 端到端像素门：加载 → RetouchEngine::apply → 断言像素**确实改变**（实测 98.4%），
-  #   杜绝「能加载但调参无效果」的假通过（铁律 29）。
-  # 反例 LA_EDIT_RAW_QA_FORCE_BROKEN=1 令 RAW 回退 QImage 直读（复现 2.28.0 缺陷形态）
-  #   -> B1/B1b 转红（实测 raw: 0x0 null=1），A 组仍绿。
-  # tier 缺省=full：真实 RAW 解码实测 ~0.6s/张，进程另付 QApplication 启动开销。
-  @{n="LA_EDIT_RAW_QA"; png=$false; need=@("LA_RAW_SAMPLE","LA_VIDEO_SAMPLE"); measuredMs=1500},
+  # 2.28.0 RAW format support gate (LA_RAW_QA). Group A is a zero-dependency pure-function
+  # contract and always runs; group B decodes for real and needs the LibRaw build plus one
+  # RAW sample. need= declares that dependency (rule 26): if either is missing the gate SKIPs
+  # cleanly and never fakes a pass. The sample is external material and must NEVER be
+  # committed or shipped to CI (zero binaries in the repo, no personal data).
+  # Counter-example LA_RAW_QA_FORCE_BROKEN=1 makes decodeToTempPpm fall back to the defective
+  # shape "rc==0 means success + guess the artifact name by swapping the extension" -> B2/B3
+  # go RED. Measured: dcraw_emu returns rc=0 in both modes, so the exit code carries no
+  # information and artifact validation is the only judgement. Expected values do not switch
+  # with the broken flag (rule 22).
+  # Tier defaults to FULL: real decode measures ~0.6 s per image, plus QApplication startup.
+  @{n="LA_RAW_QA"; png=$false; need=@("LA_RAW_SAMPLE"); measuredMs=2605},
+  # 2.28.0 video support gate (LA_VIDEO_QA). Group A is a zero-dependency pure-function
+  # contract (it carries the same needsExternalDecode boundary assertion as RAW); group B
+  # extracts and probes for real and needs FFmpeg plus a video sample; group C is the badge
+  # pixel gate (renders isVideo true/false cards offscreen and asserts the top-left badge
+  # differs). need= declares the dependency (rule 26): missing FFmpeg or sample SKIPs
+  # cleanly, and the sample is never committed or shipped to CI.
+  # Counter-example LA_VIDEO_QA_FORCE_BROKEN=1 makes extractPoster use "rc==0 means success +
+  # wrongly guessed artifact name" -> B2b goes RED while the badge pixel group is untouched,
+  # which proves the counter-example only attacks the decode judgement (not a blanket switch).
+  # Tier defaults to FULL: real frame extraction measures ~0.3-0.8 s, plus QApplication startup.
+  @{n="LA_VIDEO_QA"; png=$false; need=@("LA_VIDEO_SAMPLE"); measuredMs=1252},
+  # 2.30.0 video playback (embedded decoder) gate (LA_VIDEO_PLAY_QA). Drives ffmpeg rawvideo
+  # through QProcess and decodes frame by frame into genuinely MOVING pictures: the green case
+  # asserts frames>0, the last frame non-empty with the correct size, that CONSECUTIVE FRAMES
+  # REALLY DIFFER (a still image or placeholder would go RED) and increasing pts.
+  # Counter-example LA_VIDEO_PLAY_QA_FORCE_BROKEN=1 hands ffmpeg a second input that does not
+  # exist -> no output stream can be built -> 0 frames decoded, A1/A2/A3/A4/A5 go RED (the
+  # expected values never switch with the broken flag, rule 22). need=LA_VIDEO_SAMPLE (the
+  # external asset is never committed or shipped to CI).
+  # Tier defaults to FULL: real decode ~1 s, plus QApplication startup.
+  @{n="LA_VIDEO_PLAY_QA"; png=$false; need=@("LA_VIDEO_SAMPLE"); measuredMs=1748},
+  # 2.30.0 player UI rendering gate (LA_VIDEO_UI_QA). Renders VideoPlayerWidget offscreen and
+  # grab()s it, asserting THE PICTURE AREA IS NOT BLANK (rule 24: visuals must be measured,
+  # never guessed) -- measured green nonBg=5689 sampled pixels versus 20 under the
+  # counter-example (only the "loading" placeholder text remains). Also carries a real-motion
+  # assertion (hasAdvanced) and the frame-decode assertions.
+  # Counter-example keeps the same FORCE_BROKEN semantics: D1/D4/D5 go RED (expected values do
+  # not switch with the broken flag). need=LA_VIDEO_SAMPLE.
+  @{n="LA_VIDEO_UI_QA"; png=$false; need=@("LA_VIDEO_SAMPLE"); measuredMs=5067},
+  # 2.30.0 audio output gate (LA_AUDIO_QA). Verifies that audio track -> ffmpeg s16le PCM ->
+  # winmm waveOut really sends non-silent audio. It does NOT judge by "can you hear it"
+  # (unreliable offscreen / device-less); it asserts the waveOut device opens AND the decoded
+  # PCM byte count > 0 and block-aligned -- together equivalent to audible, and assertable
+  # offscreen. Counter-example FORCE_BROKEN: ffmpeg cannot build the stream -> 0 bytes -> C2
+  # goes RED. When the sample carries no audio track the gate SKIPs cleanly (honest premise,
+  # nothing fabricated). need=LA_VIDEO_SAMPLE.
+  @{n="LA_AUDIO_QA"; png=$false; need=@("LA_VIDEO_SAMPLE"); measuredMs=3664},
+  # 2.31.0 frame-picker gate (LA_VIDEO_FRAME_QA). Verifies that picking by second really
+  # returns DIFFERENT frames. Background: measured, the frames at t=0/2/4 s of the same video
+  # have distinct md5, so if extraction ignored the second or shared one artifact name every
+  # pick would read the same frame -- the frame picker's number-one failure mode. The green
+  # case asserts the three frames differ and that second 0 is decodable; counter-example
+  # FORCE_BROKEN makes extractPoster ignore atSec (always extracts 2 s) -> E2/E3/E4 go RED.
+  # need=LA_VIDEO_SAMPLE. Tier defaults to FULL (three extractions, one ffmpeg each, ~1.5 s).
+  @{n="LA_VIDEO_FRAME_QA"; png=$false; need=@("LA_VIDEO_SAMPLE"); measuredMs=740},
+  # 2.31.0 extraction cache gate (LA_VIDEO_CACHE_QA). Verifies extractPoster's disk cache: the
+  # green case asserts the first call misses and writes an entry (count=1), the second hits
+  # (count unchanged), a source mtime change invalidates the cache and produces a new entry
+  # (count=2), and clear empties it. Counter-example FORCE_BROKEN bypasses the cache ->
+  # C2/C3/C5/C8 go RED. need=LA_VIDEO_SAMPLE. Measured ~2-3 s (two cache misses).
+  @{n="LA_VIDEO_CACHE_QA"; png=$false; need=@("LA_VIDEO_SAMPLE"); measuredMs=502},
+  # 2.29.0 cull exemption contract gate (LA_CULL_EXEMPT_QA). Pure functions + synthetic
+  # thumbnails, ZERO external dependencies, so it belongs in the fast layer (measured in ms).
+  # Group A pins down the "RAW/video exempt" predicate, including the 8 RAW extensions that
+  # once drifted (fff/iiq/k25/kdc/mos/ptx/srf/srw -- Sigma/Phase One/Pentax/Mamiya/Ricoh/Sony)
+  # and the 10 video extensions once omitted; group B compares the RAW, video and plain-photo
+  # paths on a VERY DARK synthetic image: RAW and video must come out candidate (exemption in
+  # effect) while the plain photo must be rejected -- which proves the predicate is not a
+  # tautology (rule 16). Counter-example LA_CULL_EXEMPT_QA_FORCE_BROKEN=1 disables the RAW
+  # exemption -> B1 goes RED while group A stays green.
+  @{n="LA_CULL_EXEMPT_QA"; png=$false; tier="fast"; measuredMs=74},
+  # 2.31.0 cull page video adaptation gate (LA_CULL_VIDEO_QA). Verifies that CullEngine passes
+  # isVideo/durSec through, CullModel exposes the roles, CullProxy's "video only" filter works
+  # and CullCardDelegate paints the play badge plus the duration. Pure synthetic thumbnails,
+  # zero external dependencies, fast layer (measured in ms).
+  # Counter-example LA_CULL_VIDEO_QA_FORCE_BROKEN=1 disables badge painting -> D1/D2 go RED
+  # while A/B/C stay green.
+  @{n="LA_CULL_VIDEO_QA"; png=$false; tier="fast"; measuredMs=84},
+  # 2.29.0 RAW/video retouch pipeline gate (LA_EDIT_RAW_QA). The retouch page used to read the
+  # original straight through QImage(ph.path), which measured 0x0 null=1 for RAW -> RAW could
+  # never reach the retouch page at all (2.28.0 missed this entry point). Photo, RAW and video
+  # now converge on ImageLoad::loadForEdit. need= declares both sample dependencies: RAW and
+  # video each need one asset, and a missing one SKIPs cleanly (samples are never committed or
+  # shipped to CI). B4 is the end-to-end pixel gate: load -> RetouchEngine::apply -> assert the
+  # pixels REALLY CHANGED (measured 98.4%), ruling out the fake pass where loading works but
+  # the adjustment has no effect (rule 29). Counter-example LA_EDIT_RAW_QA_FORCE_BROKEN=1 sends
+  # RAW back to direct QImage reading (the 2.28.0 defect shape) -> B1/B1b go RED (measured
+  # raw: 0x0 null=1) while group A stays green.
+  # Tier defaults to FULL: real RAW decode measures ~0.6 s per image, plus QApplication startup.
+  @{n="LA_EDIT_RAW_QA"; png=$false; need=@("LA_RAW_SAMPLE","LA_VIDEO_SAMPLE"); measuredMs=1581},
   @{n="LA_GALLERY_FILL_QA"; png=$true; measuredMs=2690},
   @{n="LA_RETOUCH_A_QA";    png=$true; measuredMs=2707},
   @{n="LA_SCALE_SMOKE";     png=$false; measuredMs=3351},
@@ -334,6 +389,19 @@ $GateTable = @(
   # group 0 re-added into group 1's dupPaths) and must go RED on noDouble/dupTotal.
   # Measured 159-162ms (x3, 2026-10-05) -> fast tier.
   @{n="LA_DEDUP_QA";       png=$false; tier="fast"; measuredMs=160},
+  # 2.33.0 privacy gate: vault lock state must reach the three entries that
+  # previously ignored it - lightbox paging (BrowseScope::nextVisible, the same
+  # pure function PhotoLightbox::navigate calls), the cull page (CullModel chips
+  # counts / lock area / marked list + CullProxy grid), and the dedup dialog
+  # (private photos must not even enter the injection-point input set, or they
+  # get grouped, rendered and "mark rest as delete"-ed).
+  # Every check is a LOCKED/UNLOCKED pair, so a filter that never runs fails the
+  # locked half and a filter that always runs fails the unlocked half - the two
+  # halves make each block self-checking, no extra hook needed. The dialog block
+  # additionally has a real-defect hook: LA_PRIVACY_QA_FORCE_BROKEN=1 disables
+  # the injection-point filter and must go RED on C2..C6.
+  # Measured 161-179ms (x3, 2026-10-10) -> same band as LA_DEDUP_QA -> fast tier.
+  @{n="LA_PRIVACY_QA"; png=$false; tier="fast"; measuredMs=170},
   # Direction C step 3: smart scene classification write-back + retrieval contract.
   # Pure offscreen self-exit, no MainWindow, no external env. Calls
   # Classifier::classify() with a synthetic result hook (bypassing the CLIP HTTP
@@ -350,13 +418,15 @@ $GateTable = @(
   @{n="LA_CLASSIFY_QA";    png=$false; measuredMs=1600}
   # Direction C step 4 (plan A): face detection write-back + retrieval + rename contract.
   # Face detection is plan A only (no clustering): every detected face shares the
-  # default label "人物1"; the user renames it from the GalleryPage person chips.
+  # default label (the CJK literal for "person 1"); the user renames it from the GalleryPage
+  # person chips.
   # Pure offscreen self-exit, no MainWindow, no external env. Calls
   # PersonDetector::detect() with a synthetic result hook (bypassing the face_server
   # HTTP service) and asserts: (A) DB person column written; (B) in-memory
   # Photo.person synced (GalleryModel reads memory); (C) GalleryModel rowCount per
   # person + "all" correct; (D) total photo count conserved; (E) renamePerson()
-  # token-level rename updates DB + memory + retrieval; (F) default label is "人物1".
+  # token-level rename updates DB + memory + retrieval; (F) the default label is the CJK
+  # literal for "person 1".
   # Counter-example LA_PERSON_QA_FORCE_BROKEN=1 makes Library write the DB but
   # skip the in-memory sync, so the GalleryModel retrieval fails -> RED.
   # Tier: FULL. qa_runner -Timing measured ~496 ms (just UNDER the 500 ms fast
@@ -390,11 +460,29 @@ $GateTable = @(
   # 2.35.0: two-pass (greedy seed + centroid refine); groups O(order)/C(centroid)/
   # S(same-person)/D(different-person) added; FORCE_MERGE collapses all -> C/D RED.
   @{n="LA_FACE_CLUSTER_QA"; png=$false; measuredMs=165}
-  # Direction B（人物故事方向·B）：auto story album (place + time-window clustering).
+  # 2.33.0 thread-safety single-writer gate. AI async write-backs (classify / person /
+  # cluster) used to call Library mutators from the QtConcurrent worker thread: the
+  # "la_rw" QSqlDatabase handle is bound to the GUI thread (UB to use cross-thread) and
+  # the mutators sync photos_/pathIx_ that GalleryModel reads by reference (torn read).
+  # Fix = single writer: workers compute, AiWriter marshals the write to the GUI thread.
+  # The gate drives AiWriter from a REAL worker thread (QtConcurrent::run) and asserts
+  # (A) the write has NOT landed before processEvents (proves it is queued, not inline);
+  # (B) after processEvents the DB + in-memory row are written; (C) Library::
+  # lastWriteThreadId() == GUI thread id (the load-bearing thread-ownership check);
+  # and repeats C for the Classifier and PersonDetector synthetic composition paths.
+  # Counter-example LA_GUI_THREAD_QA_FORCE_BROKEN=1 flips AiWriter to write on the
+  # calling (worker) thread -- the pre-fix shape. The expectations are UNCHANGED (rule
+  # 22): lastWriteThreadId != GUI and "leaked before event loop" both turn RED, so the
+  # green run's thread assertion is measured failable and not hollow (rules 34/35).
+  # Tier: FULL (real threads + event loop; sibling of the other direction-C gates).
+  # measuredMs=197 from qa_runner -Timing (rule 13), non-zero for E8.
+  @{n="LA_GUI_THREAD_QA";   png=$false; measuredMs=197}
+  # Person-story direction, variant B: auto story album (place + time-window clustering).
   # Pure-function StoryGen::build over synthetic QVector<Photo> (no DB, no UI):
   # (A) conservation -- outputCount == inputCount and every path appears exactly once;
   # (B) full coverage -- every non-private input path is placed in some story (honest,
-  #     no silent drop), including "未标注日期" single-photo stories for date-less shots;
+  #     no silent drop), including the date-less bucket's single-photo stories (the CJK label
+  #     for "no date recorded") for shots without EXIF dates;
   # (C) grouping shape -- Beijing splits into 2 trips (gap>5d), Shanghai 1, 2 date-less
   #     singles -> 5 stories total; (D) retrieval contract -- GalleryModel.setStoryFilter
   #     of one story's paths yields rowCount == that story's photoCount.
@@ -403,6 +491,23 @@ $GateTable = @(
   # Tier: FULL (new feature gate, sibling of LA_FACE_CLUSTER_QA). Pure in-memory, no
   # write, so it is also cheap. measuredMs=162 from qa_runner -Timing (rule 13).
   @{n="LA_STORY_QA"; png=$false; tier="full"; measuredMs=162}
+  # 2.34.0 motion engine (MotionKit): pure-function truth source, offscreen, no
+  # external assets. Asserts (A) curve contracts -- endpoints f(0)==0/f(1)==1,
+  # monotone curves never decrease, OutBack overshoots >1, Pulse is periodic with
+  # range [0.25,1], Lumen::skeletonPulse delegates to engine Pulse point-for-point,
+  # and the reduce-motion hook qaForceTerminal collapses every curve to 1;
+  # (B) stagger offsets are monotone with stagger(0)==0 and total<=1 gives 0;
+  # (C) preset table completeness -- >=5 presets, duration>0, non-empty keys,
+  # evaluate dim == key count, unknown name falls back to a non-empty preset;
+  # (D) the overshoot-return segment -- StarBounce glow evaluate(f=2)==return_to;
+  # (E) particle trajectory pure fn + PIXEL discriminator -- two motion phases of
+  # the NavFade offsetY bar must render differently, and under reduce-motion the
+  # two phases must render identically (no flicker).
+  # Counter-example LA_MOTION_QA_FORCE_BROKEN=1 sets qaForceTerminal(true) so every
+  # curve collapses to its terminal value -> the SAME A-group start/range assertions
+  # turn RED (expectations never branch on broken, rule 22; measured green positive).
+  # Tier: FULL (feature gate, sibling of LA_STORY_QA). Pure in-memory, cheap.
+  @{n="LA_MOTION_QA"; png=$false; tier="full"; measuredMs=131}
   # 2.22.0 client experience: lightbox FULL image + thumbnail skeleton +
   # animation pure-function contract. Pure offscreen self-exit, no MainWindow,
   # no external env. Renders cards into QImage and asserts at the PIXEL level:
@@ -717,6 +822,32 @@ Chk "E9g" (($r7.hit -gt 0) -and ($r7.total -gt 0)) ("missingMeasuredMs rejected 
 $threw = $false
 try { Get-GateTable -Tier "medium" | Out-Null } catch { $threw = $true }
 Chk "E10" $threw "unknownTierThrows=1"
+
+# E11 - ENCODING. PS 5.1 decodes a no-BOM script with the host ANSI codepage (GBK on a
+# zh-CN host), so a UTF-8 CJK comment can consume the ASCII delimiter that follows it and
+# a table entry VANISHES WITHOUT ANY PARSE ERROR. That is exactly how 12 media gates
+# (LA_RAW_QA / LA_VIDEO_* / LA_AUDIO_QA / LA_EDIT_RAW_QA / LA_CULL_EXEMPT_QA /
+# LA_CULL_VIDEO_QA / LA_GEO_LINK_QA / LA_MAP_PERF) stopped running while the file still
+# looked complete and every other assertion stayed green. The source must be pure ASCII.
+$bytes = [System.IO.File]::ReadAllBytes($PSCommandPath)
+$hi = 0
+foreach ($b in $bytes) { if ($b -gt 127) { $hi++ } }
+Chk "E11" ($hi -eq 0) ("nonAsciiBytes=" + $hi)
+
+# E12 - the SYMPTOM, caught independently of the cause: count the entry literals in the
+# GateTable source text and require the parsed table to hold exactly that many. Any silent
+# loss (encoding, or a stray bracket ending the array early) shows up here even with E11
+# clean, so the roster can never again be smaller than the file claims.
+$text = [System.Text.Encoding]::ASCII.GetString($bytes)
+$start = $text.IndexOf('$GateTable = @(')
+$lit = ""
+if ($start -ge 0) {
+  $lit = $text.Substring($start)
+  $end = $lit.IndexOf("`n)")
+  if ($end -ge 0) { $lit = $lit.Substring(0, $end) }
+}
+$txtN = ([regex]::Matches($lit, '@\{n=')).Count
+Chk "E12" (($start -ge 0) -and ($txtN -eq $all.Count)) ("textual=" + $txtN + " parsed=" + $all.Count)
 
 Write-Host ("LA_GATE_MATRIX_QA PASS gates={0} fast={1} full={2} budget={3}ms core={4}" -f `
             $all.Count, $fast.Count, $full.Count, $fastBudgetMs, $coreFastGates.Count)

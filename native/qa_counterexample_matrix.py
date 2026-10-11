@@ -54,6 +54,25 @@ CASES = [
     ('CE6 measuredMs swallowed into a quoted scriptArgs string',
      '  @{n="LA_RELEASE_QA";      png=$false; kind="ps1"; script="release.ps1"; scriptArgs="-SelfTest"; measuredMs=3135}',
      '  @{n="LA_RELEASE_QA";      png=$false; kind="ps1"; script="release.ps1"; scriptArgs="-SelfTest; measuredMs=3135"}'),
+
+    # CE7 is the REAL 2.33.0 defect this file was nearly shipped with: CJK comments had been
+    # added inside the gate table, PS 5.1 decoded the no-BOM UTF-8 source as the host ANSI
+    # codepage (GBK), each such comment swallowed the delimiter after it, and 12 entries
+    # (LA_RAW_QA / LA_VIDEO_* / LA_AUDIO_QA / LA_EDIT_RAW_QA / LA_CULL_EXEMPT_QA /
+    # LA_CULL_VIDEO_QA / LA_GEO_LINK_QA / LA_MAP_PERF) vanished WITHOUT A PARSE ERROR. The
+    # suite ran 52 gates while the file listed 64 and every pre-existing assertion stayed
+    # green. E11 (pure-ASCII source) and E12 (textual entry count == parsed count) must bite.
+    ('CE7 CJK comment inside the gate table (ANSI decode silently drops entries)',
+     '  @{n="LA_CLUSTER_QA";      png=$false; measuredMs=1424},',
+     '  # 中文注释：PS5.1 按 GBK 解码会把下一条注册吞掉\n'
+     '  @{n="LA_CLUSTER_QA";      png=$false; measuredMs=1424},'),
+
+    # CE8 isolates E12 from the encoding cause: an entry commented out is still present in the
+    # source text but gone from the parsed table, so the suite loses a gate on a host whose
+    # codepage happens to be UTF-8. E12 must report textual > parsed.
+    ('CE8 an entry commented out: file claims it, the table no longer has it',
+     '  @{n="LA_MAP_CLICK_QA";    png=$false; measuredMs=2553},',
+     '  #@{n="LA_MAP_CLICK_QA";    png=$false; measuredMs=2553},'),
 ]
 
 
