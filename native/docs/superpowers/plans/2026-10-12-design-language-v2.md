@@ -198,7 +198,7 @@ git commit -m "feat(gates): LA_PALETTE_QA ratchet gate first (design v2 spec s5)
   - 色：`SKY ROSE TEAL OLIVE CORAL_DK INK_IMG MUTED_IMG FAINT_IMG CAT1..CAT8`、`glowJade()/glowGold()`
   - `Radius::{Micro,Inset,Ctl,Card,Feature}`（int，px）+ `Radius::Pill`（`"999px"`）
   - `Space::{Xs,S,M,L,Xl,Xxl}`（int）
-  - `Type::{Tier,display(),title(bool serif),head(),body(),small(),mono(qreal),css(Tier)}`
+  - `Type::{Tier,display(),title(bool serif),head(),body(),smallText(),mono(qreal),css(Tier)}`
   - `Elev::{Level,E1,E2}` + `Elev::apply(QWidget*, Level)`
   - `btnViolet()` / `btnOutline(const QColor& accent)`（返回 QString QSS，仿 `btnGhost()` :137）
 
@@ -243,7 +243,7 @@ namespace Type {
     inline QFont title(bool serif = true){ return serif ? serifFont(15, QFont::Bold) : yahei(15, QFont::Bold); }
     inline QFont head()  { return yahei(12, QFont::Bold); }
     inline QFont body()  { return yahei(9.5); }
-    inline QFont small_(){ return yahei(9); }   // small 与宏冲突，尾下划线
+    inline QFont smallText(){ return yahei(9); }   // small 撞 Windows RPC 宏，命名 smallText
     inline QFont mono(qreal pt = 9.5) { QFont f(QStringLiteral("Consolas")); f.setPointSizeF(pt); return f; }
     inline int px(qreal pt) { return int(pt * 4.0 / 3.0 + 0.5); }
     inline QString css(Tier t) {
@@ -398,13 +398,13 @@ git commit -m "refactor(theme): retire #8da996 MUTED-typo, 22 sites -> Lumen::he
 ### Task 8: 字阶收敛（C2 归零）
 
 **Files:**
-- Modify: 全部非豁免页面：QSS `font-size:` → `Type::css(Tier::…)` 插值；`setPointSizeF(19 档)` → `Type::display()/title()/head()/body()/small()/mono()`；`CullPage.cpp:631` Georgia 14px → `Type::head()`（降级，spec §2.3）；`LogPage.cpp:298/:511` Consolas → `Type::mono()`
+- Modify: 全部非豁免页面：QSS `font-size:` → `Type::css(Tier::…)` 插值；`setPointSizeF(19 档)` → `Type::display()/title()/head()/body()/smallText()/mono()`；`CullPage.cpp:631` Georgia 14px → `Type::head()`（降级，spec §2.3）；`LogPage.cpp:298/:511` Consolas → `Type::mono()`
 - Test: 门 C2 计数
 
 **Interfaces:** Consumes `Type::*`（Task 2）。
 
 - [ ] **Step 1: 先写红**：`grep` 出全部 `setPointSizeF|font-size:` 站点列成清单（≈90+29 处）；跑门记录 C2 现值（预期 ~90）。
-- [ ] **Step 2: 按文件替换**（每文件一次跑门，防串改）：归并表——`8.5→T6 保留（画布豁免文件内）`；`9/9.5→body()/small()`；`10/10.5/11/11.5→small()/body()`（12px 按钮副文案→small）；`12→head()`；`13/14→head()`（区块标题）或 `title()`（页面主标题：`MainWindow.cpp:590` 15pt 已是 T2 参照）；`16/17/18→title()`；`20→title/display()`（Splash 46pt 豁免文件不动）；QSS 侧数值按 px≈pt×4/3 就近落 `Type::css(tier)`。字重混写（`font-weight:600/700/bold`）随串重写归一 helper 生成值。
+- [ ] **Step 2: 按文件替换**（每文件一次跑门，防串改）：归并表——`8.5→T6 保留（画布豁免文件内）`；`9/9.5→body()/smallText()`；`10/10.5/11/11.5→smallText()/body()`（12px 按钮副文案→smallText）；`12→head()`；`13/14→head()`（区块标题）或 `title()`（页面主标题：`MainWindow.cpp:590` 15pt 已是 T2 参照）；`16/17/18→title()`；`20→title/display()`（Splash 46pt 豁免文件不动）；QSS 侧数值按 px≈pt×4/3 就近落 `Type::css(tier)`。字重混写（`font-weight:600/700/bold`）随串重写归一 helper 生成值。
 - [ ] **Step 3:** C2 归零（QSS 内仅 `Type::css()` 输出——门的正则匹配 `font-size:` 字面量，helper 拼接后字符串不含该字面量源文本，**扫描的是源码**，故 helper 自身在 Theme.h 豁免内）。`-Update` 锁 0。
 - [ ] **Step 4:** fast GO + 七页截图逐页比对（字号位移 ≤1pt 应无感；有肉眼差即回查归并表执行偏差，禁止顺手调 helper）。
 - [ ] **Step 5: Commit** `refactor(type): 19 scattered sizes -> Type:: six-tier helpers across src/ui, C2 ratchet at ZERO`
@@ -460,7 +460,7 @@ git commit -m "refactor(theme): retire #8da996 MUTED-typo, 22 sites -> Lumen::he
 
 1. **Spec 覆盖**：§1 色板→T1/3/4/5/6/7；§2 字阶→T8；§3 几何→T9/10、elevation→T11；§4 组件单源→T2/4/5/6；§5 门→T1；K1/K2 勘误落在 T4（紫=引用）与"本计划不做图标铺开"（P2）边界声明；§6 验证条款分布于每任务 Step。C5 显式留给 P2——无缺口。
 2. **占位符**：无 TBD；`<actual>` 尖括号仅在 Commit 步骤的信息串，含义=当步实测值，属执行时数据非规格空洞。
-3. **类型一致性**：`Type::small_()`（宏冲突）在 T2 定义、T8 消费拼写一致；`Radius::Pill` 为 QString、其余为 int——消费侧插值方式在 T9 Step 1 注明；`Elev::apply(QWidget*, Level)` 全程一致；门脚本 schema 字段名五任务复用一致。
+3. **类型一致性**：`Type::smallText()`（避开 Windows RPC `small` 宏）在 T2 定义、T8 消费拼写一致；`Radius::Pill` 为 QString、其余为 int——消费侧插值方式在 T9 Step 1 注明；`Elev::apply(QWidget*, Level)` 全程一致；门脚本 schema 字段名五任务复用一致。
 4. **一处对 spec §5.3 的执行形态修正**：CE9 落进 `qa_counterexample_matrix.py` 的内容是「LA_PALETTE_QA 被拖进 fast 层必须被 E9d 拒」，门行为反例主钩子是 `LA_PALETTE_QA_FORCE_BROKEN=1`（与其它 34 道 exe 门的 FORCE_BROKEN 文化同构）——两个都要，T1 Step 5 已排。
 
 ## Execution Handoff
