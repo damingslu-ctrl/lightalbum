@@ -108,6 +108,124 @@
   收口为 2.35.0——2.33.0/2.34.0 两节与其 bump 活在未提交 WIP，已提交 CHANGELOG 中本节的前节
   是 `[2.32.0]`）。
 
+## [2.34.0] - 未发布
+
+本轮为「动效引擎导入」：把此前散落在五处、各写各的 `QPropertyAnimation` 收敛到一个
+**纯函数动效引擎**（曲线族 + 错峰 + 多属性时间线 + 预设表 + 减动效单点兜底），并在其上
+开出几处新特效面。引擎与门禁同源（铁律 20），判定式不随反例开关分支（铁律 22）。
+
+### 新增 - ★`core/MotionKit`：纯函数动效引擎（真源）
+
+- **曲线族** `Motion::Curve`：`Linear/InQuad/OutQuad/InOutCubic/OutCubic/OutExpo/OutBack/`
+  `OutElastic/Spring/Pulse`，`evalCurve(c,t)` 为无状态纯函数。`Pulse` 逐点复刻 2.22 骨架屏
+  三角波公式（`f(0)==f(1)==0.25`、值域 `[0.25,1]`），保证既有 `LA_TRANSITION_QA` 断言不漂移。
+- **错峰** `staggerStart(i,total,step)`：单调不减、`stagger(0)==0`、`total<=1` 恒 0，末项 `<=1`。
+- **多属性时间线** `Key{prop,from,to,curve,t0,t1,clamp01,has_return,return_to}` +
+  `Preset{name,durationMs,keys}` + `evaluate(preset,f)`。`f∈[0,2]`：主段 `[0,1]`，
+  **过冲回归段** `(1,2]` 由 `has_return/return_to` 驱动（回弹落定来自曲线本身，无手写二段码）。
+- **预设表**：`NavFade`(320ms) / `LightboxSlide`(380ms) / `ChipPop`(240ms) /
+  `StarBounce`(420ms) / `HeartBurst`(520ms)；未知名回落首个非空预设（永不返回空）。
+- **减动效单点兜底** `qaSetForceTerminal(on)`：置位后全曲线任意 `t` 塌成终值——既是可访问性
+  开关，也是门禁反例注入点（对齐 `FullCache::setForceFailForQa` / `AiWriter::setForceInlineForQa`）。
+- **`core/MotionDriver`（唯一 Qt 驱动）**：`QVariantAnimation 0→1` 逐帧 `evaluate` 后
+  `emit valueFor(prop,value)`；减动效/`forceTerminal` 下只发一次终值、**不起定时器**。
+- **`core/MotionFX`**：`glow`（走 palette ButtonText 通道——CSS 固定字号会覆盖字体动画，
+  故发光改颜色通道）、`bounceFont`、`heartBurst`（`BurstOverlay` 粒子，金角确定性布点）。
+
+### 变更 - 收敛五处散点动效到引擎
+
+- `MainWindow::onNav` 页面过渡 → `NavFade` 预设 + **方向性视差**（`amp=±14`）+ Spring `offsetY`。
+- `HomePage` 灯箱横滑 → `LightboxSlide` 预设（`offsetX`/`scale` 走 OutExpo）。
+- `GalleryCardPainter::skeletonPulse` → 委托引擎 `Pulse`（数值契约逐点保持）。
+- `GalleryPage` 批量星标按钮 + 故事 chip 入场 → `glow`（`StarBounce`/`ChipPop`）。
+- `CullPage::onMark` 喜欢 → `heartBurst` 粒子迸发。
+- 所有 UI 特效调用均以 `qEnvironmentVariableIsEmpty("LA_GATE")` 为门，截图/像素门拿到确定静置态。
+
+### 新增 - 门禁 `LA_MOTION_QA`（full，`measuredMs=131`，第 69 门）
+
+- 五组断言：**A** 曲线契约（端点 `f(1)==1`、起点 `f(0)==0`（`Pulse` 豁免）、单调性、`OutBack`
+  过冲 `>1`、`Pulse` 周期/值域、`skeletonPulse` 逐点等于引擎 `Pulse`、`forceTerminal` 塌终值）；
+  **B** 错峰单调；**C** 预设表完整性 + 未知名回落；**D** 过冲回归段（`StarBounce` glow
+  `evaluate(f=2)==return_to`、`f=0.5` 离开起点）；**E** 粒子轨迹纯函数 + **像素判别**（`NavFade`
+  `offsetY` 条在 `f=0.2` 与 `f=0.8` 渲染必不同；减动效下两相位像素恒等、不闪）。
+- **反例非空心**：`LA_MOTION_QA_FORCE_BROKEN=1` → `qaSetForceTerminal(true)` 令全曲线塌终值，
+  A/D/E 三组多条断言**同时转红**（期望式一字不改，铁律 22）；实测 `FAIL broken=1`。
+
+### 回归
+
+- 全量套件（tier=all，**69 门 = fast 18 + full 51**）：`PASS=58 FAIL=0 CHECK=0 KILL=0 SKIP=11`，
+  墙钟 63818 ms。11 道 SKIP 皆为需用户真实库/个人素材环境变量的门（`LA_SCAN_*`/`LA_RAW_SAMPLE`/
+  `LA_VIDEO_SAMPLE`），非回归。`LA_MOTION_QA` 正例 rc=0、`FORCE_BROKEN` 反例 rc=1。
+- 版本 2.33.0 → **2.34.0**（新功能 = MINOR，单一真源 `CMakeLists.txt`）。
+
+## [2.33.0] - 未发布
+
+本轮为「业务逻辑梳理 + 补全 + 优化」收口版：修一处真实线程缺陷、清偿一批门禁/编码
+债、补齐 i18n 与死代码。以下均已在 offscreen 全量套件实测（见「回归」）。
+
+### 修复 - ★线程安全真实缺陷：AI 异步写回的跨线程竞争
+
+- **根因**：`MainWindow` 把 `Library*` 直接交给 QtConcurrent worker，worker 里调
+  `setCategories/setPersons/setFaceEmbeddings/applyClusters`。两条同时成立：① `la_rw`
+  这条 `QSqlDatabase` 连接由 GUI 线程惰性创建，SQLite 句柄不可跨线程使用（并发即 UB）；
+  ② 这些 mutator 在 COMMIT 后同步内存 `photos_`/`pathIx_`，而 `GalleryModel` 正按
+  `const QVector<Photo>*` 引用读它们 → 撕裂读/索引错位。加锁救不了 ②（模型手里是引用）。
+- **方案 = 单一写者**：新增 `core/AiWriter.{h,cpp}`，worker 只算（网络/解码线程局部），
+  落库一律 `QMetaObject::invokeMethod(guiCtx, ..., Qt::QueuedConnection)` 投递回 GUI 线程；
+  用 context 重载，`guiCtx`（MainWindow）析构即安全丢弃排队任务。`Classifier::classify` /
+  `PersonDetector::detect/detectEmbeddings` 改为收「GUI 线程照片快照 + `AiWriter&`」，
+  函数体内不再触碰 `Library`。`runFaceCluster` 的读回 embedding → 聚类 → `applyClusters`
+  一并移进 `watcher->finished`（GUI 线程）执行。
+- **可观测**：`Library::lastWriteThreadId()`（atomic 探针，记录最近一次写库线程）。
+- **门禁 `LA_GUI_THREAD_QA`（full，`measuredMs=197`）**：从**真实 worker 线程**经 AiWriter
+  投递，断言 ①事件循环跑之前尚未落地（证明确实排队、非当场写）②落地后 DB+内存正确
+  ③`lastWriteThreadId()==GUI 线程`；categories/persons/Classifier 合成/PersonDetector
+  合成四条写回各测一遍。反例 `LA_GUI_THREAD_QA_FORCE_BROKEN=1` → AiWriter 在调用线程
+  当场写（修复前形态）：期望式一字不改（铁律22），线程断言与「未泄漏」双双转红（非空心）。
+
+### 修复 - ★门禁名册编码吞门缺陷（PS 5.1 按 GBK 解码无 BOM 的 .ps1）
+
+- `gate_matrix.ps1` 曾含大量中文注释；PS 5.1 用主机 ANSI 码页（zh-CN=GBK）解码无 BOM
+  文件时，一条 UTF-8 CJK 注释会吞掉其后的 ASCII 分隔符，令紧随的 `@{n=...}` 注册**静默
+  消失且无任何解析报错**——上次 2.32.0 声称的「全量 64 门」实际只跑了 **52** 道。
+- 修复：把整份 roster 注释 ASCII 化（纯 ASCII 铁律）。补两道**从结果之外取证**的自检：
+  `E11`（`$PSCommandPath` 非 ASCII 字节数必须为 0）、`E12`（`$GateTable` 区域内
+  `@{n=` 文本计数须等于解析出的条目数）；反例注入 `qa_counterexample_matrix.py` 的
+  CE7（塞中文注释）/CE8（注释掉一条注册）各 8/8 转红。
+- 一并补注册 7 道「有实现却从未入册」的门，并回填 12 道门的 `measuredMs`。
+
+### 新增 - 隐私门补强 + 对决/地图反例钩子（铁律 35：判定须可失败）
+
+- **CullPage / DedupDialog 私密过滤**：锁定态私密照在**注入点**即不进分析集（铁律 6 一次
+  过滤），`LA_PRIVACY_QA` 断言 + `setForcePrivacyLeakForQa` 反例。
+- **`LA_MAP_SMOKE` 判定式**：此前只打数字（`rings=0` 也被 runner 当绿）→ 补「各层几何
+  非空 + 每省都有中文名（`zhKeys==provinces`）」两条真不变量，反例
+  `LA_MAP_SMOKE_FORCE_BROKEN=1` 删一省中文名 → `zhComplete=0` 转红。
+- **`LA_CULL_DUEL_QA` 反例钩子**：`LA_CULL_DUEL_QA_FORCE_BROKEN=1` 令 `markDuelItem` 空转
+  → `skipDelta=0 markOk=0` 转红（只坏行为、不坏判定式）。
+
+### 变更 - `LA_MAP_PERF` 世界层预算重定标（1.2ms → 1.6ms）
+
+`world_base` 稳态实测 ≈1.15ms（`LA_MAP_PERF_DETAIL`），原预算 1.2ms 距稳态仅 ~4% 余量 →
+跑完整套件多进程并发时均值可飘到 ~1.55ms 而必 flaky。预算取 1.6ms：高于含负载飘移的稳态
+（qa_runner 单进程实测 0.75–1.35ms），又明显低于所防的真实回退签名「改回每帧缩放 blit
+3000×1500 ≈2.30ms」→ 真回退仍整体右移转红（判定不空心）。铁律 25/31：先测后定，注释留实测数。
+
+### 补全 - i18n + 死代码清偿
+
+- 手工向 `i18n/LightAlbum_en.ts` 追加 **42** 条缺失 CJK 串（方向C 智能分类/人物/聚类、
+  故事标题、选片去重、视频抽帧），`.qm` 经 `lrelease` 重编为 **312 finished / 0 unfinished**
+  （**绝不跑 `lupdate`**，铁律 23/24：手工追加 + 转义 `& ' < >`）。`LA_I18N_QA` 覆盖断言由
+  4 条扩到 12 条（各新类目各抽一枚代表；缺译→回落源码→转红），entries 计数改动态。
+- 删除死代码 `MainWindow::setupVaultUi`（仅声明、无定义、无调用者）。
+
+### 回归
+
+- 全量套件（tier=all，**68 门 = fast 18 + full 50**）：`PASS=57 FAIL=0 CHECK=0 KILL=0 SKIP=11`，
+  墙钟 60695 ms。11 道 SKIP 皆为需要用户真实库/个人素材环境变量的门（`LA_SCAN_*`、
+  `LA_SCALE_REAL_*` 等），本轮刻意不跑以保护隐私数据。
+- `gate_matrix.ps1 -SelfTest` E1–E12 全绿（`nonAsciiBytes=0`、`textual=parsed=68`）。
+
 ## [2.32.0] - 未发布
 
 ### 新增 - 自动故事相册（人物故事方向·B）
