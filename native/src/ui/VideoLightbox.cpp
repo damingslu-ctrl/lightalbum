@@ -13,6 +13,7 @@ VideoLightbox::VideoLightbox(QWidget* parent) : QDialog(parent)
     setObjectName(QStringLiteral("videoLightbox"));
     setWindowTitle(tr("LightAlbum — 视频播放"));
     resize(880, 560);
+    Lumen::Elev::apply(this, Lumen::Elev::E2);   // spec §3.4：lightbox=true 浮层，阴影压舱石（T11）
 
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(0, 0, 0, 0);

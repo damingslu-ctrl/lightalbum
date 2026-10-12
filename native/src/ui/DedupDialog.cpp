@@ -45,6 +45,7 @@ DedupDialog::DedupDialog(const QVector<Photo>* photos, const QString& thumbsDir,
 {
     setWindowTitle(QCoreApplication::translate("LightAlbum", "相似照片"));
     resize(760, 580);
+    Lumen::Elev::apply(this, Lumen::Elev::E2);   // spec §3.4：模态=true 浮层，阴影压舱石（T11）
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(16, 16, 16, 16);
     root->setSpacing(12);

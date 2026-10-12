@@ -70,6 +70,7 @@
 #include "ui/GalleryCardPainter.h"
 #include "ui/CullPage.h"
 #include "ui/DedupDialog.h"   // 2.33.0 隐私门：去重对话框私密照隔离（LA_DEDUP_PRIVACY_QA 直调）
+#include "ui/VideoLightbox.h" // T11：LA_UI_SHOT_POPUP 弹层打开态取证
 #include "core/CullEngine.h"
 #include "ui/RetouchPage.h"
 #include "ui/HomePage.h"
@@ -6855,6 +6856,56 @@ int main(int argc, char *argv[])
         if (qEnvironmentVariableIsSet("LA_UI_SHOT_SOLID"))
             win.forceTopSolid(true); // P19：顶栏实底态截图（强制态，抗 onNav 重算）
         return win.shootPages(qEnvironmentVariable("LA_UI_SHOT"));
+    }
+
+    // T11 弹层打开态首次取证：LA_UI_SHOT_POPUP=<dir> → offscreen 合成去重对话框/视频灯箱，
+    // 同实例双抓（E2 生效 vs setEnabled(false)）逐像素差分，机械裁决「阴影是否真的进像素」
+    // （诚实律：wired≠painted）。草稿区专用、只在显式 env 组合触发，绝不入库。
+    if (qEnvironmentVariableIsSet("LA_UI_SHOT_POPUP")) {
+        const QString dir = qEnvironmentVariable("LA_UI_SHOT_POPUP");
+        QDir().mkpath(dir);
+        auto probe = [&dir](QWidget* w, const QString& name) {
+            w->show();
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 300);
+            QImage on = w->grab().toImage();
+            if (QGraphicsEffect* fx = w->graphicsEffect()) fx->setEnabled(false);
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+            const QImage off = w->grab().toImage();
+            int diff = 0;
+            for (int y = 0; y < on.height(); ++y)
+                for (int x = 0; x < on.width(); ++x)
+                    diff += on.pixelColor(x, y) != off.pixelColor(x, y);
+            on.save(QDir(dir).filePath(QStringLiteral("shot-e2-%1.png").arg(name)));
+            off.save(QDir(dir).filePath(QStringLiteral("shot-e2-%1-off.png").arg(name)));
+            std::fprintf(stderr, "LA_E2_PROBE %s size=%dx%d diffPx=%d/%d\n",
+                         qPrintable(name), on.width(), on.height(), diff,
+                         on.width() * on.height());
+            std::fflush(stderr);
+            if (QGraphicsEffect* fx = w->graphicsEffect()) fx->setEnabled(true);
+        };
+        QTemporaryDir td;
+        QImage im(64, 64, QImage::Format_ARGB32);
+        im.fill(QColor(200, 200, 200));
+        QVector<Photo> ps;
+        for (int i = 1; i <= 4; ++i) {   // 4 张字节相同合成缩略图 → 必出 1 组重复
+            const QString k = QStringLiteral("e2%1.png").arg(i);
+            im.save(QDir(td.path()).filePath(k));
+            Photo p;
+            p.path = QStringLiteral("synth/e2/%1.jpg").arg(i);
+            p.thumbFile = k;
+            p.dim = QStringLiteral("800x600");
+            ps.append(p);
+        }
+        { DedupDialog dlg(&ps, td.path(), true, &win); dlg.qaWaitFinished(8000); probe(&dlg, QStringLiteral("dedup")); }
+        { VideoLightbox lb(&win); probe(&lb, QStringLiteral("lightbox")); }
+        if (qEnvironmentVariableIsSet("LA_UI_SHOT_POPUP_MENU")) {   // 单独探针：QMenu offscreen 光栅化历史挂死（缺陷②注记）
+            QMenu m(&win);
+            m.addAction(QString::fromUtf8("\xE7\x9B\xB8\xE4\xBC\xBC\xE7\x85\xA7\xE7\x89\x87"));   // 探针专用非译串，不进 i18n
+            m.addAction(QString::fromUtf8("\xE5\x85\xB3\xE9\x97\xAD"));
+            Lumen::Elev::apply(&m, Lumen::Elev::E2);
+            probe(&m, QStringLiteral("menu"));
+        }
+        return 0;
     }
 
     // 冒烟探针门控：载入真库 + 页面栈就位后自动退出（offscreen/CI 可用）。
