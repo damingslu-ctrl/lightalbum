@@ -16,7 +16,7 @@
 - **字阶（C2 68→0，棘轮死区锁定）**：`font-size:NNpx` 字面量全量收敛到 `Type::` 六档字阶（含 `smallText()` 避 Windows RPC `small` 宏）；衬线仅存 Display 档豁免位，降级泄漏点按判例逐条注记。
 - **几何（C3 71→0 + C4 117→0，棘轮死区锁定）**：圆角归格 `Radius::` 六档（含 Theme.h 内配方），静息描边唯一化 1px；间距归格 `Space::` 4px 网格六级；编辑留白以 `palette-exempt: editorial whitespace` 标记行豁免且**仅** C4 分支消费（不泄漏入 C1/C2/C3/C5）。hover 环/嵌套律等逐页遗留移交 P3。
 - **elevation（阴影诞生）**：仓内历史首批真浮层阴影——`Elev::apply` E2 档接生 `DedupDialog` 与 `VideoLightbox`（spec §3.4）；`QMenu` 诚实挂起——顶层弹窗为原生窗口，widget 层阴影不可绘出（离屏实证 diffPx=0），不伪报成功。
-- **棘轮门 `LA_PALETTE_QA`（第 72 门）**：脚本门入 full 层（名册 72 = fast 18 + full 54）；五计数基线 `qa/palette_baseline.json`（C1 hex / C2 字号 / C3 圆角出格 / C4 间距出格 / C5 译句 emoji），ceiling 只降不升；终态 **C1=C2=C3=C4=0（死区）/ C5=30（emoji 图标，P2 走 qrc-SVG 铺开清偿）**；反例钩子 `LA_PALETTE_QA_FORCE_BROKEN=1` 必红；F1 fail-open 守卫补齐——扫描根产出 files-scanned=0 时判 FAIL（空扫描拒绝读作绿，守卫触发用 env `LA_PALETTE_QA_SCAN_DIRS` 可实证，默认不启用）；measuredMs 由占位 1900 回填实测 1984。
+- **棘轮门 `LA_PALETTE_QA`（第 72 门）**：脚本门入 full 层（名册 72 = fast 18 + full 54）；五计数基线 `qa/palette_baseline.json`（C1 hex / C2 字号 / C3 圆角出格 / C4 间距出格 / C5 译句 emoji），ceiling 只降不升；终态 **C1=C2=C3=C4=0（死区）/ C5=30（emoji 图标，P2 走 qrc-SVG 铺开清偿）**；反例钩子 `LA_PALETTE_QA_FORCE_BROKEN=1` 必红；F1 fail-open 守卫补齐——扫描根产出 files-scanned=0 时判 FAIL（空扫描拒绝读作绿，守卫触发用 env `LA_PALETTE_QA_SCAN_DIRS` 可实证，默认不启用）；measuredMs 1984（收口复测；1900 为 T1 实测值非占位，~85ms 差为主机噪声）。
 
 ### 回归
 
