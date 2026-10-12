@@ -18,6 +18,10 @@
 - **elevation（阴影诞生）**：仓内历史首批真浮层阴影——`Elev::apply` E2 档接生 `DedupDialog` 与 `VideoLightbox`（spec §3.4）；`QMenu` 诚实挂起——顶层弹窗为原生窗口，widget 层阴影不可绘出（离屏实证 diffPx=0），不伪报成功。
 - **棘轮门 `LA_PALETTE_QA`（第 72 门）**：脚本门入 full 层（名册 72 = fast 18 + full 54）；五计数基线 `qa/palette_baseline.json`（C1 hex / C2 字号 / C3 圆角出格 / C4 间距出格 / C5 译句 emoji），ceiling 只降不升；终态 **C1=C2=C3=C4=0（死区）/ C5=30（emoji 图标，P2 走 qrc-SVG 铺开清偿）**；反例钩子 `LA_PALETTE_QA_FORCE_BROKEN=1` 必红；F1 fail-open 守卫补齐——扫描根产出 files-scanned=0 时判 FAIL（空扫描拒绝读作绿，守卫触发用 env `LA_PALETTE_QA_SCAN_DIRS` 可实证，默认不启用）；measuredMs 1984（收口复测；1900 为 T1 实测值非占位，~85ms 差为主机噪声）。
 
+### 修复 - 发布工具链（打包腿）
+
+- `iterate.ps1 -Package` 两处修复：release.ps1 调用去掉 `2>&1 |` 管道改**裸调用**——windeployqt 在本机输出 dxcompiler 良性告警（无 DirectX shader 编译器），PS 5.1 + EAP=Stop 下经管道被转成 NativeCommandError，打包在 windeployqt 中途中断（与 release.ps1 自身 P13/P17 判例同类；其 windeployqt 早已裸调用免疫，iterate 侧漏改，2026-10-12 首次以 -Package 端到端打包时实证）；并补 `$LASTEXITCODE` 传播——修复前 release.ps1 失败不影响 iterate 的 GO 判定与退出码（打包失败会被静默吞成 GO）。
+
 ### 回归
 
 - fast 18 门 GO；full 54 门 `PASS=42 FAIL=0 CHECK=0 SKIP=12 KILL=0`（SKIP 皆为既有 need= 外部素材/模型 env 门，零新增）；`gate_matrix.ps1 -SelfTest` `gates=72 fast=18 full=54 nonAsciiBytes=0 textual=72==parsed`；反例矩阵 9/9 转红（CE9 锚点随 measuredMs 同步更新）。

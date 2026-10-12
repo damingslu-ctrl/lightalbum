@@ -153,7 +153,18 @@ if ($Package) {
     Write-Host "PACKAGE SKIPPED: $release not found."
   } else {
     Write-Host "==> Packaging (release.ps1, -SkipGate: iterate already verified GO) ..."
-    & powershell -ExecutionPolicy Bypass -File $release -SkipGate 2>&1 | ForEach-Object { Write-Host ("    " + $_) }
+    # Bare call, NO redirect/pipe: release.ps1's windeployqt emits a benign
+    # dxcompiler stderr warning on this host, and under PS 5.1 + EAP=Stop a
+    # piped native stderr becomes a terminating NativeCommandError (P13/P17
+    # class) -- that pipe aborted packaging mid-deploy on 2026-10-12. Bare
+    # call is immune, the same remedy release.ps1 applies to its windeployqt
+    # call. Exit code is propagated: a failed package must fail the run, not
+    # print GO over a red release.
+    & powershell -ExecutionPolicy Bypass -File $release -SkipGate
+    if ($LASTEXITCODE -ne 0) {
+      Write-Host ("PACKAGE FAILED: release.ps1 rc=" + $LASTEXITCODE)
+      exit 1
+    }
   }
 }
 
