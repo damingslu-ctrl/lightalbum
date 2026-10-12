@@ -60,6 +60,9 @@ inline constexpr QColor CORAL_DK = QColor(0xa0, 0x4a, 0x3e); // 危险描边暗�
 inline constexpr QColor INK_IMG   = QColor(0xe8, 0xe4, 0xda); // 照片叠加层·主文字
 inline constexpr QColor MUTED_IMG = QColor(0x98, 0xa2, 0x9a); // 照片叠加层·次文字
 inline constexpr QColor FAINT_IMG = QColor(0x6d, 0x7a, 0x6f); // 照片叠加层·弱文字
+// T7 长尾归零新增（spec §1.5 照片板梯阶补全；§1 erratum 提案，待 T12 文档收编）：
+inline constexpr QColor SOFT_IMG  = QColor(0xb9, 0xb3, 0xa6); // 照片叠加层·暖灰中阶（Quiet Frame 导航文字/INDEX/caps 梯阶收编，INK_IMG↔MUTED_IMG 之间）
+inline constexpr QColor GOLD_WASH = QColor(0x26, 0x20, 0x12); // 金强调按钮 :checked 底 wash（GOLD 描边+文字之下的暖金暗衬，非表面非描线，无现成 token 之家）
 // 数据分类色板：CAT 板是数据编码语言，不受 VIOLET=AI 专属的控制面职责约束（spec §1.4 裁定）
 inline constexpr QColor CAT1 = EMERALD, CAT2 = SKY, CAT3 = GOLD, CAT4 = VIOLET,
                         CAT5 = CORAL,  CAT6 = ROSE, CAT7 = TEAL, CAT8 = OLIVE;

@@ -180,11 +180,13 @@ public:
         auto* textCol = new QVBoxLayout;
         textCol->setSpacing(3);
         title_ = new QLabel(bottom_);
-        title_->setStyleSheet(QStringLiteral(
+        title_->setStyleSheet(QString::fromUtf8(
             "font-family:'Noto Serif SC','STSong','SimSun',serif;"
-            "font-size:18px;font-weight:600;color:#f4f7f4;"));
+            "font-size:18px;font-weight:600;color:%1;")
+            .arg(Lumen::hex(Lumen::INK)));
         meta_ = new QLabel(bottom_);
-        meta_->setStyleSheet(QStringLiteral("color:#9db2a5;font-size:11.5px;letter-spacing:1px;"));
+        meta_->setStyleSheet(QString::fromUtf8("color:%1;font-size:11.5px;letter-spacing:1px;")
+            .arg(Lumen::hex(Lumen::MUTED)));   // §1.7：9db2a5→MUTED（次文字归级）
         textCol->addWidget(title_);
         textCol->addWidget(meta_);
         bl->addLayout(textCol);
@@ -407,10 +409,12 @@ private:
     {
         for (int i = 0; i < starBtns_.size(); ++i) {
             starBtns_.at(i)->setStyleSheet(i < r
-                ? QStringLiteral("QToolButton{background:transparent;border:none;"
-                                 "color:#d9a94e;font-size:17px;padding:0;}")
-                : QStringLiteral("QToolButton{background:transparent;border:none;"
-                                 "color:#3a4a40;font-size:17px;padding:0;}"));
+                ? QString::fromUtf8("QToolButton{background:transparent;border:none;"
+                                    "color:%1;font-size:17px;padding:0;}")
+                      .arg(Lumen::hex(Lumen::GOLD))
+                : QString::fromUtf8("QToolButton{background:transparent;border:none;"
+                                    "color:%1;font-size:17px;padding:0;}")
+                      .arg(Lumen::hex(Lumen::FAINT)));   // §1.7：淡出态 3a4a40→FAINT
         }
     }
 
@@ -447,7 +451,8 @@ private:
     {
         if (orig_.isNull()) {
             img_->setText(QCoreApplication::translate("LightAlbum", "无缩略图"));
-            img_->setStyleSheet(QStringLiteral("color:#8da396;font-size:14px;"));
+            img_->setStyleSheet(QString::fromUtf8("color:%1;font-size:14px;")
+                .arg(Lumen::hex(Lumen::MUTED)));
             return;
         }
         const int m = 44;
@@ -503,17 +508,20 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
 
     navBox_ = new QWidget(navWrap);
     navBox_->setFixedWidth(68);
-    navBox_->setStyleSheet(QStringLiteral(
-        "background:#0a0e0b;border-radius:16px;border:1px solid #1a231d;"));
+    navBox_->setStyleSheet(QString::fromUtf8(
+        "background:%1;border-radius:16px;border:1px solid %2;")
+        .arg(Lumen::hex(Lumen::PANEL),          // §1.7：浮岛底 0a0e0b→PANEL（ΔRGB≤2 回家微亮）
+             Lumen::hex(Lumen::CARD_HI)));      // token 值字面量归引用（色不变）
     auto* nvLay = new QVBoxLayout(navBox_);
     nvLay->setContentsMargins(0, 14, 0, 12);
     nvLay->setSpacing(4);
     auto* navLogo = new QLabel(QCoreApplication::translate("LightAlbum", "光"), navBox_);
     navLogo->setAlignment(Qt::AlignCenter);
     navLogo->setFixedHeight(30);
-    navLogo->setStyleSheet(QStringLiteral(
-        "color:#d9a94e;font-family:Georgia,'Noto Serif SC','STSong',serif;"
-        "font-size:17px;background:transparent;"));
+    navLogo->setStyleSheet(QString::fromUtf8(
+        "color:%1;font-family:Georgia,'Noto Serif SC','STSong',serif;"
+        "font-size:17px;background:transparent;")
+        .arg(Lumen::hex(Lumen::GOLD)));
     nvLay->addWidget(navLogo);
 
     nav_ = new QListWidget(navBox_);
@@ -590,17 +598,20 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
     QFont tf = title_->font(); tf.setPointSizeF(15); tf.setBold(true);
     tf.setLetterSpacing(QFont::AbsoluteSpacing, 2.0);
     title_->setFont(tf);
-    title_->setStyleSheet("color:#f4f7f4;background:transparent;");
+    title_->setStyleSheet(QString::fromUtf8("color:%1;background:transparent;")
+        .arg(Lumen::hex(Lumen::INK)));
     tl->addWidget(title_);
     auto* dotSep = new QFrame(topbar);           // 金点分隔：光影集 · 模块名
     dotSep->setFixedSize(4, 4);
-    dotSep->setStyleSheet(QStringLiteral("background:#d9a94e;border-radius:2px;"));
+    dotSep->setStyleSheet(QString::fromUtf8("background:%1;border-radius:2px;")
+        .arg(Lumen::hex(Lumen::GOLD)));
     tl->addWidget(dotSep);
     moduleLbl_ = new QLabel(QCoreApplication::translate("LightAlbum", "首页"), topbar);   // P19：自 kpis_ 迁入
     QFont mf2 = moduleLbl_->font(); mf2.setPointSizeF(11); mf2.setBold(true);
     mf2.setLetterSpacing(QFont::AbsoluteSpacing, 4.0);
     moduleLbl_->setFont(mf2);
-    moduleLbl_->setStyleSheet(QStringLiteral("color:#8da396;background:transparent;"));
+    moduleLbl_->setStyleSheet(QString::fromUtf8("color:%1;background:transparent;")
+        .arg(Lumen::hex(Lumen::MUTED)));
     tl->addWidget(moduleLbl_);
     tl->addStretch(1);
     search_ = new QLineEdit(topbar);
@@ -645,9 +656,10 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
     // 成为 topbar 子控件，几何由 syncTopbarFloat 同步，不进布局）
     seam_ = new QFrame(topbar_);
     seam_->setFixedHeight(2);
-    seam_->setStyleSheet(QStringLiteral(
+    seam_->setStyleSheet(QString::fromUtf8(
         "background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
-        "stop:0 #4fc08a, stop:0.55 #d9a94e, stop:1 rgba(217,169,78,0));"));
+        "stop:0 %1, stop:0.55 %2, stop:1 rgba(217,169,78,0));")
+        .arg(Lumen::hex(Lumen::EMERALD), Lumen::hex(Lumen::GOLD)));   // token 值字面量归引用（色不变）
     seamEff_ = new QGraphicsOpacityEffect(seam_);
     seam_->setGraphicsEffect(seamEff_);
     seam_->lower();                              // 底色层之下（topShade_ 是 0 号）
@@ -671,9 +683,9 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
         b->setCursor(Qt::PointingHandCursor);
         b->setStyleSheet(Lumen::btnGhost());
     }
-    winClose_->setStyleSheet(QStringLiteral(
-        "QPushButton{background:#131a15;border:1px solid #4a2630;border-radius:9px;color:#e6a3a3;}"
-        "QPushButton:hover{background:#2a1318;border-color:#e06a6a;color:#ffd7d7;}"));
+    // §1.7：破坏按钮私有盘（4a2630/e6a3a3 + hover 2a1318/e06a6a/ffd7d7）→ btnOutline(CORAL) 单源
+    //（DedupDialog T6 同源化；hover 改由 CORAL.lighter(115) 表达，观感更收敛）
+    winClose_->setStyleSheet(Lumen::btnOutline(Lumen::CORAL));
     wl->addWidget(winMin_);
     wl->addWidget(winMax_);
     wl->addWidget(winClose_);
@@ -1175,23 +1187,26 @@ QWidget* MainWindow::makePlaceholder(const QString& secName, const QString& icon
     auto* iconLbl = new QLabel(w);
     iconLbl->setPixmap(Icons::make(iconKind, QColor(0x4f, 0xc0, 0x8a), 44).pixmap(44, 44));
     iconLbl->setAlignment(Qt::AlignCenter);
-    iconLbl->setStyleSheet(QStringLiteral(
-        "QLabel{background:#131a15;border:1px solid #26312a;border-radius:24px;"
-        "padding:14px;}"));
+    iconLbl->setStyleSheet(QString::fromUtf8(
+        "QLabel{background:%1;border:1px solid %2;border-radius:24px;"
+        "padding:14px;}")
+        .arg(Lumen::hex(Lumen::CARD), Lumen::hex(Lumen::LINE)));   // token 值字面量归引用（色不变）
 
     auto* t = new QLabel(secName, w);
     QFont f = t->font(); f.setPointSizeF(20); f.setBold(true);
     f.setLetterSpacing(QFont::AbsoluteSpacing, 4.0);
     t->setFont(f);
-    t->setStyleSheet("color:#f4f7f4;");
+    t->setStyleSheet(QString::fromUtf8("color:%1;").arg(Lumen::hex(Lumen::INK)));
 
     auto* chip = new QLabel(QCoreApplication::translate("LightAlbum", "即将推出"), w);
-    chip->setStyleSheet(QStringLiteral(
-        "QLabel{background:#0e1410;border:1px solid #2f7d57;border-radius:999px;"
-        "padding:3px 14px;color:#4fc08a;font-size:11px;}"));
+    chip->setStyleSheet(QString::fromUtf8(   // chip 工厂未出生（已知缺口）：本地 token-only 配方，逐值=INSET/EMERALD_DK/EMERALD
+        "QLabel{background:%1;border:1px solid %2;border-radius:999px;"
+        "padding:3px 14px;color:%3;font-size:11px;}")
+        .arg(Lumen::hex(Lumen::INSET), Lumen::hex(Lumen::EMERALD_DK),
+             Lumen::hex(Lumen::EMERALD)));
 
     auto* s = new QLabel(desc, w);
-    s->setStyleSheet("color:#8da396;");
+    s->setStyleSheet(QString::fromUtf8("color:%1;").arg(Lumen::hex(Lumen::MUTED)));
 
     l->addWidget(iconLbl, 0, Qt::AlignHCenter);
     l->addWidget(t, 0, Qt::AlignHCenter);
@@ -1210,8 +1225,9 @@ QWidget* MainWindow::makeAbout() const
 
     auto* card = new QWidget(w);
     card->setMaximumWidth(620);
-    card->setStyleSheet(QStringLiteral(
-        "QWidget{background:#131a15;border:1px solid #26312a;border-radius:14px;}"));
+    card->setStyleSheet(QString::fromUtf8(
+        "QWidget{background:%1;border:1px solid %2;border-radius:14px;}")
+        .arg(Lumen::hex(Lumen::CARD), Lumen::hex(Lumen::LINE)));   // token 值字面量归引用（色不变）
     auto* cl = new QVBoxLayout(card);
     cl->setContentsMargins(28, 26, 28, 26);
     cl->setSpacing(12);
@@ -1219,12 +1235,15 @@ QWidget* MainWindow::makeAbout() const
     auto* title = new QLabel(QCoreApplication::translate("LightAlbum", "光影集 LightAlbum %1").arg(LA_VERSION), card);
     QFont tf = title->font(); tf.setPointSizeF(17); tf.setBold(true);
     title->setFont(tf);
-    title->setStyleSheet("color:#f4f7f4;border:none;background:transparent;");
+    title->setStyleSheet(QString::fromUtf8("color:%1;border:none;background:transparent;")
+        .arg(Lumen::hex(Lumen::INK)));
     auto* pos = new QLabel(QCoreApplication::translate("LightAlbum", "核心客户端 · 本地优先"), card);
-    pos->setStyleSheet("color:#d9a94e;border:none;background:transparent;");
+    pos->setStyleSheet(QString::fromUtf8("color:%1;border:none;background:transparent;")
+        .arg(Lumen::hex(Lumen::GOLD)));
     auto makeLine = [card](const QString& text) {
         auto* lb = new QLabel(text, card);
-        lb->setStyleSheet("color:#8da396;border:none;background:transparent;");
+        lb->setStyleSheet(QString::fromUtf8("color:%1;border:none;background:transparent;")
+            .arg(Lumen::hex(Lumen::MUTED)));
         lb->setWordWrap(true);
         return lb;
     };
@@ -1289,13 +1308,15 @@ QMenu* MainWindow::buildImportMenu()
     // 落在系统浅色原生菜单上会叠加全局浅色文字 → 白底白字。逐实例设置暗色 QSS。
     // 配色复用暗色弹层色系（GalleryPage::clusterDimBox_），disabled 文案用 Lumen::MUTED 插值
     // 满足 WCAG 对比度（原低对比提示色已在方向 F a11y 整改中替换）。
-    m->setStyleSheet(QString::fromUtf8(
-        "QMenu{background:#0e130f;color:#d9e4dc;border:1px solid #1d2a22;}"
-        "QMenu::item{background:transparent;color:#d9e4dc;padding:6px 24px 6px 12px;}"
-        "QMenu::item:selected{background:#1d2a22;color:#4fc08a;}"
-        "QMenu::item:disabled{color:%1;}"
-        "QMenu::separator{height:1px;background:#1d2a22;margin:4px 8px;}")
-        .arg(Lumen::hex(Lumen::MUTED)));
+    m->setStyleSheet(QString::fromUtf8(   // §1.7 菜单族：0e130f→PANEL、d9e4dc→INK、1d2a22 边/缝→LINE、选中底→CARD_HI（T5 裁定先例）
+        "QMenu{background:%1;color:%2;border:1px solid %3;}"
+        "QMenu::item{background:transparent;color:%2;padding:6px 24px 6px 12px;}"
+        "QMenu::item:selected{background:%4;color:%5;}"
+        "QMenu::item:disabled{color:%6;}"
+        "QMenu::separator{height:1px;background:%3;margin:4px 8px;}")
+        .arg(Lumen::hex(Lumen::PANEL), Lumen::hex(Lumen::INK), Lumen::hex(Lumen::LINE),
+             Lumen::hex(Lumen::CARD_HI), Lumen::hex(Lumen::EMERALD),
+             Lumen::hex(Lumen::MUTED)));
     QAction* aDir = m->addAction(QCoreApplication::translate("LightAlbum", "导入目录…"));
     connect(aDir, &QAction::triggered, this, &MainWindow::startImport);
 

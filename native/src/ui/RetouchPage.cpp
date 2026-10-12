@@ -291,7 +291,8 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
     // ---- 2.31.0 视频选帧控件（默认隐藏，仅视频时显示；铁律30：不碰既有命中区）----
     m_vBadge = new QLabel(QCoreApplication::translate("LightAlbum",
         "正在编辑视频的一帧 · 导出为图片"), foot);
-    m_vBadge->setStyleSheet("color:#c8a86a;");
+    m_vBadge->setStyleSheet(QString::fromUtf8("color:%1;")
+        .arg(Lumen::hex(Lumen::GOLD)));   // 暖金淡字 c8a86a→GOLD（GOLD 家族微亮饱和，§1.3 荣誉标记归板）
     m_vBadge->setVisible(false);
     fl->addWidget(m_vBadge);
 
@@ -357,7 +358,8 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
     // ===== 右栈：6 模式面板 =====
     rightStack_ = new QStackedWidget(this);
     rightStack_->setFixedWidth(248);
-    rightStack_->setStyleSheet(QStringLiteral("QStackedWidget{background:#10150f;}"));
+    rightStack_->setStyleSheet(QString::fromUtf8("QStackedWidget{background:%1;}")
+        .arg(Lumen::hex(Lumen::INSET)));   // 私有深阶 10150f→INSET（ΔRGB≤2 不可辨归格，右栈=控件井语义）
 
     // page 0 调整：分组滑杆
     {
@@ -448,8 +450,8 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
         cropBtn_ = gbtn(QCoreApplication::translate("LightAlbum", "✂ 裁剪"));
         cropBtn_->setCheckable(true);
         cropBtn_->setStyleSheet(Lumen::btnGhost(Lumen::INK)
-            + QString::fromUtf8("QPushButton:checked{border:2px solid %1;background:#262012;}")
-                  .arg(Lumen::hex(Lumen::GOLD)));   // :checked 深金底 262012 无 token 之家（§1.7 未列），保留字面量待评审
+            + QString::fromUtf8("QPushButton:checked{border:2px solid %1;background:%2;}")
+                  .arg(Lumen::hex(Lumen::GOLD), Lumen::hex(Lumen::GOLD_WASH)));   // 深金底 wash 收编新 token GOLD_WASH（色不变；§1 erratum 提案）
         gl2->addWidget(geoRotLBtn_); gl2->addWidget(geoRotRBtn_);
         gl2->addWidget(geoFlipHBtn_); gl2->addWidget(geoFlipVBtn_);
         gl2->addWidget(sep);
@@ -473,8 +475,8 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
         };
         maskBtn_ = mbtn(QCoreApplication::translate("LightAlbum", "🖌 蒙版模式"),
             Lumen::btnGhost(Lumen::INK)
-            + QString::fromUtf8("QPushButton:checked{border:2px solid %1;background:#12241c;}")
-                  .arg(Lumen::hex(Lumen::EMERALD)));   // :checked 深翡翠底 12241c 无 token 之家，保留待评审
+            + QString::fromUtf8("QPushButton:checked{border:2px solid %1;background:%2;}")
+                  .arg(Lumen::hex(Lumen::EMERALD), Lumen::hex(Lumen::CARD_HI)));   // 深翡翠底 12241c→CARD_HI（ΔRGB≤8 不可辨；active 底语义合法）
         maskBtn_->setCheckable(true);
         maskClearBtn_ = mbtn(QCoreApplication::translate("LightAlbum", "清除蒙版"), Lumen::btnGhost(Lumen::INK));
         maskApplyBtn_ = mbtn(QCoreApplication::translate("LightAlbum", "局部应用"),
@@ -508,8 +510,8 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
         compareBtn_ = new QPushButton(QCoreApplication::translate("LightAlbum", "◐ 对比"), cp);
         compareBtn_->setCheckable(true);
         compareBtn_->setStyleSheet(Lumen::btnGhost(Lumen::INK)
-            + QString::fromUtf8("QPushButton:checked{border:2px solid %1;background:#262012;}")
-                  .arg(Lumen::hex(Lumen::GOLD)));   // 同 cropBtn_：262012 保留字面量待评审
+            + QString::fromUtf8("QPushButton:checked{border:2px solid %1;background:%2;}")
+                  .arg(Lumen::hex(Lumen::GOLD), Lumen::hex(Lumen::GOLD_WASH)));   // 同 cropBtn_：GOLD_WASH 收编（色不变）
         auto* cnote = new QLabel(QCoreApplication::translate("LightAlbum", "拖动金色分割线对比原图与修后 · 零云端"), cp);
         cnote->setStyleSheet(QString::fromUtf8("color:%1;").arg(Lumen::hex(Lumen::MUTED)));
         cl4->addWidget(compareBtn_);

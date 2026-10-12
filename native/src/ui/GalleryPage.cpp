@@ -260,10 +260,11 @@ void GalleryPage::buildBatchBar()
 {
     batchBar_ = new QWidget(this);
     batchBar_->setObjectName(QStringLiteral("gpBatchBar"));
-    // 无家 hex（原值 0b120d/1e2a22）： §1.7 表内无归处（介于 BG/PANEL 与 LINE 之间的私有深阶），
-    // 映射即改色（违色不变），留 T7 台账裁定。
-    batchBar_->setStyleSheet(QStringLiteral("#gpBatchBar{background:#0b120d;"
-                                            "border-top:1px solid #1e2a22;}"));
+    // T7 台账裁定：0b120d→PANEL（ΔRGB≤6 不可辨归格，批量条=浮面容器语义）、
+    // 1e2a22→LINE（§1.1 唯一分隔线色，禁止暖灰/私有深阶替代；微亮 ~Δ8 合法化）。
+    batchBar_->setStyleSheet(QString::fromUtf8("#gpBatchBar{background:%1;"
+                                               "border-top:1px solid %2;}")
+        .arg(Lumen::hex(Lumen::PANEL), Lumen::hex(Lumen::LINE)));
     auto* bl = new QHBoxLayout(batchBar_);
     bl->setContentsMargins(20, 6, 20, 6);
     bl->setSpacing(6);

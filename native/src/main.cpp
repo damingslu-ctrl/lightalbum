@@ -6865,11 +6865,16 @@ int main(int argc, char *argv[])
         // P29-H：首页（零 chrome 纯沉浸）应隐藏窗口控制簇——同步打印，避开 600ms 自退定时器可能的挂起
         const bool winCtlHiddenOnHome = !win.isWinCtlVisible();
         // 缺陷②回归：导入下拉菜单是独立顶层弹窗，不继承应用暗色 QSS → 曾经白底白字。
-        // 断言它确实带了暗色底（#0e130f）；全工程仅此一个 QMenu，故命中即导入菜单。
+        // 断言每个 QMenu 都带暗色弹层底：T7 token 化后导入菜单走 §1.7 回家映射
+        //（0e130f→PANEL，运行时解析为 #0c100d）；Theme.h 芯片菜单工厂（棘轮豁免文件）
+        // 仍携旧 literal #0e130f。两枚底色任一命中即算带暗色 QSS，门禁语义不变：
+        // 任一菜单回退系统浅色原生底 → 门红。
         int menuTotal = 0, menuDark = 0;
+        const QString menuBgToken = Lumen::hex(Lumen::PANEL).mid(1);  // "0c100d"
         for (QMenu* m : win.findChildren<QMenu*>()) {
             ++menuTotal;
-            if (m->styleSheet().contains(QStringLiteral("0e130f"))) ++menuDark;
+            const QString ss = m->styleSheet();
+            if (ss.contains(QStringLiteral("0e130f")) || ss.contains(menuBgToken)) ++menuDark;
         }
         const bool menuStyled = (menuTotal > 0) && (menuDark == menuTotal);
         std::fprintf(stderr, "LA_SMOKE_WINCTL home=%d menuStyled=%d(%d/%d)\n",

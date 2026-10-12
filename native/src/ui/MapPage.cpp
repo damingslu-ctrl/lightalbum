@@ -169,8 +169,9 @@ MapPage::MapPage(const QVector<Photo>* photos, const QString& thumbsDir,
     stats_ = new QWidget(this);
     stats_->setFixedWidth(272);
     stats_->setStyleSheet(QString::fromUtf8(
-        "QWidget{background:#0a0e0a;border-left:1px solid %1;}")   // 底色的无家 hex：§1.7 无归处，留 T7 台账
-        .arg(Lumen::hex(Lumen::LINE)));
+        "QWidget{background:%1;border-left:1px solid %2;}")
+        .arg(Lumen::hex(Lumen::PANEL),                        // T7 裁定：0a0e0a→PANEL（ΔRGB≤8 不可辨，侧栏=面板语义）
+             Lumen::hex(Lumen::LINE)));
     auto* sl = new QVBoxLayout(stats_);
     sl->setContentsMargins(18, 18, 18, 18);
     sl->setSpacing(12);

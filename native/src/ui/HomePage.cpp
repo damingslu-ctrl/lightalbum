@@ -131,10 +131,11 @@ QToolButton* makeArrowBtn(QWidget* parent, const QString& ch)
     b->setText(ch);
     b->setCursor(Qt::PointingHandCursor);
     b->setFixedSize(34, 34);
-    b->setStyleSheet(QStringLiteral(
+    b->setStyleSheet(QString::fromUtf8(
         "QToolButton{background:rgba(6,8,6,120);border:none;border-radius:17px;"
         "color:rgba(244,247,244,190);font-size:26px;font-weight:bold;}"
-        "QToolButton:hover{background:rgba(6,8,6,190);color:#d9a94e;}"));
+        "QToolButton:hover{background:rgba(6,8,6,190);color:%1;}")
+        .arg(Lumen::hex(Lumen::GOLD)));
     return b;
 }
 
@@ -143,11 +144,16 @@ QToolButton* makeTextBtn(QWidget* parent, const QString& text, int px)
     auto* b = new QToolButton(parent);
     b->setText(text);
     b->setCursor(Qt::PointingHandCursor);
-    b->setStyleSheet(QStringLiteral(
-        "QToolButton{background:transparent;border:none;color:#b9b3a6;"
+    b->setStyleSheet(QString::fromUtf8(
+        // 照片叠加暖灰板：b9b3a6→SOFT_IMG（新命名 token，色值逐字节同，Quiet Frame 编辑梯阶合法化）；
+        // 禁用态 4a534b→DISABLED（ΔRGB≤7 就近归格）
+        "QToolButton{background:transparent;border:none;color:%2;"
         "font-size:%1px;}"
-        "QToolButton:hover{color:#d9a94e;}"
-        "QToolButton:disabled{color:#4a534b;}").arg(px));
+        "QToolButton:hover{color:%3;}"
+        "QToolButton:disabled{color:%4;}")
+        .arg(px)
+        .arg(Lumen::hex(Lumen::SOFT_IMG), Lumen::hex(Lumen::GOLD),
+             Lumen::hex(Lumen::DISABLED)));
     return b;
 }
 
@@ -586,7 +592,8 @@ HomePage::HomePage(Library* lib, const QString& thumbsDir, QWidget* parent)
     : QWidget(parent), lib_(lib), thumbsDir_(thumbsDir)
 {
     setObjectName(QStringLiteral("homePage"));
-    setStyleSheet(QStringLiteral("QWidget#homePage{background:#060806;}"));
+    setStyleSheet(QString::fromUtf8("QWidget#homePage{background:%1;}")
+        .arg(Lumen::hex(Lumen::BG)));
     setFocusPolicy(Qt::StrongFocus);
 
     auto* root = new QVBoxLayout(this);
@@ -599,8 +606,9 @@ HomePage::HomePage(Library* lib, const QString& thumbsDir, QWidget* parent)
     topBar_ = new QWidget(this);
     topBar_->setObjectName(QStringLiteral("homeTopBar"));
     topBar_->setFixedHeight(56);
-    topBar_->setStyleSheet(QStringLiteral(
-        "#homeTopBar{background:#060806;border-bottom:1px solid #161d18;}"));
+    topBar_->setStyleSheet(QString::fromUtf8(
+        "#homeTopBar{background:%1;border-bottom:1px solid %2;}")
+        .arg(Lumen::hex(Lumen::BG), Lumen::hex(Lumen::LINE)));   // 发丝缝暖灰 161d18→LINE（§1.1 唯一分隔线；此栏 P29-H 起常隐，零可见影响）
     auto* tl = new QHBoxLayout(topBar_);
     tl->setContentsMargins(24, 0, 20, 0);
     tl->setSpacing(16);
@@ -611,10 +619,12 @@ HomePage::HomePage(Library* lib, const QString& thumbsDir, QWidget* parent)
         lv->setSpacing(0);
         auto* logo = new QLabel(QCoreApplication::translate("LightAlbum", "光影集"), logoBox);
         logo->setFont(Lumen::serifFont(14, QFont::DemiBold, 3.0));
-        logo->setStyleSheet(QStringLiteral("color:#f4f7f4;background:transparent;"));
+        logo->setStyleSheet(QString::fromUtf8("color:%1;background:transparent;")
+            .arg(Lumen::hex(Lumen::INK)));
         auto* en = new QLabel(QStringLiteral("QUIET FRAME · LIGHTALBUM"), logoBox);
         en->setFont(Lumen::serifFont(6.8, QFont::Normal, 2.4));
-        en->setStyleSheet(QStringLiteral("color:#d9a94e;background:transparent;"));
+        en->setStyleSheet(QString::fromUtf8("color:%1;background:transparent;")
+            .arg(Lumen::hex(Lumen::GOLD)));
         lv->addWidget(logo);
         lv->addWidget(en);
         tl->addWidget(logoBox);
@@ -631,18 +641,20 @@ HomePage::HomePage(Library* lib, const QString& thumbsDir, QWidget* parent)
             navTexts_.append(b);
         }
         // 首页永远处于当前态（其他页由全局 chrome 接管导航）
-        navTexts_.at(0)->setStyleSheet(QStringLiteral(
-            "QToolButton{background:transparent;border:none;color:#d9a94e;"
-            "font-size:12px;font-weight:bold;}"));
+        navTexts_.at(0)->setStyleSheet(QString::fromUtf8(
+            "QToolButton{background:transparent;border:none;color:%1;"
+            "font-size:12px;font-weight:bold;}")
+            .arg(Lumen::hex(Lumen::GOLD)));
     }
     {
         auto* avatar = new QLabel(QCoreApplication::translate("LightAlbum", "光"), topBar_);
         avatar->setFixedSize(30, 30);
         avatar->setAlignment(Qt::AlignCenter);
         avatar->setFont(Lumen::serifFont(12, QFont::DemiBold));
-        avatar->setStyleSheet(QStringLiteral(
-            "QLabel{background:#1a231d;border:1px solid rgba(217,169,78,140);"
-            "border-radius:15px;color:#d9a94e;}"));
+        avatar->setStyleSheet(QString::fromUtf8(
+            "QLabel{background:%1;border:1px solid rgba(217,169,78,140);"
+            "border-radius:15px;color:%2;}")
+            .arg(Lumen::hex(Lumen::CARD_HI), Lumen::hex(Lumen::GOLD)));
         tl->addWidget(avatar);
     }
         root->addWidget(topBar_);
@@ -656,12 +668,14 @@ HomePage::HomePage(Library* lib, const QString& thumbsDir, QWidget* parent)
         ev->setSpacing(14);
         auto* t = new QLabel(QCoreApplication::translate("LightAlbum", "光影集"), empty);
         t->setFont(Lumen::serifFont(30, QFont::DemiBold, 8.0));
-        t->setStyleSheet(QStringLiteral("color:#f4f7f4;"));
+        t->setStyleSheet(QString::fromUtf8("color:%1;")
+            .arg(Lumen::hex(Lumen::INK)));
         t->setAlignment(Qt::AlignCenter);
         auto* s = new QLabel(
             QStringLiteral("导入目录后，首页会按城市分章、全屏轮播你的作品。\n"
                            "（当前库中没有可定位的可见照片）"), empty);
-        s->setStyleSheet(QStringLiteral("color:#8da396;"));
+        s->setStyleSheet(QString::fromUtf8("color:%1;")
+            .arg(Lumen::hex(Lumen::MUTED)));
         s->setAlignment(Qt::AlignCenter);
         ev->addWidget(t);
         ev->addWidget(s);
@@ -698,38 +712,44 @@ HomePage::HomePage(Library* lib, const QString& thumbsDir, QWidget* parent)
         pv->setSpacing(0);
         auto* index = new QLabel(QStringLiteral("←  INDEX"), panel_);
         index->setFont(Lumen::serifFont(9, QFont::Normal, 3.0));
-        index->setStyleSheet(QStringLiteral("color:#b9b3a6;background:transparent;"));
+        index->setStyleSheet(QString::fromUtf8("color:%1;background:transparent;")
+            .arg(Lumen::hex(Lumen::SOFT_IMG)));   // 暖灰 b9b3a6→SOFT_IMG（色值逐字节同）
         pv->addWidget(index);
         pv->addSpacing(60);
 
         capsLbl_ = new QLabel(panel_);
         capsLbl_->setFont(Lumen::serifFont(8.5, QFont::Normal, 2.2));
-        capsLbl_->setStyleSheet(QStringLiteral("color:#cfc9bd;background:transparent;"));
+        capsLbl_->setStyleSheet(QString::fromUtf8("color:%1;background:transparent;")
+            .arg(Lumen::hex(Lumen::SOFT_IMG)));   // 暖灰 cfc9bd 收编 SOFT_IMG（同族暗 -Δ≈8%，照片面上不可辨）
         capsLbl_->setWordWrap(true);
         pv->addWidget(capsLbl_);
         pv->addSpacing(10);
 
         titleLbl_ = new QLabel(panel_);
         titleLbl_->setFont(Lumen::serifFont(34, QFont::DemiBold, 1.0));
-        titleLbl_->setStyleSheet(QStringLiteral("color:#f4f7f4;background:transparent;"));
+        titleLbl_->setStyleSheet(QString::fromUtf8("color:%1;background:transparent;")
+            .arg(Lumen::hex(Lumen::INK)));
         titleLbl_->setWordWrap(true);
         pv->addWidget(titleLbl_);
         pv->addSpacing(14);
 
         goldRule_ = new QFrame(panel_);
         goldRule_->setFixedSize(34, 2);
-        goldRule_->setStyleSheet(QStringLiteral("background:#d9a94e;border:none;"));
+        goldRule_->setStyleSheet(QString::fromUtf8("background:%1;border:none;")
+            .arg(Lumen::hex(Lumen::GOLD)));
         pv->addWidget(goldRule_);
         pv->addSpacing(12);
 
         subtitleLbl_ = new QLabel(panel_);
-        subtitleLbl_->setStyleSheet(QStringLiteral(
-            "color:#e8e4da;background:transparent;font-size:12px;"));
+        subtitleLbl_->setStyleSheet(QString::fromUtf8(
+            "color:%1;background:transparent;font-size:12px;")
+            .arg(Lumen::hex(Lumen::INK_IMG)));    // §1.5 照片板命名合法化（色值逐字节同）
         pv->addWidget(subtitleLbl_);
         pv->addSpacing(6);
         keywordLbl_ = new QLabel(panel_);
-        keywordLbl_->setStyleSheet(QStringLiteral(
-            "color:#98a29a;background:transparent;font-size:11px;"));
+        keywordLbl_->setStyleSheet(QString::fromUtf8(
+            "color:%1;background:transparent;font-size:11px;")
+            .arg(Lumen::hex(Lumen::MUTED_IMG)));  // §1.5 照片板命名合法化（色值逐字节同）
         keywordLbl_->setWordWrap(true);
         pv->addWidget(keywordLbl_);
 
@@ -739,13 +759,15 @@ HomePage::HomePage(Library* lib, const QString& thumbsDir, QWidget* parent)
         pv->addWidget(grid_);
         pv->addSpacing(10);
         coverLbl_ = new QLabel(panel_);
-        coverLbl_->setStyleSheet(QStringLiteral(
-            "color:#6d7a6f;background:transparent;font-size:9px;"));
+        coverLbl_->setStyleSheet(QString::fromUtf8(
+            "color:%1;background:transparent;font-size:9px;")
+            .arg(Lumen::hex(Lumen::FAINT_IMG)));  // §1.5 照片板命名合法化（色值逐字节同）
         pv->addWidget(coverLbl_);
         pv->addSpacing(6);
         metaLbl_ = new QLabel(panel_);
         metaLbl_->setFont(Lumen::serifFont(9, QFont::Normal, 2.0));
-        metaLbl_->setStyleSheet(QStringLiteral("color:#8d8878;background:transparent;"));
+        metaLbl_->setStyleSheet(QString::fromUtf8("color:%1;background:transparent;")
+            .arg(Lumen::hex(Lumen::MUTED_IMG)));  // 暖灰 8d8878→MUTED_IMG（§1.5 同角色判例 7d887f→MUTED_IMG 就近归板）
         pv->addWidget(metaLbl_);
         pv->addSpacing(14);
         auto* fRow = new QHBoxLayout;
@@ -856,12 +878,15 @@ void HomePage::refreshPanel()
     // 网格高亮
     for (int i = 0; i < gridBtns_.size(); ++i) {
         gridBtns_.at(i)->setStyleSheet(i == chapterIdx_
-            ? QStringLiteral("QToolButton{background:rgba(217,169,78,30);"
-                             "border:1px solid #d9a94e;border-radius:4px;"
-                             "color:#d9a94e;font-size:10px;}")
-            : QStringLiteral("QToolButton{background:transparent;border:none;"
-                             "border-radius:4px;color:#7d887f;font-size:10px;}"
-                             "QToolButton:hover{color:#f4f7f4;}"));
+            ? QString::fromUtf8("QToolButton{background:rgba(217,169,78,30);"
+                                "border:1px solid %1;border-radius:4px;"
+                                "color:%1;font-size:10px;}")
+                      .arg(Lumen::hex(Lumen::GOLD))
+            : QString::fromUtf8("QToolButton{background:transparent;border:none;"
+                                "border-radius:4px;color:%1;font-size:10px;}"
+                                "QToolButton:hover{color:%2;}")
+                      .arg(Lumen::hex(Lumen::MUTED_IMG),   // §1.5：chip 文字 7d887f→MUTED_IMG（照片面暖灰合法化微亮）
+                           Lumen::hex(Lumen::INK)));
     }
     prevChapBtn_->setEnabled(chapters_.size() > 1);
     nextChapBtn_->setEnabled(chapters_.size() > 1);
