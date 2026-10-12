@@ -434,7 +434,7 @@ void GalleryPage::buildChips()
         //（多参数 .arg 会先吃掉 %1，令彩色底失效——占位符纪律，勿改成 arg 链）。
         const QString personCssTpl = QStringLiteral(
             "QPushButton{background:%1;border:none;border-radius:11px;"
-            "padding:4px 12px;color:") + Lumen::hex(Lumen::INK) + QStringLiteral(
+            "padding:4px 12px;color:") + Lumen::hex(Lumen::PANEL) + QStringLiteral(
             ";font-size:12px;font-weight:bold;}"
             "QPushButton:hover{border:2px solid ") + Lumen::hex(Lumen::EMERALD) + QStringLiteral(
             ";padding:2px 10px;}"
