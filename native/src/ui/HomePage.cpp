@@ -132,13 +132,14 @@ QToolButton* makeArrowBtn(QWidget* parent, const QString& ch)
     b->setCursor(Qt::PointingHandCursor);
     b->setFixedSize(34, 34);
     b->setStyleSheet((QString::fromUtf8(
-        "QToolButton{background:rgba(6,8,6,120);border:none;border-radius:17px;"
+        "QToolButton{background:rgba(6,8,6,120);border:none;border-radius:%2px;"   // T9：17→%2 插值 Radius::Feature 20（§3.1 归并 17/22/24；34px 圆钮半径 17<20 仍整圆，视觉零位移）
         "color:rgba(244,247,244,190);")
         + Lumen::Type::css(Lumen::Type::Tier::Display)   // T8：26px 英雄箭头就近归 T1(27px)
         + QString::fromUtf8(
         "font-weight:bold;}"
         "QToolButton:hover{background:rgba(6,8,6,190);color:%1;}"))
-        .arg(Lumen::hex(Lumen::GOLD)));
+        .arg(Lumen::hex(Lumen::GOLD))
+        .arg(Lumen::Radius::Feature));
     return b;
 }
 
@@ -235,13 +236,13 @@ public:
         connect(nextBtn_, &QToolButton::clicked, this, [this] { next(); });
         counter_ = new QLabel(this);
         counter_->setStyleSheet(QStringLiteral(
-            "QLabel{background:rgba(6,8,6,120);border-radius:9px;padding:2px 9px;"
+            "QLabel{background:rgba(6,8,6,120);border-radius:10px;padding:2px 9px;"   // T9：9→Radius::Ctl 值归格（拼接式保形态，见 brief 纪律）
             "color:rgba(244,247,244,225);")
             + Lumen::Type::css(Lumen::Type::Tier::Small)   // T8：11px→T5(12px)
             + QStringLiteral("letter-spacing:1px;}"));     // ls 属 §2.4 签名层，非本次字号 token
         tag_ = new QLabel(this);
         tag_->setStyleSheet(QStringLiteral(
-            "QLabel{background:rgba(6,8,6,120);border-radius:8px;padding:2px 8px;"
+            "QLabel{background:rgba(6,8,6,120);border-radius:10px;padding:2px 8px;"   // T9：8→Radius::Ctl 值归格
             "color:rgba(244,247,244,215);")
             + Lumen::Type::css(Lumen::Type::Tier::Small)   // T8：10px→T5(12px)，3px ls=§2.4 签名保留
             + QStringLiteral("letter-spacing:3px;}"));
@@ -661,8 +662,9 @@ HomePage::HomePage(Library* lib, const QString& thumbsDir, QWidget* parent)
         avatar->setFont(Lumen::serifFont(12, QFont::DemiBold));
         avatar->setStyleSheet(QString::fromUtf8(
             "QLabel{background:%1;border:1px solid rgba(217,169,78,140);"
-            "border-radius:15px;color:%2;}")
-            .arg(Lumen::hex(Lumen::CARD_HI), Lumen::hex(Lumen::GOLD)));
+            "border-radius:%3px;color:%2;}")   // T9：15→Radius::Card 14（30px 圆头像就近归格，视觉同圆）
+            .arg(Lumen::hex(Lumen::CARD_HI), Lumen::hex(Lumen::GOLD))
+            .arg(Lumen::Radius::Card));
         tl->addWidget(avatar);
     }
         root->addWidget(topBar_);

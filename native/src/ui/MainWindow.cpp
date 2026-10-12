@@ -516,9 +516,10 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
     navBox_ = new QWidget(navWrap);
     navBox_->setFixedWidth(68);
     navBox_->setStyleSheet(QString::fromUtf8(
-        "background:%1;border-radius:16px;border:1px solid %2;")
+        "background:%1;border-radius:%3px;border:1px solid %2;")
         .arg(Lumen::hex(Lumen::PANEL),          // §1.7：浮岛底 0a0e0b→PANEL（ΔRGB≤2 回家微亮）
-             Lumen::hex(Lumen::CARD_HI)));      // token 值字面量归引用（色不变）
+             Lumen::hex(Lumen::CARD_HI))        // token 值字面量归引用（色不变）
+        .arg(Lumen::Radius::Card));             // T9 C3: 16px->Radius::Card 14
     auto* nvLay = new QVBoxLayout(navBox_);
     nvLay->setContentsMargins(0, 14, 0, 12);
     nvLay->setSpacing(4);
@@ -547,11 +548,12 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
     // 2.33 浮岛选中态：金色光晕（径向渐变）替代纯色胶囊，更有「打光」感
     nav_->setStyleSheet(QStringLiteral(
         "QListWidget{background:transparent;outline:0;}"
-        "QListWidget::item{margin:2px 10px;border-radius:12px;}"
+        "QListWidget::item{margin:2px 10px;border-radius:%1px;}"
         "QListWidget::item:hover{background:rgba(79,192,138,18);}"
         "QListWidget::item:selected{background:qradialgradient(cx:0.5,cy:0.5,"
         "radius:0.6,fx:0.5,fy:0.5,stop:0 rgba(217,169,78,60),"
-        "stop:1 rgba(217,169,78,8));}"));
+        "stop:1 rgba(217,169,78,8));}")
+        .arg(Lumen::Radius::Card));   // T9 C3: 12px->Radius::Card 14（§3.1 归并 12/14/16）
     nav_->setIconSize(QSize(22, 22));
     // 三组：浏览(首页/足迹/图库) | 编辑(选片/修图) | 工具(日志/关于)
     // 分割线由 delegate 在 row 3/5 顶部绘制（不加假 item，保持 row→stack 索引一致）
@@ -609,8 +611,9 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
     tl->addWidget(title_);
     auto* dotSep = new QFrame(topbar);           // 金点分隔：光影集 · 模块名
     dotSep->setFixedSize(4, 4);
-    dotSep->setStyleSheet(QString::fromUtf8("background:%1;border-radius:2px;")
-        .arg(Lumen::hex(Lumen::GOLD)));
+    dotSep->setStyleSheet(QString::fromUtf8("background:%1;border-radius:%2px;")
+        .arg(Lumen::hex(Lumen::GOLD))
+        .arg(Lumen::Radius::Micro));   // T9 C3: 2px->Radius::Micro 4（4x4 金点，半径>高/2 截半仍正圆，视觉零位移）
     tl->addWidget(dotSep);
     moduleLbl_ = new QLabel(QCoreApplication::translate("LightAlbum", "首页"), topbar);   // P19：自 kpis_ 迁入
     moduleLbl_->setFont(Lumen::Type::smallText());   // T8：11pt 粗→T5 9pt（粗体/ls 4.0 随档归一，漂移入 T12 清单）
@@ -1192,9 +1195,10 @@ QWidget* MainWindow::makePlaceholder(const QString& secName, const QString& icon
     iconLbl->setPixmap(Icons::make(iconKind, QColor(0x4f, 0xc0, 0x8a), 44).pixmap(44, 44));
     iconLbl->setAlignment(Qt::AlignCenter);
     iconLbl->setStyleSheet(QString::fromUtf8(
-        "QLabel{background:%1;border:1px solid %2;border-radius:24px;"
+        "QLabel{background:%1;border:1px solid %2;border-radius:%3px;"
         "padding:14px;}")
-        .arg(Lumen::hex(Lumen::CARD), Lumen::hex(Lumen::LINE)));   // token 值字面量归引用（色不变）
+        .arg(Lumen::hex(Lumen::CARD), Lumen::hex(Lumen::LINE))   // token 值字面量归引用（色不变）
+        .arg(Lumen::Radius::Card));   // T9 C3: 24px->Radius::Card 14（§3.1 违反例裁定：MainWindow 24px 徽章→r-card）
 
     auto* t = new QLabel(secName, w);
     t->setFont(Lumen::Type::title(false));   // T8修订：占位题保持 sans（YaHei 15pt 粗体，同 LogPage:176）；Display/serif 仅首页 hero（§2.1）

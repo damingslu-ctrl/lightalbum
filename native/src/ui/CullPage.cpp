@@ -498,10 +498,11 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     topNSpin_->setStyleSheet(Lumen::input());
     minus->setFixedWidth(26); plus->setFixedWidth(26);
     minus->setStyleSheet(QString::fromUtf8("QPushButton{background:%1;border:1px solid %2;"
-        "border-radius:7px;color:%3;}")
+        "border-radius:%4px;color:%3;}")   // T9：7→Radius::Inset 6（§3.1 归并 5/6/7）
         .arg(Lumen::hex(Lumen::CARD))
         .arg(Lumen::hex(Lumen::LINE))
-        .arg(Lumen::hex(Lumen::INK)));
+        .arg(Lumen::hex(Lumen::INK))
+        .arg(Lumen::Radius::Inset));
     plus->setStyleSheet(minus->styleSheet());
     sl->addWidget(stepLbl); sl->addWidget(minus); sl->addWidget(topNSpin_); sl->addWidget(plus);
     connect(minus, &QPushButton::clicked, this, [this]{ topNSpin_->setValue(topNSpin_->value() - 10); });
@@ -558,7 +559,8 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     selBar_->setVisible(false);
     selThumb_ = new QLabel(selBar_);
     selThumb_->setFixedSize(56, 56);
-    selThumb_->setStyleSheet(QStringLiteral("QLabel{background:#000;border-radius:8px;}"));
+    selThumb_->setStyleSheet(QStringLiteral("QLabel{background:#000;border-radius:%1px;}")
+        .arg(Lumen::Radius::Ctl));   // T9：8→Radius::Ctl 10（§3.1 归并 8/9/11）
     selThumb_->setAlignment(Qt::AlignCenter);
     selName_ = new QLabel(selBar_);
     selName_->setStyleSheet(QStringLiteral("color:%1;%2")
@@ -590,8 +592,9 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     lockFrame_ = new QFrame(this);
     lockFrame_->setFrameShape(QFrame::StyledPanel);
     lockFrame_->setObjectName(QStringLiteral("cullLockFrame"));
-    lockFrame_->setStyleSheet(QStringLiteral("#cullLockFrame{background:%1;border:none;border-radius:12px;}")
-        .arg(Lumen::hex(Lumen::INSET)));
+    lockFrame_->setStyleSheet(QStringLiteral("#cullLockFrame{background:%1;border:none;border-radius:%2px;}")
+        .arg(Lumen::hex(Lumen::INSET))
+        .arg(Lumen::Radius::Card));   // T9：12→Radius::Card 14（§3.1 归并 12/14/16）
     auto* ll = new QVBoxLayout(lockFrame_);
     ll->setContentsMargins(12, 10, 12, 10); ll->setSpacing(8);
     lockTitle_ = new QLabel(QCoreApplication::translate("LightAlbum", "锁定区"), lockFrame_);
@@ -622,8 +625,9 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     view_->setWordWrap(false);
     view_->setSelectionMode(QAbstractItemView::SingleSelection);
     view_->setStyleSheet(QStringLiteral("QListView{background:%1;border:none;"
-        "border-radius:12px;} QListView::item:selected{background:transparent;}")
-        .arg(Lumen::hex(Lumen::PANEL)));
+        "border-radius:%2px;} QListView::item:selected{background:transparent;}")
+        .arg(Lumen::hex(Lumen::PANEL))
+        .arg(Lumen::Radius::Card));   // T9：12→Radius::Card 14
     model_ = new CullModel(this);
     proxy_ = new CullProxy(this);
     proxy_->setSourceModel(model_);
@@ -649,8 +653,9 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     duelFrame->setFrameShape(QFrame::StyledPanel);
     duelFrame->setObjectName(QStringLiteral("cullDuelFrame"));
     duelFrame->setStyleSheet(QStringLiteral(
-        "#cullDuelFrame{background:%1;border:none;border-radius:12px;}")
-        .arg(Lumen::hex(Lumen::PANEL)));
+        "#cullDuelFrame{background:%1;border:none;border-radius:%2px;}")
+        .arg(Lumen::hex(Lumen::PANEL))
+        .arg(Lumen::Radius::Card));   // T9：12→Radius::Card 14
     duel_ = duelFrame;
     duel_->setFocusPolicy(Qt::StrongFocus);
     auto* dv = new QVBoxLayout(duel_);
@@ -676,17 +681,18 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     pk->setAlignment(Qt::AlignCenter);
     // 金边徽章保持 QLabel 配方（不重构成按钮）：色彩改走 GOLD token 引用——
     // 描边即 GOLD @45% alpha（= btnOutline(GOLD) 同族的金描边语义）；
-    // 1.5px 描边 / 22px 圆角留给 T9；T8 已收编：Georgia 衬线泄漏降级
-    // font-family 删除 + 14px → Type::css(Head)=16px（spec §2.3 编辑特权归位）。
+    // T9 已归格：1.5px→1px（§3.2 描边唯一宽度）、22px→Radius::Pill 胶囊（§3.1 嵌套律违反例裁定）；
+    // T8 已收编：Georgia 衬线泄漏降级 font-family 删除 + 14px → Type::css(Head)=16px（spec §2.3 编辑特权归位）。
     pk->setStyleSheet(QStringLiteral(
-        "QLabel{color:%1;border:1.5px solid rgba(%2,%3,%4,.45);border-radius:22px;"
+        "QLabel{color:%1;border:1px solid rgba(%2,%3,%4,.45);border-radius:%6;"
         "font-weight:bold;%5"
         "min-width:40px;min-height:40px;background:transparent;}")
         .arg(Lumen::hex(Lumen::GOLD))
         .arg(Lumen::GOLD.red())
         .arg(Lumen::GOLD.green())
         .arg(Lumen::GOLD.blue())
-        .arg(Lumen::Type::css(Lumen::Type::Tier::Head)));   // T8：Georgia 14px → T3 head
+        .arg(Lumen::Type::css(Lumen::Type::Tier::Head))   // T8：Georgia 14px → T3 head
+        .arg(Lumen::Radius::Pill));                       // T9：22px→999px 唯一胶囊来源
     mid->addWidget(paneL_, 1);
     mid->addWidget(pk, 0, Qt::AlignVCenter);
     mid->addWidget(paneR_, 1);
@@ -724,7 +730,8 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     filmScroll_->setWidgetResizable(true);
     filmScroll_->setFixedHeight(104);
     filmScroll_->setStyleSheet(QStringLiteral("QScrollArea{background:%1;border:none;"
-        "border-radius:12px;}").arg(Lumen::hex(Lumen::PANEL)));
+        "border-radius:%2px;}").arg(Lumen::hex(Lumen::PANEL))
+        .arg(Lumen::Radius::Card));   // T9：12→Radius::Card 14
     filmRow_ = new QWidget(filmScroll_);
     filmRow_->setLayout(new QHBoxLayout);
     filmRow_->layout()->setContentsMargins(10, 8, 10, 8);

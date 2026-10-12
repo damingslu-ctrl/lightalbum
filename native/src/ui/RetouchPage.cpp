@@ -70,10 +70,12 @@ QString rtCardStyle(bool sel)
 {
     // Task 4 归一：色字面量→Lumen token（spec §1.7 回家映射，色值不变）
     return sel
-      ? QString::fromUtf8("QToolButton{background:%1;border:2px solid %2;border-radius:12px;color:%3;padding:4px;}")
+      ? QString::fromUtf8("QToolButton{background:%1;border:1px solid %2;border-radius:%4px;color:%3;padding:4px;}")
           .arg(Lumen::hex(Lumen::CARD_HI), Lumen::hex(Lumen::EMERALD), Lumen::hex(Lumen::INK))
-      : QString::fromUtf8("QToolButton{background:%1;border:2px solid %2;border-radius:12px;color:%3;padding:4px;}")
-          .arg(Lumen::hex(Lumen::CARD), Lumen::hex(Lumen::LINE), Lumen::hex(Lumen::INK));
+          .arg(Lumen::Radius::Card)    // T9 C3: 12->Radius::Card 14（%4）；2px 描边同步归 1px（§3.2）
+      : QString::fromUtf8("QToolButton{background:%1;border:1px solid %2;border-radius:%4px;color:%3;padding:4px;}")
+          .arg(Lumen::hex(Lumen::CARD), Lumen::hex(Lumen::LINE), Lumen::hex(Lumen::INK))
+          .arg(Lumen::Radius::Card);   // T9 C3: 12->Radius::Card 14（%4）；2px 描边同步归 1px（§3.2）
 }
 } // namespace
 
@@ -178,20 +180,20 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
     trl->setContentsMargins(10, 14, 10, 14);
     trl->setSpacing(8);
     railCss_   = (QString::fromUtf8(
-        "QPushButton{background:transparent;border:none;border-radius:9px;color:%1;padding:9px 8px;")
+        "QPushButton{background:transparent;border:none;border-radius:%2px;color:%1;padding:9px 8px;")
         + Lumen::Type::css(Lumen::Type::Tier::Small)   // T8：12px=T5 原位
         + QString::fromUtf8(
         "letter-spacing:.06em;text-align:left;}"
         "QPushButton:hover{background:rgba(232,228,218,0.06);}")
         )
-        .arg(Lumen::hex(Lumen::MUTED));   // 旧 9fa8a3 → MUTED（spec §1.7）
+        .arg(Lumen::hex(Lumen::MUTED)).arg(Lumen::Radius::Ctl);   // T9 C3: 9->Radius::Ctl 10（%2 按号绑定）旧 9fa8a3 → MUTED（spec §1.7）
     railOnCss_ = (QString::fromUtf8(
-        "QPushButton{background:rgba(217,169,78,0.16);border:none;border-radius:9px;color:%1;"
+        "QPushButton{background:rgba(217,169,78,0.16);border:none;border-radius:%2px;color:%1;"
         "font-weight:bold;padding:9px 8px;")   // T8 §2.4：600 归一 bold 三档
         + Lumen::Type::css(Lumen::Type::Tier::Small)   // T8：12px=T5 原位
         + QString::fromUtf8(
         "letter-spacing:.06em;text-align:left;}"))
-        .arg(Lumen::hex(Lumen::GOLD));
+        .arg(Lumen::hex(Lumen::GOLD)).arg(Lumen::Radius::Ctl);   // T9 C3: 9->Radius::Ctl 10（railOn %2）
     static const char* kModeNames[] = {"预设", "调整", "几何", "蒙版", "对比", "AI"};
     for (int m = 0; m < 6; ++m) {
         auto* b = new QPushButton(QString::fromUtf8(kModeNames[m]), toolrail_);
@@ -243,8 +245,8 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
     for (QLabel* l : {beforeLbl_, afterLbl_}) {
         l->setFixedSize(kPreviewW, kPreviewH);
         l->setAlignment(Qt::AlignCenter);
-        l->setStyleSheet(QString::fromUtf8("QLabel{background:#000;border:1px solid %1;border-radius:12px;}")
-            .arg(Lumen::hex(Lumen::LINE)));
+        l->setStyleSheet(QString::fromUtf8("QLabel{background:#000;border:1px solid %1;border-radius:%2px;}")
+            .arg(Lumen::hex(Lumen::LINE)).arg(Lumen::Radius::Card));   // T9 C3: 12->Radius::Card 14
     }
     auto* bl1 = new QVBoxLayout; bl1->setContentsMargins(0,0,0,0);
     bl1->addWidget(beforeLbl_); bl1->addWidget(new QLabel(QCoreApplication::translate("LightAlbum", "原图"), this), 0, Qt::AlignHCenter);
@@ -397,8 +399,9 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
         gv->addWidget(gt);
         auto* gsa = new QScrollArea(galleryPanel_);
         gsa->setWidgetResizable(true);
-        gsa->setStyleSheet(QString::fromUtf8("QScrollArea{background:%1;border:1px solid %2;border-radius:12px;}")
-            .arg(Lumen::hex(Lumen::INSET), Lumen::hex(Lumen::LINE)));
+        gsa->setStyleSheet(QString::fromUtf8("QScrollArea{background:%1;border:1px solid %2;border-radius:%3px;}")
+            .arg(Lumen::hex(Lumen::INSET), Lumen::hex(Lumen::LINE))
+            .arg(Lumen::Radius::Card));   // T9 C3: 12->Radius::Card 14（%3 按号绑定）
         auto* gw = new QWidget(gsa);
         constexpr int kCardCols = 2, kCardIcon = 86;
         auto* gl = new QGridLayout(gw);
@@ -491,8 +494,9 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
         maskClearBtn_ = mbtn(QCoreApplication::translate("LightAlbum", "清除蒙版"), Lumen::btnGhost(Lumen::INK));
         maskApplyBtn_ = mbtn(QCoreApplication::translate("LightAlbum", "局部应用"),
             QString::fromUtf8("QPushButton{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 %1, stop:1 %2);"
-                "border:none;border-radius:9px;padding:6px 14px;color:%3;font-weight:bold;}")
-                .arg(Lumen::hex(Lumen::EMERALD_HI), Lumen::hex(Lumen::EMERALD_DK), Lumen::hex(Lumen::INK)));
+                "border:none;border-radius:%4px;padding:6px 14px;color:%3;font-weight:bold;}")   // T9 C3: 9->%4 Radius::Ctl
+                .arg(Lumen::hex(Lumen::EMERALD_HI), Lumen::hex(Lumen::EMERALD_DK), Lumen::hex(Lumen::INK))
+                .arg(Lumen::Radius::Ctl));
         brushSlider_ = new QSlider(Qt::Horizontal, mp);
         brushSlider_->setRange(4, 80); brushSlider_->setValue(24);
         brushSlider_->setFixedWidth(120);

@@ -212,11 +212,11 @@ LogPage::LogPage(const QVector<Photo>* photos, QWidget* parent)
     exportBtn_->setFixedHeight(28);
     exportBtn_->setStyleSheet((QString::fromUtf8(
         "QPushButton{background:transparent;color:%1;border:1px solid %1;"
-        "border-radius:8px;padding:0 14px;")
+        "border-radius:%2px;padding:0 14px;")
         + Lumen::Type::css(Lumen::Type::Tier::Small)   // T8：12px=T5 原位
         + QString::fromUtf8(
         "}QPushButton:hover{background:rgba(217,169,78,0.12);}"))
-        .arg(Lumen::hex(Lumen::GOLD)));   // 描边 c19a4b→GOLD（§1.4 收编值就近归板，ΔRGB≤24 微亮合法化）
+        .arg(Lumen::hex(Lumen::GOLD)).arg(Lumen::Radius::Ctl));   // T9 C3: 8px->Radius::Ctl 10   // 描边 c19a4b→GOLD（§1.4 收编值就近归板，ΔRGB≤24 微亮合法化）
     tlb->addWidget(exportBtn_);
 
     rebuildFilterChips();
@@ -239,12 +239,13 @@ LogPage::LogPage(const QVector<Photo>* photos, QWidget* parent)
     insight_ = new QLabel(root);
     insight_->setWordWrap(true);
     insight_->setStyleSheet(QString::fromUtf8(
-        "QLabel{background:%1;border:none;border-radius:8px;"
+        "QLabel{background:%1;border:none;border-radius:%4px;"
         "padding:12px 16px;color:%2;font-family:Consolas,'SFMono-Regular',monospace;"
         "%3line-height:1.6;}")
         .arg(Lumen::hex(Lumen::INSET),               // §1.7：0f1512→INSET
              Lumen::hex(Lumen::INK))                 // 终端体 cfe6d8→INK（§1.7 承载面判例：UI 表面非照片面）
-        .arg(Lumen::Type::css(Lumen::Type::Tier::Small)));   // T8：12px=T5 原位（终端面族留串，mono 收编判例见报告）
+        .arg(Lumen::Type::css(Lumen::Type::Tier::Small))
+        .arg(Lumen::Radius::Ctl));   // T9 C3: 8px->Radius::Ctl 10. T8：12px=T5 原位（终端面族留串，mono 收编判例见报告）
     lay->addWidget(insight_);
 
     // —— 图表网格（3 列 × 2 行）——
@@ -261,8 +262,8 @@ LogPage::LogPage(const QVector<Photo>* photos, QWidget* parent)
         // 令标题/提示/图表各自长出一个底+描边框——正是「框中框」根因。
         card->setObjectName(QStringLiteral("logChartCard"));
         card->setStyleSheet(QString::fromUtf8(
-            "#logChartCard{background:%1;border:none;border-radius:8px;}")
-            .arg(Lumen::hex(Lumen::INSET)));   // §1.7：0f1512→INSET
+            "#logChartCard{background:%1;border:none;border-radius:%2px;}")
+            .arg(Lumen::hex(Lumen::INSET)).arg(Lumen::Radius::Ctl));   // §1.7：0f1512→INSET
         auto* cl = new QVBoxLayout(card);
         cl->setContentsMargins(12, 10, 12, 10);
         cl->setSpacing(6);
@@ -496,8 +497,9 @@ void LogPage::recompute()
     QString legendHtml;
     for (int i = 0; i < gk.size(); ++i)
         legendHtml += QStringLiteral("<span style='margin-right:12px;'><i style='display:inline-block;"
-                                     "width:9px;height:9px;border-radius:2px;background:%1;margin-right:5px;'></i>"
-                                     "%2 (%3)</span>").arg(gc[i], gk[i], QString::number(gv_[i]));
+                                     "width:9px;height:9px;border-radius:%4px;background:%1;margin-right:5px;'></i>"
+                                     "%2 (%3)</span>").arg(gc[i], gk[i], QString::number(gv_[i]))
+                                     .arg(Lumen::Radius::Micro);   // T9 C3: 2px->Radius::Micro 4（图例色块 §3.1 r-micro 用途+值双命中）
     gearLegend_->setText(legendHtml);
 
     // —— KPI（P30-C：紧凑等宽数字）——
@@ -535,9 +537,9 @@ void LogPage::recompute()
             .arg(Lumen::Type::css(Lumen::Type::Tier::Head))
             .arg(Lumen::Type::css(Lumen::Type::Tier::Small)));
         kpiLbls[i]->setStyleSheet(QString::fromUtf8(
-            "QLabel{background:%1;border:none;border-radius:8px;"
+            "QLabel{background:%1;border:none;border-radius:%2px;"
             "padding:9px 10px;}")
-            .arg(Lumen::hex(Lumen::INSET)));        // §1.7：0f1512→INSET
+            .arg(Lumen::hex(Lumen::INSET)).arg(Lumen::Radius::Ctl));        // §1.7：0f1512→INSET
     }
 
     // —— 洞察（终端风）——

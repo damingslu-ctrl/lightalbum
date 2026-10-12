@@ -112,7 +112,7 @@ MapPage::MapPage(const QVector<Photo>* photos, const QString& thumbsDir,
     for (int y : computeFootYears())
         yearBox_->addItem(QString::number(y), y);
     yearBox_->setStyleSheet(QString::fromUtf8(
-        "QComboBox{background:%1;border:1px solid %2;border-radius:9px;"
+        "QComboBox{background:%1;border:1px solid %2;border-radius:%8px;"   // T9 C3: 9->%8 Radius::Ctl
         "padding:4px 8px;color:%3;min-width:86px;}"
         "QComboBox QAbstractItemView{background:%4;color:%5;"
         "selection-background-color:%6;selection-color:%7;}")
@@ -122,7 +122,8 @@ MapPage::MapPage(const QVector<Photo>* photos, const QString& thumbsDir,
         .arg(Lumen::hex(Lumen::PANEL))     // %4 下拉盘（原菜单底 → PANEL，spec §1.7）
         .arg(Lumen::hex(Lumen::INK))       // %5
         .arg(Lumen::hex(Lumen::CARD_HI))   // %6 选中底（原菜单选中底 → CARD_HI：选中态归宿）
-        .arg(Lumen::hex(Lumen::EMERALD))); // %7
+        .arg(Lumen::hex(Lumen::EMERALD))    // %7
+        .arg(Lumen::Radius::Ctl));          // T9 C3: 9->Radius::Ctl 10（%8 尾插，序号升序绑定安全）
     connect(yearBox_, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [this](int) {
         footYear_ = yearBox_->currentData().toInt();   // 0 = 全部年份
@@ -140,7 +141,7 @@ MapPage::MapPage(const QVector<Photo>* photos, const QString& thumbsDir,
     heatRampBox_->addItem(QCoreApplication::translate("LightAlbum", "翡翠"), 1);
     heatRampBox_->addItem(QCoreApplication::translate("LightAlbum", "绯红"), 2);
     heatRampBox_->setStyleSheet(QString::fromUtf8(
-        "QComboBox{background:%1;border:1px solid %2;border-radius:9px;"
+        "QComboBox{background:%1;border:1px solid %2;border-radius:%8px;"   // T9 C3: 9->%8 Radius::Ctl
         "padding:4px 8px;color:%3;min-width:64px;}"
         "QComboBox QAbstractItemView{background:%4;color:%5;"
         "selection-background-color:%6;selection-color:%7;}")
@@ -150,7 +151,8 @@ MapPage::MapPage(const QVector<Photo>* photos, const QString& thumbsDir,
         .arg(Lumen::hex(Lumen::PANEL))
         .arg(Lumen::hex(Lumen::INK))
         .arg(Lumen::hex(Lumen::CARD_HI))
-        .arg(Lumen::hex(Lumen::EMERALD)));
+        .arg(Lumen::hex(Lumen::EMERALD))
+        .arg(Lumen::Radius::Ctl));   // T9 C3: 9->Radius::Ctl 10（%8 尾插）
     connect(heatRampBox_, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [this](int) {
         view_->setHeatRamp(heatRampBox_->currentData().toInt());
@@ -521,9 +523,9 @@ void MapPage::onRelocate()
     dlg.setStyleSheet(QString::fromUtf8(
         "QDialog{background:%1;}"
         "QLabel{color:%2;%10}"
-        "QComboBox,QLineEdit{background:%3;border:1px solid %4;border-radius:8px;"
+        "QComboBox,QLineEdit{background:%3;border:1px solid %4;border-radius:%11px;"
         "padding:6px 8px;color:%5;}"
-        "QPushButton{background:%6;border:1px solid %7;border-radius:8px;"
+        "QPushButton{background:%6;border:1px solid %7;border-radius:%12px;"
         "padding:6px 14px;color:%8;}"
         "QPushButton QPushButton{color:%9;}")
         .arg(Lumen::hex(Lumen::PANEL))    // %1 弹层底（原菜单底 → PANEL，spec §1.7）
@@ -535,7 +537,9 @@ void MapPage::onRelocate()
         .arg(Lumen::hex(Lumen::LINE))     // %7
         .arg(Lumen::hex(Lumen::INK))      // %8
         .arg(Lumen::hex(Lumen::INK))      // %9
-        .arg(Lumen::Type::css(Lumen::Type::Tier::Small)));   // T8（%10）：12px=T5 原位
+        .arg(Lumen::Type::css(Lumen::Type::Tier::Small))   // %10（T8：12px=T5 原位）
+        .arg(Lumen::Radius::Ctl)                           // T9 C3: 8->Radius::Ctl 10（%11 combo/lineedit）
+        .arg(Lumen::Radius::Ctl));                         // T9 C3: 8->Radius::Ctl 10（%12 button）
     auto* vl = new QVBoxLayout(&dlg);
     vl->setContentsMargins(18, 16, 18, 14);
     vl->setSpacing(10);

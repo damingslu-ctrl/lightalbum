@@ -149,7 +149,7 @@ GalleryPage::GalleryPage(const QVector<Photo>* photos, const QString& thumbsDir,
     //（§1.7：0e130f→PANEL、d9e4dc→INK；1d2a22 选中底→CARD_HI，沿用 T5「LINE 仅作分隔线、
     // 选中面归 CARD_HI」判例）。圆角 9px/内距/字阶原值保留（归格属 T9/T8）。
     clusterDimBox_->setStyleSheet((QString::fromUtf8(   // T8：12px=T5 原位 → css(Small)，拼接式序号不动
-        "QComboBox{background:%1;border:1px solid %2;border-radius:9px;"
+        "QComboBox{background:%1;border:1px solid %2;border-radius:%8px;"
         "padding:3px 8px;color:%3;")
         + Lumen::Type::css(Lumen::Type::Tier::Small)
         + QString::fromUtf8(
@@ -161,7 +161,8 @@ GalleryPage::GalleryPage(const QVector<Photo>* photos, const QString& thumbsDir,
         .arg(Lumen::hex(Lumen::PANEL))
         .arg(Lumen::hex(Lumen::INK))
         .arg(Lumen::hex(Lumen::CARD_HI))
-        .arg(Lumen::hex(Lumen::EMERALD)));
+        .arg(Lumen::hex(Lumen::EMERALD))
+        .arg(Lumen::Radius::Ctl));   // T9：9→Radius::Ctl 10（§3.1 归并 8/9/11，%8 尾插序号纪律安全）
     connect(clusterDimBox_, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [this](int) {
         clusterDim_ = clusterDimBox_->currentData().toInt();
@@ -441,7 +442,7 @@ void GalleryPage::buildChips()
         // 用拼接而非链式 .arg：fillChipRow 只对模板做一次 .arg(d.bg)，%1 占位必须保持唯一最低标号
         //（多参数 .arg 会先吃掉 %1，令彩色底失效——占位符纪律，勿改成 arg 链）。
         const QString personCssTpl = QStringLiteral(
-            "QPushButton{background:%1;border:none;border-radius:11px;"
+            "QPushButton{background:%1;border:none;border-radius:10px;"   // T9：11→Radius::Ctl 值归格（%1 彩色底模板纪律：拼接式不换插值形态，只换值）
             "padding:4px 12px;color:") + Lumen::hex(Lumen::PANEL) + QStringLiteral(";")
             + Lumen::Type::css(Lumen::Type::Tier::Small)   // T8：12px=T5 原位（输出无 % 标号，模板纪律不破坏）
             + QStringLiteral(
@@ -492,7 +493,7 @@ void GalleryPage::buildClusterBar()
         lay->setSpacing(8);
     }
     // §1.7：克隆盘 101710/232d26 → CARD/LINE 回家（并入文件级 galleryChipCss 单源）
-    const QString chipCss = galleryChipCss(QStringLiteral("11px"), Lumen::GOLD);
+    const QString chipCss = galleryChipCss(QString::number(Lumen::Radius::Ctl) + QStringLiteral("px"), Lumen::GOLD);   // T9：11→Radius::Ctl 10（归格）
 
     const QVector<PhotoCluster::Cluster> cs =
         PhotoCluster::cluster(*photos_, static_cast<PhotoCluster::Dim>(clusterDim_), hidePrivate_);
@@ -556,7 +557,7 @@ void GalleryPage::buildStoryBar()
         lay->setSpacing(8);
     }
     // §1.7 同上；故事条 checked 传统为翡翠（非分类/聚类条的金），以 accent 参数保留语义差异
-    const QString chipCss = galleryChipCss(QStringLiteral("11px"), Lumen::EMERALD);
+    const QString chipCss = galleryChipCss(QString::number(Lumen::Radius::Ctl) + QStringLiteral("px"), Lumen::EMERALD);   // T9：11→Radius::Ctl 10（归格）
 
     const StoryGen::Result r = StoryGen::build(*photos_, 5, hidePrivate_);
     if (r.stories.isEmpty()) { Lumen::clearChipRow(lay); storyBar_->setVisible(false); return; }

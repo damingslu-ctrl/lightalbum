@@ -159,7 +159,7 @@ inline QString btnPrimary()
 {
     return QString::fromUtf8(
         "QPushButton{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-        "stop:0 %1, stop:1 %2);border:none;border-radius:9px;"
+        "stop:0 %1, stop:1 %2);border:none;border-radius:10px;"
         "padding:8px 18px;color:#06130c;font-weight:bold;}"
         "QPushButton:hover{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
         "stop:0 %3, stop:1 %1);}"
@@ -172,7 +172,7 @@ inline QString btnGold()
 {
     return QString::fromUtf8(
         "QPushButton{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-        "stop:0 %1, stop:1 %2);border:none;border-radius:9px;"
+        "stop:0 %1, stop:1 %2);border:none;border-radius:10px;"
         "padding:8px 18px;color:#1a1204;font-weight:bold;}"
         "QPushButton:hover{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
         "stop:0 %3, stop:1 %1);}"
@@ -185,7 +185,7 @@ inline QString btnAi()
 {
     return QString::fromUtf8(
         "QPushButton{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-        "stop:0 %1, stop:1 %2);border:none;border-radius:9px;"
+        "stop:0 %1, stop:1 %2);border:none;border-radius:10px;"
         "padding:8px 18px;color:#f2eefc;font-weight:bold;}"
         "QPushButton:hover{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
         "stop:0 %3, stop:1 %1);}"
@@ -197,7 +197,7 @@ inline QString btnAi()
 inline QString btnGhost(const QColor& tint = GOLD)
 {
     return QString::fromUtf8(
-        "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:9px;"
+        "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:10px;"   // T9: 9->Radius::Ctl 10 (btnGhost)
         "padding:6px 14px;color:%1;}"
         "QPushButton:hover{background:#1a231d;border-color:%2;}"
         "QPushButton:disabled{color:#5a6b60;border-color:#1c2420;}")
@@ -210,7 +210,7 @@ inline QString btnViolet()
     QColor hover = VIOLET.lighter(115);
     return QString::fromUtf8(
         "QPushButton{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-        "stop:0 %1, stop:1 %2);border:none;border-radius:9px;"
+        "stop:0 %1, stop:1 %2);border:none;border-radius:10px;"
         "padding:8px 16px;color:#f4f7f4;font-weight:bold;}"
         "QPushButton:hover{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
         "stop:0 %3, stop:1 %1);}"
@@ -222,7 +222,7 @@ inline QString btnOutline(const QColor& accent)
 {
     QColor hi = accent.lighter(115);
     return QString::fromUtf8(
-        "QPushButton{background:%1;border:1px solid %2;border-radius:9px;"
+        "QPushButton{background:%1;border:1px solid %2;border-radius:10px;"   // T9: 9->Radius::Ctl 10 (btnOutline)
         "padding:6px 14px;color:%2;}"
         "QPushButton:hover{border-color:%3;color:%3;background:%4;}"
         "QPushButton:disabled{color:%5;border-color:%6;}")
@@ -236,7 +236,7 @@ inline QString kpiCard(const QColor& accent)
         "QLabel{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
         "stop:0 rgba(%1,46), stop:1 rgba(0,0,0,0)) #131a15;"
         "border:1px solid #26312a;border-left:3px solid %2;"
-        "border-radius:12px;padding:10px 18px;}")
+        "border-radius:14px;padding:10px 18px;}")   // T9: 12->Radius::Card 14 (kpiCard)
         .arg(QString::number(accent.red()) + "," + QString::number(accent.green())
              + "," + QString::number(accent.blue()), hex(accent));
 }
@@ -249,7 +249,7 @@ inline QString heroBand()
     return QString::fromUtf8(
         "#hero{background:qlineargradient(x1:0,y1:0,x2:1,y2:1,"
         "stop:0 #14281d, stop:0.45 #0d130f, stop:1 #1c1508);"
-        "border:1px solid #26312a;border-radius:16px;}");
+        "border:1px solid #26312a;border-radius:20px;}");   // T9: 16->Radius::Feature 20 (heroBand=首页英雄件 §3.1)
 }
 
 // 胶囊 chip：描边 + 语义色文字
@@ -277,7 +277,7 @@ inline QString featureCard(const QColor& accent)
 inline QString filmCard()
 {
     return QString::fromUtf8(
-        "QToolButton{background:#131a15;border:1px solid #26312a;border-radius:12px;"
+        "QToolButton{background:#131a15;border:1px solid #26312a;border-radius:14px;"   // T9: 12->Radius::Card 14 (filmCard)
         "padding:5px;color:#8da396;font-size:10.5px;}"
         "QToolButton:hover{border:1px solid #d9a94e;background:#1a231d;}");
 }
@@ -287,7 +287,7 @@ inline QString input()
 {
     return QString::fromUtf8(
         "QLineEdit,QComboBox{background:#0e1410;border:1px solid #26312a;"
-        "border-radius:9px;padding:6px 12px;color:#f4f7f4;"
+        "border-radius:10px;padding:6px 12px;color:#f4f7f4;"   // T9: 9->Radius::Ctl 10 (input，brief 裁定 Theme.h 9px 族归 Ctl)
         "selection-background-color:#2f7d57;}"
         "QLineEdit:focus,QComboBox:focus{border-color:#4fc08a;}");
 }
@@ -309,10 +309,10 @@ inline QString focusRing(const QColor& c = EMERALD_HI)
 inline QString slider(const QColor& handle = EMERALD)
 {
     return QString::fromUtf8(
-        "QSlider::groove:horizontal{background:#0e1410;height:4px;border-radius:2px;}"
+        "QSlider::groove:horizontal{background:#0e1410;height:4px;border-radius:6px;}"   // T9: 2->Radius::Inset 6（§3.1 r-inset 用途明列滑轨；4px 高轨半径截半仍胶囊，视觉零位移）
         "QSlider::handle:horizontal{background:%1;width:12px;height:12px;"
         "border-radius:6px;margin:-4px 0;}"
-        "QSlider::sub-page:horizontal{background:rgba(%2,%3,%4,110);border-radius:2px;}")
+        "QSlider::sub-page:horizontal{background:rgba(%2,%3,%4,110);border-radius:6px;}")   // T9: 2->Radius::Inset 6（与 groove 同档嵌套等径）
         .arg(hex(handle), QString::number(handle.red()),
              QString::number(handle.green()), QString::number(handle.blue()));
 }
@@ -439,8 +439,8 @@ inline void fillChipRow(QHBoxLayout* lay, QWidget* host,
         auto* menu = new QMenu(more);
         menu->setStyleSheet(QString::fromUtf8(
             "QMenu{background:#0e130f;color:#d9e4dc;border:1px solid #26312a;"
-            "border-radius:8px;padding:4px;}"
-            "QMenu::item{padding:5px 18px;border-radius:5px;font-size:12px;}"
+            "border-radius:10px;padding:4px;}"   // T9: 8->Radius::Ctl 10（QMenu 框；嵌套律 框10=项6+padding4 命中）
+            "QMenu::item{padding:5px 18px;border-radius:6px;font-size:12px;}"   // T9: 5->Radius::Inset 6（§3.1 归并 5/6/7；font-size 串为豁免文件原位 T8 形态，不动）
             "QMenu::item:selected{background:#1d2a22;color:#4fc08a;}"
             "QMenu::item:disabled{color:#5a6b60;}"));
         const int menuCap = 120;   // 超大库保护：菜单最多列 120 项（QMenu 自带滚动，别塞爆）
