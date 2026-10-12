@@ -1,6 +1,7 @@
 #include "MapView.h"
 #include "../core/MotionPref.h"
 #include "../core/GeoHotspot.h"   // 方向 C·联动：热点聚合（与渲染/门禁同源）
+#include "Theme.h"                // 终审 M1：glow 字面量收编 Lumen token（spec §1.6/§1.7），直接 include 不靠传递
 #include <QPainter>
 #include <QFile>
 #include <QImage>
@@ -21,6 +22,13 @@
 #include <QHash>
 #include <QPoint>
 #include <QCoreApplication>
+
+// —— 终审 M1（spec §1.6 glow 收编）：辉光字面量改引 Lumen token，各站点 alpha 原样保留 ——
+// 不用 Theme 预设 glowJade()/glowGold()（alpha 钉死 115/102 且 gold 基色为 GOLD_HI，
+// 与本仓站点原 alpha 均不符）。jade 按 spec 归一 EMERALD_HI #6adba6（自 #5fdca6 微漂移
+// R+11/G−1，收编即此意，终审裁定认可）；gold 与 GOLD #d9a94e 逐字节相等，纯字面量→token。
+static QColor jadeGlow(int a) { QColor c = Lumen::EMERALD_HI; c.setAlpha(a); return c; }
+static QColor goldGlow(int a) { QColor c = Lumen::GOLD;       c.setAlpha(a); return c; }
 
 // —— 预投影：经纬度 → [0,MAP_W]x[0,MAP_H]（与 web 版 eqX/eqY 一致）——
 static double eqX(double lon) { return (lon + 180.0) / 360.0 * MapView::MAP_W; }
@@ -306,7 +314,7 @@ void MapView::buildWorldPixmap()
         const QPointF h(eqX(homeLon_), eqY(homeLat_));
         const QVector<QPointF> targets = arcTargets();
         p.setBrush(Qt::NoBrush);
-        p.setPen(QPen(QColor(0xd9, 0xa9, 0x4e, 110), 1.0));
+        p.setPen(QPen(goldGlow(110), 1.0));
         for (const QPointF& pt : targets) {
             QPointF t = pt;
             if (t.x() - h.x() > MAP_W / 2) t.rx() -= MAP_W;   // 短路径方向
@@ -323,7 +331,7 @@ void MapView::buildWorldPixmap()
             }
         }
         // 基点标记：金色圆环 + 实心芯
-        p.setPen(QPen(QColor(0xd9, 0xa9, 0x4e), 1.4));
+        p.setPen(QPen(Lumen::GOLD, 1.4));
         p.setBrush(QColor(0xf0, 0xd0, 0x8a));
         p.drawEllipse(h, 3.2, 3.2);
     }
@@ -848,17 +856,17 @@ void MapView::drawArcs(QPainter& p, const QRectF& bbox, const QRectF& dst) const
     }
     // 很精细：流动金色虚线（reduceMotion 时退化为实线）——整条路径一次描边
     p.setBrush(Qt::NoBrush);
-    QPen pen(QColor(0xd9, 0xa9, 0x4e, 150), 1.2);
+    QPen pen(goldGlow(150), 1.2);
     if (flow) { pen.setStyle(Qt::DashLine); pen.setDashPattern({6.0, 6.0}); pen.setDashOffset(-arcDashOffset_); }
     p.setPen(pen);
     p.drawPath(arcs);
     p.setPen(Qt::NoPen);
-    p.setBrush(QColor(0xd9, 0xa9, 0x4e, 210));
+    p.setBrush(goldGlow(210));
     p.drawPath(glowDots);
     // 基点标记（在 bbox 内才画；世界层已画过一次）
     if (eqX(homeLon_) >= bbox.left() && eqX(homeLon_) <= bbox.right() &&
         eqY(homeLat_) >= bbox.top() && eqY(homeLat_) <= bbox.bottom()) {
-        p.setPen(QPen(QColor(0xd9, 0xa9, 0x4e), 1.5));
+        p.setPen(QPen(Lumen::GOLD, 1.5));
         p.setBrush(QColor(0xf0, 0xd0, 0x8a));
         p.drawEllipse(h, 3.6, 3.6);
     }
@@ -1648,7 +1656,7 @@ void MapView::qaClickProbe()
     {
         QVector<QPixmap> th;
         QPixmap pm(96, 72);
-        pm.fill(QColor(0x5f, 0xdc, 0xa6));
+        pm.fill(Lumen::EMERALD_HI);
         th.append(pm);
         burstActive_ = false;
         startBurst(th, QStringList(QStringLiteral("synthetic/region.jpg")));
@@ -1789,8 +1797,8 @@ void MapView::drawBurst(QPainter& p, const QRectF& dst) const
         p.setBrush(Qt::NoBrush);
         p.drawEllipse(c, 10.0 + maxR * e, 10.0 + maxR * e);
     };
-    ring(0,  dst.width() * 0.30, QColor(0xd9, 0xa9, 0x4e, 180), 2.2);
-    ring(90, dst.width() * 0.22, QColor(0x5f, 0xdc, 0xa6, 150), 1.6);
+    ring(0,  dst.width() * 0.30, goldGlow(180), 2.2);
+    ring(90, dst.width() * 0.22, jadeGlow(150), 1.6);
 
     // —— 金色连线 + 圆角照片卡：逐张错峰飞出（70ms/张，520ms OutCubic）——
     const int n = burstThumbs_.size();
@@ -1802,7 +1810,7 @@ void MapView::drawBurst(QPainter& p, const QRectF& dst) const
         const double e = 1.0 - std::pow(1.0 - lt, 3.0);
         const QPointF pos = c + (tgt - c) * e;
         // 连线（金色，中心 → 卡片）
-        QColor lc(0xd9, 0xa9, 0x4e);
+        QColor lc = Lumen::GOLD;
         lc.setAlphaF(0.75 * e);
         p.setPen(QPen(lc, 1.2));
         p.setBrush(Qt::NoBrush);
@@ -1838,14 +1846,14 @@ void MapView::drawBurst(QPainter& p, const QRectF& dst) const
         p.restore();
         QPainterPath bd;
         bd.addRoundedRect(cr, 6, 6);
-        QColor bc(0xd9, 0xa9, 0x4e);
+        QColor bc = Lumen::GOLD;
         bc.setAlphaF(0.9 * e);
         p.setPen(QPen(bc, 1.4));
         p.setBrush(Qt::NoBrush);
         p.drawPath(bd);
     }
     // 中心爆发点（金环 + 实心芯，与世界层「我的位置」同语言）
-    p.setPen(QPen(QColor(0xd9, 0xa9, 0x4e), 1.5));
+    p.setPen(QPen(Lumen::GOLD, 1.5));
     p.setBrush(QColor(0xf0, 0xd0, 0x8a));
     p.drawEllipse(c, 3.6, 3.6);
 }
@@ -1870,7 +1878,7 @@ void MapView::qaShootBurst(const QString& path)
     // 合成缩略图：翡翠 / 金 / 奶油三张实心卡（paths 同步合成，卡片命中测试可跑）
     burstThumbs_.clear();
     burstPaths_.clear();
-    const QColor cardCols[3] = { QColor(0x5f, 0xdc, 0xa6), QColor(0xd9, 0xa9, 0x4e),
+    const QColor cardCols[3] = { Lumen::EMERALD_HI, Lumen::GOLD,
                                  QColor(0xe8, 0xe2, 0xd4) };
     for (int i = 0; i < 3; ++i) {
         QPixmap pm(96, 72);
@@ -1925,15 +1933,15 @@ void MapView::renderFootDotSprite()
     const QPointF c(D / 2.0, D / 2.0);
     // 柔光晕（径向梯度，翡翠→透明）
     QRadialGradient g(c, D * 0.45);
-    g.setColorAt(0.0,  QColor(0x5f, 0xdc, 0xa6, 150));
-    g.setColorAt(0.35, QColor(0x5f, 0xdc, 0xa6, 80));
-    g.setColorAt(1.0,  QColor(0x5f, 0xdc, 0xa6, 0));
+    g.setColorAt(0.0,  jadeGlow(150));
+    g.setColorAt(0.35, jadeGlow(80));
+    g.setColorAt(1.0,  jadeGlow(0));
     p.setBrush(g);
     p.setPen(Qt::NoPen);
     p.drawEllipse(c, D * 0.45, D * 0.45);
     // 翡翠描边环
     p.setBrush(Qt::NoBrush);
-    p.setPen(QPen(QColor(0x5f, 0xdc, 0xa6, 140), 1.4));
+    p.setPen(QPen(jadeGlow(140), 1.4));
     p.drawEllipse(c, D * 0.18, D * 0.18);
     // 实心翡翠芯
     p.setBrush(QColor(0x7f, 0xe6, 0xb6));
@@ -2122,13 +2130,13 @@ void MapView::drawTrackPlayback(QPainter& p) const
             tw = o + t * s;
         }
         p.setPen(Qt::NoPen);
-        p.setBrush(QColor(0x5f, 0xdc, 0xa6, 60 * (4 - k) / 3));
+        p.setBrush(jadeGlow(60 * (4 - k) / 3));
         p.drawEllipse(tw, 2.0 + k * 0.5, 2.0 + k * 0.5);
     }
     // 脉冲环（随进度收缩）
     const double pulse = trackActive_ && !reduceMotion_
         ? std::fmod(trackClock_.elapsed() / 260.0, 1.0) : 1.0;
-    p.setPen(QPen(QColor(0x5f, 0xdc, 0xa6, 200), 1.6));
+    p.setPen(QPen(jadeGlow(200), 1.6));
     p.setBrush(Qt::NoBrush);
     p.drawEllipse(w, 4.0 + pulse * 5.0, 4.0 + pulse * 5.0);
     // 实心芯
@@ -2376,13 +2384,13 @@ void MapView::drawLegend(QPainter& p) const
     drawLabel(p, QPointF(lx + 22, y - 3), "拍摄地", QColor(0xd8, 0xe2, 0xd4));
     y += 20;
     // 航线
-    p.setPen(QPen(QColor(0xd9, 0xa9, 0x4e), 1.5));
+    p.setPen(QPen(Lumen::GOLD, 1.5));
     p.setBrush(Qt::NoBrush);
     p.drawLine(QLineF(lx + 6, y, lx + 18, y));
     drawLabel(p, QPointF(lx + 22, y - 3), "航线", QColor(0xd8, 0xe2, 0xd4));
     y += 20;
     // 我的位置
-    p.setPen(QPen(QColor(0xd9, 0xa9, 0x4e), 1.5));
+    p.setPen(QPen(Lumen::GOLD, 1.5));
     p.setBrush(Qt::NoBrush);
     p.drawEllipse(QPointF(lx + 12, y), 4, 4);
     drawLabel(p, QPointF(lx + 22, y - 3), "我的位置", QColor(0xd8, 0xe2, 0xd4));
@@ -2397,7 +2405,7 @@ void MapView::paintEvent(QPaintEvent*)
     // 仅自绘 QWidget 需手动描边；按钮类已由 Lumen::focusRing() 全局覆盖。
     if (hasFocus()) {
         p.save();
-        p.setPen(QPen(QColor(0x5f, 0xdc, 0xa6), 2));
+        p.setPen(QPen(Lumen::EMERALD_HI, 2));
         p.setBrush(Qt::NoBrush);
         p.drawRoundedRect(rect().adjusted(2, 2, -3, -3), 6, 6);
         p.restore();
@@ -2452,7 +2460,7 @@ void MapView::paintMap(QPainter& p)
         p.drawText(rect().adjusted(12, 0, 0, -10), Qt::AlignLeft | Qt::AlignBottom, foot);
     // 缩放倍数可见（>1 时才显示，避免常态噪音）
     if (level_ == World && worldZoom_ > 1.01) {
-        p.setPen(QColor(0xd9, 0xa9, 0x4e));
+        p.setPen(Lumen::GOLD);
         p.drawText(rect().adjusted(0, 0, -12, -10), Qt::AlignRight | Qt::AlignBottom,
                    QCoreApplication::translate("LightAlbum", "缩放 ×%1").arg(worldZoom_, 0, 'f', 2));
     }

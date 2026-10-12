@@ -331,14 +331,17 @@ inline QString progress()
 // 全局滚动条：细翡翠
 inline QString scrollbar()
 {
+    // 终审 M2（spec §1.7）：把手 #24312a 归并 LINE token（#26312a，近值归一是裁定本意）。
+    // 陷阱注记：hex() 自带前导 '#'，模板 %N 前不得再写字面 #，否则 ##rrggbb 整条声明被静默丢弃。
     return QString::fromUtf8(
         "QScrollBar:vertical{background:transparent;width:10px;margin:2px;}"
-        "QScrollBar::handle:vertical{background:#24312a;border-radius:4px;min-height:30px;}"
+        "QScrollBar::handle:vertical{background:%1;border-radius:4px;min-height:30px;}"
         "QScrollBar::handle:vertical:hover{background:#2f7d57;}"
         "QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0;}"
         "QScrollBar:horizontal{background:transparent;height:10px;margin:2px;}"
-        "QScrollBar::handle:horizontal{background:#24312a;border-radius:4px;min-width:30px;}"
-        "QScrollBar::add-line:horizontal,QScrollBar::sub-line:horizontal{width:0;}");
+        "QScrollBar::handle:horizontal{background:%1;border-radius:4px;min-width:30px;}"
+        "QScrollBar::add-line:horizontal,QScrollBar::sub-line:horizontal{width:0;}")
+        .arg(hex(LINE));
 }
 
 // ---- 2.33 统一选项条（全客户端「选项 chips 条」共用构建器） -----------------
