@@ -1424,12 +1424,12 @@ Errors: %1 — %2</translation>
         <translation>%1-%2</translation>
     </message>
     <message>
-        <source>&lt;br&gt;&lt;span style=&apos;color:#8da996;&apos;&gt;（该区域暂无 GPS 作品，可导入带 GPS 的照片）&lt;/span&gt;</source>
-        <translation>&lt;br&gt;&lt;span style='color:#8da996;'&gt;(No GPS photos in this region yet; import photos with GPS)&lt;/span&gt;</translation>
+        <source>&lt;br&gt;&lt;span style=&apos;color:%1;&apos;&gt;（该区域暂无 GPS 作品，可导入带 GPS 的照片）&lt;/span&gt;</source>
+        <translation>&lt;br&gt;&lt;span style=&apos;color:%1;&apos;&gt;(No GPS photos in this region yet; import photos with GPS)&lt;/span&gt;</translation>
     </message>
     <message>
-        <source>&lt;br&gt;&lt;span style=&apos;color:#8da996;&apos;&gt;（该国暂无 GPS 作品）&lt;/span&gt;</source>
-        <translation>&lt;br&gt;&lt;span style='color:#8da996;'&gt;(No GPS photos in this country yet)&lt;/span&gt;</translation>
+        <source>&lt;br&gt;&lt;span style=&apos;color:%1;&apos;&gt;（该国暂无 GPS 作品）&lt;/span&gt;</source>
+        <translation>&lt;br&gt;&lt;span style=&apos;color:%1;&apos;&gt;(No GPS photos in this country yet)&lt;/span&gt;</translation>
     </message>
     <message>
         <source>AI 分类</source>
