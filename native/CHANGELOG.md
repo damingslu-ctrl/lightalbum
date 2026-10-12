@@ -3,6 +3,25 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.37.0] - 未发布
+
+本轮为**设计语言 v2 · P1（高级感升级子轨的地基层）**：色板、字阶、几何三类设计债
+全量收敛到 `src/ui/Theme.h` 唯一真源，`LA_PALETTE_QA` 棘轮门四类计数归零并锁死区
+（任何新增字面量即刻红），elevation 阴影在仓内首次诞生。共 12 个任务
+（864ecf7 起，收口=本提交），逐页遗留项已移交 P2/P3（见审视报告收口台账附录）。
+
+### 变更 - ★设计语言 v2 P1 五组收口
+
+- **色板（C1 415→0，棘轮死区锁定）**：全仓 hex 字面量收编进 Lumen 语义 token——逐页迁移（Retouch/Map/Cull/Gallery/Dedup + MainWindow/LogPage/HomePage/videos/core 长尾）清零；新增 token `SOFT_IMG #b9b3a6`（照片叠加层·暖灰中阶）与 `GOLD_WASH #262012`（金强调按钮 :checked 暖金暗衬）；typo 绿 `#8da996` 全仓清退（含已发货翻译目录 .ts/.qm，同步 `LA_I18N_QA` 复验）；人物色板 CAT1..8 命名单源，人物 chip 文字改 INK→PANEL（WCAG 最低 6.1:1）。
+- **字阶（C2 68→0，棘轮死区锁定）**：`font-size:NNpx` 字面量全量收敛到 `Type::` 六档字阶（含 `smallText()` 避 Windows RPC `small` 宏）；衬线仅存 Display 档豁免位，降级泄漏点按判例逐条注记。
+- **几何（C3 71→0 + C4 117→0，棘轮死区锁定）**：圆角归格 `Radius::` 六档（含 Theme.h 内配方），静息描边唯一化 1px；间距归格 `Space::` 4px 网格六级；编辑留白以 `palette-exempt: editorial whitespace` 标记行豁免且**仅** C4 分支消费（不泄漏入 C1/C2/C3/C5）。hover 环/嵌套律等逐页遗留移交 P3。
+- **elevation（阴影诞生）**：仓内历史首批真浮层阴影——`Elev::apply` E2 档接生 `DedupDialog` 与 `VideoLightbox`（spec §3.4）；`QMenu` 诚实挂起——顶层弹窗为原生窗口，widget 层阴影不可绘出（离屏实证 diffPx=0），不伪报成功。
+- **棘轮门 `LA_PALETTE_QA`（第 72 门）**：脚本门入 full 层（名册 72 = fast 18 + full 54）；五计数基线 `qa/palette_baseline.json`（C1 hex / C2 字号 / C3 圆角出格 / C4 间距出格 / C5 译句 emoji），ceiling 只降不升；终态 **C1=C2=C3=C4=0（死区）/ C5=30（emoji 图标，P2 走 qrc-SVG 铺开清偿）**；反例钩子 `LA_PALETTE_QA_FORCE_BROKEN=1` 必红；F1 fail-open 守卫补齐——扫描根产出 files-scanned=0 时判 FAIL（空扫描拒绝读作绿，守卫触发用 env `LA_PALETTE_QA_SCAN_DIRS` 可实证，默认不启用）；measuredMs 由占位 1900 回填实测 1984。
+
+### 回归
+
+- fast 18 门 GO；full 54 门 `PASS=42 FAIL=0 CHECK=0 SKIP=12 KILL=0`（SKIP 皆为既有 need= 外部素材/模型 env 门，零新增）；`gate_matrix.ps1 -SelfTest` `gates=72 fast=18 full=54 nonAsciiBytes=0 textual=72==parsed`；反例矩阵 9/9 转红（CE9 锚点随 measuredMs 同步更新）。
+
 ## [2.36.0] - 2026-10-11
 
 本轮为 AI 消除引擎的**异步化与协议健壮性收口**：解除 2.35.0 遗留已知限制

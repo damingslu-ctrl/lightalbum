@@ -44,3 +44,20 @@
 ## 4. 下一步
 
 P1 设计语言 v2 走 brainstorming 分节评审（色板→字阶→间距/圆角/阴影→组件单源→棘轮门禁），产出 spec 后再拆实施计划。P0 缺陷清单可直接进首个实施小轨。
+
+## 5. P1 收口移交台账（P2/P3 输入）
+
+> 2026-10-12 设计语言 v2 P1（12 任务，864ecf7 起）收口时登记。棘轮死区已锁（C1..C4=0，新增字面量即红），以下遗留项不属 P1 清偿范围，是 P2/P3 的显式输入。
+
+- **P2**：emoji 图标 C5=30 → qrc 内嵌 SVG 铺开（K2 路线）；C5 ceiling 随逐页铺开只降不升。
+- **P3 逐页精修输入**：
+  - T8 眼检清单：14 处 >1.5px 字号漂移站（最大 LogPage 页题 20→15pt −6.7px；CullPage Georgia→head 为**故意降级**，判例见 spec §2.3）。
+  - hover 环 7 站：GalleryPage:450/452、RetouchPage:466/491/527（缺 padding 补偿）、Theme.h:238/304。
+  - 嵌套律硬骨头：selBar / card-chip / nav island 三处。
+  - 头像：15→14 微方非正圆。
+  - QSS padding 缝隙 ~31 站：off-grid ~20、gutter 级 ~3（含 GalleryPage count_ 20px vs 16px gutter）。
+  - MainWindow:168 lightbox 条不对称留白。
+- **T11 后续**：顶层 QDialog 的 E2 阴影被裁在窗框内——实屏是否读作深度待人眼检（备选：margin 包裹层）；空态灯箱截图代表性待复核。
+- **工厂缺口**：Theme.h 无 `chip()`/`combo()`（spec §4.1 勘误；各页本地单源判例 `cullChipCss`）；chip-menu 工厂旧 literals（豁免区）；`QColor(0x..)` 通道字面量不受 C1 管辖（P30-C 台账）；绿色柱 vs 翡翠 UI 区分度留 P4 对比度复检；close=CORAL 语义巡检。
+- **F1 fail-open 守卫**：**已闭**（本收口第 1 项落地：`qa_palette_ratchet.ps1` files-scanned=0 → FAIL；空扫描根反例经 `LA_PALETTE_QA_SCAN_DIRS`（默认不启用）实测红，正常跑与 FORCE_BROKEN 双臂复核不变）。
+- **其他**：main.cpp:6901 QMenu 探针注释混写历史挂死与 diffPx=0 实证，待收紧；T4 btnPrimary padding 16→18 涟漪像素巡检（HomePage/MainWindow/CullPage/MapPage）。

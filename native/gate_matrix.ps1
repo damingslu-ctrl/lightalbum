@@ -550,8 +550,10 @@ $GateTable = @(
   # src/ui + src/core against qa/palette_baseline.json; five counts, ceiling only
   # descends. Script gate => FULL tier by rule E9d (fast script gates rejected).
   # Counter-example env LA_PALETTE_QA_FORCE_BROKEN=1 injects +1 hex and must go
-  # RED. measuredMs=1900 from qa_runner -Timing (1869/1905/1939 ms x3, rule 13).
-  @{n="LA_PALETTE_QA"; png=$false; kind="ps1"; script="qa_palette_ratchet.ps1"; measuredMs=1900}
+  # RED. measuredMs=1984 from qa_runner -Timing full run (1984 matrix; 1987/1990/2072
+  # standalone x3, rule 13). 2026-10-12 Task 12: F1 fail-open guard added to the script
+  # (files-scanned=0 -> FAIL); the ~85ms rise vs the 1900 placeholder is the scan itself.
+  @{n="LA_PALETTE_QA"; png=$false; kind="ps1"; script="qa_palette_ratchet.ps1"; measuredMs=1984}
 )
 # Resolve a gate's tier. Absent key means "full" - the fail-safe default.
 function Get-GateTier {

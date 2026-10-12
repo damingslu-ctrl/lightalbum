@@ -79,8 +79,8 @@ CASES = [
     # NEVER sit in the per-PR fast layer -- smuggling tier="fast" into its table entry
     # must be rejected by rule E5 (the E9d counter-example inside gate_matrix -SelfTest).
     ('CE9 LA_PALETTE_QA script gate smuggled into the fast layer',
-     '  @{n="LA_PALETTE_QA"; png=$false; kind="ps1"; script="qa_palette_ratchet.ps1"; measuredMs=1900}',
-     '  @{n="LA_PALETTE_QA"; png=$false; tier="fast"; kind="ps1"; script="qa_palette_ratchet.ps1"; measuredMs=1900}'),
+     '  @{n="LA_PALETTE_QA"; png=$false; kind="ps1"; script="qa_palette_ratchet.ps1"; measuredMs=1984}',
+     '  @{n="LA_PALETTE_QA"; png=$false; tier="fast"; kind="ps1"; script="qa_palette_ratchet.ps1"; measuredMs=1984}'),
 ]
 
 

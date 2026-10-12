@@ -14,6 +14,12 @@
   -Init creates the baseline with ceiling=current (used exactly once, Task 1).
   Counter-example: env LA_PALETTE_QA_FORCE_BROKEN=1 injects +1 into every
   count AFTER comparison and must FAIL (proves the scanner is not inert).
+  Fail-open guard (F1, Task 12): if the scan roots yield ZERO files, every
+  count reads 0 and the compare would report green on an empty scan. That is
+  a broken harness, not a clean codebase, so files-scanned=0 is a hard FAIL.
+  The guard can be proven live with env LA_PALETTE_QA_SCAN_DIRS (semicolon-
+  separated dirs replacing the default src\ui;src\core roots) pointed at a
+  tree with no .cpp/.h sources. Unset = production behaviour (default off).
 .USAGE
   powershell -NoProfile -ExecutionPolicy Bypass -File qa_palette_ratchet.ps1 [-Init] [-Update]
 #>
@@ -23,18 +29,24 @@ $root = $PSScriptRoot
 $basePath = Join-Path $root "qa\palette_baseline.json"
 $exemptNames = @("Theme.h","DarkPalette.h","GalleryCardPainter.cpp","MapView.cpp","Splash.cpp")
 function Get-ScanFiles {
+  # F1 guard-test knob (default off): LA_PALETTE_QA_SCAN_DIRS replaces the two
+  # production roots when set, so the empty-scan guard below can be triggered
+  # live without touching the scan roots used by every normal run.
+  $dirs = @("src\ui","src\core")
+  if ($env:LA_PALETTE_QA_SCAN_DIRS) { $dirs = @($env:LA_PALETTE_QA_SCAN_DIRS -split ";") }
   $f = @()
-  foreach ($d in @("src\ui","src\core")) {
-    $p = Join-Path $root $d
+  foreach ($d in $dirs) {
+    $p = if ([System.IO.Path]::IsPathRooted($d)) { $d } else { Join-Path $root $d }
     if (Test-Path $p) { $f += @(Get-ChildItem -Path $p -Include *.cpp,*.h -Recurse |
       Where-Object { $exemptNames -notcontains $_.Name }) }
   }
   return $f
 }
 function Measure-Counts {
+  param($files)
   $c1=0;$c2=0;$c3=$c4=$c5=0
   $rw = @(4,6,10,14,20,999); $sw = @(0,4,8,12,16,24,32)
-  foreach ($f in (Get-ScanFiles)) {
+  foreach ($f in $files) {
     $lines = @(Get-Content -LiteralPath $f.FullName -Encoding UTF8)
     foreach ($ln in $lines) {
       $c1 += @([regex]::Matches($ln,'#[0-9a-fA-F]{6}\b')).Count
@@ -64,7 +76,17 @@ function Measure-Counts {
   }
   return @{C1=$c1;C2=$c2;C3=$c3;C4=$c4;C5=$c5}
 }
-$cur = Measure-Counts
+$scanned = @(Get-ScanFiles)
+# F1 fail-open guard: zero scanned files makes every count read 0, the compare
+# trivially passes, and the gate goes green while watching nothing. Refuse it.
+# Fires before -Init/-Update/compare so an empty scan can neither validate nor
+# (re)baseline through this path.
+if ($scanned.Count -eq 0) {
+  Write-Host "LA_PALETTE_QA FAIL files-scanned=0 (scan roots yielded no .cpp/.h sources; refusing green on an empty scan)"
+  exit 1
+}
+Write-Host ("LA_PALETTE_QA files-scanned={0}" -f $scanned.Count)
+$cur = Measure-Counts $scanned
 if ($Init -or -not (Test-Path $basePath)) {
   if (-not $Init) { Write-Host "LA_PALETTE_QA FAIL baseline missing (run -Init once)"; exit 1 }
   if (-not (Test-Path (Join-Path $root "qa"))) { New-Item -ItemType Directory (Join-Path $root "qa") | Out-Null }
