@@ -26,8 +26,8 @@
     "counts":  {
                    "C3":  {
                               "label":  "radius-offgrid",
-                              "current":  56,
-                              "ceiling":  56
+                              "current":  43,
+                              "ceiling":  43
                           },
                    "C4":  {
                               "label":  "spacing-offgrid",
@@ -36,8 +36,8 @@
                           },
                    "C2":  {
                               "label":  "font-size",
-                              "current":  68,
-                              "ceiling":  68
+                              "current":  67,
+                              "ceiling":  67
                           },
                    "C5":  {
                               "label":  "emoji-in-tr",
@@ -46,8 +46,8 @@
                           },
                    "C1":  {
                               "label":  "hex",
-                              "current":  309,
-                              "ceiling":  309
+                              "current":  179,
+                              "ceiling":  179
                           }
                }
 }

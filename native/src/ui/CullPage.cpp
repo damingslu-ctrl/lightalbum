@@ -65,6 +65,30 @@ static double parseAperture(const QString& s)
     if (m.hasMatch()) return m.captured(1).toDouble();
     return 0;
 }
+
+// design-language-v2 T5：chip 族单源。Theme.h 无 chip() 工厂（pill() 是 QLabel 胶囊，
+// 与本处可勾选 QPushButton 形状不合），按 brief Step 3 裁定的「单一本地函数」落地：
+// buildChips（初建）与 onChipClicked（切态）两处共用，杜绝双份 CSS 漂移。
+// 色彩全部走 Lumen token（spec §1.7），圆角/内距维持原值（归格属 T9/T10）。
+static QString cullChipCss(bool checked)
+{
+    if (checked)
+        return QString::fromUtf8(
+            "QPushButton{background:%1;border:1px solid %2;border-radius:999px;"
+            "padding:5px 14px;color:%3;font-size:12px;font-weight:bold;}")
+            .arg(Lumen::hex(Lumen::CARD_HI))
+            .arg(Lumen::hex(Lumen::EMERALD))
+            .arg(Lumen::hex(Lumen::EMERALD));
+    return QString::fromUtf8(
+        "QPushButton{background:%1;border:1px solid %2;border-radius:999px;"
+        "padding:5px 14px;color:%3;font-size:12px;}"
+        "QPushButton:hover{border-color:%4;color:%5;}")
+        .arg(Lumen::hex(Lumen::CARD))
+        .arg(Lumen::hex(Lumen::LINE))
+        .arg(Lumen::hex(Lumen::MUTED))
+        .arg(Lumen::hex(Lumen::EMERALD))
+        .arg(Lumen::hex(Lumen::INK));
+}
 } // namespace
 
 // ---------------------------------------------------------------- CullModel
@@ -248,9 +272,9 @@ void CullCardDelegate::paint(QPainter* p, const QStyleOptionViewItem& o,
     // 标记徽标（单字，避免 emoji 字体缺失）：喜/略/锁
     if (!mark.isEmpty()) {
         QString ch, col;
-        if (mark == QStringLiteral("like"))      { ch = QCoreApplication::translate("LightAlbum", "喜"); col = "#4fc08a"; }
-        else if (mark == QStringLiteral("skip")) { ch = QCoreApplication::translate("LightAlbum", "略"); col = "#e0705f"; }
-        else { ch = QCoreApplication::translate("LightAlbum", "锁"); col = "#d9a94e"; }
+        if (mark == QStringLiteral("like"))      { ch = QCoreApplication::translate("LightAlbum", "喜"); col = Lumen::hex(Lumen::EMERALD); }
+        else if (mark == QStringLiteral("skip")) { ch = QCoreApplication::translate("LightAlbum", "略"); col = Lumen::hex(Lumen::CORAL); }
+        else { ch = QCoreApplication::translate("LightAlbum", "锁"); col = Lumen::hex(Lumen::GOLD); }
         QRect br(imgR.x() + 6, imgR.y() + 6, 22, 22);
         p->setPen(Qt::NoPen);
         p->setBrush(QColor(0x06, 0x08, 0x06, 210));
@@ -426,12 +450,16 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
                                 QCoreApplication::translate("LightAlbum", "模糊"), QCoreApplication::translate("LightAlbum", "曝光"),
                                 QCoreApplication::translate("LightAlbum", "解码失败")};
     for (const QString& l : labels) {
-        auto* lb = new QLabel(QString::fromUtf8("<b style='font-size:15px;color:#f4f7f4;'>—</b><br>"
-            "<span style='font-size:11px;color:#8da396;'>%1</span>").arg(l), kp);
+        auto* lb = new QLabel(QString::fromUtf8(
+            "<b style='font-size:15px;color:%1;'>—</b><br>"
+            "<span style='font-size:11px;color:%2;'>%3</span>")
+            .arg(Lumen::hex(Lumen::INK))
+            .arg(Lumen::hex(Lumen::MUTED))
+            .arg(l), kp);
         lb->setAlignment(Qt::AlignCenter);
         lb->setMinimumWidth(80);
-        lb->setStyleSheet(QString::fromUtf8("QLabel{background:#131a15;border:none;"
-            "border-radius:10px;padding:8px 14px;}"));
+        lb->setStyleSheet(QString::fromUtf8("QLabel{background:%1;border:none;"
+            "border-radius:10px;padding:8px 14px;}").arg(Lumen::hex(Lumen::CARD)));
         kpis_.append(lb);
         kl->addWidget(lb);
     }
@@ -451,7 +479,7 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     auto* sl = new QHBoxLayout(stepWrap);
     sl->setContentsMargins(0, 0, 0, 0); sl->setSpacing(6);
     auto* stepLbl = new QLabel(QCoreApplication::translate("LightAlbum", "目标张数"), bar);
-    stepLbl->setStyleSheet(QStringLiteral("color:#8da396;"));
+    stepLbl->setStyleSheet(QStringLiteral("color:%1;").arg(Lumen::hex(Lumen::MUTED)));
     auto* minus = new QPushButton(QString::fromUtf8("−"), bar);
     auto* plus  = new QPushButton(QString::fromUtf8("+"), bar);
     topNSpin_ = new QSpinBox(bar);
@@ -460,8 +488,11 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     topNSpin_->setSuffix(QCoreApplication::translate("LightAlbum", " 张"));
     topNSpin_->setStyleSheet(Lumen::input());
     minus->setFixedWidth(26); plus->setFixedWidth(26);
-    minus->setStyleSheet(QStringLiteral("QPushButton{background:#131a15;border:1px solid #26312a;"
-        "border-radius:7px;color:#f4f7f4;}"));
+    minus->setStyleSheet(QString::fromUtf8("QPushButton{background:%1;border:1px solid %2;"
+        "border-radius:7px;color:%3;}")
+        .arg(Lumen::hex(Lumen::CARD))
+        .arg(Lumen::hex(Lumen::LINE))
+        .arg(Lumen::hex(Lumen::INK)));
     plus->setStyleSheet(minus->styleSheet());
     sl->addWidget(stepLbl); sl->addWidget(minus); sl->addWidget(topNSpin_); sl->addWidget(plus);
     connect(minus, &QPushButton::clicked, this, [this]{ topNSpin_->setValue(topNSpin_->value() - 10); });
@@ -476,16 +507,13 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     markCombo_->setStyleSheet(Lumen::input());
 
     progress_ = new QLabel(QCoreApplication::translate("LightAlbum", "基于本地缩略图 · 零云端 · 失败即放行"), bar);
-    progress_->setStyleSheet(QStringLiteral("color:#8da396;"));
+    progress_->setStyleSheet(QStringLiteral("color:%1;").arg(Lumen::hex(Lumen::MUTED)));
 
     bl->addWidget(runBtn_);
 
     // P25 对决模式入口（分析完成后可点；空结果禁用）
     duelBtn_ = new QPushButton(QCoreApplication::translate("LightAlbum", "开始对决"), bar);
-    duelBtn_->setStyleSheet(QStringLiteral(
-        "QPushButton{background:#131a15;border:1px solid #d9a94e;border-radius:8px;"
-        "padding:6px 16px;color:#d9a94e;}"
-        "QPushButton:disabled{border-color:#26312a;color:#5a6b60;}"));
+    duelBtn_->setStyleSheet(Lumen::btnOutline(Lumen::GOLD));
     duelBtn_->setEnabled(false);
     connect(duelBtn_, &QPushButton::clicked, this, [this]{ duelEnterMode(); });
     bl->addWidget(duelBtn_);
@@ -516,29 +544,33 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     sbl->setContentsMargins(12, 8, 12, 8);
     sbl->setSpacing(10);
     selBar_->setObjectName(QStringLiteral("cullSelBar"));
-    selBar_->setStyleSheet(QStringLiteral("#cullSelBar{background:#0e1410;border:none;"
-        "border-radius:10px;}"));
+    selBar_->setStyleSheet(QStringLiteral("#cullSelBar{background:%1;border:none;"
+        "border-radius:10px;}").arg(Lumen::hex(Lumen::INSET)));
     selBar_->setVisible(false);
     selThumb_ = new QLabel(selBar_);
     selThumb_->setFixedSize(56, 56);
     selThumb_->setStyleSheet(QStringLiteral("QLabel{background:#000;border-radius:8px;}"));
     selThumb_->setAlignment(Qt::AlignCenter);
     selName_ = new QLabel(selBar_);
-    selName_->setStyleSheet(QStringLiteral("color:#f4f7f4;font-size:12px;"));
+    selName_->setStyleSheet(QStringLiteral("color:%1;font-size:12px;")
+        .arg(Lumen::hex(Lumen::INK)));
     auto mkMark = [this](const QString& t, const QString& m, const QString& css){
         auto* b = new QPushButton(t, selBar_);
         b->setStyleSheet(css);
         connect(b, &QPushButton::clicked, this, [this, m]{ onMark(m); });
         return b;
     };
+    // 描边按钮族单源（spec §4.1）：like/skip/lock 各按原 accent 走 btnOutline；
+    // unlock 原是中性幽灵（LINE 边 + MUTED 字）→ btnGhost(MUTED)（btnOutline(LINE)
+    // 会把文字洗成描边色不可读，保语义优先——brief Step 3「keep semantics」）
     likeBtn_  = mkMark(QCoreApplication::translate("LightAlbum", "喜欢"), QStringLiteral("like"),
-        "QPushButton{background:#131a15;border:1px solid #4fc08a;border-radius:8px;padding:6px 14px;color:#4fc08a;}");
+        Lumen::btnOutline(Lumen::EMERALD));
     skipBtn_  = mkMark(QCoreApplication::translate("LightAlbum", "略过"), QStringLiteral("skip"),
-        "QPushButton{background:#131a15;border:1px solid #e0705f;border-radius:8px;padding:6px 14px;color:#e0705f;}");
+        Lumen::btnOutline(Lumen::CORAL));
     lockBtn_  = mkMark(QCoreApplication::translate("LightAlbum", "锁定"), QStringLiteral("lock"),
-        "QPushButton{background:#131a15;border:1px solid #d9a94e;border-radius:8px;padding:6px 14px;color:#d9a94e;}");
+        Lumen::btnOutline(Lumen::GOLD));
     unlockBtn_ = mkMark(QCoreApplication::translate("LightAlbum", "解除"), QString(),
-        "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:8px;padding:6px 14px;color:#8da396;}");
+        Lumen::btnGhost(Lumen::MUTED));
     sbl->addWidget(selThumb_);
     sbl->addWidget(selName_, 1);
     sbl->addWidget(likeBtn_); sbl->addWidget(skipBtn_); sbl->addWidget(lockBtn_); sbl->addWidget(unlockBtn_);
@@ -548,11 +580,13 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     lockFrame_ = new QFrame(this);
     lockFrame_->setFrameShape(QFrame::StyledPanel);
     lockFrame_->setObjectName(QStringLiteral("cullLockFrame"));
-    lockFrame_->setStyleSheet(QStringLiteral("#cullLockFrame{background:#0e1410;border:none;border-radius:12px;}"));
+    lockFrame_->setStyleSheet(QStringLiteral("#cullLockFrame{background:%1;border:none;border-radius:12px;}")
+        .arg(Lumen::hex(Lumen::INSET)));
     auto* ll = new QVBoxLayout(lockFrame_);
     ll->setContentsMargins(12, 10, 12, 10); ll->setSpacing(8);
     lockTitle_ = new QLabel(QCoreApplication::translate("LightAlbum", "锁定区"), lockFrame_);
-    lockTitle_->setStyleSheet(QStringLiteral("color:#d9a94e;font-weight:bold;font-size:13px;"));
+    lockTitle_->setStyleSheet(QStringLiteral("color:%1;font-weight:bold;font-size:13px;")
+        .arg(Lumen::hex(Lumen::GOLD)));
     ll->addWidget(lockTitle_);
     lockList_ = new QListWidget(lockFrame_);
     lockList_->setViewMode(QListView::IconMode);
@@ -576,8 +610,9 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     view_->setGridSize(QSize(232, 268));
     view_->setWordWrap(false);
     view_->setSelectionMode(QAbstractItemView::SingleSelection);
-    view_->setStyleSheet(QStringLiteral("QListView{background:#0c100d;border:none;"
-        "border-radius:12px;} QListView::item:selected{background:transparent;}"));
+    view_->setStyleSheet(QStringLiteral("QListView{background:%1;border:none;"
+        "border-radius:12px;} QListView::item:selected{background:transparent;}")
+        .arg(Lumen::hex(Lumen::PANEL)));
     model_ = new CullModel(this);
     proxy_ = new CullProxy(this);
     proxy_->setSourceModel(model_);
@@ -590,7 +625,8 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     auto* emptyHint = new QLabel(QString::fromUtf8(
         "尚无分析结果\n\n导入照片后点击「开始分析」\n基于本地缩略图打分 · 零云端 · 失败即放行"), this);
     emptyHint->setAlignment(Qt::AlignCenter);
-    emptyHint->setStyleSheet(QStringLiteral("QLabel{color:#8da396;font-size:13px;background:transparent;}"));
+    emptyHint->setStyleSheet(QStringLiteral("QLabel{color:%1;font-size:13px;background:transparent;}")
+        .arg(Lumen::hex(Lumen::MUTED)));
     gridStack_->addWidget(emptyHint);   // 0
     gridStack_->addWidget(view_);       // 1
     gridStack_->setCurrentIndex(0);
@@ -601,7 +637,8 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     duelFrame->setFrameShape(QFrame::StyledPanel);
     duelFrame->setObjectName(QStringLiteral("cullDuelFrame"));
     duelFrame->setStyleSheet(QStringLiteral(
-        "#cullDuelFrame{background:#0c100d;border:none;border-radius:12px;}"));
+        "#cullDuelFrame{background:%1;border:none;border-radius:12px;}")
+        .arg(Lumen::hex(Lumen::PANEL)));
     duel_ = duelFrame;
     duel_->setFocusPolicy(Qt::StrongFocus);
     auto* dv = new QVBoxLayout(duel_);
@@ -610,12 +647,10 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     auto* hrow = new QHBoxLayout;
     hrow->setSpacing(10);
     duelHead_ = new QLabel(duel_);
-    duelHead_->setStyleSheet(QStringLiteral("color:#8da396;font-size:12px;border:none;background:transparent;"));
+    duelHead_->setStyleSheet(QStringLiteral("color:%1;font-size:12px;border:none;background:transparent;")
+        .arg(Lumen::hex(Lumen::MUTED)));
     duelBackBtn_ = new QPushButton(QCoreApplication::translate("LightAlbum", "返回总览 Esc"), duel_);
-    duelBackBtn_->setStyleSheet(QStringLiteral(
-        "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:8px;"
-        "padding:5px 14px;color:#8da396;}"
-        "QPushButton:hover{color:#f4f7f4;border-color:#4fc08a;}"));
+    duelBackBtn_->setStyleSheet(Lumen::btnGhost(Lumen::MUTED));
     hrow->addWidget(duelHead_, 1);
     hrow->addWidget(duelBackBtn_);
     dv->addLayout(hrow);
@@ -626,10 +661,17 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     paneR_ = new DuelPane(duel_);
     auto* pk = new QLabel(QString::fromUtf8("PK"), duel_);
     pk->setAlignment(Qt::AlignCenter);
+    // 金边徽章保持 QLabel 配方（不重构成按钮）：色彩改走 GOLD token 引用——
+    // 描边即 GOLD @45% alpha（= btnOutline(GOLD) 同族的金描边语义）；
+    // 1.5px 描边 / 22px 圆角 / Georgia 均按裁定留给 T9/T8，本任务不动。
     pk->setStyleSheet(QStringLiteral(
-        "QLabel{color:#d9a94e;border:1.5px solid rgba(217,169,78,.45);border-radius:22px;"
+        "QLabel{color:%1;border:1.5px solid rgba(%2,%3,%4,.45);border-radius:22px;"
         "font-family:Georgia,serif;font-size:14px;font-weight:bold;"
-        "min-width:40px;min-height:40px;background:transparent;}"));
+        "min-width:40px;min-height:40px;background:transparent;}")
+        .arg(Lumen::hex(Lumen::GOLD))
+        .arg(Lumen::GOLD.red())
+        .arg(Lumen::GOLD.green())
+        .arg(Lumen::GOLD.blue()));
     mid->addWidget(paneL_, 1);
     mid->addWidget(pk, 0, Qt::AlignVCenter);
     mid->addWidget(paneR_, 1);
@@ -639,10 +681,7 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     brow->setSpacing(10);
     auto mkDuelBtn = [this](const QString& t, std::function<void()> fn) {
         auto* b = new QPushButton(t, duel_);
-        b->setStyleSheet(QStringLiteral(
-            "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:8px;"
-            "padding:6px 16px;color:#8da396;}"
-            "QPushButton:hover{color:#f4f7f4;border-color:#4fc08a;}"));
+        b->setStyleSheet(Lumen::btnGhost(Lumen::MUTED));
         connect(b, &QPushButton::clicked, this, fn);
         return b;
     };
@@ -668,8 +707,8 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     filmScroll_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     filmScroll_->setWidgetResizable(true);
     filmScroll_->setFixedHeight(104);
-    filmScroll_->setStyleSheet(QStringLiteral("QScrollArea{background:#0c100d;border:none;"
-        "border-radius:12px;}"));
+    filmScroll_->setStyleSheet(QStringLiteral("QScrollArea{background:%1;border:none;"
+        "border-radius:12px;}").arg(Lumen::hex(Lumen::PANEL)));
     filmRow_ = new QWidget(filmScroll_);
     filmRow_->setLayout(new QHBoxLayout);
     filmRow_->layout()->setContentsMargins(10, 8, 10, 8);
@@ -685,14 +724,17 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     sv->setContentsMargins(0, 0, 0, 0);
     sv->setSpacing(12);
     auto* rt = new QLabel(QCoreApplication::translate("LightAlbum", "审美档案"), side);
-    rt->setStyleSheet(QStringLiteral("color:#f4f7f4;font-weight:bold;font-size:14px;"));
+    rt->setStyleSheet(QStringLiteral("color:%1;font-weight:bold;font-size:14px;")
+        .arg(Lumen::hex(Lumen::INK)));
     radar_ = new RadarWidget(side);
     radar_->setFixedSize(300, 320);
     radarNote_ = new QLabel(side);
     radarNote_->setWordWrap(true);
-    radarNote_->setStyleSheet(QStringLiteral("color:#8da396;font-size:11px;"));
+    radarNote_->setStyleSheet(QStringLiteral("color:%1;font-size:11px;")
+        .arg(Lumen::hex(Lumen::MUTED)));
     radarCount_ = new QLabel(side);
-    radarCount_->setStyleSheet(QStringLiteral("color:#d9a94e;font-size:11px;"));
+    radarCount_->setStyleSheet(QStringLiteral("color:%1;font-size:11px;")
+        .arg(Lumen::hex(Lumen::GOLD)));
     sv->addWidget(rt);
     sv->addWidget(radar_, 0, Qt::AlignHCenter);
     sv->addWidget(radarNote_);
@@ -718,8 +760,12 @@ void CullPage::setKpi(int idx, const QString& v, const QString& label)
 {
     if (idx < 0 || idx >= kpis_.size()) return;
     kpis_[idx]->setText(QString::fromUtf8(
-        "<b style='font-size:15px;color:#f4f7f4;'>%1</b><br>"
-        "<span style='font-size:11px;color:#8da396;'>%2</span>").arg(v, label));
+        "<b style='font-size:15px;color:%1;'>%2</b><br>"
+        "<span style='font-size:11px;color:%3;'>%4</span>")
+        .arg(Lumen::hex(Lumen::INK))
+        .arg(v)
+        .arg(Lumen::hex(Lumen::MUTED))
+        .arg(label));
 }
 
 void CullPage::buildChips(const QMap<QString,int>& counts)
@@ -732,10 +778,7 @@ void CullPage::buildChips(const QMap<QString,int>& counts)
         auto* b = new QPushButton(QString::fromUtf8("%1 (%2)").arg(label).arg(n), chipRow_);
         b->setProperty("cat", cat);
         b->setCursor(Qt::PointingHandCursor);
-        b->setStyleSheet(QString::fromUtf8(
-            "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:999px;"
-            "padding:5px 14px;color:#8da396;font-size:12px;}"
-            "QPushButton:hover{border-color:#4fc08a;color:#f4f7f4;}"));
+        b->setStyleSheet(cullChipCss(false));
         connect(b, &QPushButton::clicked, this, [this, cat]{ onChipClicked(cat); });
         chips_.append(b);
         cl->addWidget(b);
@@ -766,14 +809,8 @@ void CullPage::onChipClicked(const QString& cat)
         proxy_->setCategoryFilter(activeCat_);
         proxy_->setVideoOnly(false);
     }
-    for (QPushButton* b : chips_) {
-        const bool on = (b->property("cat").toString() == activeCat_);
-        b->setStyleSheet(on
-            ? QString::fromUtf8("QPushButton{background:#1a231d;border:1px solid #4fc08a;"
-                "border-radius:999px;padding:5px 14px;color:#4fc08a;font-size:12px;font-weight:bold;}")
-            : QString::fromUtf8("QPushButton{background:#131a15;border:1px solid #26312a;"
-                "border-radius:999px;padding:5px 14px;color:#8da396;font-size:12px;}"));
-    }
+    for (QPushButton* b : chips_)
+        b->setStyleSheet(cullChipCss(b->property("cat").toString() == activeCat_));
 }
 
 void CullPage::onMarkFilterChanged(int idx)
@@ -1275,7 +1312,7 @@ void CullPage::runDuelQa(const QString& png)
     const bool saveOk = img.save(png);
     std::fprintf(stderr, "  duelSize=920x580 saveOk=%d\n", int(saveOk));
     std::fflush(stderr);
-    long gold = 0;                            // 金 #d9a94e：引擎倾向金框/徽章/分条
+    long gold = 0;                            // 金（Lumen::GOLD）：引擎倾向金框/徽章/分条
     for (int y = 0; y < img.height(); y += 2) {
         const QRgb* row = reinterpret_cast<const QRgb*>(img.constScanLine(y));
         for (int x = 0; x < img.width(); x += 2) {
