@@ -259,7 +259,7 @@ void GalleryPage::buildBatchBar()
         b->setStyleSheet(btnCss);
         connect(b, &QPushButton::clicked, this, [this, i, b] {
             // 2.34 StarBounce：CSS 固定了字号 → 走辉光通道（曲线/时长仍出自引擎预设）。
-            MotionFx::glow(b, QColor(0x8d, 0xa9, 0x96), QColor(0xf4, 0xf7, 0xf4),
+            MotionFx::glow(b, Lumen::MUTED, QColor(0xf4, 0xf7, 0xf4),
                            Motion::kStarBounce, Motion::kPropGlow,
                            qEnvironmentVariableIsEmpty("LA_GATE"));
             emitBatchRating(i);
@@ -573,7 +573,7 @@ void GalleryPage::buildStoryBar()
         },
         [](QPushButton* b, const Lumen::ChipDef& d) {
             // 2.34 ChipPop 入场：辉光弹一下（ChipPop 预设 glow 键；CSS 固定字号故不走字体）。
-            MotionFx::glow(b, d.checked ? QColor(0x0c, 0x10, 0x0d) : QColor(0x8d, 0xa9, 0x96),
+            MotionFx::glow(b, d.checked ? QColor(0x0c, 0x10, 0x0d) : Lumen::MUTED,
                            QColor(0xf4, 0xf7, 0xf4),
                            Motion::kChipPop, Motion::kPropGlow,
                            qEnvironmentVariableIsEmpty("LA_GATE"));
