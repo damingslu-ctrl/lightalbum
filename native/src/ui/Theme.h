@@ -66,6 +66,8 @@ inline constexpr QColor CAT1 = EMERALD, CAT2 = SKY, CAT3 = GOLD, CAT4 = VIOLET,
 inline QColor glowJade() { QColor c = EMERALD_HI; c.setAlpha(115); return c; } // 45%
 inline QColor glowGold() { QColor c = GOLD_HI;   c.setAlpha(102); return c; } // 40%
 
+// 注意：返回值含前导 '#'（QColor::name()）。QSS 模板占位符前不得再写字面 #，
+// 否则拼出 "##rrggbb"，Qt 样式表解析器会整条丢弃该声明（Task 4 offscreen 实测）。
 inline QString hex(const QColor& c) { return c.name(); }
 
 // ---- 字体：中文优先雅黑（不写死则 offscreen/默认字体中文发虚） ---------------
@@ -154,10 +156,10 @@ inline QString btnPrimary()
 {
     return QString::fromUtf8(
         "QPushButton{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-        "stop:0 #%1, stop:1 #%2);border:none;border-radius:9px;"
+        "stop:0 %1, stop:1 %2);border:none;border-radius:9px;"
         "padding:8px 18px;color:#06130c;font-weight:bold;}"
         "QPushButton:hover{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-        "stop:0 #%3, stop:1 #%1);}"
+        "stop:0 %3, stop:1 %1);}"
         "QPushButton:disabled{background:#2a332d;color:#5a6b60;}")
         .arg(hex(EMERALD_HI), hex(EMERALD_DK), hex(EMERALD));
 }
@@ -167,10 +169,10 @@ inline QString btnGold()
 {
     return QString::fromUtf8(
         "QPushButton{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-        "stop:0 #%1, stop:1 #%2);border:none;border-radius:9px;"
+        "stop:0 %1, stop:1 %2);border:none;border-radius:9px;"
         "padding:8px 18px;color:#1a1204;font-weight:bold;}"
         "QPushButton:hover{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-        "stop:0 #%3, stop:1 #%1);}"
+        "stop:0 %3, stop:1 %1);}"
         "QPushButton:disabled{background:#2a332d;color:#5a6b60;}")
         .arg(hex(GOLD_HI), hex(GOLD_DK), hex(GOLD));
 }
@@ -180,10 +182,10 @@ inline QString btnAi()
 {
     return QString::fromUtf8(
         "QPushButton{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-        "stop:0 #%1, stop:1 #%2);border:none;border-radius:9px;"
+        "stop:0 %1, stop:1 %2);border:none;border-radius:9px;"
         "padding:8px 18px;color:#f2eefc;font-weight:bold;}"
         "QPushButton:hover{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-        "stop:0 #%3, stop:1 #%1);}"
+        "stop:0 %3, stop:1 %1);}"
         "QPushButton:disabled{background:#2a332d;color:#5a6b60;}")
         .arg(hex(VIOLET), hex(VIOLET_DK), QColor(0xbd, 0xa4, 0xf0).name());
 }
@@ -193,8 +195,8 @@ inline QString btnGhost(const QColor& tint = GOLD)
 {
     return QString::fromUtf8(
         "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:9px;"
-        "padding:6px 14px;color:#%1;}"
-        "QPushButton:hover{background:#1a231d;border-color:#%2;}"
+        "padding:6px 14px;color:%1;}"
+        "QPushButton:hover{background:#1a231d;border-color:%2;}"
         "QPushButton:disabled{color:#5a6b60;border-color:#1c2420;}")
         .arg(hex(tint), hex(tint), hex(tint));
 }
@@ -205,10 +207,10 @@ inline QString btnViolet()
     QColor hover = VIOLET.lighter(115);
     return QString::fromUtf8(
         "QPushButton{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-        "stop:0 #%1, stop:1 #%2);border:none;border-radius:9px;"
+        "stop:0 %1, stop:1 %2);border:none;border-radius:9px;"
         "padding:8px 16px;color:#f4f7f4;font-weight:bold;}"
         "QPushButton:hover{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-        "stop:0 #%3, stop:1 #%1);}"
+        "stop:0 %3, stop:1 %1);}"
         "QPushButton:disabled{background:%4;color:%5;}")
         .arg(hex(VIOLET), hex(VIOLET_DK), hex(hover), hex(DISABLED), hex(FAINT));
 }
@@ -230,7 +232,7 @@ inline QString kpiCard(const QColor& accent)
     return QString::fromUtf8(
         "QLabel{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
         "stop:0 rgba(%1,46), stop:1 rgba(0,0,0,0)) #131a15;"
-        "border:1px solid #26312a;border-left:3px solid #%2;"
+        "border:1px solid #26312a;border-left:3px solid %2;"
         "border-radius:12px;padding:10px 18px;}")
         .arg(QString::number(accent.red()) + "," + QString::number(accent.green())
              + "," + QString::number(accent.blue()), hex(accent));
@@ -252,7 +254,7 @@ inline QString pill(const QColor& accent)
 {
     return QString::fromUtf8(
         "QLabel{background:#0e1410;border:1px solid rgba(%1,120);"
-        "border-radius:999px;padding:3px 12px;color:#%2;font-size:11px;}")
+        "border-radius:999px;padding:3px 12px;color:%2;font-size:11px;}")
         .arg(QString::number(accent.red()) + "," + QString::number(accent.green())
              + "," + QString::number(accent.blue()), hex(accent));
 }
@@ -263,7 +265,7 @@ inline QString featureCard(const QColor& accent)
     return QString::fromUtf8(
         "QToolButton{background:#131a15;border:1px solid #26312a;border-radius:14px;"
         "padding:12px 8px;color:#f4f7f4;font-weight:bold;font-size:13px;}"
-        "QToolButton:hover{background:#1a231d;border:1px solid #%1;}"
+        "QToolButton:hover{background:#1a231d;border:1px solid %1;}"
         "QToolButton:pressed{background:#0e1410;}")
         .arg(hex(accent));
 }
@@ -296,7 +298,7 @@ inline QString focusRing(const QColor& c = EMERALD_HI)
     return QString::fromUtf8(
         "QPushButton:focus,QToolButton:focus,QAbstractSpinBox:focus,"
         "QComboBox:focus,QSlider:focus{"
-        "outline:2px solid #%1;outline-offset:2px;}")
+        "outline:2px solid %1;outline-offset:2px;}")
         .arg(hex(c));
 }
 
@@ -305,7 +307,7 @@ inline QString slider(const QColor& handle = EMERALD)
 {
     return QString::fromUtf8(
         "QSlider::groove:horizontal{background:#0e1410;height:4px;border-radius:2px;}"
-        "QSlider::handle:horizontal{background:#%1;width:12px;height:12px;"
+        "QSlider::handle:horizontal{background:%1;width:12px;height:12px;"
         "border-radius:6px;margin:-4px 0;}"
         "QSlider::sub-page:horizontal{background:rgba(%2,%3,%4,110);border-radius:2px;}")
         .arg(hex(handle), QString::number(handle.red()),
@@ -319,7 +321,7 @@ inline QString progress()
         "QProgressBar{background:#0e1410;border:1px solid #26312a;"
         "border-radius:6px;height:8px;text-align:center;}"
         "QProgressBar::chunk{border-radius:6px;"
-        "background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #%1, stop:1 #%2);}")
+        "background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 %1, stop:1 %2);}")
         .arg(hex(EMERALD), hex(EMERALD_HI));
 }
 

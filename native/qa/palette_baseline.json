@@ -26,8 +26,8 @@
     "counts":  {
                    "C3":  {
                               "label":  "radius-offgrid",
-                              "current":  71,
-                              "ceiling":  71
+                              "current":  56,
+                              "ceiling":  56
                           },
                    "C4":  {
                               "label":  "spacing-offgrid",
@@ -46,8 +46,8 @@
                           },
                    "C1":  {
                               "label":  "hex",
-                              "current":  394,
-                              "ceiling":  394
+                              "current":  309,
+                              "ceiling":  309
                           }
                }
 }

@@ -1,4 +1,5 @@
 #include "RetouchPage.h"
+#include "Theme.h"          // Task 4：Lumen token + 组件工厂（btnViolet/btnGhost/slider/progress/input）
 #include "../core/ImageLoad.h"   // 2.29.0 统一原图加载（照片/RAW/视频）
 #include "../core/VideoDecode.h"// 2.31.0 视频选帧（探测时长）
 #include "../core/qaExit.h"   // 2.7.0 门禁自退契约（禁裸调 quit）
@@ -67,9 +68,12 @@ QString photoLabel(const Photo& ph)
 
 QString rtCardStyle(bool sel)
 {
+    // Task 4 归一：色字面量→Lumen token（spec §1.7 回家映射，色值不变）
     return sel
-      ? QStringLiteral("QToolButton{background:#1a231d;border:2px solid #4fc08a;border-radius:12px;color:#f4f7f4;padding:4px;}")
-      : QStringLiteral("QToolButton{background:#131a15;border:2px solid #26312a;border-radius:12px;color:#f4f7f4;padding:4px;}");
+      ? QString::fromUtf8("QToolButton{background:%1;border:2px solid %2;border-radius:12px;color:%3;padding:4px;}")
+          .arg(Lumen::hex(Lumen::CARD_HI), Lumen::hex(Lumen::EMERALD), Lumen::hex(Lumen::INK))
+      : QString::fromUtf8("QToolButton{background:%1;border:2px solid %2;border-radius:12px;color:%3;padding:4px;}")
+          .arg(Lumen::hex(Lumen::CARD), Lumen::hex(Lumen::LINE), Lumen::hex(Lumen::INK));
 }
 } // namespace
 
@@ -168,13 +172,20 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
     // ===== 左 模式轨（预设 / 调整 / 几何 / 蒙版 / 对比 / AI）=====
     toolrail_ = new QWidget(this);
     toolrail_->setFixedWidth(116);
-    toolrail_->setStyleSheet(QStringLiteral("QWidget{background:#0c100d;border-right:1px solid #26312a;}"));
+    toolrail_->setStyleSheet(QString::fromUtf8("QWidget{background:%1;border-right:1px solid %2;}")
+        .arg(Lumen::hex(Lumen::PANEL), Lumen::hex(Lumen::LINE)));
     auto* trl = new QVBoxLayout(toolrail_);
     trl->setContentsMargins(10, 14, 10, 14);
     trl->setSpacing(8);
-    railCss_   = QStringLiteral("QPushButton{background:transparent;border:none;border-radius:9px;color:#9fa8a3;padding:9px 8px;font-size:12px;letter-spacing:.06em;text-align:left;}"
-                                 "QPushButton:hover{background:rgba(232,228,218,0.06);}");
-    railOnCss_ = QStringLiteral("QPushButton{background:rgba(217,169,78,0.16);border:none;border-radius:9px;color:#d9a94e;font-weight:600;padding:9px 8px;font-size:12px;letter-spacing:.06em;text-align:left;}");
+    railCss_   = QString::fromUtf8(
+        "QPushButton{background:transparent;border:none;border-radius:9px;color:%1;padding:9px 8px;"
+        "font-size:12px;letter-spacing:.06em;text-align:left;}"
+        "QPushButton:hover{background:rgba(232,228,218,0.06);}")
+        .arg(Lumen::hex(Lumen::MUTED));   // 旧 9fa8a3 → MUTED（spec §1.7）
+    railOnCss_ = QString::fromUtf8(
+        "QPushButton{background:rgba(217,169,78,0.16);border:none;border-radius:9px;color:%1;"
+        "font-weight:600;padding:9px 8px;font-size:12px;letter-spacing:.06em;text-align:left;}")
+        .arg(Lumen::hex(Lumen::GOLD));
     static const char* kModeNames[] = {"预设", "调整", "几何", "蒙版", "对比", "AI"};
     for (int m = 0; m < 6; ++m) {
         auto* b = new QPushButton(QString::fromUtf8(kModeNames[m]), toolrail_);
@@ -188,7 +199,7 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
 
     // ===== 中间工作区 =====
     auto* centerCol = new QWidget(this);
-    centerCol->setStyleSheet(QStringLiteral("QWidget{background:#0e1410;}"));
+    centerCol->setStyleSheet(QString::fromUtf8("QWidget{background:%1;}").arg(Lumen::hex(Lumen::INSET)));
     auto* root = new QVBoxLayout(centerCol);
     root->setContentsMargins(16, 16, 16, 16);
     root->setSpacing(12);
@@ -226,7 +237,8 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
     for (QLabel* l : {beforeLbl_, afterLbl_}) {
         l->setFixedSize(kPreviewW, kPreviewH);
         l->setAlignment(Qt::AlignCenter);
-        l->setStyleSheet("QLabel{background:#000;border:1px solid #26312a;border-radius:12px;}");
+        l->setStyleSheet(QString::fromUtf8("QLabel{background:#000;border:1px solid %1;border-radius:12px;}")
+            .arg(Lumen::hex(Lumen::LINE)));
     }
     auto* bl1 = new QVBoxLayout; bl1->setContentsMargins(0,0,0,0);
     bl1->addWidget(beforeLbl_); bl1->addWidget(new QLabel(QCoreApplication::translate("LightAlbum", "原图"), this), 0, Qt::AlignHCenter);
@@ -254,7 +266,7 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
     cl->setContentsMargins(0, 0, 0, 0);
     cl->setSpacing(8);
     chipTitle_ = new QLabel(QCoreApplication::translate("LightAlbum", "智能建议："), chipWrap);
-    chipTitle_->setStyleSheet("color:#8da396;");
+    chipTitle_->setStyleSheet(QString::fromUtf8("color:%1;").arg(Lumen::hex(Lumen::MUTED)));
     cl->addWidget(chipTitle_);
     chipRow_ = new QWidget(chipWrap);
     chipRow_->setLayout(new QHBoxLayout);
@@ -270,11 +282,9 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
     prog_ = new QProgressBar(foot);
     prog_->setRange(0, 100); prog_->setValue(0);
     prog_->setTextVisible(false);
-    prog_->setStyleSheet("QProgressBar{background:#0e1410;border:1px solid #26312a;"
-        "border-radius:6px;height:8px;} QProgressBar::chunk{border-radius:6px;"
-        "background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #4fc08a, stop:1 #6adba6);}");
+    prog_->setStyleSheet(Lumen::progress());   // 手写进度条 → 共享工厂（同 INSET/LINE/EMERALD→EMERALD_HI 配方）
     badge_ = new QLabel(QCoreApplication::translate("LightAlbum", "未调整 · 零云端"), foot);
-    badge_->setStyleSheet("color:#8da396;");
+    badge_->setStyleSheet(QString::fromUtf8("color:%1;").arg(Lumen::hex(Lumen::MUTED)));
     fl->addWidget(prog_, 1);
     fl->addWidget(badge_);
 
@@ -321,32 +331,20 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
     auto* abl = new QHBoxLayout(actbar);
     abl->setContentsMargins(0, 0, 0, 0);
     abl->setSpacing(8);
-    const char* goldCss =
-        "QPushButton{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #f0d08a, stop:1 #b0863a);"
-        "border:none;border-radius:9px;padding:8px 16px;"
-        "color:#1a1204;font-weight:bold;} QPushButton:disabled{background:#2a332d;color:#5a6b60;}";
-    const char* emCss =
-        "QPushButton{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #6adba6, stop:1 #2f7d57);"
-        "border:none;border-radius:9px;padding:8px 16px;"
-        "color:#06130c;font-weight:bold;} QPushButton:disabled{background:#2a332d;color:#5a6b60;}";
-    const char* viCss =
-        "QPushButton{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #a88be5, stop:1 #6d54a8);"
-        "border:none;border-radius:9px;padding:8px 16px;"
-        "color:#f2eefc;font-weight:bold;} QPushButton:disabled{background:#2a332d;color:#5a6b60;}";
-    const char* resetCss =
-        "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:8px;"
-        "padding:8px 16px;color:#f4f7f4;}";
-    auto mkAct = [actbar](const QString& t, const char* css){
+    // Task 4 组件归厂：四段手写渐变/幽灵 CSS → Theme.h 共享工厂
+    // （btnPrimary=翡翠执行、btnGold=金品牌导出、btnViolet=紫 AI 专属、btnGhost(INK)=中性幽灵，
+    //  文字色语义不变；渐变/圆角/内距按工厂统一，新增 hover 态为工厂配方自带。）
+    auto mkAct = [actbar](const QString& t, const QString& css){
         auto* b = new QPushButton(t, actbar);
-        b->setStyleSheet(QString::fromLatin1(css));
+        b->setStyleSheet(css);
         return b;
     };
-    autoBtn_   = mkAct(QCoreApplication::translate("LightAlbum", "智能增强"), emCss);
-    agentBtn_  = mkAct(QCoreApplication::translate("LightAlbum", "AI 智能体"), viCss);
-    resetBtn_  = mkAct(QCoreApplication::translate("LightAlbum", "重置"), resetCss);
-    undoBtn_   = mkAct(QCoreApplication::translate("LightAlbum", "↶ 撤销"), resetCss);
-    redoBtn_   = mkAct(QCoreApplication::translate("LightAlbum", "↷ 重做"), resetCss);
-    exportBtn_ = mkAct(QCoreApplication::translate("LightAlbum", "导出副本"), goldCss);
+    autoBtn_   = mkAct(QCoreApplication::translate("LightAlbum", "智能增强"), Lumen::btnPrimary());
+    agentBtn_  = mkAct(QCoreApplication::translate("LightAlbum", "AI 智能体"), Lumen::btnViolet());
+    resetBtn_  = mkAct(QCoreApplication::translate("LightAlbum", "重置"), Lumen::btnGhost(Lumen::INK));
+    undoBtn_   = mkAct(QCoreApplication::translate("LightAlbum", "↶ 撤销"), Lumen::btnGhost(Lumen::INK));
+    redoBtn_   = mkAct(QCoreApplication::translate("LightAlbum", "↷ 重做"), Lumen::btnGhost(Lumen::INK));
+    exportBtn_ = mkAct(QCoreApplication::translate("LightAlbum", "导出副本"), Lumen::btnGold());
     abl->addWidget(autoBtn_);
     abl->addWidget(agentBtn_);
     abl->addWidget(resetBtn_);
@@ -385,11 +383,12 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
         gv->setContentsMargins(10, 14, 10, 14);
         gv->setSpacing(8);
         auto* gt = new QLabel(QCoreApplication::translate("LightAlbum", "滤镜预设"), galleryPanel_);
-        gt->setStyleSheet(QStringLiteral("color:#f4f7f4;font-weight:bold;font-size:13px;"));
+        gt->setStyleSheet(QString::fromUtf8("color:%1;font-weight:bold;font-size:13px;").arg(Lumen::hex(Lumen::INK)));
         gv->addWidget(gt);
         auto* gsa = new QScrollArea(galleryPanel_);
         gsa->setWidgetResizable(true);
-        gsa->setStyleSheet(QStringLiteral("QScrollArea{background:#0e1410;border:1px solid #26312a;border-radius:12px;}"));
+        gsa->setStyleSheet(QString::fromUtf8("QScrollArea{background:%1;border:1px solid %2;border-radius:12px;}")
+            .arg(Lumen::hex(Lumen::INSET), Lumen::hex(Lumen::LINE)));
         auto* gw = new QWidget(gsa);
         constexpr int kCardCols = 2, kCardIcon = 86;
         auto* gl = new QGridLayout(gw);
@@ -417,11 +416,11 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
         gl2->setSpacing(8);
         auto gbtn = [gp](const QString& t){
             auto* b = new QPushButton(t, gp);
-            b->setStyleSheet("QPushButton{background:#131a15;border:1px solid #26312a;border-radius:8px;padding:6px 12px;color:#f4f7f4;}");
+            b->setStyleSheet(Lumen::btnGhost(Lumen::INK));   // 手写幽灵 CSS → 共享工厂（INK 文字语义不变）
             return b;
         };
         auto* hgeo = new QLabel(QCoreApplication::translate("LightAlbum", "几何编辑"), gp);
-        hgeo->setStyleSheet("color:#f4f7f4;font-weight:bold;font-size:12px;");
+        hgeo->setStyleSheet(QString::fromUtf8("color:%1;font-weight:bold;font-size:12px;").arg(Lumen::hex(Lumen::INK)));
         gl2->addWidget(hgeo);
         geoRotLBtn_ = gbtn(QCoreApplication::translate("LightAlbum", "旋转⟲"));
         geoRotRBtn_ = gbtn(QCoreApplication::translate("LightAlbum", "旋转⟳"));
@@ -432,13 +431,12 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
         geoFlipHBtn_->setToolTip(QCoreApplication::translate("LightAlbum", "水平翻转（镜像）"));
         geoFlipVBtn_->setToolTip(QCoreApplication::translate("LightAlbum", "垂直翻转（镜像）"));
         auto* sep = new QFrame(gp); sep->setFrameShape(QFrame::VLine); sep->setFixedHeight(20);
-        sep->setStyleSheet("color:#26312a;");
+        sep->setStyleSheet(QString::fromUtf8("color:%1;").arg(Lumen::hex(Lumen::LINE)));
         straighten_ = new QSlider(Qt::Horizontal, gp);
         straighten_->setRange(-100, 100); straighten_->setValue(0);
         straighten_->setFixedWidth(160);
         straighten_->setToolTip(QCoreApplication::translate("LightAlbum", "拉直 ±10°"));
-        straighten_->setStyleSheet("QSlider::groove:horizontal{background:#0e1410;height:4px;border-radius:2px;}"
-            "QSlider::handle:horizontal{background:#d9a94e;width:12px;height:12px;border-radius:6px;margin:-4px 0;}");
+        straighten_->setStyleSheet(Lumen::slider(Lumen::GOLD));   // 手写滑块 → 工厂，保留 GOLD 强调语义
         aspectCombo_ = new QComboBox(gp);
         aspectCombo_->addItem(QCoreApplication::translate("LightAlbum", "自由"), 0.0);
         aspectCombo_->addItem(QStringLiteral("1:1"), 1.0);
@@ -449,8 +447,9 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
         geoResetBtn_ = gbtn(QCoreApplication::translate("LightAlbum", "重置几何"));
         cropBtn_ = gbtn(QCoreApplication::translate("LightAlbum", "✂ 裁剪"));
         cropBtn_->setCheckable(true);
-        cropBtn_->setStyleSheet("QPushButton{background:#131a15;border:1px solid #26312a;border-radius:8px;padding:6px 12px;color:#f4f7f4;}"
-            "QPushButton:checked{border:2px solid #d9a94e;background:#262012;}");
+        cropBtn_->setStyleSheet(Lumen::btnGhost(Lumen::INK)
+            + QString::fromUtf8("QPushButton:checked{border:2px solid %1;background:#262012;}")
+                  .arg(Lumen::hex(Lumen::GOLD)));   // :checked 深金底 262012 无 token 之家（§1.7 未列），保留字面量待评审
         gl2->addWidget(geoRotLBtn_); gl2->addWidget(geoRotRBtn_);
         gl2->addWidget(geoFlipHBtn_); gl2->addWidget(geoFlipVBtn_);
         gl2->addWidget(sep);
@@ -467,30 +466,32 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
         auto* ml = new QVBoxLayout(mp);
         ml->setContentsMargins(14, 14, 14, 14);
         ml->setSpacing(8);
-        auto mbtn = [mp](const QString& t, const char* css){
+        auto mbtn = [mp](const QString& t, const QString& css){
             auto* b = new QPushButton(t, mp);
-            b->setStyleSheet(QString::fromLatin1(css));
+            b->setStyleSheet(css);
             return b;
         };
         maskBtn_ = mbtn(QCoreApplication::translate("LightAlbum", "🖌 蒙版模式"),
-            "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:8px;padding:6px 12px;color:#f4f7f4;}"
-            "QPushButton:checked{border:2px solid #4fc08a;background:#12241c;}");
+            Lumen::btnGhost(Lumen::INK)
+            + QString::fromUtf8("QPushButton:checked{border:2px solid %1;background:#12241c;}")
+                  .arg(Lumen::hex(Lumen::EMERALD)));   // :checked 深翡翠底 12241c 无 token 之家，保留待评审
         maskBtn_->setCheckable(true);
-        maskClearBtn_ = mbtn(QCoreApplication::translate("LightAlbum", "清除蒙版"), "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:8px;padding:6px 12px;color:#f4f7f4;}");
+        maskClearBtn_ = mbtn(QCoreApplication::translate("LightAlbum", "清除蒙版"), Lumen::btnGhost(Lumen::INK));
         maskApplyBtn_ = mbtn(QCoreApplication::translate("LightAlbum", "局部应用"),
-            "QPushButton{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #6adba6, stop:1 #2f7d57);border:none;border-radius:9px;padding:6px 14px;color:#f4f7f4;font-weight:bold;}");
+            QString::fromUtf8("QPushButton{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 %1, stop:1 %2);"
+                "border:none;border-radius:9px;padding:6px 14px;color:%3;font-weight:bold;}")
+                .arg(Lumen::hex(Lumen::EMERALD_HI), Lumen::hex(Lumen::EMERALD_DK), Lumen::hex(Lumen::INK)));
         brushSlider_ = new QSlider(Qt::Horizontal, mp);
         brushSlider_->setRange(4, 80); brushSlider_->setValue(24);
         brushSlider_->setFixedWidth(120);
         brushSlider_->setToolTip(QCoreApplication::translate("LightAlbum", "笔刷大小（像素）"));
-        brushSlider_->setStyleSheet("QSlider::groove:horizontal{background:#0e1410;height:4px;border-radius:2px;}"
-            "QSlider::handle:horizontal{background:#4fc08a;width:12px;height:12px;border-radius:6px;margin:-4px 0;}");
+        brushSlider_->setStyleSheet(Lumen::slider(Lumen::EMERALD));   // 手写滑块 → 工厂，保留 EMERALD 强调语义
         eraseBridge_ = new EraseBridge(this);
         eraseBridge_->setModelSlot(qEnvironmentVariable("LA_INPAINT_MODEL"));
-        eraseBtn_ = mbtn(QCoreApplication::translate("LightAlbum", "🧹 AI消除"), "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:8px;padding:6px 12px;color:#f4f7f4;}");
+        eraseBtn_ = mbtn(QCoreApplication::translate("LightAlbum", "🧹 AI消除"), Lumen::btnGhost(Lumen::INK));
         const QString slot = eraseBridge_->modelPath().isEmpty() ? QCoreApplication::translate("LightAlbum", "未配置") : eraseBridge_->modelPath();
         eraseSlotLbl_ = new QLabel(QCoreApplication::translate("LightAlbum", "模型槽位：%1 · 执行器未接入 · 零云端").arg(slot), mp);
-        eraseSlotLbl_->setStyleSheet("color:#8da396;");
+        eraseSlotLbl_->setStyleSheet(QString::fromUtf8("color:%1;").arg(Lumen::hex(Lumen::MUTED)));
         ml->addWidget(maskBtn_);
         ml->addWidget(new QLabel(QCoreApplication::translate("LightAlbum", "笔刷"), mp)); ml->addWidget(brushSlider_);
         ml->addWidget(maskClearBtn_); ml->addWidget(maskApplyBtn_);
@@ -506,10 +507,11 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
         cl4->setSpacing(8);
         compareBtn_ = new QPushButton(QCoreApplication::translate("LightAlbum", "◐ 对比"), cp);
         compareBtn_->setCheckable(true);
-        compareBtn_->setStyleSheet("QPushButton{background:#131a15;border:1px solid #26312a;border-radius:8px;padding:6px 12px;color:#f4f7f4;}"
-            "QPushButton:checked{border:2px solid #d9a94e;background:#262012;}");
+        compareBtn_->setStyleSheet(Lumen::btnGhost(Lumen::INK)
+            + QString::fromUtf8("QPushButton:checked{border:2px solid %1;background:#262012;}")
+                  .arg(Lumen::hex(Lumen::GOLD)));   // 同 cropBtn_：262012 保留字面量待评审
         auto* cnote = new QLabel(QCoreApplication::translate("LightAlbum", "拖动金色分割线对比原图与修后 · 零云端"), cp);
-        cnote->setStyleSheet("color:#8da396;");
+        cnote->setStyleSheet(QString::fromUtf8("color:%1;").arg(Lumen::hex(Lumen::MUTED)));
         cl4->addWidget(compareBtn_);
         cl4->addWidget(cnote);
         cl4->addStretch(1);
@@ -522,14 +524,15 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
         al5->setContentsMargins(14, 14, 14, 14);
         al5->setSpacing(10);
         auto* ah = new QLabel(QCoreApplication::translate("LightAlbum", "AI 智能体（Lumen × 本地 LLM）"), ap);
-        ah->setStyleSheet("color:#a88be5;font-weight:bold;font-size:12px;");
+        ah->setStyleSheet(QString::fromUtf8("color:%1;font-weight:bold;font-size:12px;").arg(Lumen::hex(Lumen::VIOLET)));
         goalEdit_ = new QLineEdit(ap);
         goalEdit_->setPlaceholderText(QCoreApplication::translate("LightAlbum", "目标（可选）：如 风光通透 / 胶片感"));
-        goalEdit_->setStyleSheet(QStringLiteral(
-            "QLineEdit{background:#0e1410;border:1px solid #26312a;border-radius:9px;"
-            "padding:6px 10px;color:#f4f7f4;} QLineEdit:focus{border-color:#a88be5;}"));
+        goalEdit_->setStyleSheet(Lumen::input()
+            + QString::fromUtf8("QLineEdit:focus{border-color:%1;}").arg(Lumen::hex(Lumen::VIOLET)));
+            // input() 焦点环是 EMERALD（全局语义）；AI 面板专属 VIOLET 焦点为工厂不可表达的
+            // per-site 例外（VIOLET=AI 职责锁死，spec §1.3），故追加覆盖。
         auto* anote = new QLabel(QCoreApplication::translate("LightAlbum", "描述目标，本地测量 → 本地 LLM 决策 → 所见即所得导出。"), ap);
-        anote->setStyleSheet("color:#8da396;");
+        anote->setStyleSheet(QString::fromUtf8("color:%1;").arg(Lumen::hex(Lumen::MUTED)));
         al5->addWidget(ah);
         al5->addWidget(goalEdit_);
         al5->addWidget(anote);
@@ -750,14 +753,13 @@ void RetouchPage::buildSlider(const RtSlider& def, QGridLayout* gl)
 {
     const int row = gl->rowCount();
     auto* lab = new QLabel(QString::fromUtf8(def.label), this);  // P11 修乱码：label 是 UTF-8 中文，Latin-1 必豆腐
-    lab->setStyleSheet("color:#f4f7f4;");
+    lab->setStyleSheet(QString::fromUtf8("color:%1;").arg(Lumen::hex(Lumen::INK)));
     auto* sl = new QSlider(Qt::Horizontal, this);
     sl->setRange(int(def.min * 100), int(def.max * 100));
     sl->setValue(0);
-    sl->setStyleSheet("QSlider::groove:horizontal{background:#0e1410;height:4px;border-radius:2px;}"
-        "QSlider::handle:horizontal{background:#4fc08a;width:14px;height:14px;border-radius:7px;margin:-5px 0;}");
+    sl->setStyleSheet(Lumen::slider(Lumen::EMERALD));   // 手写滑块 → 工厂（把手统一 12px，sanctioned）
     auto* val = new QLabel(QStringLiteral("0.00"), this);
-    val->setStyleSheet("color:#8da396;min-width:48px;");
+    val->setStyleSheet(QString::fromUtf8("color:%1;min-width:48px;").arg(Lumen::hex(Lumen::MUTED)));
     val->setAlignment(Qt::AlignRight);
     gl->addWidget(lab, row, 0);
     gl->addWidget(sl,  row, 1);
@@ -1308,14 +1310,17 @@ void RetouchPage::refreshChips()
     const RetouchSuggest s = RetouchEngine::recommend(geoImg_);
     if (!s.valid || s.chips.isEmpty()) {
         auto* t = new QLabel(QCoreApplication::translate("LightAlbum", "曝光均衡，无需修正"), chipRow_);
-        t->setStyleSheet("color:#8da396;");
+        t->setStyleSheet(QString::fromUtf8("color:%1;").arg(Lumen::hex(Lumen::MUTED)));
         hl->addWidget(t);
         return;
     }
     for (const QString& c : s.chips) {
         auto* b = new QPushButton(c, chipRow_);
-        b->setStyleSheet("QPushButton{background:#131a15;border:1px solid #4fc08a;border-radius:14px;"
-            "padding:4px 12px;color:#d2f0e0;font-size:12px;}");
+        b->setStyleSheet(QString::fromUtf8(
+            "QPushButton{background:%1;border:1px solid %2;border-radius:14px;"
+            "padding:4px 12px;color:%3;font-size:12px;}")
+            .arg(Lumen::hex(Lumen::CARD), Lumen::hex(Lumen::EMERALD), Lumen::hex(Lumen::INK_IMG)));
+            // 旧 d2f0e0 → INK_IMG：建议芯片浮于影像工作区之上，属影像叠加层（spec §1.7）
         connect(b, &QPushButton::clicked, this, &RetouchPage::onAutoEnhance);
         hl->addWidget(b);
     }
