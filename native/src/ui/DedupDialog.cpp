@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 LightAlbum Contributors
 #include "DedupDialog.h"
 #include "../core/PhotoDedup.h"
+#include "Theme.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QScrollArea>
@@ -49,7 +50,8 @@ DedupDialog::DedupDialog(const QVector<Photo>* photos, const QString& thumbsDir,
     root->setSpacing(12);
 
     summary_ = new QLabel(this);
-    summary_->setStyleSheet(QStringLiteral("color:#8da996;font-size:13px;"));
+    summary_->setStyleSheet(QString::fromUtf8("color:%1;font-size:13px;")
+        .arg(Lumen::hex(Lumen::MUTED)));
     root->addWidget(summary_);
 
     auto* sa = new QScrollArea(this);
@@ -200,10 +202,11 @@ void DedupDialog::buildGroup(const DupGroup& g, QVBoxLayout* parent)
     auto* markBtn = new QPushButton(
         QCoreApplication::translate("LightAlbum", "标记其余为待删"), w);
     markBtn->setCursor(Qt::PointingHandCursor);
-    markBtn->setStyleSheet(QStringLiteral(
+    markBtn->setStyleSheet(QString::fromUtf8(
         "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:8px;"
-        "padding:3px 10px;color:#8da996;font-size:12px;}"
-        "QPushButton:hover{border-color:#4fc08a;color:#d9e4dc;}"));
+        "padding:3px 10px;color:%1;font-size:12px;}"
+        "QPushButton:hover{border-color:#4fc08a;color:#d9e4dc;}")
+        .arg(Lumen::hex(Lumen::MUTED)));
     const QStringList dupsCopy = g.dupPaths;
     connect(markBtn, &QPushButton::clicked, this, [this, dupsCopy, w]() {
         onMarkGroup(dupsCopy, w);

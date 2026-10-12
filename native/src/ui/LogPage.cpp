@@ -279,7 +279,8 @@ LogPage::LogPage(const QVector<Photo>* photos, QWidget* parent)
     gearChart_ = new PieChart(root);
     gearLegend_= new QLabel(root);
     gearLegend_->setWordWrap(true);
-    gearLegend_->setStyleSheet("color:#8da996;font-size:11px;");
+    gearLegend_->setStyleSheet(QString::fromUtf8("color:%1;font-size:11px;")
+        .arg(Lumen::hex(Lumen::MUTED)));
     gearLegend_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
     monthChart_= new BarChart(root);
 
@@ -294,8 +295,9 @@ LogPage::LogPage(const QVector<Photo>* photos, QWidget* parent)
 
     // —— 页脚快照 ——
     foot_ = new QLabel(root);
-    foot_->setStyleSheet(QStringLiteral(
-        "color:#8da996;font-family:Consolas,'SFMono-Regular',monospace;font-size:11px;"));
+    foot_->setStyleSheet(QString::fromUtf8(
+        "color:%1;font-family:Consolas,'SFMono-Regular',monospace;font-size:11px;")
+        .arg(Lumen::hex(Lumen::MUTED)));
     lay->addWidget(foot_);
 
     lay->addStretch(1);
@@ -509,7 +511,8 @@ void LogPage::recompute()
     for (int i = 0; i < 6 && i < kpiLbls.size(); ++i) {
         kpiLbls[i]->setText(QStringLiteral(
             "<b style='font-family:Consolas,monospace;font-size:16px;color:#7fe6ac;'>%1</b><br>"
-            "<span style='font-size:11px;color:#8da996;'>%2</span>").arg(kpiV[i], kpiL[i]));
+            "<span style='font-size:11px;color:%3;'>%2</span>")
+            .arg(kpiV[i], kpiL[i], Lumen::hex(Lumen::MUTED)));
         kpiLbls[i]->setStyleSheet(QStringLiteral(
             "QLabel{background:#0f1512;border:none;border-radius:8px;"
             "padding:9px 10px;}"));

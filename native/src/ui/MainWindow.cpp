@@ -1287,14 +1287,15 @@ QMenu* MainWindow::buildImportMenu()
     QMenu* m = new QMenu(this);
     // 缺陷②修复：QMenu 是独立顶层弹出窗口，不继承应用级暗色 palette/QSS，
     // 落在系统浅色原生菜单上会叠加全局浅色文字 → 白底白字。逐实例设置暗色 QSS。
-    // 配色复用暗色弹层色系（GalleryPage::clusterDimBox_），disabled 文案用 #8da996
-    // 满足 WCAG 对比度（原低对比提示色 #5a6b60 已在方向 F a11y 整改中替换）。
-    m->setStyleSheet(QStringLiteral(
+    // 配色复用暗色弹层色系（GalleryPage::clusterDimBox_），disabled 文案用 Lumen::MUTED 插值
+    // 满足 WCAG 对比度（原低对比提示色已在方向 F a11y 整改中替换）。
+    m->setStyleSheet(QString::fromUtf8(
         "QMenu{background:#0e130f;color:#d9e4dc;border:1px solid #1d2a22;}"
         "QMenu::item{background:transparent;color:#d9e4dc;padding:6px 24px 6px 12px;}"
         "QMenu::item:selected{background:#1d2a22;color:#4fc08a;}"
-        "QMenu::item:disabled{color:#8da996;}"
-        "QMenu::separator{height:1px;background:#1d2a22;margin:4px 8px;}"));
+        "QMenu::item:disabled{color:%1;}"
+        "QMenu::separator{height:1px;background:#1d2a22;margin:4px 8px;}")
+        .arg(Lumen::hex(Lumen::MUTED)));
     QAction* aDir = m->addAction(QCoreApplication::translate("LightAlbum", "导入目录…"));
     connect(aDir, &QAction::triggered, this, &MainWindow::startImport);
 

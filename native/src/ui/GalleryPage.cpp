@@ -114,11 +114,12 @@ GalleryPage::GalleryPage(const QVector<Photo>* photos, const QString& thumbsDir,
     clusterDimBox_->addItem(QCoreApplication::translate("LightAlbum", "按城市"), 1);
     clusterDimBox_->addItem(QCoreApplication::translate("LightAlbum", "按年份"), 2);
     clusterDimBox_->addItem(QCoreApplication::translate("LightAlbum", "按月份"), 3);
-    clusterDimBox_->setStyleSheet(QStringLiteral(
+    clusterDimBox_->setStyleSheet(QString::fromUtf8(
         "QComboBox{background:#131a15;border:1px solid #26312a;border-radius:9px;"
-        "padding:3px 8px;color:#8da996;font-size:12px;}"
+        "padding:3px 8px;color:%1;font-size:12px;}"
         "QComboBox QAbstractItemView{background:#0e130f;color:#d9e4dc;"
-        "selection-background-color:#1d2a22;selection-color:#4fc08a;}"));
+        "selection-background-color:#1d2a22;selection-color:#4fc08a;}")
+        .arg(Lumen::hex(Lumen::MUTED)));
     connect(clusterDimBox_, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [this](int) {
         clusterDim_ = clusterDimBox_->currentData().toInt();
@@ -134,37 +135,41 @@ GalleryPage::GalleryPage(const QVector<Photo>* photos, const QString& thumbsDir,
     // 方向 C：相似照片去重入口（打开分组浏览对话框）
     auto* dedupBtn = new QPushButton(QCoreApplication::translate("LightAlbum", "相似照片"), clusterBar_);
     dedupBtn->setCursor(Qt::PointingHandCursor);
-    dedupBtn->setStyleSheet(QStringLiteral(
+    dedupBtn->setStyleSheet(QString::fromUtf8(
         "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:9px;"
-        "padding:3px 12px;color:#8da996;font-size:12px;}"
-        "QPushButton:hover{border-color:#4fc08a;color:#d9e4dc;}"));
+        "padding:3px 12px;color:%1;font-size:12px;}"
+        "QPushButton:hover{border-color:#4fc08a;color:#d9e4dc;}")
+        .arg(Lumen::hex(Lumen::MUTED)));
     connect(dedupBtn, &QPushButton::clicked, this, &GalleryPage::openDedup);
     clusterLay->addWidget(dedupBtn);
     // 方向 C·智能分类：请求 MainWindow 跑 CLIP 分类（视图不持写能力，只发信号）
     classifyBtn_ = new QPushButton(QCoreApplication::translate("LightAlbum", "AI 分类"), clusterBar_);
     classifyBtn_->setCursor(Qt::PointingHandCursor);
-    classifyBtn_->setStyleSheet(QStringLiteral(
+    classifyBtn_->setStyleSheet(QString::fromUtf8(
         "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:9px;"
-        "padding:3px 12px;color:#8da996;font-size:12px;}"
-        "QPushButton:hover{border-color:#4fc08a;color:#d9e4dc;}"));
+        "padding:3px 12px;color:%1;font-size:12px;}"
+        "QPushButton:hover{border-color:#4fc08a;color:#d9e4dc;}")
+        .arg(Lumen::hex(Lumen::MUTED)));
     connect(classifyBtn_, &QPushButton::clicked, this, &GalleryPage::classifyRequested);
     clusterLay->addWidget(classifyBtn_);
     // 方向 C·人脸识别（方案A）：请求 MainWindow 跑人脸检测（视图不持写能力，只发信号）
     auto* personBtn = new QPushButton(QCoreApplication::translate("LightAlbum", "识别人物"), clusterBar_);
     personBtn->setCursor(Qt::PointingHandCursor);
-    personBtn->setStyleSheet(QStringLiteral(
+    personBtn->setStyleSheet(QString::fromUtf8(
         "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:9px;"
-        "padding:3px 12px;color:#8da996;font-size:12px;}"
-        "QPushButton:hover{border-color:#4fc08a;color:#d9e4dc;}"));
+        "padding:3px 12px;color:%1;font-size:12px;}"
+        "QPushButton:hover{border-color:#4fc08a;color:#d9e4dc;}")
+        .arg(Lumen::hex(Lumen::MUTED)));
     connect(personBtn, &QPushButton::clicked, this, &GalleryPage::personDetectRequested);
     clusterLay->addWidget(personBtn);
     // 方向 C·人物自动聚类：请求 MainWindow 抽 embedding + 阈值余弦聚类（视图不持写能力，只发信号）
     auto* faceClusterBtn = new QPushButton(QCoreApplication::translate("LightAlbum", "智能聚类"), clusterBar_);
     faceClusterBtn->setCursor(Qt::PointingHandCursor);
-    faceClusterBtn->setStyleSheet(QStringLiteral(
+    faceClusterBtn->setStyleSheet(QString::fromUtf8(
         "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:9px;"
-        "padding:3px 12px;color:#8da996;font-size:12px;}"
-        "QPushButton:hover{border-color:#4fc08a;color:#d9e4dc;}"));
+        "padding:3px 12px;color:%1;font-size:12px;}"
+        "QPushButton:hover{border-color:#4fc08a;color:#d9e4dc;}")
+        .arg(Lumen::hex(Lumen::MUTED)));
     connect(faceClusterBtn, &QPushButton::clicked, this, &GalleryPage::faceClusterRequested);
     clusterLay->addWidget(faceClusterBtn);
     lay->addWidget(clusterBar_);
@@ -242,10 +247,11 @@ void GalleryPage::buildBatchBar()
     batchInfo_->setStyleSheet(QStringLiteral("color:#d9a94e;font-size:12px;font-weight:bold;"));
     bl->addWidget(batchInfo_);
 
-    const QString btnCss = QStringLiteral(
+    const QString btnCss = QString::fromUtf8(
         "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:9px;"
-        "padding:4px 10px;color:#8da996;font-size:12px;}"
-        "QPushButton:hover{border-color:#4fc08a;color:#f4f7f4;}");
+        "padding:4px 10px;color:%1;font-size:12px;}"
+        "QPushButton:hover{border-color:#4fc08a;color:#f4f7f4;}")
+        .arg(Lumen::hex(Lumen::MUTED));
     starBtns_.clear();
     for (int i = 1; i <= 5; ++i) {
         auto* b = new QPushButton(QStringLiteral("★%1").arg(i), batchBar_);
@@ -329,12 +335,13 @@ void GalleryPage::qaFireFaceCluster() { emit faceClusterRequested(); }
 // （前 kMaxVisibleChips=8 个平铺 + 「▾ N」溢出下拉），选中项自动提升可见。
 void GalleryPage::buildChips()
 {
-    const QString chipCss = QStringLiteral(
+    const QString chipCss = QString::fromUtf8(
         "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:999px;"
-        "padding:4px 12px;color:#8da996;font-size:12px;}"
+        "padding:4px 12px;color:%1;font-size:12px;}"
         "QPushButton:hover{border-color:#4fc08a;color:#f4f7f4;}"
         "QPushButton:checked{background:#d9a94e;border-color:#d9a94e;"
-        "color:#0c100d;font-weight:bold;}");
+        "color:#0c100d;font-weight:bold;}")
+        .arg(Lumen::hex(Lumen::MUTED));
 
     // 计数（与列表同口径：锁定时跳过私密）
     QHash<QString, int> catCnt;
@@ -450,12 +457,13 @@ void GalleryPage::buildClusterBar()
         lay->setContentsMargins(0, 0, 0, 0);
         lay->setSpacing(8);
     }
-    const QString chipCss = QStringLiteral(
+    const QString chipCss = QString::fromUtf8(
         "QPushButton{background:#101710;border:1px solid #232d26;border-radius:11px;"
-        "padding:4px 12px;color:#8da996;font-size:12px;}"
+        "padding:4px 12px;color:%1;font-size:12px;}"
         "QPushButton:hover{border-color:#4fc08a;color:#f4f7f4;}"
         "QPushButton:checked{background:#d9a94e;border-color:#d9a94e;"
-        "color:#0c100d;font-weight:bold;}");
+        "color:#0c100d;font-weight:bold;}")
+        .arg(Lumen::hex(Lumen::MUTED));
 
     const QVector<PhotoCluster::Cluster> cs =
         PhotoCluster::cluster(*photos_, static_cast<PhotoCluster::Dim>(clusterDim_), hidePrivate_);
@@ -518,12 +526,13 @@ void GalleryPage::buildStoryBar()
         lay->setContentsMargins(0, 0, 0, 0);
         lay->setSpacing(8);
     }
-    const QString chipCss = QStringLiteral(
+    const QString chipCss = QString::fromUtf8(
         "QPushButton{background:#101710;border:1px solid #232d26;border-radius:11px;"
-        "padding:4px 12px;color:#8da996;font-size:12px;}"
+        "padding:4px 12px;color:%1;font-size:12px;}"
         "QPushButton:hover{border-color:#4fc08a;color:#f4f7f4;}"
         "QPushButton:checked{background:#4fc08a;border-color:#4fc08a;"
-        "color:#0c100d;font-weight:bold;}");
+        "color:#0c100d;font-weight:bold;}")
+        .arg(Lumen::hex(Lumen::MUTED));
 
     const StoryGen::Result r = StoryGen::build(*photos_, 5, hidePrivate_);
     if (r.stories.isEmpty()) { Lumen::clearChipRow(lay); storyBar_->setVisible(false); return; }

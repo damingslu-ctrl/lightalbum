@@ -5991,12 +5991,12 @@ int main(int argc, char *argv[])
             {"Bg on Gold (selection)",     Dark::Bg,   Dark::Gold,   4.5},
             {"btnGold #1a1204 on Gold",    QColor(0x1a,0x12,0x04), Dark::Gold, 4.5},
             {"checkedChip #0c100d on Gold",QColor(0x0c,0x10,0x0d), Dark::Gold, 4.5},
-            {"hint #8da996 on Bg",         QColor(0x8d,0xa9,0x96), Dark::Bg,     4.5},
+            {"hint Lumen::MUTED on Bg",    Lumen::MUTED, Dark::Bg,     4.5},
             {"lightbox meta #9db2a5 on bottom", QColor(0x9d,0xb2,0xa5), QColor(0x04,0x06,0x04), 4.5},
             // 缺陷②回归：导入菜单逐实例暗色 QSS 配色必须过 WCAG（防止白底白字回潮）
             {"importMenu item #d9e4dc on #0e130f",   QColor(0xd9,0xe4,0xdc), QColor(0x0e,0x13,0x0f), 4.5},
             {"importMenu selected #4fc08a on #1d2a22",QColor(0x4f,0xc0,0x8a), QColor(0x1d,0x2a,0x22), 4.5},
-            {"importMenu disabled #8da996 on #0e130f",QColor(0x8d,0xa9,0x96), QColor(0x0e,0x13,0x0f), 4.5},
+            {"importMenu disabled MUTED on #0e130f",Lumen::MUTED, QColor(0x0e,0x13,0x0f), 4.5},
         };
         if (!qEnvironmentVariableIsEmpty("LA_A11Y_CONTRAST_QA_FORCE_BROKEN"))
             pairs.append({"BROKEN Line on Inset", Dark::Line, Dark::Inset, 4.5});
