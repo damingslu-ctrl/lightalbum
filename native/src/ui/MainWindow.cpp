@@ -1197,7 +1197,7 @@ QWidget* MainWindow::makePlaceholder(const QString& secName, const QString& icon
         .arg(Lumen::hex(Lumen::CARD), Lumen::hex(Lumen::LINE)));   // token 值字面量归引用（色不变）
 
     auto* t = new QLabel(secName, w);
-    t->setFont(Lumen::Type::display());   // T8：20pt 粗体英雄题即 T1 Display（ls 4.0 随档归零 §2.4）
+    t->setFont(Lumen::Type::title(false));   // T8修订：占位题保持 sans（YaHei 15pt 粗体，同 LogPage:176）；Display/serif 仅首页 hero（§2.1）
     t->setStyleSheet(QString::fromUtf8("color:%1;").arg(Lumen::hex(Lumen::INK)));
 
     auto* chip = new QLabel(QCoreApplication::translate("LightAlbum", "即将推出"), w);
