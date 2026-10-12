@@ -53,11 +53,14 @@ static QString storyAvatarColor(const QString& name)
 // 圆角/内距/字阶原值保留（归格属 T9/T10）。
 static QString galleryChipCss(const QString& radiusPx, const QColor& checkedAccent)
 {
-    return QString::fromUtf8(
+    // T8：12px=T5 原位 → Type::css(Small)（拼接式，%1..%9 序号不动）。
+    return (QString::fromUtf8(
         "QPushButton{background:%1;border:1px solid %2;border-radius:%3;"
-        "padding:4px 12px;color:%4;font-size:12px;}"
-        "QPushButton:hover{border-color:%5;color:%6;}"
-        "QPushButton:checked{background:%7;border-color:%8;color:%9;font-weight:bold;}")
+        "padding:4px 12px;color:%4;")
+        + Lumen::Type::css(Lumen::Type::Tier::Small)
+        + QString::fromUtf8(
+        "}QPushButton:hover{border-color:%5;color:%6;}"
+        "QPushButton:checked{background:%7;border-color:%8;color:%9;font-weight:bold;}"))
         .arg(Lumen::hex(Lumen::CARD), Lumen::hex(Lumen::LINE), radiusPx,
              Lumen::hex(Lumen::MUTED), Lumen::hex(Lumen::EMERALD),
              Lumen::hex(Lumen::INK), Lumen::hex(checkedAccent),
@@ -145,11 +148,13 @@ GalleryPage::GalleryPage(const QVector<Photo>* photos, const QString& thumbsDir,
     // 缺口记报告，不强造）。与 T5 MapPage yearBox 同形：本地单源配方 + 全 token 引用
     //（§1.7：0e130f→PANEL、d9e4dc→INK；1d2a22 选中底→CARD_HI，沿用 T5「LINE 仅作分隔线、
     // 选中面归 CARD_HI」判例）。圆角 9px/内距/字阶原值保留（归格属 T9/T8）。
-    clusterDimBox_->setStyleSheet(QString::fromUtf8(
+    clusterDimBox_->setStyleSheet((QString::fromUtf8(   // T8：12px=T5 原位 → css(Small)，拼接式序号不动
         "QComboBox{background:%1;border:1px solid %2;border-radius:9px;"
-        "padding:3px 8px;color:%3;font-size:12px;}"
-        "QComboBox QAbstractItemView{background:%4;color:%5;"
-        "selection-background-color:%6;selection-color:%7;}")
+        "padding:3px 8px;color:%3;")
+        + Lumen::Type::css(Lumen::Type::Tier::Small)
+        + QString::fromUtf8(
+        "}QComboBox QAbstractItemView{background:%4;color:%5;"
+        "selection-background-color:%6;selection-color:%7;}"))
         .arg(Lumen::hex(Lumen::CARD))
         .arg(Lumen::hex(Lumen::LINE))
         .arg(Lumen::hex(Lumen::MUTED))
@@ -270,8 +275,10 @@ void GalleryPage::buildBatchBar()
     bl->setSpacing(6);
 
     batchInfo_ = new QLabel(batchBar_);
-    batchInfo_->setStyleSheet(QStringLiteral("color:%1;font-size:12px;font-weight:bold;")
-        .arg(Lumen::hex(Lumen::GOLD)));    // token 值字面量归引用（色不变）
+    batchInfo_->setStyleSheet(QStringLiteral("color:%1;")   // T8：12px=T5 原位 → css(Small)
+        .arg(Lumen::hex(Lumen::GOLD))                        // token 值字面量归引用（色不变）
+        + Lumen::Type::css(Lumen::Type::Tier::Small)
+        + QStringLiteral("font-weight:bold;"));
     bl->addWidget(batchInfo_);
 
     // §4.2：ghost 克隆归厂 → btnGhost(MUTED) 单源（星级×5 + 私密 + 取消选择共用；
@@ -435,8 +442,10 @@ void GalleryPage::buildChips()
         //（多参数 .arg 会先吃掉 %1，令彩色底失效——占位符纪律，勿改成 arg 链）。
         const QString personCssTpl = QStringLiteral(
             "QPushButton{background:%1;border:none;border-radius:11px;"
-            "padding:4px 12px;color:") + Lumen::hex(Lumen::PANEL) + QStringLiteral(
-            ";font-size:12px;font-weight:bold;}"
+            "padding:4px 12px;color:") + Lumen::hex(Lumen::PANEL) + QStringLiteral(";")
+            + Lumen::Type::css(Lumen::Type::Tier::Small)   // T8：12px=T5 原位（输出无 % 标号，模板纪律不破坏）
+            + QStringLiteral(
+            "font-weight:bold;}"
             "QPushButton:hover{border:2px solid ") + Lumen::hex(Lumen::EMERALD) + QStringLiteral(
             ";padding:2px 10px;}"
             "QPushButton:checked{border:2px solid ") + Lumen::hex(Lumen::INK) + QStringLiteral(

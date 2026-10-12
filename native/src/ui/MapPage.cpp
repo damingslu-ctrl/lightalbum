@@ -45,8 +45,9 @@ MapPage::MapPage(const QVector<Photo>* photos, const QString& thumbsDir,
     back_->setEnabled(false);
     back_->setStyleSheet(Lumen::btnGhost());   // 默认 GOLD tint = 原字面金
     crumb_ = new QLabel(QCoreApplication::translate("LightAlbum", "世界"), bar);
-    crumb_->setStyleSheet(QStringLiteral("color:%1;font-size:13px;")
-        .arg(Lumen::hex(Lumen::GOLD_HI)));
+    crumb_->setStyleSheet(QStringLiteral("color:%1;")
+        .arg(Lumen::hex(Lumen::GOLD_HI))
+        + Lumen::Type::css(Lumen::Type::Tier::Body));   // T8：13px=T4 原位
     bl->addWidget(back_);
     bl->addWidget(crumb_);
     // 迭代 1：世界层导航 —— 平移/缩放后一键回到默认视角（缩放归 1 + 中国居中）
@@ -177,23 +178,21 @@ MapPage::MapPage(const QVector<Photo>* photos, const QString& thumbsDir,
     sl->setSpacing(12);
 
     auto* head = new QLabel(QCoreApplication::translate("LightAlbum", "区域统计"), stats_);
-    QFont hf = head->font(); hf.setPointSizeF(14); hf.setBold(true);
-    hf.setLetterSpacing(QFont::AbsoluteSpacing, 3.0);
-    head->setFont(hf);
+    head->setFont(Lumen::Type::head());   // T8：14pt 粗体区块标题归 T3(12pt 粗)，ls 3.0 随档归零 §2.4
     head->setStyleSheet(QStringLiteral("color:%1;").arg(Lumen::hex(Lumen::INK)));
     sl->addWidget(head);
 
     statsTitle_ = new QLabel(QCoreApplication::translate("LightAlbum", "尚未选择区域"), stats_);
-    QFont tf = statsTitle_->font(); tf.setPointSizeF(13); tf.setBold(true);
-    statsTitle_->setFont(tf);
+    statsTitle_->setFont(Lumen::Type::head());   // T8：13pt 粗体归 T3(12pt 粗)
     statsTitle_->setStyleSheet(QStringLiteral("color:%1;").arg(Lumen::hex(Lumen::GOLD)));
     statsTitle_->setWordWrap(true);
     sl->addWidget(statsTitle_);
 
     statsBody_ = new QLabel(QStringLiteral(
         "点击地图上的大区或省份，查看该地作品统计，并可一键在图库筛选。"), stats_);
-    statsBody_->setStyleSheet(QStringLiteral("color:%1;font-size:12px;")
-        .arg(Lumen::hex(Lumen::MUTED)));
+    statsBody_->setStyleSheet(QStringLiteral("color:%1;")
+        .arg(Lumen::hex(Lumen::MUTED))
+        + Lumen::Type::css(Lumen::Type::Tier::Small));   // T8：12px=T5 原位
     statsBody_->setWordWrap(true);
     sl->addWidget(statsBody_);
 
@@ -214,8 +213,9 @@ MapPage::MapPage(const QVector<Photo>* photos, const QString& thumbsDir,
 
     // P16.4.2 航线基点提示（数据事实：默认上海，可经「重新定位」修改）
     homeHint_ = new QLabel(stats_);
-    homeHint_->setStyleSheet(QStringLiteral("color:%1;font-size:11px;")
-        .arg(Lumen::hex(Lumen::MUTED)));
+    homeHint_->setStyleSheet(QStringLiteral("color:%1;")
+        .arg(Lumen::hex(Lumen::MUTED))
+        + Lumen::Type::css(Lumen::Type::Tier::Small));   // T8：11px→T5(12px)
     homeHint_->setWordWrap(true);
     homeHint_->setText(QString::fromUtf8(
         "<span style='color:%1;'>✈ 航线基点：%2</span><br>"
@@ -520,7 +520,7 @@ void MapPage::onRelocate()
     dlg.setWindowTitle(QCoreApplication::translate("LightAlbum", "重新定位 · 航线基点"));
     dlg.setStyleSheet(QString::fromUtf8(
         "QDialog{background:%1;}"
-        "QLabel{color:%2;font-size:12px;}"
+        "QLabel{color:%2;%10}"
         "QComboBox,QLineEdit{background:%3;border:1px solid %4;border-radius:8px;"
         "padding:6px 8px;color:%5;}"
         "QPushButton{background:%6;border:1px solid %7;border-radius:8px;"
@@ -534,7 +534,8 @@ void MapPage::onRelocate()
         .arg(Lumen::hex(Lumen::CARD))     // %6
         .arg(Lumen::hex(Lumen::LINE))     // %7
         .arg(Lumen::hex(Lumen::INK))      // %8
-        .arg(Lumen::hex(Lumen::INK)));    // %9
+        .arg(Lumen::hex(Lumen::INK))      // %9
+        .arg(Lumen::Type::css(Lumen::Type::Tier::Small)));   // T8（%10）：12px=T5 原位
     auto* vl = new QVBoxLayout(&dlg);
     vl->setContentsMargins(18, 16, 18, 14);
     vl->setSpacing(10);

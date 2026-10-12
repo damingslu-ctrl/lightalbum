@@ -177,14 +177,20 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
     auto* trl = new QVBoxLayout(toolrail_);
     trl->setContentsMargins(10, 14, 10, 14);
     trl->setSpacing(8);
-    railCss_   = QString::fromUtf8(
-        "QPushButton{background:transparent;border:none;border-radius:9px;color:%1;padding:9px 8px;"
-        "font-size:12px;letter-spacing:.06em;text-align:left;}"
+    railCss_   = (QString::fromUtf8(
+        "QPushButton{background:transparent;border:none;border-radius:9px;color:%1;padding:9px 8px;")
+        + Lumen::Type::css(Lumen::Type::Tier::Small)   // T8：12px=T5 原位
+        + QString::fromUtf8(
+        "letter-spacing:.06em;text-align:left;}"
         "QPushButton:hover{background:rgba(232,228,218,0.06);}")
+        )
         .arg(Lumen::hex(Lumen::MUTED));   // 旧 9fa8a3 → MUTED（spec §1.7）
-    railOnCss_ = QString::fromUtf8(
+    railOnCss_ = (QString::fromUtf8(
         "QPushButton{background:rgba(217,169,78,0.16);border:none;border-radius:9px;color:%1;"
-        "font-weight:600;padding:9px 8px;font-size:12px;letter-spacing:.06em;text-align:left;}")
+        "font-weight:bold;padding:9px 8px;")   // T8 §2.4：600 归一 bold 三档
+        + Lumen::Type::css(Lumen::Type::Tier::Small)   // T8：12px=T5 原位
+        + QString::fromUtf8(
+        "letter-spacing:.06em;text-align:left;}"))
         .arg(Lumen::hex(Lumen::GOLD));
     static const char* kModeNames[] = {"预设", "调整", "几何", "蒙版", "对比", "AI"};
     for (int m = 0; m < 6; ++m) {
@@ -385,7 +391,9 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
         gv->setContentsMargins(10, 14, 10, 14);
         gv->setSpacing(8);
         auto* gt = new QLabel(QCoreApplication::translate("LightAlbum", "滤镜预设"), galleryPanel_);
-        gt->setStyleSheet(QString::fromUtf8("color:%1;font-weight:bold;font-size:13px;").arg(Lumen::hex(Lumen::INK)));
+        gt->setStyleSheet(QString::fromUtf8("color:%1;font-weight:bold;")
+            .arg(Lumen::hex(Lumen::INK))
+            + Lumen::Type::css(Lumen::Type::Tier::Body));   // T8：13px=T4 原位（粗体留串）
         gv->addWidget(gt);
         auto* gsa = new QScrollArea(galleryPanel_);
         gsa->setWidgetResizable(true);
@@ -422,7 +430,9 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
             return b;
         };
         auto* hgeo = new QLabel(QCoreApplication::translate("LightAlbum", "几何编辑"), gp);
-        hgeo->setStyleSheet(QString::fromUtf8("color:%1;font-weight:bold;font-size:12px;").arg(Lumen::hex(Lumen::INK)));
+        hgeo->setStyleSheet(QString::fromUtf8("color:%1;font-weight:bold;")
+            .arg(Lumen::hex(Lumen::INK))
+            + Lumen::Type::css(Lumen::Type::Tier::Small));   // T8：12px=T5 原位（粗体留串）
         gl2->addWidget(hgeo);
         geoRotLBtn_ = gbtn(QCoreApplication::translate("LightAlbum", "旋转⟲"));
         geoRotRBtn_ = gbtn(QCoreApplication::translate("LightAlbum", "旋转⟳"));
@@ -526,7 +536,9 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
         al5->setContentsMargins(14, 14, 14, 14);
         al5->setSpacing(10);
         auto* ah = new QLabel(QCoreApplication::translate("LightAlbum", "AI 智能体（Lumen × 本地 LLM）"), ap);
-        ah->setStyleSheet(QString::fromUtf8("color:%1;font-weight:bold;font-size:12px;").arg(Lumen::hex(Lumen::VIOLET)));
+        ah->setStyleSheet(QString::fromUtf8("color:%1;font-weight:bold;")
+            .arg(Lumen::hex(Lumen::VIOLET))
+            + Lumen::Type::css(Lumen::Type::Tier::Small));   // T8：12px=T5 原位（粗体留串）
         goalEdit_ = new QLineEdit(ap);
         goalEdit_->setPlaceholderText(QCoreApplication::translate("LightAlbum", "目标（可选）：如 风光通透 / 胶片感"));
         goalEdit_->setStyleSheet(Lumen::input()
@@ -1320,8 +1332,9 @@ void RetouchPage::refreshChips()
         auto* b = new QPushButton(c, chipRow_);
         b->setStyleSheet(QString::fromUtf8(
             "QPushButton{background:%1;border:1px solid %2;border-radius:14px;"
-            "padding:4px 12px;color:%3;font-size:12px;}")
-            .arg(Lumen::hex(Lumen::CARD), Lumen::hex(Lumen::EMERALD), Lumen::hex(Lumen::INK_IMG)));
+            "padding:4px 12px;color:%3;%4}")
+            .arg(Lumen::hex(Lumen::CARD), Lumen::hex(Lumen::EMERALD), Lumen::hex(Lumen::INK_IMG))
+            .arg(Lumen::Type::css(Lumen::Type::Tier::Small)));   // T8：12px=T5 原位
             // 旧 d2f0e0 → INK_IMG：建议芯片浮于影像工作区之上，属影像叠加层（spec §1.7）
         connect(b, &QPushButton::clicked, this, &RetouchPage::onAutoEnhance);
         hl->addWidget(b);

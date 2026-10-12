@@ -36,8 +36,8 @@
                           },
                    "C2":  {
                               "label":  "font-size",
-                              "current":  58,
-                              "ceiling":  58
+                              "current":  0,
+                              "ceiling":  0
                           },
                    "C5":  {
                               "label":  "emoji-in-tr",

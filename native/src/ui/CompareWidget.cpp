@@ -1,4 +1,5 @@
 #include "CompareWidget.h"
+#include "Theme.h"   // T8：Type:: 六档字阶 helper（spec §2.2，页面禁手调 setPointSizeF）
 #include <QCoreApplication>
 #include <QPainter>
 #include <QMouseEvent>
@@ -57,7 +58,7 @@ void CompareWidget::paintEvent(QPaintEvent*)
     p.drawLine(splitX, d.top(), splitX, d.bottom());
     // 角标
     p.setPen(QColor(0xf4, 0xf7, 0xf4));
-    QFont f = p.font(); f.setPointSizeF(10); p.setFont(f);
+    p.setFont(Lumen::Type::smallText());   // T8：10pt 角标归 T5 smallText（9pt）
     p.drawText(QRect(d.left() + 8, d.top() + 6, 80, 20), Qt::AlignLeft, QCoreApplication::translate("LightAlbum", "原图"));
     p.drawText(QRect(d.right() - 88, d.top() + 6, 80, 20), Qt::AlignRight, QCoreApplication::translate("LightAlbum", "修后"));
 }

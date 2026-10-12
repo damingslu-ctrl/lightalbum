@@ -50,8 +50,9 @@ DedupDialog::DedupDialog(const QVector<Photo>* photos, const QString& thumbsDir,
     root->setSpacing(12);
 
     summary_ = new QLabel(this);
-    summary_->setStyleSheet(QString::fromUtf8("color:%1;font-size:13px;")
-        .arg(Lumen::hex(Lumen::MUTED)));
+    summary_->setStyleSheet(QString::fromUtf8("color:%1;%2")
+        .arg(Lumen::hex(Lumen::MUTED))
+        .arg(Lumen::Type::css(Lumen::Type::Tier::Body)));   // T8：13px=T4 原位
     root->addWidget(summary_);
 
     auto* sa = new QScrollArea(this);
@@ -189,8 +190,9 @@ void DedupDialog::buildGroup(const DupGroup& g, QVBoxLayout* parent)
     auto* col = new QVBoxLayout;
     col->setSpacing(6);
     auto* reason = new QLabel(g.reason, w);
-    reason->setStyleSheet(QStringLiteral("color:%1;font-size:12px;")
-        .arg(Lumen::hex(Lumen::INK)));   // §1.7：抄写盘文字（原值 d9e4dc） → INK（归并，色微亮）
+    reason->setStyleSheet(QStringLiteral("color:%1;%2")
+        .arg(Lumen::hex(Lumen::INK))   // §1.7：抄写盘文字（原值 d9e4dc） → INK（归并，色微亮）
+        .arg(Lumen::Type::css(Lumen::Type::Tier::Small)));   // T8：12px=T5 原位
     col->addWidget(reason);
 
     auto* dups = new QWidget(w);
