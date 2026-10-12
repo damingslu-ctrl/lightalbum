@@ -21,6 +21,8 @@
 #include <QVector>
 #include <QPoint>
 #include <QCoreApplication>
+#include <QGraphicsDropShadowEffect>
+#include <QWidget>
 #include <functional>
 
 // 统一选项条需要的最小 Qt 声明（fillChipRow 只做构建，不持状态）
@@ -48,6 +50,21 @@ inline constexpr QColor VIOLET     = QColor(0xa8, 0x8b, 0xe5); // AI 智能体�
 inline constexpr QColor VIOLET_DK  = QColor(0x6d, 0x54, 0xa8);
 inline constexpr QColor CORAL      = QColor(0xe0, 0x70, 0x5f); // 危险/警示
 inline constexpr QColor DISABLED   = QColor(0x50, 0x58, 0x52);
+
+// ---- v2 扩展 token（spec 2026-10-12 §1）—— 曜石基底之上只加语义角色，不改旧值 ----
+inline constexpr QColor SKY      = QColor(0x5b, 0x9c, 0xd6); // CAT2 数据分类·天青
+inline constexpr QColor ROSE     = QColor(0xcf, 0x86, 0xa8); // CAT6 数据分类·洋红
+inline constexpr QColor TEAL     = QColor(0x57, 0xb6, 0xa4); // CAT7 数据分类·蓝绿
+inline constexpr QColor OLIVE    = QColor(0x9f, 0xb7, 0x5a); // CAT8 数据分类·橄榄
+inline constexpr QColor CORAL_DK = QColor(0xa0, 0x4a, 0x3e); // 危险描边暗端
+inline constexpr QColor INK_IMG   = QColor(0xe8, 0xe4, 0xda); // 照片叠加层·主文字
+inline constexpr QColor MUTED_IMG = QColor(0x98, 0xa2, 0x9a); // 照片叠加层·次文字
+inline constexpr QColor FAINT_IMG = QColor(0x6d, 0x7a, 0x6f); // 照片叠加层·弱文字
+// 数据分类色板：CAT 板是数据编码语言，不受 VIOLET=AI 专属的控制面职责约束（spec §1.4 裁定）
+inline constexpr QColor CAT1 = EMERALD, CAT2 = SKY, CAT3 = GOLD, CAT4 = VIOLET,
+                        CAT5 = CORAL,  CAT6 = ROSE, CAT7 = TEAL, CAT8 = OLIVE;
+inline QColor glowJade() { QColor c = EMERALD_HI; c.setAlpha(115); return c; } // 45%
+inline QColor glowGold() { QColor c = GOLD_HI;   c.setAlpha(102); return c; } // 40%
 
 inline QString hex(const QColor& c) { return c.name(); }
 
@@ -90,6 +107,44 @@ inline QFont serifFont(qreal pointSize, QFont::Weight weight = QFont::Normal,
         f.setLetterSpacing(QFont::AbsoluteSpacing, letterSpacing);
     f.setStyleStrategy(QFont::PreferAntialias);
     return f;
+}
+
+namespace Radius { // px，白名单与 qa/palette_baseline.json radiusWhitelist 同步
+    inline constexpr int Micro = 4, Inset = 6, Ctl = 10, Card = 14, Feature = 20;
+    inline const QString Pill = QStringLiteral("999px");
+}
+namespace Space { // 4px 基网格六级
+    inline constexpr int Xs = 4, S = 8, M = 12, L = 16, Xl = 24, Xxl = 32;
+}
+namespace Type {
+    enum class Tier { Display, Title, Head, Body, Small };
+    inline QFont yahei(qreal pt, QFont::Weight w = QFont::Normal, qreal ls = 0.0) {
+        QFont f(QString::fromUtf8("Microsoft YaHei UI"));
+        f.setPointSizeF(pt); f.setWeight(w); f.setStyleStrategy(QFont::PreferAntialias);
+        if (ls != 0.0) f.setLetterSpacing(QFont::AbsoluteSpacing, ls);
+        return f;
+    }
+    inline QFont display()               { return serifFont(20, QFont::Bold); }
+    inline QFont title(bool serif = true){ return serif ? serifFont(15, QFont::Bold) : yahei(15, QFont::Bold); }
+    inline QFont head()  { return yahei(12, QFont::Bold); }
+    inline QFont body()  { return yahei(9.5); }
+    inline QFont smallText(){ return yahei(9); }   // small 撞 Windows RPC 宏，命名 smallText
+    inline QFont mono(qreal pt = 9.5) { QFont f(QStringLiteral("Consolas")); f.setPointSizeF(pt); return f; }
+    inline int px(qreal pt) { return int(pt * 4.0 / 3.0 + 0.5); }
+    inline QString css(Tier t) {
+        static const qreal pts[] = {20, 15, 12, 9.5, 9};
+        return QString("font-size:%1px;").arg(px(pts[int(t)]));
+    }
+}
+namespace Elev {
+    enum Level { E1, E2 };
+    inline void apply(QWidget* w, Level lv) {
+        auto* sh = new QGraphicsDropShadowEffect(w);
+        sh->setColor(QColor(0, 0, 0, lv == E1 ? 128 : 158));
+        sh->setOffset(QPointF(0, lv == E1 ? 6 : 14));
+        sh->setBlurRadius(lv == E1 ? 20 : 36);
+        w->setGraphicsEffect(sh);
+    }
 }
 
 // ---- 组件样式工厂（QSS 片段；只覆盖强语义组件，表面色走 QPalette） -----------
@@ -142,6 +197,31 @@ inline QString btnGhost(const QColor& tint = GOLD)
         "QPushButton:hover{background:#1a231d;border-color:#%2;}"
         "QPushButton:disabled{color:#5a6b60;border-color:#1c2420;}")
         .arg(hex(tint), hex(tint), hex(tint));
+}
+
+// AI 动作专用第四形态（VIOLET 职责锁死：非 AI 禁用，spec §1.3）
+inline QString btnViolet()
+{
+    QColor hover = VIOLET.lighter(115);
+    return QString::fromUtf8(
+        "QPushButton{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
+        "stop:0 #%1, stop:1 #%2);border:none;border-radius:9px;"
+        "padding:8px 16px;color:#f4f7f4;font-weight:bold;}"
+        "QPushButton:hover{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
+        "stop:0 #%3, stop:1 #%1);}"
+        "QPushButton:disabled{background:%4;color:%5;}")
+        .arg(hex(VIOLET), hex(VIOLET_DK), hex(hover), hex(DISABLED), hex(FAINT));
+}
+
+inline QString btnOutline(const QColor& accent)
+{
+    QColor hi = accent.lighter(115);
+    return QString::fromUtf8(
+        "QPushButton{background:%1;border:1px solid %2;border-radius:9px;"
+        "padding:6px 14px;color:%2;}"
+        "QPushButton:hover{border-color:%3;color:%3;background:%4;}"
+        "QPushButton:disabled{color:%5;border-color:%6;}")
+        .arg(hex(CARD), hex(accent), hex(hi), hex(CARD_HI), hex(FAINT), hex(LINE));
 }
 
 // KPI 卡片：左侧语义色竖条 + 渐变高光底（大胆点三）
