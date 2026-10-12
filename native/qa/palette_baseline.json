@@ -41,8 +41,8 @@
                           },
                    "C5":  {
                               "label":  "emoji-in-tr",
-                              "current":  0,
-                              "ceiling":  0
+                              "current":  30,
+                              "ceiling":  30
                           },
                    "C1":  {
                               "label":  "hex",

@@ -7,7 +7,8 @@
     C2 font-size literals    (font-size:NNpx in QSS strings)
     C3 off-grid border-radius (value not in radiusWhitelist)
     C4 off-grid spacing      (setSpacing/setContentsMargins value not in spaceWhitelist)
-    C5 emoji inside tr()     (surrogate-pair chars in tr/fromUtf8 string literals)
+    C5 emoji in translatable strings (symbol/glyph chars on translate()/tr()/
+                                            fromUtf8()/QStringLiteral() lines)
   Ratchet: current > ceiling -> FAIL. Never auto-relaxes. -Update rewrites
   ceilings to current (only allowed from BELOW, i.e. it records progress).
   -Init creates the baseline with ceiling=current (used exactly once, Task 1).
@@ -45,9 +46,15 @@ function Measure-Counts {
       foreach ($m in [regex]::Matches($ln,'setContentsMargins\(([^)]*)\)')) {
         foreach ($n in ($m.Groups[1].Value -split ',')) {
           $v = $n.Trim(); if ($v -match '^\d+$') { if ($sw -notcontains [int]$v) { $c4++ } } } }
-      foreach ($m in [regex]::Matches($ln,'(tr|fromUtf8)\(')) {
-        $tail = $ln.Substring($m.Index)
-        if ([regex]::IsMatch($tail,'[\uD800-\uDBFF][\uDC00-\uDFFF]')) { $c5++ } }
+      # C5: an emoji/symbol glyph on a translatable-string site. The real codebase
+      # idiom is QCoreApplication::translate("LightAlbum","...") (evidence: Gallery
+      # Page:264, CullPage:241/859, MainWindow:279/287) plus tr/fromUtf8/QStringLitera
+      # l, so the old "(tr|fromUtf8)\(" key reported C5=0 and stayed blind to the deb
+      # t it monitors. Precision holds because a line must ALSO carry an emoji-class c
+      # har: astral surrogate pairs (U+1F300..) plus the BMP dingbat/shape blocks the
+      # audit inventory uses (U+2600-U+27BF incl. 0x2665 heart; U+25A0-U+25FF shapes).
+      if (($ln -match '[\uD800-\uDBFF][\uDC00-\uDFFF]|[\u2600-\u27BF]|[\u25A0-\u25FF]') -and
+          ($ln -match 'translate\(|tr\(|fromUtf8\(|QStringLiteral\(')) { $c5++ }
     }
   }
   return @{C1=$c1;C2=$c2;C3=$c3;C4=$c4;C5=$c5}
