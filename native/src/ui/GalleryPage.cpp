@@ -30,17 +30,44 @@ static QStringList catOrder()
 
 // 人物故事方向·B 的 A 轻增强：人物 chip 改圆形头像徽标（首字母 + 确定性主题配色）。
 // 说明：FaceCluster 仅存 embedding，磁盘无现成人脸代表图，故用首字母 + 色环，
-// 诚实不伪装成照片；配色由名字哈希确定，稳定且落在主题绿/青/褐色系内。
+// 诚实不伪装成照片；配色由名字哈希确定。
+// design-language-v2 T6：八色自拟盘（off-token 绿青褐系）退役 → CAT1..8 具名板（spec §1.4/§1.7）。
+// FNV 选择器保留：对稳定姓名做稳定哈希本身确定，满足 spec「固定映射」意图——
+// 原缺陷是板色 off-token + 相邻色同色不可读，具名高对比 CAT 板已修复此两点。
 static QString storyAvatarColor(const QString& name)
 {
     const QByteArray s = name.toUtf8();
     uint h = 2166136261u;
     for (char c : s) { h ^= (unsigned char)c; h *= 16777619u; }
-    static const QStringList palette = {
-        QStringLiteral("#2f6f54"), QStringLiteral("#3a6e7a"), QStringLiteral("#5a6b3a"),
-        QStringLiteral("#7a5a3a"), QStringLiteral("#6b3a5a"), QStringLiteral("#3a5a7a"),
-        QStringLiteral("#5a3a6b"), QStringLiteral("#7a3a4a") };
-    return palette[h % palette.size()];
+    static const QColor palette[] = { Lumen::CAT1, Lumen::CAT2, Lumen::CAT3, Lumen::CAT4,
+                                      Lumen::CAT5, Lumen::CAT6, Lumen::CAT7, Lumen::CAT8 };
+    return Lumen::hex(palette[h % (sizeof(palette) / sizeof(palette[0]))]);
+}
+
+// design-language-v2 T6：chip 族单源（分类/聚类/故事三条共用一份配方，终结 3 处克隆漂移）。
+// Theme.h 无 chip() 工厂（spec §4.1 称「chip 已有」系失实，缺口已记报告）。与 CullPage.cullChipCss
+// （T5 本地单源）能否并为一个签名？——不能诚实统一：本页 checked = accent 实心反转 + PANEL
+// 深色字（强激活态），Cull checked = CARD_HI 底 + accent 描边/文字（spec §3.4 选中态条例）；
+// 结构不同、padding 不同（4x12 vs 5x14），单签名 = 一厂藏两配方，属强扭，裁定维持各自本地单源。
+// 色值全走 Lumen token（§1.7：克隆盘 101710/232d26 → CARD/LINE 回家；token 值字面量归引用）。
+// 圆角/内距/字阶原值保留（归格属 T9/T10）。
+static QString galleryChipCss(const QString& radiusPx, const QColor& checkedAccent)
+{
+    return QString::fromUtf8(
+        "QPushButton{background:%1;border:1px solid %2;border-radius:%3;"
+        "padding:4px 12px;color:%4;font-size:12px;}"
+        "QPushButton:hover{border-color:%5;color:%6;}"
+        "QPushButton:checked{background:%7;border-color:%8;color:%9;font-weight:bold;}")
+        .arg(Lumen::hex(Lumen::CARD), Lumen::hex(Lumen::LINE), radiusPx,
+             Lumen::hex(Lumen::MUTED), Lumen::hex(Lumen::EMERALD),
+             Lumen::hex(Lumen::INK), Lumen::hex(checkedAccent),
+             Lumen::hex(checkedAccent), Lumen::hex(Lumen::PANEL));
+}
+
+// §1.7：五处条带底色（原值 060806） 即 Lumen::BG 的 token 值字面量 → 归引用（色不变）。
+static QString barBgCss()
+{
+    return QStringLiteral("background:%1;").arg(Lumen::hex(Lumen::BG));
 }
 
 class GalleryCardDelegate : public QStyledItemDelegate {
@@ -86,7 +113,7 @@ GalleryPage::GalleryPage(const QVector<Photo>* photos, const QString& thumbsDir,
 
     // P16 分类 chips 条（buildChips 按数据填充；无分类数据时整条隐藏）
     chipsBar_ = new QWidget(this);
-    chipsBar_->setStyleSheet(QStringLiteral("background:#060806;"));
+    chipsBar_->setStyleSheet(barBgCss());
     auto* chipLay = new QHBoxLayout(chipsBar_);
     chipLay->setContentsMargins(20, 10, 20, 0);
     chipLay->setSpacing(8);
@@ -94,7 +121,7 @@ GalleryPage::GalleryPage(const QVector<Photo>* photos, const QString& thumbsDir,
 
     // P16 人物 chips 条（person 列有数据才显示）
     personBar_ = new QWidget(this);
-    personBar_->setStyleSheet(QStringLiteral("background:#060806;"));
+    personBar_->setStyleSheet(barBgCss());
     auto* personLay = new QHBoxLayout(personBar_);
     personLay->setContentsMargins(20, 8, 20, 0);
     personLay->setSpacing(8);
@@ -102,7 +129,7 @@ GalleryPage::GalleryPage(const QVector<Photo>* photos, const QString& thumbsDir,
 
     // 方向 C 第一步：聚类条（维度切换 + 簇 chips）。与分类/人物筛选**并存叠加**。
     clusterBar_ = new QWidget(this);
-    clusterBar_->setStyleSheet(QStringLiteral("background:#060806;"));
+    clusterBar_->setStyleSheet(barBgCss());
     auto* clusterLay = new QHBoxLayout(clusterBar_);
     clusterLay->setContentsMargins(20, 8, 20, 0);
     clusterLay->setSpacing(8);
@@ -114,12 +141,22 @@ GalleryPage::GalleryPage(const QVector<Photo>* photos, const QString& thumbsDir,
     clusterDimBox_->addItem(QCoreApplication::translate("LightAlbum", "按城市"), 1);
     clusterDimBox_->addItem(QCoreApplication::translate("LightAlbum", "按年份"), 2);
     clusterDimBox_->addItem(QCoreApplication::translate("LightAlbum", "按月份"), 3);
+    // design-language-v2 T6：combo() 工厂不存在（spec §4.1 称「input()/combo() 已有」中 combo 失实，
+    // 缺口记报告，不强造）。与 T5 MapPage yearBox 同形：本地单源配方 + 全 token 引用
+    //（§1.7：0e130f→PANEL、d9e4dc→INK；1d2a22 选中底→CARD_HI，沿用 T5「LINE 仅作分隔线、
+    // 选中面归 CARD_HI」判例）。圆角 9px/内距/字阶原值保留（归格属 T9/T8）。
     clusterDimBox_->setStyleSheet(QString::fromUtf8(
-        "QComboBox{background:#131a15;border:1px solid #26312a;border-radius:9px;"
-        "padding:3px 8px;color:%1;font-size:12px;}"
-        "QComboBox QAbstractItemView{background:#0e130f;color:#d9e4dc;"
-        "selection-background-color:#1d2a22;selection-color:#4fc08a;}")
-        .arg(Lumen::hex(Lumen::MUTED)));
+        "QComboBox{background:%1;border:1px solid %2;border-radius:9px;"
+        "padding:3px 8px;color:%3;font-size:12px;}"
+        "QComboBox QAbstractItemView{background:%4;color:%5;"
+        "selection-background-color:%6;selection-color:%7;}")
+        .arg(Lumen::hex(Lumen::CARD))
+        .arg(Lumen::hex(Lumen::LINE))
+        .arg(Lumen::hex(Lumen::MUTED))
+        .arg(Lumen::hex(Lumen::PANEL))
+        .arg(Lumen::hex(Lumen::INK))
+        .arg(Lumen::hex(Lumen::CARD_HI))
+        .arg(Lumen::hex(Lumen::EMERALD)));
     connect(clusterDimBox_, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [this](int) {
         clusterDim_ = clusterDimBox_->currentData().toInt();
@@ -135,48 +172,34 @@ GalleryPage::GalleryPage(const QVector<Photo>* photos, const QString& thumbsDir,
     // 方向 C：相似照片去重入口（打开分组浏览对话框）
     auto* dedupBtn = new QPushButton(QCoreApplication::translate("LightAlbum", "相似照片"), clusterBar_);
     dedupBtn->setCursor(Qt::PointingHandCursor);
-    dedupBtn->setStyleSheet(QString::fromUtf8(
-        "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:9px;"
-        "padding:3px 12px;color:%1;font-size:12px;}"
-        "QPushButton:hover{border-color:#4fc08a;color:#d9e4dc;}")
-        .arg(Lumen::hex(Lumen::MUTED)));
+    // §4.2：ghost 克隆归厂 → btnGhost(MUTED) 单源。归厂偏差记录：padding 3px12px→6px14px、
+    // hover 由「翡翠边+亮字」改工厂制式「CARD_HI 底+同色描边」（T5 MapPage 同族判例）。
+    dedupBtn->setStyleSheet(Lumen::btnGhost(Lumen::MUTED));
     connect(dedupBtn, &QPushButton::clicked, this, &GalleryPage::openDedup);
     clusterLay->addWidget(dedupBtn);
     // 方向 C·智能分类：请求 MainWindow 跑 CLIP 分类（视图不持写能力，只发信号）
     classifyBtn_ = new QPushButton(QCoreApplication::translate("LightAlbum", "AI 分类"), clusterBar_);
     classifyBtn_->setCursor(Qt::PointingHandCursor);
-    classifyBtn_->setStyleSheet(QString::fromUtf8(
-        "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:9px;"
-        "padding:3px 12px;color:%1;font-size:12px;}"
-        "QPushButton:hover{border-color:#4fc08a;color:#d9e4dc;}")
-        .arg(Lumen::hex(Lumen::MUTED)));
+    classifyBtn_->setStyleSheet(Lumen::btnGhost(Lumen::MUTED));   // ghost 克隆归厂（同 dedupBtn）
     connect(classifyBtn_, &QPushButton::clicked, this, &GalleryPage::classifyRequested);
     clusterLay->addWidget(classifyBtn_);
     // 方向 C·人脸识别（方案A）：请求 MainWindow 跑人脸检测（视图不持写能力，只发信号）
     auto* personBtn = new QPushButton(QCoreApplication::translate("LightAlbum", "识别人物"), clusterBar_);
     personBtn->setCursor(Qt::PointingHandCursor);
-    personBtn->setStyleSheet(QString::fromUtf8(
-        "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:9px;"
-        "padding:3px 12px;color:%1;font-size:12px;}"
-        "QPushButton:hover{border-color:#4fc08a;color:#d9e4dc;}")
-        .arg(Lumen::hex(Lumen::MUTED)));
+    personBtn->setStyleSheet(Lumen::btnGhost(Lumen::MUTED));      // ghost 克隆归厂（同 dedupBtn）
     connect(personBtn, &QPushButton::clicked, this, &GalleryPage::personDetectRequested);
     clusterLay->addWidget(personBtn);
     // 方向 C·人物自动聚类：请求 MainWindow 抽 embedding + 阈值余弦聚类（视图不持写能力，只发信号）
     auto* faceClusterBtn = new QPushButton(QCoreApplication::translate("LightAlbum", "智能聚类"), clusterBar_);
     faceClusterBtn->setCursor(Qt::PointingHandCursor);
-    faceClusterBtn->setStyleSheet(QString::fromUtf8(
-        "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:9px;"
-        "padding:3px 12px;color:%1;font-size:12px;}"
-        "QPushButton:hover{border-color:#4fc08a;color:#d9e4dc;}")
-        .arg(Lumen::hex(Lumen::MUTED)));
+    faceClusterBtn->setStyleSheet(Lumen::btnGhost(Lumen::MUTED)); // ghost 克隆归厂（同 dedupBtn）
     connect(faceClusterBtn, &QPushButton::clicked, this, &GalleryPage::faceClusterRequested);
     clusterLay->addWidget(faceClusterBtn);
     lay->addWidget(clusterBar_);
 
     // 人物故事方向·B：故事相册入口条（纯视图态，按 StoryGen 聚合结果填充；无库写入）
     storyBar_ = new QWidget(this);
-    storyBar_->setStyleSheet(QStringLiteral("background:#060806;"));
+    storyBar_->setStyleSheet(barBgCss());
     auto* storyLay = new QHBoxLayout(storyBar_);
     storyLay->setContentsMargins(20, 8, 20, 0);
     storyLay->setSpacing(8);
@@ -184,24 +207,24 @@ GalleryPage::GalleryPage(const QVector<Photo>* photos, const QString& thumbsDir,
 
     // 方向 C 第一步：搜索框（地点/时间/评分/关键词过滤，经 applyFilter → GalleryModel::setFilter）
     auto* searchBar = new QWidget(this);
-    searchBar->setStyleSheet(QStringLiteral("background:#060806;"));
+    searchBar->setStyleSheet(barBgCss());
     auto* searchLay = new QHBoxLayout(searchBar);
     searchLay->setContentsMargins(20, 8, 20, 8);
     searchLay->setSpacing(8);
     auto* searchLe = new QLineEdit(searchBar);
     searchLe->setPlaceholderText(QCoreApplication::translate("LightAlbum", "搜索 地点 / 时间 / 评分 / 关键词…"));
     searchLe->setClearButtonEnabled(true);
-    searchLe->setStyleSheet(QStringLiteral(
-        "QLineEdit{background:#0e1410;border:1px solid #26312a;border-radius:9px;"
-        "padding:7px 12px;color:#f4f7f4;font-size:13px;}"
-        "QLineEdit:focus{border-color:#4fc08a;}"));
+    // §4.1：输入框克隆收编 → input() 单源（INSET 底/LINE 边/9px 圆角/INK 字/focus EMERALD 均厂内；
+    // 归厂偏差记录：padding 7px12px→6px12px、原 13px 字号由工厂省略回落应用字阶、新增选区底色）。
+    searchLe->setStyleSheet(Lumen::input());
     searchLay->addWidget(searchLe);
     searchLay->addStretch(1);
     lay->addWidget(searchBar);
     connect(searchLe, &QLineEdit::textChanged, this, &GalleryPage::applyFilter);
 
     count_ = new QLabel(this);
-    count_->setStyleSheet(QString::fromUtf8("color:#8da396;padding:12px 20px 8px;"));
+    count_->setStyleSheet(QString::fromUtf8("color:%1;padding:12px 20px 8px;")
+        .arg(Lumen::hex(Lumen::MUTED)));   // token 值字面量归引用（色不变）
     lay->addWidget(count_);
 
     // P23 E 杂志拼贴：用自定义 EditorialView 替换 QListView 均匀网格（首图 2×2 feature）
@@ -237,6 +260,8 @@ void GalleryPage::buildBatchBar()
 {
     batchBar_ = new QWidget(this);
     batchBar_->setObjectName(QStringLiteral("gpBatchBar"));
+    // 无家 hex（原值 0b120d/1e2a22）： §1.7 表内无归处（介于 BG/PANEL 与 LINE 之间的私有深阶），
+    // 映射即改色（违色不变），留 T7 台账裁定。
     batchBar_->setStyleSheet(QStringLiteral("#gpBatchBar{background:#0b120d;"
                                             "border-top:1px solid #1e2a22;}"));
     auto* bl = new QHBoxLayout(batchBar_);
@@ -244,14 +269,13 @@ void GalleryPage::buildBatchBar()
     bl->setSpacing(6);
 
     batchInfo_ = new QLabel(batchBar_);
-    batchInfo_->setStyleSheet(QStringLiteral("color:#d9a94e;font-size:12px;font-weight:bold;"));
+    batchInfo_->setStyleSheet(QStringLiteral("color:%1;font-size:12px;font-weight:bold;")
+        .arg(Lumen::hex(Lumen::GOLD)));    // token 值字面量归引用（色不变）
     bl->addWidget(batchInfo_);
 
-    const QString btnCss = QString::fromUtf8(
-        "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:9px;"
-        "padding:4px 10px;color:%1;font-size:12px;}"
-        "QPushButton:hover{border-color:#4fc08a;color:#f4f7f4;}")
-        .arg(Lumen::hex(Lumen::MUTED));
+    // §4.2：ghost 克隆归厂 → btnGhost(MUTED) 单源（星级×5 + 私密 + 取消选择共用；
+    // 归厂偏差同 dedupBtn 记录：padding 4px10px→6px14px、hover 制式化）。
+    const QString btnCss = Lumen::btnGhost(Lumen::MUTED);
     starBtns_.clear();
     for (int i = 1; i <= 5; ++i) {
         auto* b = new QPushButton(QStringLiteral("★%1").arg(i), batchBar_);
@@ -335,13 +359,7 @@ void GalleryPage::qaFireFaceCluster() { emit faceClusterRequested(); }
 // （前 kMaxVisibleChips=8 个平铺 + 「▾ N」溢出下拉），选中项自动提升可见。
 void GalleryPage::buildChips()
 {
-    const QString chipCss = QString::fromUtf8(
-        "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:999px;"
-        "padding:4px 12px;color:%1;font-size:12px;}"
-        "QPushButton:hover{border-color:#4fc08a;color:#f4f7f4;}"
-        "QPushButton:checked{background:#d9a94e;border-color:#d9a94e;"
-        "color:#0c100d;font-weight:bold;}")
-        .arg(Lumen::hex(Lumen::MUTED));
+    const QString chipCss = galleryChipCss(Lumen::Radius::Pill, Lumen::GOLD);
 
     // 计数（与列表同口径：锁定时跳过私密）
     QHash<QString, int> catCnt;
@@ -411,11 +429,17 @@ void GalleryPage::buildChips()
             d.tooltip = n;
             pdefs.append(d);
         }
+        // §1.7：token 值字面量归引用（f4f7f4→INK、4fc08a→EMERALD，色不变）。
+        // 用拼接而非链式 .arg：fillChipRow 只对模板做一次 .arg(d.bg)，%1 占位必须保持唯一最低标号
+        //（多参数 .arg 会先吃掉 %1，令彩色底失效——占位符纪律，勿改成 arg 链）。
         const QString personCssTpl = QStringLiteral(
             "QPushButton{background:%1;border:none;border-radius:11px;"
-            "padding:4px 12px;color:#f4f7f4;font-size:12px;font-weight:bold;}"
-            "QPushButton:hover{border:2px solid #4fc08a;padding:2px 10px;}"
-            "QPushButton:checked{border:2px solid #f4f7f4;padding:2px 10px;background:%1;}");
+            "padding:4px 12px;color:") + Lumen::hex(Lumen::INK) + QStringLiteral(
+            ";font-size:12px;font-weight:bold;}"
+            "QPushButton:hover{border:2px solid ") + Lumen::hex(Lumen::EMERALD) + QStringLiteral(
+            ";padding:2px 10px;}"
+            "QPushButton:checked{border:2px solid ") + Lumen::hex(Lumen::INK) + QStringLiteral(
+            ";padding:2px 10px;background:%1;}");
         // 方向 C·人脸识别（方案A）：右键重命名（视图不持写能力，只发信号）
         Lumen::fillChipRow(personLay, personBar_, pdefs, chipCss, personCssTpl,
             [this](const Lumen::ChipDef& d) {
@@ -457,13 +481,8 @@ void GalleryPage::buildClusterBar()
         lay->setContentsMargins(0, 0, 0, 0);
         lay->setSpacing(8);
     }
-    const QString chipCss = QString::fromUtf8(
-        "QPushButton{background:#101710;border:1px solid #232d26;border-radius:11px;"
-        "padding:4px 12px;color:%1;font-size:12px;}"
-        "QPushButton:hover{border-color:#4fc08a;color:#f4f7f4;}"
-        "QPushButton:checked{background:#d9a94e;border-color:#d9a94e;"
-        "color:#0c100d;font-weight:bold;}")
-        .arg(Lumen::hex(Lumen::MUTED));
+    // §1.7：克隆盘 101710/232d26 → CARD/LINE 回家（并入文件级 galleryChipCss 单源）
+    const QString chipCss = galleryChipCss(QStringLiteral("11px"), Lumen::GOLD);
 
     const QVector<PhotoCluster::Cluster> cs =
         PhotoCluster::cluster(*photos_, static_cast<PhotoCluster::Dim>(clusterDim_), hidePrivate_);
@@ -526,13 +545,8 @@ void GalleryPage::buildStoryBar()
         lay->setContentsMargins(0, 0, 0, 0);
         lay->setSpacing(8);
     }
-    const QString chipCss = QString::fromUtf8(
-        "QPushButton{background:#101710;border:1px solid #232d26;border-radius:11px;"
-        "padding:4px 12px;color:%1;font-size:12px;}"
-        "QPushButton:hover{border-color:#4fc08a;color:#f4f7f4;}"
-        "QPushButton:checked{background:#4fc08a;border-color:#4fc08a;"
-        "color:#0c100d;font-weight:bold;}")
-        .arg(Lumen::hex(Lumen::MUTED));
+    // §1.7 同上；故事条 checked 传统为翡翠（非分类/聚类条的金），以 accent 参数保留语义差异
+    const QString chipCss = galleryChipCss(QStringLiteral("11px"), Lumen::EMERALD);
 
     const StoryGen::Result r = StoryGen::build(*photos_, 5, hidePrivate_);
     if (r.stories.isEmpty()) { Lumen::clearChipRow(lay); storyBar_->setVisible(false); return; }
@@ -686,8 +700,8 @@ int GalleryPage::qaShootE(const QString& png)
         for (int x = 0; x < W; x += 2) {
             const QRgb p = row[x];
             const int r = qRed(p), g = qGreen(p), b = qBlue(p);
-            if (qAbs(r - 19) < 12 && qAbs(g - 26) < 12 && qAbs(b - 21) < 12) ++cardBg;   // 卡片底 #131a15
-            if (r > 210 && g > 210 && b > 200) ++lightTxt;                                // 标题/文字 #f4f7f4
+            if (qAbs(r - 19) < 12 && qAbs(g - 26) < 12 && qAbs(b - 21) < 12) ++cardBg;   // 卡片底（Lumen::CARD）
+            if (r > 210 && g > 210 && b > 200) ++lightTxt;                                // 标题/文字（Lumen::INK）
         }
     }
     // feature 2×2 判定：首图宽 > 1.5 个单图宽 且 高 > 1.5 个单图高

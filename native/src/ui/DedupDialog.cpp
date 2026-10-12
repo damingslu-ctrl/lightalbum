@@ -56,8 +56,10 @@ DedupDialog::DedupDialog(const QVector<Photo>* photos, const QString& thumbsDir,
 
     auto* sa = new QScrollArea(this);
     sa->setWidgetResizable(true);
-    sa->setStyleSheet(QStringLiteral(
-        "background:#060806;border:1px solid #1c2620;border-radius:10px;"));
+    // §1.7：滚动区盘底（原值 060806） 即 BG token 值字面量→归引用；私有描边 1c2620→LINE（回家，微亮授权内）
+    sa->setStyleSheet(QString::fromUtf8(
+        "background:%1;border:1px solid %2;border-radius:10px;")
+        .arg(Lumen::hex(Lumen::BG), Lumen::hex(Lumen::LINE)));
     auto* list = new QWidget(sa);
     listLay_ = new QVBoxLayout(list);
     listLay_->setContentsMargins(12, 12, 12, 12);
@@ -170,8 +172,10 @@ void DedupDialog::startScan()
 void DedupDialog::buildGroup(const DupGroup& g, QVBoxLayout* parent)
 {
     auto* w = new QWidget(this);
-    w->setStyleSheet(QStringLiteral(
-        "background:#0e1410;border:1px solid #1c2620;border-radius:10px;"));
+    // §1.7：组卡内嵌底（原值 0e1410） 即 INSET token 值字面量→归引用；描边 1c2620→LINE（回家）
+    w->setStyleSheet(QString::fromUtf8(
+        "background:%1;border:1px solid %2;border-radius:10px;")
+        .arg(Lumen::hex(Lumen::INSET), Lumen::hex(Lumen::LINE)));
     auto* lay = new QHBoxLayout(w);
     lay->setContentsMargins(10, 10, 10, 10);
     lay->setSpacing(12);
@@ -185,7 +189,8 @@ void DedupDialog::buildGroup(const DupGroup& g, QVBoxLayout* parent)
     auto* col = new QVBoxLayout;
     col->setSpacing(6);
     auto* reason = new QLabel(g.reason, w);
-    reason->setStyleSheet(QStringLiteral("color:#d9e4dc;font-size:12px;"));
+    reason->setStyleSheet(QStringLiteral("color:%1;font-size:12px;")
+        .arg(Lumen::hex(Lumen::INK)));   // §1.7：抄写盘文字（原值 d9e4dc） → INK（归并，色微亮）
     col->addWidget(reason);
 
     auto* dups = new QWidget(w);
@@ -202,11 +207,10 @@ void DedupDialog::buildGroup(const DupGroup& g, QVBoxLayout* parent)
     auto* markBtn = new QPushButton(
         QCoreApplication::translate("LightAlbum", "标记其余为待删"), w);
     markBtn->setCursor(Qt::PointingHandCursor);
-    markBtn->setStyleSheet(QString::fromUtf8(
-        "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:8px;"
-        "padding:3px 10px;color:%1;font-size:12px;}"
-        "QPushButton:hover{border-color:#4fc08a;color:#d9e4dc;}")
-        .arg(Lumen::hex(Lumen::MUTED)));
+    // CONTROLLER RULING（本任务一并做，一页一过）：「标记其余为待删」= 破坏性动作，
+    // 幽灵克隆（MUTED 静息 + 翡翠 hover，语义错位）→ §4.1/§4.2 指定 btnOutline(CORAL)。
+    // 归厂偏差记录：padding 3px10px→6px14px、原 12px 字号回落应用字阶、hover/disabled 制式化。
+    markBtn->setStyleSheet(Lumen::btnOutline(Lumen::CORAL));
     const QStringList dupsCopy = g.dupPaths;
     connect(markBtn, &QPushButton::clicked, this, [this, dupsCopy, w]() {
         onMarkGroup(dupsCopy, w);
