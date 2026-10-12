@@ -164,14 +164,14 @@ LogPage::LogPage(const QVector<Photo>* photos, QWidget* parent)
 
     auto* root = new QWidget(scroll);
     auto* lay = new QVBoxLayout(root);
-    lay->setContentsMargins(22, 20, 22, 24);
+    lay->setContentsMargins(Lumen::Space::Xl, Lumen::Space::Xl, Lumen::Space::Xl, Lumen::Space::Xl);
     lay->setSpacing(12);
 
     // —— 区块标题 ——
     auto* head = new QWidget(root);
     auto* hl = new QVBoxLayout(head);
     hl->setContentsMargins(0, 0, 0, 0);
-    hl->setSpacing(6);
+    hl->setSpacing(Lumen::Space::S);
     auto* title = new QLabel(QCoreApplication::translate("LightAlbum", "摄影日志"), head);
     title->setFont(Lumen::Type::title(false));   // T8：页主标题 20pt 粗→T2 15pt（雅黑保持，ls 4.0 随档归零 §2.4）
     title->setStyleSheet(QString::fromUtf8("color:%1;").arg(Lumen::hex(Lumen::INK)));
@@ -251,7 +251,7 @@ LogPage::LogPage(const QVector<Photo>* photos, QWidget* parent)
     // —— 图表网格（3 列 × 2 行）——
     auto* grid = new QGridLayout();
     grid->setContentsMargins(0, 0, 0, 0);
-    grid->setSpacing(10);
+    grid->setSpacing(Lumen::Space::M);
     grid->setColumnStretch(0, 1);
     grid->setColumnStretch(1, 1);
     grid->setColumnStretch(2, 1);
@@ -265,8 +265,8 @@ LogPage::LogPage(const QVector<Photo>* photos, QWidget* parent)
             "#logChartCard{background:%1;border:none;border-radius:%2px;}")
             .arg(Lumen::hex(Lumen::INSET)).arg(Lumen::Radius::Ctl));   // §1.7：0f1512→INSET
         auto* cl = new QVBoxLayout(card);
-        cl->setContentsMargins(12, 10, 12, 10);
-        cl->setSpacing(6);
+        cl->setContentsMargins(Lumen::Space::M, Lumen::Space::M, Lumen::Space::M, Lumen::Space::M);
+        cl->setSpacing(Lumen::Space::S);
         auto* h = new QLabel(t, card);
         QFont hf = Lumen::Type::head();   // T8：卡标题 13pt 粗→T3 head 12pt（ls 2.0 随档归零 §2.4）
         h->setFont(hf); h->setStyleSheet(QString::fromUtf8("color:%1;")

@@ -177,7 +177,7 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
     toolrail_->setStyleSheet(QString::fromUtf8("QWidget{background:%1;border-right:1px solid %2;}")
         .arg(Lumen::hex(Lumen::PANEL), Lumen::hex(Lumen::LINE)));
     auto* trl = new QVBoxLayout(toolrail_);
-    trl->setContentsMargins(10, 14, 10, 14);
+    trl->setContentsMargins(Lumen::Space::M, Lumen::Space::L, Lumen::Space::M, Lumen::Space::L);
     trl->setSpacing(8);
     railCss_   = (QString::fromUtf8(
         "QPushButton{background:transparent;border:none;border-radius:%2px;color:%1;padding:9px 8px;")
@@ -217,7 +217,7 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
     auto* bar = new QWidget(centerCol);
     auto* bl = new QHBoxLayout(bar);
     bl->setContentsMargins(0, 0, 0, 0);
-    bl->setSpacing(10);
+    bl->setSpacing(Lumen::Space::M);
     photoCombo_ = new QComboBox(bar);
     presetCombo_ = new QComboBox(bar);
     if (photos_) {
@@ -373,8 +373,8 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
     {
         auto* adj = new QWidget(rightStack_);
         auto* al0 = new QVBoxLayout(adj);
-        al0->setContentsMargins(14, 14, 14, 14);
-        al0->setSpacing(10);
+        al0->setContentsMargins(Lumen::Space::L, Lumen::Space::L, Lumen::Space::L, Lumen::Space::L);
+        al0->setSpacing(Lumen::Space::M);
         auto* sa = new QScrollArea(adj);
         sa->setWidgetResizable(true);
         sa->setStyleSheet("QScrollArea{background:transparent;border:none;}");
@@ -390,7 +390,7 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
     {
         galleryPanel_ = new QWidget(rightStack_);
         auto* gv = new QVBoxLayout(galleryPanel_);
-        gv->setContentsMargins(10, 14, 10, 14);
+        gv->setContentsMargins(Lumen::Space::M, Lumen::Space::L, Lumen::Space::M, Lumen::Space::L);
         gv->setSpacing(8);
         auto* gt = new QLabel(QCoreApplication::translate("LightAlbum", "滤镜预设"), galleryPanel_);
         gt->setStyleSheet(QString::fromUtf8("color:%1;font-weight:bold;")
@@ -405,7 +405,7 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
         auto* gw = new QWidget(gsa);
         constexpr int kCardCols = 2, kCardIcon = 86;
         auto* gl = new QGridLayout(gw);
-        gl->setSpacing(10);
+        gl->setSpacing(Lumen::Space::M);
         for (int i = 0; i < presets_.size(); ++i) {
             auto* card = new QToolButton(gw);
             card->setFixedSize(kCardIcon + 14, kCardIcon + 32);
@@ -425,7 +425,7 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
     {
         auto* gp = new QWidget(rightStack_);
         auto* gl2 = new QVBoxLayout(gp);
-        gl2->setContentsMargins(14, 14, 14, 14);
+        gl2->setContentsMargins(Lumen::Space::L, Lumen::Space::L, Lumen::Space::L, Lumen::Space::L);
         gl2->setSpacing(8);
         auto gbtn = [gp](const QString& t){
             auto* b = new QPushButton(t, gp);
@@ -479,7 +479,7 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
     {
         auto* mp = new QWidget(rightStack_);
         auto* ml = new QVBoxLayout(mp);
-        ml->setContentsMargins(14, 14, 14, 14);
+        ml->setContentsMargins(Lumen::Space::L, Lumen::Space::L, Lumen::Space::L, Lumen::Space::L);
         ml->setSpacing(8);
         auto mbtn = [mp](const QString& t, const QString& css){
             auto* b = new QPushButton(t, mp);
@@ -519,7 +519,7 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
     {
         auto* cp = new QWidget(rightStack_);
         auto* cl4 = new QVBoxLayout(cp);
-        cl4->setContentsMargins(14, 14, 14, 14);
+        cl4->setContentsMargins(Lumen::Space::L, Lumen::Space::L, Lumen::Space::L, Lumen::Space::L);
         cl4->setSpacing(8);
         compareBtn_ = new QPushButton(QCoreApplication::translate("LightAlbum", "◐ 对比"), cp);
         compareBtn_->setCheckable(true);
@@ -537,8 +537,8 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
     {
         auto* ap = new QWidget(rightStack_);
         auto* al5 = new QVBoxLayout(ap);
-        al5->setContentsMargins(14, 14, 14, 14);
-        al5->setSpacing(10);
+        al5->setContentsMargins(Lumen::Space::L, Lumen::Space::L, Lumen::Space::L, Lumen::Space::L);
+        al5->setSpacing(Lumen::Space::M);
         auto* ah = new QLabel(QCoreApplication::translate("LightAlbum", "AI 智能体（Lumen × 本地 LLM）"), ap);
         ah->setStyleSheet(QString::fromUtf8("color:%1;font-weight:bold;")
             .arg(Lumen::hex(Lumen::VIOLET))

@@ -31,8 +31,8 @@
                           },
                    "C4":  {
                               "label":  "spacing-offgrid",
-                              "current":  117,
-                              "ceiling":  117
+                              "current":  0,
+                              "ceiling":  0
                           },
                    "C2":  {
                               "label":  "font-size",

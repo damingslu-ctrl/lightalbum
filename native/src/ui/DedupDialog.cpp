@@ -178,7 +178,7 @@ void DedupDialog::buildGroup(const DupGroup& g, QVBoxLayout* parent)
         "background:%1;border:1px solid %2;border-radius:10px;")
         .arg(Lumen::hex(Lumen::INSET), Lumen::hex(Lumen::LINE)));
     auto* lay = new QHBoxLayout(w);
-    lay->setContentsMargins(10, 10, 10, 10);
+    lay->setContentsMargins(Lumen::Space::M, Lumen::Space::M, Lumen::Space::M, Lumen::Space::M);
     lay->setSpacing(12);
 
     // 保留者缩略图
@@ -188,7 +188,7 @@ void DedupDialog::buildGroup(const DupGroup& g, QVBoxLayout* parent)
 
     // 右侧：原因 + 重复缩略图行 + 动作
     auto* col = new QVBoxLayout;
-    col->setSpacing(6);
+    col->setSpacing(Lumen::Space::S);
     auto* reason = new QLabel(g.reason, w);
     reason->setStyleSheet(QStringLiteral("color:%1;%2")
         .arg(Lumen::hex(Lumen::INK))   // §1.7：抄写盘文字（原值 d9e4dc） → INK（归并，色微亮）

@@ -175,10 +175,10 @@ public:
             "QFrame#lbBottom{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
             "stop:0 rgba(4,6,4,0), stop:0.45 rgba(4,6,4,0.55), stop:1 rgba(4,6,4,0.94));}"));
         auto* bl = new QHBoxLayout(bottom_);
-        bl->setContentsMargins(34, 6, 28, 16);
+        bl->setContentsMargins(Lumen::Space::Xxl, Lumen::Space::S, Lumen::Space::Xl, Lumen::Space::L);
         bl->setSpacing(16);
         auto* textCol = new QVBoxLayout;
-        textCol->setSpacing(3);
+        textCol->setSpacing(Lumen::Space::Xs);
         title_ = new QLabel(bottom_);
         title_->setStyleSheet((QString::fromUtf8(
             "font-family:'Noto Serif SC','STSong','SimSun',serif;")
@@ -201,7 +201,7 @@ public:
         bl->addWidget(starRow_);
         ctl_ = new QWidget(bottom_);              // 操作按钮区：setPhoto 时填充
         auto* cl = new QHBoxLayout(ctl_);
-        cl->setContentsMargins(0, 0, 0, 0); cl->setSpacing(10);
+        cl->setContentsMargins(0, 0, 0, 0); cl->setSpacing(Lumen::Space::M);
         bl->addWidget(ctl_);
 
         bottom_->installEventFilter(this);
@@ -510,7 +510,7 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
     navWrap->setFixedWidth(92);                      // 68 浮岛 + 12*2 边距
     navWrap->setStyleSheet(QStringLiteral("background:transparent;"));
     auto* nwLay = new QVBoxLayout(navWrap);
-    nwLay->setContentsMargins(12, 14, 12, 14);
+    nwLay->setContentsMargins(Lumen::Space::M, Lumen::Space::L, Lumen::Space::M, Lumen::Space::L);
     nwLay->setSpacing(0);
 
     navBox_ = new QWidget(navWrap);
@@ -521,7 +521,7 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
              Lumen::hex(Lumen::CARD_HI))        // token 值字面量归引用（色不变）
         .arg(Lumen::Radius::Card));             // T9 C3: 16px->Radius::Card 14
     auto* nvLay = new QVBoxLayout(navBox_);
-    nvLay->setContentsMargins(0, 14, 0, 12);
+    nvLay->setContentsMargins(0, Lumen::Space::L, 0, Lumen::Space::M);
     nvLay->setSpacing(4);
     auto* navLogo = new QLabel(QCoreApplication::translate("LightAlbum", "光"), navBox_);
     navLogo->setAlignment(Qt::AlignCenter);
@@ -596,8 +596,8 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
     QWidget* topbar = topbar_;
     topbar->setFixedHeight(54);
     auto* tl = new QHBoxLayout(topbar);
-    tl->setContentsMargins(20, 0, 16, 0);
-    tl->setSpacing(10);
+    tl->setContentsMargins(Lumen::Space::L, 0, Lumen::Space::L, 0);
+    tl->setSpacing(Lumen::Space::M);
     // 渐显底色层（0 号子控件、置底；文字/按钮不受透明度影响）
     topShade_ = new QFrame(topbar);     // QFrame：QWidget 默认不绘制 QSS 背景（实测坑）
     topShade_->setStyleSheet(QStringLiteral("background:rgba(12,16,13,0.90);"));
@@ -679,7 +679,7 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
     winCtl_->setFixedSize(116, 36);
     winCtl_->setStyleSheet(QStringLiteral("background:transparent;"));
     auto* wl = new QHBoxLayout(winCtl_);
-    wl->setContentsMargins(0, 0, 2, 0);
+    wl->setContentsMargins(0, 0, Lumen::Space::Xs, 0);
     wl->setSpacing(4);
     wl->addStretch(1);
     winMin_   = new QPushButton(QStringLiteral("—"), winCtl_);   // 最小化
@@ -1188,7 +1188,7 @@ QWidget* MainWindow::makePlaceholder(const QString& secName, const QString& icon
     auto* w = new QWidget;
     auto* l = new QVBoxLayout(w);
     l->setAlignment(Qt::AlignCenter);
-    l->setSpacing(14);
+    l->setSpacing(Lumen::Space::L);
 
     // 图标：翡翠色线性自绘，置于暗圆底上
     auto* iconLbl = new QLabel(w);
@@ -1228,7 +1228,7 @@ QWidget* MainWindow::makeAbout() const
     auto* w = new QWidget;
     auto* outer = new QVBoxLayout(w);
     outer->setAlignment(Qt::AlignHCenter | Qt::AlignTop);
-    outer->setContentsMargins(48, 40, 48, 24);
+    outer->setContentsMargins(Lumen::Space::Xxl, Lumen::Space::Xxl, Lumen::Space::Xxl, Lumen::Space::Xl);
 
     auto* card = new QWidget(w);
     card->setMaximumWidth(620);
@@ -1236,7 +1236,7 @@ QWidget* MainWindow::makeAbout() const
         "QWidget{background:%1;border:1px solid %2;border-radius:14px;}")
         .arg(Lumen::hex(Lumen::CARD), Lumen::hex(Lumen::LINE)));   // token 值字面量归引用（色不变）
     auto* cl = new QVBoxLayout(card);
-    cl->setContentsMargins(28, 26, 28, 26);
+    cl->setContentsMargins(Lumen::Space::Xl, Lumen::Space::Xl, Lumen::Space::Xl, Lumen::Space::Xl);
     cl->setSpacing(12);
 
     auto* title = new QLabel(QCoreApplication::translate("LightAlbum", "光影集 LightAlbum %1").arg(LA_VERSION), card);

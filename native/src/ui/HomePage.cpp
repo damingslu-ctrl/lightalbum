@@ -618,12 +618,12 @@ HomePage::HomePage(Library* lib, const QString& thumbsDir, QWidget* parent)
         "#homeTopBar{background:%1;border-bottom:1px solid %2;}")
         .arg(Lumen::hex(Lumen::BG), Lumen::hex(Lumen::LINE)));   // 发丝缝暖灰 161d18→LINE（§1.1 唯一分隔线；此栏 P29-H 起常隐，零可见影响）
     auto* tl = new QHBoxLayout(topBar_);
-    tl->setContentsMargins(24, 0, 20, 0);
+    tl->setContentsMargins(Lumen::Space::Xl, 0, Lumen::Space::Xl, 0);
     tl->setSpacing(16);
     {
         auto* logoBox = new QWidget(topBar_);
         auto* lv = new QVBoxLayout(logoBox);
-        lv->setContentsMargins(0, 6, 0, 6);
+        lv->setContentsMargins(0, Lumen::Space::S, 0, Lumen::Space::S);
         lv->setSpacing(0);
         auto* logo = new QLabel(QCoreApplication::translate("LightAlbum", "光影集"), logoBox);
         logo->setFont(Lumen::serifFont(14, QFont::DemiBold, 3.0));
@@ -675,7 +675,7 @@ HomePage::HomePage(Library* lib, const QString& thumbsDir, QWidget* parent)
         auto* empty = new QWidget(this);
         auto* ev = new QVBoxLayout(empty);
         ev->setAlignment(Qt::AlignCenter);
-        ev->setSpacing(14);
+        ev->setSpacing(Lumen::Space::L);
         auto* t = new QLabel(QCoreApplication::translate("LightAlbum", "光影集"), empty);
         t->setFont(Lumen::serifFont(30, QFont::DemiBold, 8.0));
         t->setStyleSheet(QString::fromUtf8("color:%1;")
@@ -692,7 +692,7 @@ HomePage::HomePage(Library* lib, const QString& thumbsDir, QWidget* parent)
         // 2.6.0：空态是新用户第一次接触应用的入口，iCloud 相册占了 Windows 照片库
         // 的大头，所以和「导入目录」并排给出（不是藏在顶栏下拉里）。
         auto* row = new QHBoxLayout;
-        row->setSpacing(10);
+        row->setSpacing(Lumen::Space::M);
         auto* imp = new QPushButton(QCoreApplication::translate("LightAlbum", "导入目录"), empty);
         imp->setCursor(Qt::PointingHandCursor);
         imp->setStyleSheet(Lumen::btnGold());
@@ -718,7 +718,7 @@ HomePage::HomePage(Library* lib, const QString& thumbsDir, QWidget* parent)
     {
         // 面板内容（margins 由外层 VBox 撑）
         auto* pv = new QVBoxLayout(panel_);
-        pv->setContentsMargins(30, 26, 24, 18);
+        pv->setContentsMargins(30, 26, 24, 18); // palette-exempt: editorial whitespace — Quiet Frame 章节面板非对称留白（左30/上26/下18 光学对齐 INDEX 基线，归格会把静寂拉平，见 spec §3.3）
         pv->setSpacing(0);
         auto* index = new QLabel(QStringLiteral("←  INDEX"), panel_);
         index->setFont(Lumen::serifFont(9, QFont::Normal, 3.0));

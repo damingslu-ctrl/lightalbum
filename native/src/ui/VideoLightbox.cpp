@@ -1,5 +1,6 @@
 #include "VideoLightbox.h"
 
+#include "Theme.h"
 #include "VideoPlayerWidget.h"
 
 #include <QFileInfo>
@@ -19,7 +20,7 @@ VideoLightbox::VideoLightbox(QWidget* parent) : QDialog(parent)
 
     m_title = new QLabel(this);
     m_title->setObjectName(QStringLiteral("videoLightboxTitle"));
-    m_title->setContentsMargins(10, 6, 10, 6);
+    m_title->setContentsMargins(Lumen::Space::M, Lumen::Space::S, Lumen::Space::M, Lumen::Space::S);
     m_title->setTextInteractionFlags(Qt::TextSelectableByMouse);
     lay->addWidget(m_title, 0);
 

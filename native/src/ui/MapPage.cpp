@@ -176,7 +176,7 @@ MapPage::MapPage(const QVector<Photo>* photos, const QString& thumbsDir,
         .arg(Lumen::hex(Lumen::PANEL),                        // T7 裁定：0a0e0a→PANEL（ΔRGB≤8 不可辨，侧栏=面板语义）
              Lumen::hex(Lumen::LINE)));
     auto* sl = new QVBoxLayout(stats_);
-    sl->setContentsMargins(18, 18, 18, 18);
+    sl->setContentsMargins(Lumen::Space::L, Lumen::Space::L, Lumen::Space::L, Lumen::Space::L);
     sl->setSpacing(12);
 
     auto* head = new QLabel(QCoreApplication::translate("LightAlbum", "区域统计"), stats_);
@@ -541,8 +541,8 @@ void MapPage::onRelocate()
         .arg(Lumen::Radius::Ctl)                           // T9 C3: 8->Radius::Ctl 10（%11 combo/lineedit）
         .arg(Lumen::Radius::Ctl));                         // T9 C3: 8->Radius::Ctl 10（%12 button）
     auto* vl = new QVBoxLayout(&dlg);
-    vl->setContentsMargins(18, 16, 18, 14);
-    vl->setSpacing(10);
+    vl->setContentsMargins(Lumen::Space::L, Lumen::Space::L, Lumen::Space::L, Lumen::Space::L);
+    vl->setSpacing(Lumen::Space::M);
 
     vl->addWidget(new QLabel(QString::fromUtf8(
         "金色航线以「我的位置」为基点，连向每一处拍摄地。选择常驻城市，或直接输入经纬度："), &dlg));

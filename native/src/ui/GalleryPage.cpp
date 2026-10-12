@@ -118,7 +118,7 @@ GalleryPage::GalleryPage(const QVector<Photo>* photos, const QString& thumbsDir,
     chipsBar_ = new QWidget(this);
     chipsBar_->setStyleSheet(barBgCss());
     auto* chipLay = new QHBoxLayout(chipsBar_);
-    chipLay->setContentsMargins(20, 10, 20, 0);
+    chipLay->setContentsMargins(Lumen::Space::L, Lumen::Space::M, Lumen::Space::L, 0);
     chipLay->setSpacing(8);
     lay->addWidget(chipsBar_);
 
@@ -126,7 +126,7 @@ GalleryPage::GalleryPage(const QVector<Photo>* photos, const QString& thumbsDir,
     personBar_ = new QWidget(this);
     personBar_->setStyleSheet(barBgCss());
     auto* personLay = new QHBoxLayout(personBar_);
-    personLay->setContentsMargins(20, 8, 20, 0);
+    personLay->setContentsMargins(Lumen::Space::L, Lumen::Space::S, Lumen::Space::L, 0);
     personLay->setSpacing(8);
     lay->addWidget(personBar_);
 
@@ -134,7 +134,7 @@ GalleryPage::GalleryPage(const QVector<Photo>* photos, const QString& thumbsDir,
     clusterBar_ = new QWidget(this);
     clusterBar_->setStyleSheet(barBgCss());
     auto* clusterLay = new QHBoxLayout(clusterBar_);
-    clusterLay->setContentsMargins(20, 8, 20, 0);
+    clusterLay->setContentsMargins(Lumen::Space::L, Lumen::Space::S, Lumen::Space::L, 0);
     clusterLay->setSpacing(8);
     clusterDimBox_ = new QComboBox(clusterBar_);
     clusterDimBox_->setCursor(Qt::PointingHandCursor);
@@ -207,7 +207,7 @@ GalleryPage::GalleryPage(const QVector<Photo>* photos, const QString& thumbsDir,
     storyBar_ = new QWidget(this);
     storyBar_->setStyleSheet(barBgCss());
     auto* storyLay = new QHBoxLayout(storyBar_);
-    storyLay->setContentsMargins(20, 8, 20, 0);
+    storyLay->setContentsMargins(Lumen::Space::L, Lumen::Space::S, Lumen::Space::L, 0);
     storyLay->setSpacing(8);
     lay->addWidget(storyBar_);
 
@@ -215,7 +215,7 @@ GalleryPage::GalleryPage(const QVector<Photo>* photos, const QString& thumbsDir,
     auto* searchBar = new QWidget(this);
     searchBar->setStyleSheet(barBgCss());
     auto* searchLay = new QHBoxLayout(searchBar);
-    searchLay->setContentsMargins(20, 8, 20, 8);
+    searchLay->setContentsMargins(Lumen::Space::L, Lumen::Space::S, Lumen::Space::L, Lumen::Space::S);
     searchLay->setSpacing(8);
     auto* searchLe = new QLineEdit(searchBar);
     searchLe->setPlaceholderText(QCoreApplication::translate("LightAlbum", "搜索 地点 / 时间 / 评分 / 关键词…"));
@@ -272,8 +272,8 @@ void GalleryPage::buildBatchBar()
                                                "border-top:1px solid %2;}")
         .arg(Lumen::hex(Lumen::PANEL), Lumen::hex(Lumen::LINE)));
     auto* bl = new QHBoxLayout(batchBar_);
-    bl->setContentsMargins(20, 6, 20, 6);
-    bl->setSpacing(6);
+    bl->setContentsMargins(Lumen::Space::L, Lumen::Space::S, Lumen::Space::L, Lumen::Space::S);
+    bl->setSpacing(Lumen::Space::S);
 
     batchInfo_ = new QLabel(batchBar_);
     batchInfo_->setStyleSheet(QStringLiteral("color:%1;")   // T8：12px=T5 原位 → css(Small)

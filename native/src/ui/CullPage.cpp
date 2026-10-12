@@ -450,7 +450,7 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     // 概览条（7 KPI）
     auto* kp = new QWidget(this);
     auto* kl = new QHBoxLayout(kp);
-    kl->setContentsMargins(0, 0, 0, 0); kl->setSpacing(10);
+    kl->setContentsMargins(0, 0, 0, 0); kl->setSpacing(Lumen::Space::M);
     const QStringList labels = {QCoreApplication::translate("LightAlbum", "已分析"), QCoreApplication::translate("LightAlbum", "候选"),
                                 QCoreApplication::translate("LightAlbum", "废片"), QCoreApplication::translate("LightAlbum", "去重组"),
                                 QCoreApplication::translate("LightAlbum", "模糊"), QCoreApplication::translate("LightAlbum", "曝光"),
@@ -479,14 +479,14 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     auto* bar = new QWidget(this);
     auto* bl = new QHBoxLayout(bar);
     bl->setContentsMargins(0, 0, 0, 0);
-    bl->setSpacing(10);
+    bl->setSpacing(Lumen::Space::M);
 
     runBtn_ = new QPushButton(QCoreApplication::translate("LightAlbum", "开始分析"), bar);
     runBtn_->setStyleSheet(Lumen::btnGold());
 
     auto* stepWrap = new QWidget(bar);
     auto* sl = new QHBoxLayout(stepWrap);
-    sl->setContentsMargins(0, 0, 0, 0); sl->setSpacing(6);
+    sl->setContentsMargins(0, 0, 0, 0); sl->setSpacing(Lumen::Space::S);
     auto* stepLbl = new QLabel(QCoreApplication::translate("LightAlbum", "目标张数"), bar);
     stepLbl->setStyleSheet(QStringLiteral("color:%1;").arg(Lumen::hex(Lumen::MUTED)));
     auto* minus = new QPushButton(QString::fromUtf8("−"), bar);
@@ -552,7 +552,7 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     selBar_ = new QWidget(this);
     auto* sbl = new QHBoxLayout(selBar_);
     sbl->setContentsMargins(12, 8, 12, 8);
-    sbl->setSpacing(10);
+    sbl->setSpacing(Lumen::Space::M);
     selBar_->setObjectName(QStringLiteral("cullSelBar"));
     selBar_->setStyleSheet(QStringLiteral("#cullSelBar{background:%1;border:none;"
         "border-radius:10px;}").arg(Lumen::hex(Lumen::INSET)));
@@ -596,7 +596,7 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
         .arg(Lumen::hex(Lumen::INSET))
         .arg(Lumen::Radius::Card));   // T9：12→Radius::Card 14（§3.1 归并 12/14/16）
     auto* ll = new QVBoxLayout(lockFrame_);
-    ll->setContentsMargins(12, 10, 12, 10); ll->setSpacing(8);
+    ll->setContentsMargins(Lumen::Space::M, Lumen::Space::M, Lumen::Space::M, Lumen::Space::M); ll->setSpacing(8);
     lockTitle_ = new QLabel(QCoreApplication::translate("LightAlbum", "锁定区"), lockFrame_);
     lockTitle_->setStyleSheet(QStringLiteral("color:%1;font-weight:bold;%2")
         .arg(Lumen::hex(Lumen::GOLD))
@@ -605,7 +605,7 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     lockList_ = new QListWidget(lockFrame_);
     lockList_->setViewMode(QListView::IconMode);
     lockList_->setResizeMode(QListView::Adjust);
-    lockList_->setSpacing(6);
+    lockList_->setSpacing(Lumen::Space::Xs);
     lockList_->setFixedHeight(98);
     lockList_->setStyleSheet(QStringLiteral("QListWidget{background:transparent;border:none;}"
         "QListWidget::item:selected{background:transparent;}"));
@@ -659,10 +659,10 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     duel_ = duelFrame;
     duel_->setFocusPolicy(Qt::StrongFocus);
     auto* dv = new QVBoxLayout(duel_);
-    dv->setContentsMargins(12, 10, 12, 10);
-    dv->setSpacing(10);
+    dv->setContentsMargins(Lumen::Space::M, Lumen::Space::M, Lumen::Space::M, Lumen::Space::M);
+    dv->setSpacing(Lumen::Space::M);
     auto* hrow = new QHBoxLayout;
-    hrow->setSpacing(10);
+    hrow->setSpacing(Lumen::Space::M);
     duelHead_ = new QLabel(duel_);
     duelHead_->setStyleSheet(QStringLiteral("color:%1;%2border:none;background:transparent;")
         .arg(Lumen::hex(Lumen::MUTED))
@@ -674,7 +674,7 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     dv->addLayout(hrow);
 
     auto* mid = new QHBoxLayout;
-    mid->setSpacing(14);
+    mid->setSpacing(Lumen::Space::L);
     paneL_ = new DuelPane(duel_);
     paneR_ = new DuelPane(duel_);
     auto* pk = new QLabel(QString::fromUtf8("PK"), duel_);
@@ -699,7 +699,7 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     dv->addLayout(mid, 1);
 
     auto* brow = new QHBoxLayout;
-    brow->setSpacing(10);
+    brow->setSpacing(Lumen::Space::M);
     auto mkDuelBtn = [this](const QString& t, std::function<void()> fn) {
         auto* b = new QPushButton(t, duel_);
         b->setStyleSheet(Lumen::btnGhost(Lumen::MUTED));
@@ -734,7 +734,7 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
         .arg(Lumen::Radius::Card));   // T9：12→Radius::Card 14
     filmRow_ = new QWidget(filmScroll_);
     filmRow_->setLayout(new QHBoxLayout);
-    filmRow_->layout()->setContentsMargins(10, 8, 10, 8);
+    filmRow_->layout()->setContentsMargins(Lumen::Space::M, Lumen::Space::S, Lumen::Space::M, Lumen::Space::S);
     filmRow_->layout()->setSpacing(8);
     filmScroll_->setWidget(filmRow_);
     root->addWidget(filmScroll_);

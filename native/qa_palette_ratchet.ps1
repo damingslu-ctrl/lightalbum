@@ -41,11 +41,16 @@ function Measure-Counts {
       foreach ($m in [regex]::Matches($ln,'font-size:\s*([0-9.]+)px')) { $c2++ }
       foreach ($m in [regex]::Matches($ln,'border-radius:\s*(\d+)px')) {
         if ($rw -notcontains [int]$m.Groups[1].Value) { $c3++ } }
+      # C4 only: the sanctioned editorial-whitespace exemption marker (spec 3.3 /
+      # Task 10). Lines carrying the exact marker are skipped in this branch; no
+      # other counter reads it, so the exemption cannot leak into C1/C2/C3/C5.
+      if ($ln -notmatch 'palette-exempt: editorial whitespace') {
       foreach ($m in [regex]::Matches($ln,'setSpacing\w*\(\s*(\d+)')) {
         if ($sw -notcontains [int]$m.Groups[1].Value) { $c4++ } }
       foreach ($m in [regex]::Matches($ln,'setContentsMargins\(([^)]*)\)')) {
         foreach ($n in ($m.Groups[1].Value -split ',')) {
           $v = $n.Trim(); if ($v -match '^\d+$') { if ($sw -notcontains [int]$v) { $c4++ } } } }
+      }
       # C5: an emoji/symbol glyph on a translatable-string site. The real codebase
       # idiom is QCoreApplication::translate("LightAlbum","...") (evidence: Gallery
       # Page:264, CullPage:241/859, MainWindow:279/287) plus tr/fromUtf8/QStringLitera

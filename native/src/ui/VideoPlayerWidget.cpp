@@ -1,5 +1,6 @@
 #include "VideoPlayerWidget.h"
 
+#include "Theme.h"
 #include "../core/AudioPlayer.h"
 #include "../core/VideoDecode.h"
 #include "../core/VideoDecoder.h"
@@ -52,7 +53,7 @@ VideoPlayerWidget::VideoPlayerWidget(QWidget* parent) : QWidget(parent)
     auto* bar = new QWidget(this);
     bar->setObjectName(QStringLiteral("videoBar"));
     auto* bl = new QVBoxLayout(bar);
-    bl->setContentsMargins(6, 4, 6, 4);
+    bl->setContentsMargins(Lumen::Space::S, Lumen::Space::Xs, Lumen::Space::S, Lumen::Space::Xs);
 
     m_playBtn = new QPushButton(QStringLiteral("▶"), bar);
     m_playBtn->setObjectName(QStringLiteral("videoPlayBtn"));
