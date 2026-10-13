@@ -366,7 +366,9 @@ $GateTable = @(
   # Tier defaults to FULL: real RAW decode measures ~0.6 s per image, plus QApplication startup.
   @{n="LA_EDIT_RAW_QA"; png=$false; need=@("LA_RAW_SAMPLE","LA_VIDEO_SAMPLE"); measuredMs=1581},
   @{n="LA_GALLERY_FILL_QA"; png=$true; measuredMs=2690},
-  @{n="LA_RETOUCH_A_QA";    png=$true; measuredMs=2707},
+  # R1-T4 re-measure: qaShootA now counts enhOps (13 wired ops), so the pre-R1
+  # record measuredMs=2707 was stale; 1113 is the fresh qa_runner -Timing value.
+  @{n="LA_RETOUCH_A_QA";    png=$true; measuredMs=1113},
   @{n="LA_SCALE_SMOKE";     png=$false; measuredMs=3351},
   @{n="LA_SCALE_PERF";      png=$false; measuredMs=338},
   @{n="LA_BATCH_TX_QA";     png=$false; measuredMs=7004},
@@ -560,9 +562,11 @@ $GateTable = @(
   # gates from the fast layer, so the spec section 2.4 "fast tier" intent is delivered as
   # an exe static-scan gate instead of a script gate (plan-level ruling 1). F1 fail-open
   # guard: 0 files scanned -> FAIL. Counter-example LA_LUMEN_OPS_UI_QA_FORCE_BROKEN=1
-  # injects a phantom op name (13/14 coverage) -> RED. measuredMs=0 placeholder; E8
-  # requires the key, rule 25/31 require the -Timing value (backfilled in R1-T4).
-  @{n="LA_LUMEN_OPS_UI_QA"; png=$false; tier="fast"; measuredMs=0}
+  # injects a phantom op name (13/14 coverage) -> RED. measuredMs=155 backfilled in
+  # R1-T4 from qa_runner -Timing (rule 25/31; E8 only requires the key to exist).
+  # 155 <= the 500 ms E6 fast budget, so the FAST tier stands (plan-level ruling:
+  # demote to full only if >500).
+  @{n="LA_LUMEN_OPS_UI_QA"; png=$false; tier="fast"; measuredMs=155}
 )
 # Resolve a gate's tier. Absent key means "full" - the fail-safe default.
 function Get-GateTier {
