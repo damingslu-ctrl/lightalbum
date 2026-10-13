@@ -3,6 +3,35 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.38.0] - 2026-10-12
+
+### R1 Lumen 13 显式算子产品化
+- RetouchPage 新增「一键增强」工具区：13 算子三组平铺（影调/人像/校正），QtConcurrent
+  异步执行、忙碌态、走现有撤销/重做通道（RtEditState 增 enh/ops），导出按序列全分辨率重放。
+- 诚实反馈：红眼修复点数 / 肤色占比 / 水平校正角度；无倾斜 no-op 明确提示、不改动。
+- 新门 LA_LUMEN_OPS_UI_QA（fast 层 exe 静态扫描，接线前必红）；修复 LA_RETOUCH_A_QA
+  恒 exit 0 空心门 + 增 enhOps/eraseCancel 存在性断言。
+- 引擎数学零改动（LumenEngine.{h,cpp} 未触；LA_LUMEN_SMOKE 金样对拍为回归护栏）。
+
+### R2 HEIC/WebP EXIF 容器补全
+- ExifReader 增 WebP（RIFF EXIF chunk，兼容 "Exif\0\0" 前缀）与 HEIC（ISOBMFF
+  meta/iinf/iloc 最小 walker）抽取，容器→TIFF blob 一层，复喂现有 TIFF 解析器；
+  失败一律走 mtime 回退（诚实降级，绝不伪造）。
+- 新门 LA_EXIF_CONTAINER_QA（full）：合成夹具字节确定 + 恒开反例（越界盒/自指子盒
+  不崩且回退）；真样本臂 LA_HEIC_SAMPLE env 内判定（无值 skipped）。
+- JPEG/PNG/TIFF 三格式行为不变（既有解析断言全绿）。
+
+### R3 Erase residual 收尾
+- EraseBridge 任务表淘汰（保留最近 8；running 永不淘汰；submit 尾修剪）；ES
+  取消链路：EraseRunner.requestCancel（atomic）+ run() 100ms 分片等待观测 +
+  kill 子进程复位；cancelled 终态定格（worker 回调不得覆写）；RetouchPage 取消按钮。
+- EraseBridge.h / FaceCluster.h 陈旧注释订正；LA_ERASE_QA 扩 G1（淘汰）G2（取消）
+  两组 + FORCE_NO_EVICT / FORCE_IGNORE_CANCEL 反例钩子。
+
+### 回归
+- 名册 72 → 74 门（fast 19 + full 55）；gate_matrix SelfTest fails=0；
+  全量套件 FAIL=0 CHECK=0 KILL=0，SKIP 仅既有 need= 门。
+
 ## [2.37.0] - 2026-10-12
 
 本轮为**设计语言 v2 · P1（高级感升级子轨的地基层）**：色板、字阶、几何三类设计债
