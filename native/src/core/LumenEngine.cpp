@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <functional>
 #include <random>
+#include <QtConcurrent>   // blockingMap（QtConcurrentRun 头不含 map 族，需总括头）
+#include <QThread>
 
 // ============================================================ 预设
 LumenPreset LumenPreset::byName(const QString& name)
@@ -19,6 +21,23 @@ LumenPreset LumenPreset::byName(const QString& name)
 namespace {
 
 constexpr double P_SHADES = 6.0;
+
+// 逐行块并行执行器：把 [0,h) 切成行块用 QtConcurrent::blockingMap 分派。
+// body(y0,y1) 负责行区间 [y0,y1)，仅用于"每输出像素只读自身/邻域（只读源）、只写自身像素"的纯映射循环。
+// LA_LUMEN_THREADS=1 -> 强制串行（金样门串行/并行逐字节比对基准）；未设/坏值 -> idealThreadCount。
+static void lumenParallelRows(int h, const std::function<void(int, int)>& body)
+{
+    int nt = 0;
+    const QByteArray tv = qgetenv("LA_LUMEN_THREADS");
+    if (!tv.isEmpty()) nt = tv.toInt();
+    if (nt <= 0) nt = QThread::idealThreadCount();
+    if (nt <= 1 || h <= 1) { body(0, h); return; }
+    const int nchunk = std::max(1, std::min(h, nt * 4));
+    const int rows = (h + nchunk - 1) / nchunk;
+    QVector<QPair<int, int>> blocks;
+    for (int y = 0; y < h; y += rows) blocks.append(qMakePair(y, qMin(y + rows, h)));
+    QtConcurrent::blockingMap(blocks, [&](const QPair<int, int>& b) { body(b.first, b.second); });
+}
 
 inline int clamp255(int v) { return v < 0 ? 0 : (v > 255 ? 255 : v); }
 inline int chopMul(int a, int b) { return (a * b) / 255; }   // ImageChops.multiply
@@ -268,44 +287,50 @@ QImage LumenEngine::LumenEngine::gaussianBlur(const QImage& src, double radius)
     for (double& k : kern) k /= ksum;
 
     QImage tmp(img.size(), img.format());
-    for (int y = 0; y < h; ++y) {
-        const uchar* srow = img.constScanLine(y);
-        uchar* drow = tmp.scanLine(y);
-        for (int x = 0; x < w; ++x) {
-            double acc[3] = {0, 0, 0};
-            for (int i = -kr; i <= kr; ++i) {
-                const int xx = std::clamp(x + i, 0, w - 1);
-                const double kw = kern[i + kr];
-                if (ch == 1) acc[0] += srow[xx] * kw;
-                else {
-                    const QRgb px = reinterpret_cast<const QRgb*>(srow)[xx];
-                    acc[0] += qRed(px) * kw; acc[1] += qGreen(px) * kw; acc[2] += qBlue(px) * kw;
+    tmp.scanLine(0);   // 单线程段完成 detach；并行体只写各自行
+    img.scanLine(0);
+    lumenParallelRows(h, [&](int y0, int y1) {
+        for (int y = y0; y < y1; ++y) {
+            const uchar* srow = img.constScanLine(y);
+            uchar* drow = tmp.scanLine(y);
+            for (int x = 0; x < w; ++x) {
+                double acc[3] = {0, 0, 0};
+                for (int i = -kr; i <= kr; ++i) {
+                    const int xx = std::clamp(x + i, 0, w - 1);
+                    const double kw = kern[i + kr];
+                    if (ch == 1) acc[0] += srow[xx] * kw;
+                    else {
+                        const QRgb px = reinterpret_cast<const QRgb*>(srow)[xx];
+                        acc[0] += qRed(px) * kw; acc[1] += qGreen(px) * kw; acc[2] += qBlue(px) * kw;
+                    }
                 }
+                if (ch == 1) drow[x] = uchar(clamp255(int(acc[0] + 0.5)));
+                else reinterpret_cast<QRgb*>(drow)[x] =
+                    qRgb(clamp255(int(acc[0] + 0.5)), clamp255(int(acc[1] + 0.5)), clamp255(int(acc[2] + 0.5)));
             }
-            if (ch == 1) drow[x] = uchar(clamp255(int(acc[0] + 0.5)));
-            else reinterpret_cast<QRgb*>(drow)[x] =
-                qRgb(clamp255(int(acc[0] + 0.5)), clamp255(int(acc[1] + 0.5)), clamp255(int(acc[2] + 0.5)));
         }
-    }
-    for (int y = 0; y < h; ++y) {
-        uchar* drow = img.scanLine(y);
-        for (int x = 0; x < w; ++x) {
-            double acc[3] = {0, 0, 0};
-            for (int i = -kr; i <= kr; ++i) {
-                const int yy = std::clamp(y + i, 0, h - 1);
-                const double kw = kern[i + kr];
-                const uchar* srow = tmp.constScanLine(yy);
-                if (ch == 1) acc[0] += srow[x] * kw;
-                else {
-                    const QRgb px = reinterpret_cast<const QRgb*>(srow)[x];
-                    acc[0] += qRed(px) * kw; acc[1] += qGreen(px) * kw; acc[2] += qBlue(px) * kw;
+    });
+    lumenParallelRows(h, [&](int y0, int y1) {
+        for (int y = y0; y < y1; ++y) {
+            uchar* drow = img.scanLine(y);
+            for (int x = 0; x < w; ++x) {
+                double acc[3] = {0, 0, 0};
+                for (int i = -kr; i <= kr; ++i) {
+                    const int yy = std::clamp(y + i, 0, h - 1);
+                    const double kw = kern[i + kr];
+                    const uchar* srow = tmp.constScanLine(yy);
+                    if (ch == 1) acc[0] += srow[x] * kw;
+                    else {
+                        const QRgb px = reinterpret_cast<const QRgb*>(srow)[x];
+                        acc[0] += qRed(px) * kw; acc[1] += qGreen(px) * kw; acc[2] += qBlue(px) * kw;
+                    }
                 }
+                if (ch == 1) drow[x] = uchar(clamp255(int(acc[0] + 0.5)));
+                else reinterpret_cast<QRgb*>(drow)[x] =
+                    qRgb(clamp255(int(acc[0] + 0.5)), clamp255(int(acc[1] + 0.5)), clamp255(int(acc[2] + 0.5)));
             }
-            if (ch == 1) drow[x] = uchar(clamp255(int(acc[0] + 0.5)));
-            else reinterpret_cast<QRgb*>(drow)[x] =
-                qRgb(clamp255(int(acc[0] + 0.5)), clamp255(int(acc[1] + 0.5)), clamp255(int(acc[2] + 0.5)));
         }
-    }
+    });
     return img;
 }
 

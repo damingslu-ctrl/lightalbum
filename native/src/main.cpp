@@ -27,6 +27,7 @@
 #include <QLocale>
 #include <cstdio>
 #include <cmath>
+#include <cstring>                      // R3-T1 DET 决定性子断言：std::memcmp 逐字节比对
 #include <algorithm>          // 2.35.0 std::reverse / std::rotate（O 组顺序不变性排列）
 #include "core/Library.h"
 #include "core/LumenEngine.h"
@@ -5728,6 +5729,43 @@ int runLumenSmoke()
             std::fprintf(stderr, "LUMEN_LEVEL %d cppAngle=%.2f goldAngle=%.2f angErr=%.2f mad=%.3f\n",
                          i, cppAngle, goldAngle, angErr, mad);
             if (angErr > 1.0 || mad > kLevelLimit) pass = false;
+        }
+    }
+    // ---- R3 决定性子断言：串行（LA_LUMEN_THREADS=1）vs 默认并行，逐字节 memcmp 全等。
+    // 强于 MAD：任何跨块写竞态/误并行归约即使 MAD 仍在容差内也必红（铁律34）。
+    // 反例：LA_LUMEN_SMOKE_FORCE_DIFF=1 只损坏串行基准一字节；期望表冻结"必须相等"，绝不随开关变（铁律22）。
+    {
+        const QImage dIn(QDir(dir).filePath(QStringLiteral("in_0.png")));
+        if (!dIn.isNull()) {
+            qputenv("LA_LUMEN_THREADS", "1");
+            const QImage sLens = LumenEngine::lensCorrect(dIn);
+            const QImage sVig  = LumenEngine::vignetteCorrect(dIn);
+            const QImage sGlow = LumenEngine::glowStyle(dIn);
+            const QImage sHdr  = LumenEngine::toneMapHdr(dIn);
+            const QImage sDeh  = LumenEngine::dehaze(dIn);
+            const QImage sPor  = LumenEngine::portraitBeautify(dIn);
+            qunsetenv("LA_LUMEN_THREADS");
+            const QImage pLens = LumenEngine::lensCorrect(dIn);
+            const QImage pVig  = LumenEngine::vignetteCorrect(dIn);
+            const QImage pGlow = LumenEngine::glowStyle(dIn);
+            const QImage pHdr  = LumenEngine::toneMapHdr(dIn);
+            const QImage pDeh  = LumenEngine::dehaze(dIn);
+            const QImage pPor  = LumenEngine::portraitBeautify(dIn);
+            auto cmp = [&](const char* nm, QImage a, const QImage& b) {
+                if (qEnvironmentVariableIsSet("LA_LUMEN_SMOKE_FORCE_DIFF") && !a.isNull())
+                    a.scanLine(0)[0] ^= uchar(0x01);   // a 为按值句柄，scanLine 触发私有 detach，不污染 s* 原图
+                const bool eq = a.size() == b.size() && a.bytesPerLine() == b.bytesPerLine()
+                    && a.sizeInBytes() == b.sizeInBytes()
+                    && std::memcmp(a.constBits(), b.constBits(), size_t(a.sizeInBytes())) == 0;
+                std::fprintf(stderr, "LA_LUMEN_DET %s equal=%d\n", nm, eq ? 1 : 0);
+                if (!eq) pass = false;
+            };
+            cmp("lens", sLens, pLens);
+            cmp("vignette", sVig, pVig);
+            cmp("glow", sGlow, pGlow);
+            cmp("hdr", sHdr, pHdr);
+            cmp("dehaze", sDeh, pDeh);
+            cmp("portrait", sPor, pPor);
         }
     }
     std::fprintf(stderr, "LA_LUMEN_SMOKE %s\n", pass ? "PASS" : "FAIL");
