@@ -59,6 +59,59 @@ const RtSlider kSliders[] = {
     {"vignette",   "暗角",   -1, 1},
 };
 
+// 2.38.0 R1：一键增强 13 算子（组内平铺；key 与 LumenEngine 方法严格同名）
+struct EnhOp { const char* key; const char* label; int group; };   // group: 0 影调 / 1 人像 / 2 校正
+const EnhOp kEnhOps[] = {
+    {"filmStyle",       "胶片", 0}, {"blackWhite",  "黑白", 0}, {"toneMapHdr",      "HDR",  0},
+    {"structure",       "结构", 0}, {"dodge",       "减淡", 0}, {"glowStyle",       "柔光", 0},
+    {"redeyeRemove",    "红眼", 1}, {"portraitBeautify", "美颜", 1},
+    {"levelCorrect",    "水平", 2}, {"lensCorrect",  "镜头", 2}, {"vignetteCorrect", "暗角", 2},
+    {"dehaze",          "去雾", 2}, {"chromaticCorrect", "色差", 2},
+};
+
+// 算子执行结果：img=null 表示未改动（诚实 no-op）；note 为诚实反馈（空=用默认文案）
+struct EnhOutcome { QImage img; QString note; };
+
+EnhOutcome runEnhOp(const QImage& src, const QString& key)
+{
+    EnhOutcome o;
+    if (src.isNull()) return o;
+    if (key == QStringLiteral("filmStyle"))            o.img = LumenEngine::filmStyle(src);
+    else if (key == QStringLiteral("blackWhite"))      o.img = LumenEngine::blackWhite(src);
+    else if (key == QStringLiteral("glowStyle"))       o.img = LumenEngine::glowStyle(src);
+    else if (key == QStringLiteral("toneMapHdr"))      o.img = LumenEngine::toneMapHdr(src);
+    else if (key == QStringLiteral("structure"))       o.img = LumenEngine::structure(src);
+    else if (key == QStringLiteral("dodge"))           o.img = LumenEngine::dodge(src);
+    else if (key == QStringLiteral("dehaze"))          o.img = LumenEngine::dehaze(src);
+    else if (key == QStringLiteral("chromaticCorrect"))o.img = LumenEngine::chromaticCorrect(src);
+    else if (key == QStringLiteral("lensCorrect"))     o.img = LumenEngine::lensCorrect(src);
+    else if (key == QStringLiteral("redeyeRemove")) {
+        int pixels = 0;
+        o.img = LumenEngine::redeyeRemove(src, &pixels);
+        o.note = pixels > 0
+            ? QCoreApplication::translate("LightAlbum", "红眼已修 %1 点").arg(pixels)
+            : QCoreApplication::translate("LightAlbum", "未检测到红眼 · 未改动");
+    } else if (key == QStringLiteral("portraitBeautify")) {
+        double frac = -1.0;
+        o.img = LumenEngine::portraitBeautify(src, 1.0, &frac);
+        if (frac >= 0.0)
+            o.note = QCoreApplication::translate("LightAlbum", "美颜 · 肤色占比 %1%")
+                         .arg(frac * 100.0, 0, 'f', 1);
+    } else if (key == QStringLiteral("vignetteCorrect")) {
+        double k = 0.0;
+        o.img = LumenEngine::vignetteCorrect(src, 1.0, &k);
+    } else if (key == QStringLiteral("levelCorrect")) {
+        const double ang = LumenEngine::levelDetectAngle(src);
+        if (ang == 0.0) {
+            o.note = QCoreApplication::translate("LightAlbum", "未检测到可校正的倾斜 · 未改动");
+            return o;                                   // 诚实 no-op：不追加 ops_、不进历史
+        }
+        o.img = LumenEngine::levelCorrect(src);
+        o.note = QCoreApplication::translate("LightAlbum", "水平校正 %1°").arg(ang, 0, 'f', 2);
+    }
+    return o;
+}
+
 QString photoLabel(const Photo& ph)
 {
     if (!ph.title.isEmpty()) return ph.title;
@@ -381,6 +434,7 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
         auto* panel = new QWidget(sa);
         auto* gl = new QGridLayout(panel);
         gl->setColumnStretch(1, 1);
+        buildEnhOps(gl);                                     // 2.38.0 R1：一键增强 13 入口（三组）
         for (const RtSlider& def : kSliders) buildSlider(def, gl);
         sa->setWidget(panel);
         al0->addWidget(sa, 1);
@@ -788,6 +842,40 @@ void RetouchPage::buildSlider(const RtSlider& def, QGridLayout* gl)
     connect(sl, &QSlider::valueChanged, this, &RetouchPage::onSliderChanged);
 }
 
+// 2.38.0 R1：一键增强工具区（标题 + 三组九宫格；插在滑杆行之前，buildSlider 依 rowCount 自动顺延）
+void RetouchPage::buildEnhOps(QGridLayout* gl)
+{
+    if (!gl) return;
+    int row = 0;
+    auto* ht = new QLabel(QCoreApplication::translate("LightAlbum", "一键增强"), this);
+    ht->setStyleSheet(QString::fromUtf8("color:%1;font-weight:bold;").arg(Lumen::hex(Lumen::INK))
+                      + Lumen::Type::css(Lumen::Type::Tier::Body));
+    gl->addWidget(ht, row++, 0, 1, 3);
+    const QStringList kGroups = { QCoreApplication::translate("LightAlbum", "影调"),
+                                  QCoreApplication::translate("LightAlbum", "人像"),
+                                  QCoreApplication::translate("LightAlbum", "校正") };
+    for (int g = 0; g < kGroups.size(); ++g) {
+        auto* gt = new QLabel(kGroups[g], this);
+        gt->setStyleSheet(QString::fromUtf8("color:%1;font-weight:bold;").arg(Lumen::hex(Lumen::MUTED))
+                          + Lumen::Type::css(Lumen::Type::Tier::Small));
+        gl->addWidget(gt, row++, 0, 1, 3);
+        int col = 0;
+        for (const EnhOp& op : kEnhOps) {
+            if (op.group != g) continue;
+            auto* b = new QPushButton(QString::fromUtf8(op.label), this);
+            b->setObjectName(QStringLiteral("opBtn_") + QString::fromLatin1(op.key));
+            b->setStyleSheet(Lumen::btnGhost(Lumen::INK));
+            b->setCursor(Qt::PointingHandCursor);
+            gl->addWidget(b, row, col % 3);
+            if (++col % 3 == 0) ++row;
+            opBtns_.append(b);
+            const QString key = QString::fromLatin1(op.key);
+            connect(b, &QPushButton::clicked, this, [this, key]() { onEnhOpClicked(key); });
+        }
+        if (col % 3 != 0) ++row;
+    }
+}
+
 void RetouchPage::onSliderChanged()
 {
     exitAgentMode();   // 手动干预即接管（智能体计划失效）
@@ -881,10 +969,49 @@ void RetouchPage::onAgentRun()
     }));
 }
 
+// 2.38.0 R1：点击一键增强入口——异步执行（QtConcurrent）+ 写回编辑态 + 走撤销通道。
+// 诚实反馈：no-op（如 levelCorrect 无倾斜）不追加 ops_、不产生历史点。
+void RetouchPage::onEnhOpClicked(const QString& key)
+{
+    if (opBusy_ || geoSrc_.isNull()) return;
+    exitAgentMode();                     // 手动动作即退出智能体模式
+    clearCardSel();
+    opBusy_ = true;
+    const int gen = opGen_;
+    for (auto* b : opBtns_) b->setEnabled(false);
+    prog_->setRange(0, 0);               // 忙碌态（不确定进度；完成回落）
+    badge_->setText(QCoreApplication::translate("LightAlbum", "一键增强处理中…（本地计算，零云端）"));
+    const QImage src = geoImg_.isNull() ? geoSrc_ : geoImg_;
+    auto* watcher = new QFutureWatcher<EnhOutcome>(this);
+    connect(watcher, &QFutureWatcher<EnhOutcome>::finished, this, [this, watcher, key, gen]() {
+        watcher->deleteLater();
+        opBusy_ = false;
+        prog_->setRange(0, 100);
+        prog_->setValue(0);
+        for (auto* b : opBtns_) b->setEnabled(true);
+        if (gen != opGen_) return;       // 换图/重置后抵达的飞行结果：丢弃（不跨图套用）
+        const EnhOutcome oc = watcher->result();
+        if (oc.img.isNull()) {
+            badge_->setText(oc.note.isEmpty()
+                ? QCoreApplication::translate("LightAlbum", "该操作未产生改动")
+                : oc.note);
+            return;
+        }
+        enhImg_ = oc.img;
+        ops_.append(key);
+        rebuildGeo();                    // 几何管线基图 = enhImg_（doApply 末尾提交撤销快照）
+        badge_->setText(oc.note.isEmpty()
+            ? QCoreApplication::translate("LightAlbum", "一键增强 · %1 · 零云端").arg(key)
+            : oc.note);                  // 诚实反馈优先于默认文案（rebuildGeo 后设置，防被 updateBadge 覆盖）
+    });
+    watcher->setFuture(QtConcurrent::run([src, key]() { return runEnhOp(src, key); }));
+}
+
 // ----------------------------------------------------------------- P4-1 几何槽
 void RetouchPage::rebuildGeo()
 {
-    geoImg_ = applyGeometry(geoSrc_, rot_, flipH_, flipV_, angle_, aspect_, cropNorm_);
+    const QImage& base = enhImg_.isNull() ? geoSrc_ : enhImg_;   // 2.38.0 R1：几何在增强结果之上
+    geoImg_ = applyGeometry(base, rot_, flipH_, flipV_, angle_, aspect_, cropNorm_);
     if (geoImg_.isNull()) {
         beforeLbl_->setText(QCoreApplication::translate("LightAlbum", "无缩略图"));
         return;
@@ -1073,6 +1200,7 @@ void RetouchPage::onReset()
 {
     exitAgentMode();
     clearCardSel();    // 重置后无激活预设卡片
+    enhImg_ = QImage(); ops_.clear(); ++opGen_;   // 重置=全量回基线（含增强层）；doApply 末尾自然提交撤销点
     setParams(RetouchParams{});
     presetCombo_->setCurrentIndex(0);
     doApply();
@@ -1091,6 +1219,11 @@ void RetouchPage::onExport()
     QImage work = full.isNull() ? geoSrc_ : full;
     if (work.width() > kMaxExport || work.height() > kMaxExport)
         work = work.scaled(kMaxExport, kMaxExport, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    // 2.38.0 R1：一键增强序列在全分辨率上如实重放（预览所见 = 导出所得；顺序与预览一致：先增强后几何）
+    for (const QString& k : ops_) {
+        const EnhOutcome oc = runEnhOp(work, k);
+        if (!oc.img.isNull()) work = oc.img;
+    }
     work = applyGeometry(work, rot_, flipH_, flipV_, angle_, aspect_, cropNorm_);
     // P9：智能体模式导出走同一执行路径（retouchWithPlan），预览所见即导出所得
     QImage out = agentMode_
@@ -1179,6 +1312,7 @@ void RetouchPage::onVideoFrameChanged(int sec)
         img = img.scaled(kMaxSrc, kMaxSrc, Qt::KeepAspectRatio, Qt::SmoothTransformation);
     restoring_ = true;                // 换帧重建不计入撤销历史（不是「编辑动作」）
     geoSrc_ = img;
+    enhImg_ = QImage(); ops_.clear(); ++opGen_;
     rebuildGeo();
     refreshGallery();
     restoring_ = false;
@@ -1201,6 +1335,7 @@ void RetouchPage::loadPhoto(int idx)
     QImage img(path);
     if (img.isNull()) {
         geoSrc_ = QImage(); geoImg_ = QImage();
+        enhImg_ = QImage(); ops_.clear(); ++opGen_;
         beforeLbl_->setText(QCoreApplication::translate("LightAlbum", "无缩略图"));
         resetHistory();              // 空基线：无可撤销
         updateUndoRedoButtons();
@@ -1210,6 +1345,7 @@ void RetouchPage::loadPhoto(int idx)
         img = img.scaled(kMaxSrc, kMaxSrc, Qt::KeepAspectRatio, Qt::SmoothTransformation);
     restoring_ = true;               // 载入重建不计入历史
     geoSrc_ = img;
+    enhImg_ = QImage(); ops_.clear(); ++opGen_;
     rebuildGeo();
     refreshGallery();
     restoring_ = false;
@@ -1238,6 +1374,7 @@ RtEditState RetouchPage::captureState() const
     s.agentMode = agentMode_;
     s.rot = rot_; s.flipH = flipH_; s.flipV = flipV_;
     s.angle = angle_; s.aspect = aspect_; s.cropNorm = cropNorm_;
+    s.enh = enhImg_; s.ops = ops_;
     return s;
 }
 
@@ -1248,6 +1385,7 @@ void RetouchPage::applyState(const RtEditState& s)
     agentMode_ = s.agentMode;
     rot_ = s.rot; flipH_ = s.flipH; flipV_ = s.flipV;
     angle_ = s.angle; aspect_ = s.aspect; cropNorm_ = s.cropNorm;
+    enhImg_ = s.enh; ops_ = s.ops;
     syncSlidersFromCur();                       // 滑杆显示同步
     if (straighten_) {
         straighten_->blockSignals(true);
@@ -1264,6 +1402,7 @@ void RetouchPage::applyState(const RtEditState& s)
 
 void RetouchPage::onUndo()
 {
+    if (opBusy_) return;
     if (!hist_.canUndo()) return;
     restoring_ = true;
     applyState(hist_.undo());
@@ -1272,6 +1411,7 @@ void RetouchPage::onUndo()
 
 void RetouchPage::onRedo()
 {
+    if (opBusy_) return;
     if (!hist_.canRedo()) return;
     restoring_ = true;
     applyState(hist_.redo());

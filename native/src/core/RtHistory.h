@@ -6,6 +6,8 @@
 #include <QString>
 #include <QRectF>
 #include <QVector>
+#include <QImage>
+#include <QStringList>
 
 struct RtEditState {
     QMap<QString, double> cur;        // 修调参数（归一量）
@@ -16,12 +18,15 @@ struct RtEditState {
     double      angle = 0.0;           // 拉直角度（度）
     double      aspect = 0.0;          // 裁剪宽高比，0 = 自由
     QRectF      cropNorm;              // 交互裁剪框（归一化）；无效 = 未裁
+    QImage      enh;                   // 2.38.0 R1：一键增强结果（null=未用）
+    QStringList ops;                   // 已应用算子序列（重放）
 
     bool operator==(const RtEditState& o) const {
         return cur == o.cur && agentPlan == o.agentPlan && agentMode == o.agentMode
             && rot == o.rot && flipH == o.flipH && flipV == o.flipV
             && qFuzzyCompare(angle, o.angle) && qFuzzyCompare(aspect, o.aspect)
-            && cropNorm == o.cropNorm;
+            && cropNorm == o.cropNorm
+            && enh == o.enh && ops == o.ops;
     }
     bool operator!=(const RtEditState& o) const { return !(*this == o); }
 };

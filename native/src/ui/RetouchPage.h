@@ -7,6 +7,8 @@
 #include <QVector>
 #include <QMap>
 #include <QString>
+#include <QStringList>
+#include <QImage>
 #include <QRectF>
 #include "../core/Library.h"
 #include "../core/RetouchEngine.h"
@@ -168,6 +170,15 @@ QImage        geoSrc_;                    // 几何源（载入的缩略图，�
     QPushButton* geoResetBtn_ = nullptr;
     QSlider*     straighten_ = nullptr;
     QComboBox*   aspectCombo_ = nullptr;
+
+    // 2.38.0 R1：一键增强（Lumen 13 显式算子；异步 + 撤销集成 + 诚实反馈）
+    void buildEnhOps(class QGridLayout* gl);
+    void onEnhOpClicked(const QString& key);
+    QVector<QPushButton*> opBtns_;
+    QStringList ops_;                        // 已应用算子序列（导出全分辨率重放用）
+    QImage    enhImg_;                       // 增强结果（null=未用；几何管线基图）
+    bool      opBusy_ = false;
+    int       opGen_ = 0;                    // 换图/重置代次（丢弃跨代飞行结果）
 
     // P4-2 蒙版
     QStackedLayout* midStack_ = nullptr;     // 0=预览 1=蒙版画布 2=裁剪画布 3=对比视图
