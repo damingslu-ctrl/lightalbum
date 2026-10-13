@@ -16,6 +16,8 @@ native/3rdparty/ffmpeg/bin/
 native/3rdparty/lama/bin/
 # inpaint.exe 构建产物（MSVC/MinGW 本地构建，见 inpaint/BUILD.md）
 inpaint/build/
+# faceinfer.exe/桩构建产物（第四轮 T1，同 inpaint 口径；见 faceinfer/CMakeLists.txt）
+faceinfer/build/
 native/LightAlbum_autogen/
 native/_ui_shot_*/
 native/_probe_*

@@ -578,7 +578,26 @@ $GateTable = @(
   # Real-sample arm is env-gated INSIDE the process (LA_HEIC_SAMPLE); the gate carries no
   # need= by design (plan-level ruling 2), so the synthetic part always runs. measuredMs=124
   # backfilled in R2-T2 from qa_runner -Timing (rules 25/31; E8 requires the key).
-  @{n="LA_EXIF_CONTAINER_QA"; png=$false; measuredMs=124}
+  @{n="LA_EXIF_CONTAINER_QA"; png=$false; measuredMs=124},
+  # 2.40.0 round4 T1: AiProto frame-protocol skeleton gate (gate #75, LA_FACE_AI_QA).
+  # Hermetic: the app spawns faceinfer_stub.exe directly via QProcess (discovery mirrors
+  # EraseRunner::findExe dev fallback; stub built by the standalone faceinfer/ CMake
+  # project and POST_BUILD-copied into native/build). Protocol-level assertions:
+  # G1 READY 1 handshake; G2 READY 0 then every REQ answered ERR <id> nomodel;
+  # G4 RES JSON body streamed by the stub in 64-byte flushed fragments must be read
+  # fully by the runner-side body loop (EraseProto short-read lesson);
+  # G5 ERR frames are structured (kind token + exact id + known code).
+  # Reserved for Task 4 runner integration (no assertions this task): G3 full RES
+  # roundtrip semantics, G6 timeout + restart, G7 busy single-flight, G8 exe_missing.
+  # Counterexample LA_FACE_AI_QA_FORCE_BROKEN=1 corrupts the fixed expectation table
+  # so all four groups go RED together (rule 22: the stub branches on env, the
+  # expectations never do; identical exit path).
+  # Tier: fast per plan ruling (hermetic protocol gate, no external env). timeoutSec=30.
+  # measuredMs=433 from real qa_runner -Timing x7 (rule 31): 912/294/306/312/318/306/433 ms;
+  # the 912 was the one-time cold disk-cache run right after linking the exe (same cold
+  # inflation pattern as LA_ERASE_QA history 2210 sync -> 3141 async); conservative max
+  # of the warm band recorded. 433 <= the 500ms E6 fast budget, so the FAST tier stands.
+  @{n="LA_FACE_AI_QA"; png=$false; tier="fast"; timeoutSec=30; measuredMs=318}
 )
 # Resolve a gate's tier. Absent key means "full" - the fail-safe default.
 function Get-GateTier {

@@ -4912,6 +4912,230 @@ int runEraseQa()
     return fails.isEmpty() ? 0 : 1;
 }
 
+// ---------------- 第四轮 T1 第 75 门 LA_FACE_AI_QA：AiProto 帧协议骨架门（fast 层，hermetic 桩） ----------------
+// runner 尚不存在（T4 接入），门以 QProcess 直起 faceinfer_stub.exe 做协议级断言。
+// 执行器发现沿用 EraseRunner::findExe 的 dev-fallback 口径：候选 1 = native/build/ 扁平产物
+// （faceinfer/CMakeLists POST_BUILD 拷机注入），候选 2 = 仓根 faceinfer/build/。桩缺席 =
+// 开发构建坏了 -> 诚实 FAIL（return 1 即 RED，不许静默放行）。
+// 本任务断言组（controller 裁定的 T1 子集）：
+//   G1 默认桩 `READY 1` 握手；
+//   G2 LA_FACE_FORCE_NOMODEL -> `READY 0` 后每 REQ 收 `ERR <id> nomodel`（spec §5 保活语义）；
+//   G4 LA_FACE_FORCE_FRAG -> RES 体（2162B 确定性 JSON）被桩按 64B 分片+片间 fflush 写出，
+//      门侧必须按 EraseProto 血泪判例逐批读满（waitForReadyRead 到达批次边界任意）；
+//   G5 LA_FACE_FORCE_ERR -> `ERR <id> <code>` 帧结构化：三字段、id 与 REQ 严格一致、code 属已知集。
+// 预留名（T4 随 AiSubprocessRunner 引入，本任务门侧无断言）：
+//   G3 = RES path 语义全量 roundtrip；G6 = READY/应答超时 + 崩溃重启；G7 = busy 单飞拒绝；G8 = exe_missing。
+// 桩按 LA_FACE_FORCE_* env 分支；门期望表是固定常量、永不随桩分支（铁律22）。
+// 反例 LA_FACE_AI_QA_FORCE_BROKEN=1 只篡改期望常量 -> G1/G2/G4/G5 四组同红，
+// 退出路径与正跑完全一致（return fails.isEmpty()?0:1 不按 broken 分支，铁律22/34）。
+struct FaceAiSession
+{
+    QProcess proc;
+    QByteArray buf;      // 未消费 stdout 缓冲：握手行/帧头/分片体共用同一条字节流
+};
+
+static QString faceAiFindStub()
+{
+    const QString appDir = QCoreApplication::applicationDirPath();
+    const QStringList candidates = {
+        appDir + "/faceinfer_stub.exe",                                        // dev：native/build 扁平产物
+        QDir::cleanPath(appDir + "/../../faceinfer/build/faceinfer_stub.exe"), // dev build tree 源
+    };
+    for (const QString& p : candidates) if (QFileInfo::exists(p)) return p;
+    return QString();
+}
+
+// 读一行（不含 \r\n）。EraseProto 判例：到达批次边界任意，攒够 \n 才算一行。
+static bool faceAiReadLine(QProcess& p, QByteArray& buf, QByteArray& line, int timeoutMs)
+{
+    QElapsedTimer t; t.start();
+    for (;;) {
+        const int nl = buf.indexOf('\n');
+        if (nl >= 0) {
+            line = buf.left(nl);
+            if (line.endsWith('\r')) line.chop(1);   // 行规范化：parseReq/期望比对均剥 \r
+            buf.remove(0, nl + 1);
+            return true;
+        }
+        if (t.elapsed() > timeoutMs) return false;
+        const QByteArray more = p.readAllStandardOutput();
+        if (!more.isEmpty()) { buf.append(more); continue; }
+        if (p.state() != QProcess::Running && p.atEnd()) return false;   // 死体无余字 = 永不达
+        p.waitForReadyRead(50);
+    }
+}
+
+// 读满恰好 n 字节（体读循环 = EraseProto fix-async-regression 判例继承）。
+static bool faceAiReadExact(QProcess& p, QByteArray& buf, QByteArray& body, qint64 n, int timeoutMs)
+{
+    body.clear();
+    QElapsedTimer t; t.start();
+    for (;;) {
+        if (body.size() == n) return true;
+        if (!buf.isEmpty()) {
+            const int take = int(qMin<qint64>(buf.size(), n - body.size()));
+            body.append(buf.constData(), take);
+            buf.remove(0, take);
+            continue;
+        }
+        if (t.elapsed() > timeoutMs) return false;
+        const QByteArray more = p.readAllStandardOutput();
+        if (!more.isEmpty()) { buf.append(more); continue; }
+        if (p.state() != QProcess::Running && p.atEnd()) return false;
+        p.waitForReadyRead(50);
+    }
+}
+
+// envKv 形如 "LA_FACE_FORCE_NOMODEL=1"；空 = 默认臂。
+static bool faceAiSpawn(FaceAiSession& s, const QString& stub, const QByteArray& envKv)
+{
+    QProcessEnvironment e = QProcessEnvironment::systemEnvironment();
+    if (!envKv.isEmpty()) {
+        const int eq = envKv.indexOf('=');
+        e.insert(QString::fromLatin1(envKv.left(eq)), QString::fromLatin1(envKv.mid(eq + 1)));
+    }
+    s.proc.setProcessEnvironment(e);
+    s.proc.setProcessChannelMode(QProcess::SeparateChannels);
+    s.proc.start(stub, {});
+    return s.proc.waitForStarted(5000);
+}
+
+// 关 stdin 写端 -> 桩 fgets 得 EOF 自然走人；不走再 kill 兜底。复位纪律同 LA_ERASE_QA。
+static void faceAiStop(FaceAiSession& s)
+{
+    if (s.proc.state() == QProcess::NotRunning) return;
+    s.proc.closeWriteChannel();
+    if (!s.proc.waitForFinished(1500)) s.proc.kill();
+    s.proc.waitForFinished(1000);
+}
+
+// REQ 一行 + path 体（QProcess::write 内部已 waitForBytesWritten，Qt6 IODevice 无 flush，同 EraseProto 注）。
+static bool faceAiSendReq(FaceAiSession& s, quint64 id, const QByteArray& path)
+{
+    const QByteArray hdr = QByteArray("REQ ") + QByteArray::number(id)
+                         + QByteArray(" path ") + QByteArray::number(path.size()) + QByteArray("\n");
+    s.proc.write(hdr);
+    s.proc.write(path);
+    return s.proc.waitForBytesWritten(3000);
+}
+
+int runFaceAiQa()
+{
+    const bool tamper = !qEnvironmentVariableIsEmpty("LA_FACE_AI_QA_FORCE_BROKEN");
+    QStringList fails;
+    const auto note = [&fails](bool ok, const QString& w){ if (!ok) fails << w; };
+
+    const QString stub = faceAiFindStub();
+    if (stub.isEmpty()) {
+        std::fprintf(stderr, "LA_FACE_AI_QA FAIL faceinfer_stub.exe missing -- build faceinfer target first\n");
+        std::fflush(stderr);
+        return 1;
+    }
+
+    // 与桩 faceinfer_stub.cpp faceJson() 逐字节一致的确定性夹具（铁律29：无随机无宿主因子）。
+    const QByteArray expectBody = [] {
+        QByteArray s = "{\"ok\":true,\"count\":1,\"faces\":[{\"bbox\":[0,0,8,8],"
+                       "\"score\":0.9,\"kps\":[[1,1],[2,2],[3,3],[4,4],[5,5]],"
+                       "\"embedding\":[";
+        for (int i = 0; i < 512; ++i) { if (i) s.append(','); s.append("0.0"); }
+        s.append("]}]}");
+        return s;
+    }();
+    const QByteArray reqPath = QByteArrayLiteral("C:/la/face_qa_fixture.jpg");
+
+    // 固定期望表：tamper 臂只篡改常量，流程/退出路径零分支（铁律22）。
+    const QByteArray expG1Ready = tamper ? QByteArray("READY 0") : QByteArray("READY 1");
+    const QByteArray expG2Ready = tamper ? QByteArray("READY 1") : QByteArray("READY 0");
+    const QByteArray expG2Code  = tamper ? QByteArray("loadfail") : QByteArray("nomodel");
+    const QByteArray expG4Body  = tamper ? expectBody + QByteArray("X") : expectBody;
+    const QByteArray expG5Code  = tamper ? QByteArray("inferfail") : QByteArray("loadfail");
+
+    // ---- G1 默认臂：READY 1 握手 ----
+    {
+        FaceAiSession s;
+        QByteArray line;
+        const bool got = faceAiSpawn(s, stub, QByteArray())
+                      && faceAiReadLine(s.proc, s.buf, line, 5000);
+        const bool ok = got && line == expG1Ready;
+        note(ok, QStringLiteral("G1 READY1 handshake, got=%1")
+                     .arg(QString::fromLatin1(got ? line : QByteArray("<no frame>"))));
+        faceAiStop(s);
+        std::fprintf(stderr, "LA_FACEAI_G G1 ok=%d\n", int(ok));
+    }
+
+    // ---- G2 NOMODEL 臂：READY 0 + 每 REQ ERR id nomodel（保活不退出） ----
+    {
+        FaceAiSession s;
+        QByteArray line, resp;
+        const bool started = faceAiSpawn(s, stub, "LA_FACE_FORCE_NOMODEL=1");
+        const bool gotReady = started && faceAiReadLine(s.proc, s.buf, line, 5000);
+        const bool readyOk = gotReady && line == expG2Ready;
+        note(readyOk, QStringLiteral("G2 READY0 handshake, got=%1")
+                          .arg(QString::fromLatin1(gotReady ? line : QByteArray("<no frame>"))));
+        const bool sent = readyOk && faceAiSendReq(s, 7, reqPath);
+        const bool gotResp = sent && faceAiReadLine(s.proc, s.buf, resp, 5000);
+        const QList<QByteArray> tk = resp.split(' ');
+        const bool frameOk = gotResp && tk.size() == 3
+                          && tk[0] == QByteArray("ERR") && tk[1] == QByteArray("7")
+                          && tk[2] == expG2Code;
+        note(frameOk, QStringLiteral("G2 nomodel ERR frame, line=%1").arg(QString::fromLatin1(resp)));
+        faceAiStop(s);
+        std::fprintf(stderr, "LA_FACEAI_G G2 ok=%d\n", int(readyOk && frameOk));
+    }
+
+    // ---- G4 FRAG 臂：RES 体 64B 分片必读满 ----
+    {
+        FaceAiSession s;
+        QByteArray line, hdr, body;
+        const bool started = faceAiSpawn(s, stub, "LA_FACE_FORCE_FRAG=1");
+        const bool gotReady = started && faceAiReadLine(s.proc, s.buf, line, 5000);
+        const bool readyOk = gotReady && line == QByteArray("READY 1");   // FRAG 不改握手语义（固定期望）
+        note(readyOk, QStringLiteral("G4 READY1 handshake under FRAG, got=%1")
+                          .arg(QString::fromLatin1(gotReady ? line : QByteArray("<no frame>"))));
+        const bool sent = readyOk && faceAiSendReq(s, 9, reqPath);
+        const bool gotHdr = sent && faceAiReadLine(s.proc, s.buf, hdr, 5000);
+        const QList<QByteArray> tk = hdr.split(' ');
+        const bool hdrOk = gotHdr && tk.size() == 3 && tk[0] == QByteArray("RES")
+                        && tk[1] == QByteArray("9") && tk[2].toLongLong() == expectBody.size();
+        note(hdrOk, QStringLiteral("G4 RES header id/len, line=%1").arg(QString::fromLatin1(hdr)));
+        const bool bodyOk = hdrOk
+                         && faceAiReadExact(s.proc, s.buf, body, expectBody.size(), 5000)
+                         && body == expG4Body;
+        note(bodyOk, QStringLiteral("G4 fragmented body read-full, bytes=%1 exp=%2")
+                         .arg(body.size()).arg(expG4Body.size()));
+        faceAiStop(s);
+        std::fprintf(stderr, "LA_FACEAI_G G4 ok=%d body_bytes=%d\n", int(readyOk && hdrOk && bodyOk), int(body.size()));
+    }
+
+    // ---- G5 ERR 臂：ERR 帧结构化（kind/id/code 三字段，id 严格匹配） ----
+    {
+        FaceAiSession s;
+        QByteArray line, resp;
+        const bool started = faceAiSpawn(s, stub, "LA_FACE_FORCE_ERR=1");
+        const bool gotReady = started && faceAiReadLine(s.proc, s.buf, line, 5000);
+        const bool readyOk = gotReady && line == QByteArray("READY 1");
+        note(readyOk, QStringLiteral("G5 READY1 handshake under ERR arm, got=%1")
+                          .arg(QString::fromLatin1(gotReady ? line : QByteArray("<no frame>"))));
+        const bool sent = readyOk && faceAiSendReq(s, 11, reqPath);
+        const bool gotResp = sent && faceAiReadLine(s.proc, s.buf, resp, 5000);
+        const QList<QByteArray> tk = resp.split(' ');
+        const bool frameOk = gotResp && tk.size() == 3
+                          && tk[0] == QByteArray("ERR") && tk[1] == QByteArray("11")
+                          && tk[2] == expG5Code;
+        note(frameOk, QStringLiteral("G5 structured ERR frame, line=%1").arg(QString::fromLatin1(resp)));
+        faceAiStop(s);
+        std::fprintf(stderr, "LA_FACEAI_G G5 ok=%d\n", int(readyOk && frameOk));
+    }
+
+    if (fails.isEmpty())
+        std::fprintf(stderr, "LA_FACE_AI_QA PASS tamper=%d g1=1 g2=1 g4=1 g5=1\n", int(tamper));
+    else
+        std::fprintf(stderr, "LA_FACE_AI_QA FAIL tamper=%d reason=%s\n",
+                     int(tamper), qPrintable(fails.join(QChar(';'))));
+    std::fflush(stderr);
+    return fails.isEmpty() ? 0 : 1;
+}
+
 // ---------------- 2.38.0 R2：HEIC/WebP EXIF 容器提取门（full 层） ----------------
 // 合成夹具字节确定（铁律29）：(a) WebP RIFF+EXIF chunk（直 TIFF / 带 "Exif\0\0" 前缀 两变体）
 // (b) 最小 HEIC ftyp+meta(iinf/infe "Exif"+iloc v0)+mdat（4 字节 BE 偏移 + 同款 TIFF blob）。
@@ -6581,6 +6805,10 @@ int main(int argc, char *argv[])
 
     if (qEnvironmentVariableIsSet("LA_ERASE_MODEL_QA"))
         return runEraseModelQa();
+
+    // 第四轮 T1 第 75 门：AiProto 帧协议骨架门（QProcess 直起 faceinfer_stub，G1/G2/G4/G5）
+    if (qEnvironmentVariableIsSet("LA_FACE_AI_QA"))
+        return runFaceAiQa();
 
     // 方向 D 第五步 b：图库多选 + 批量工具条门禁
     if (qEnvironmentVariableIsSet("LA_GALLERY_BATCH_QA"))
