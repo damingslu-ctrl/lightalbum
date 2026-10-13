@@ -99,21 +99,24 @@ QImage median3G(const QImage& src)
 {
     QImage out = grayLike(src);
     const int w = src.width(), h = src.height();
-    for (int y = 0; y < h; ++y) {
-        const uchar* s = src.constScanLine(y);
-        uchar* d = out.scanLine(y);
-        for (int x = 0; x < w; ++x) {
-            int win[9], n = 0;
-            for (int dy = -1; dy <= 1; ++dy) {
-                const int yy = std::clamp(y + dy, 0, h - 1);
-                const uchar* row = src.constScanLine(yy);
-                for (int dx = -1; dx <= 1; ++dx)
-                    win[n++] = row[std::clamp(x + dx, 0, w - 1)];
+    out.scanLine(0);                       // 单线程段强制 detach
+    lumenParallelRows(h, [&](int y0, int y1) {
+        for (int y = y0; y < y1; ++y) {
+            const uchar* s = src.constScanLine(y);
+            uchar* d = out.scanLine(y);
+            for (int x = 0; x < w; ++x) {
+                int win[9], n = 0;
+                for (int dy = -1; dy <= 1; ++dy) {
+                    const int yy = std::clamp(y + dy, 0, h - 1);
+                    const uchar* row = src.constScanLine(yy);
+                    for (int dx = -1; dx <= 1; ++dx)
+                        win[n++] = row[std::clamp(x + dx, 0, w - 1)];
+                }
+                std::sort(win, win + 9);
+                d[x] = uchar(win[4]);
             }
-            std::sort(win, win + 9);
-            d[x] = uchar(win[4]);
         }
-    }
+    });
     return out;
 }
 
@@ -123,19 +126,22 @@ QImage smoothG(const QImage& src)
     static const int K[3][3] = {{1, 2, 1}, {2, 4, 2}, {1, 2, 1}};
     QImage out = grayLike(src);
     const int w = src.width(), h = src.height();
-    for (int y = 0; y < h; ++y) {
-        uchar* d = out.scanLine(y);
-        for (int x = 0; x < w; ++x) {
-            int acc = 0;
-            for (int dy = -1; dy <= 1; ++dy) {
-                const int yy = std::clamp(y + dy, 0, h - 1);
-                const uchar* row = src.constScanLine(yy);
-                for (int dx = -1; dx <= 1; ++dx)
-                    acc += row[std::clamp(x + dx, 0, w - 1)] * K[dy + 1][dx + 1];
+    out.scanLine(0);                       // 单线程段强制 detach
+    lumenParallelRows(h, [&](int y0, int y1) {
+        for (int y = y0; y < y1; ++y) {
+            uchar* d = out.scanLine(y);
+            for (int x = 0; x < w; ++x) {
+                int acc = 0;
+                for (int dy = -1; dy <= 1; ++dy) {
+                    const int yy = std::clamp(y + dy, 0, h - 1);
+                    const uchar* row = src.constScanLine(yy);
+                    for (int dx = -1; dx <= 1; ++dx)
+                        acc += row[std::clamp(x + dx, 0, w - 1)] * K[dy + 1][dx + 1];
+                }
+                d[x] = uchar(clamp255(acc / 16));
             }
-            d[x] = uchar(clamp255(acc / 16));
         }
-    }
+    });
     return out;
 }
 
@@ -387,22 +393,25 @@ QImage LumenEngine::median3(const QImage& src)
     QImage img = src.convertToFormat(QImage::Format_RGB32);
     QImage out(img.size(), img.format());
     const int w = img.width(), h = img.height();
-    for (int y = 0; y < h; ++y) {
-        QRgb* d = reinterpret_cast<QRgb*>(out.scanLine(y));
-        for (int x = 0; x < w; ++x) {
-            int r[9], g[9], b[9], n = 0;
-            for (int dy = -1; dy <= 1; ++dy) {
-                const int yy = std::clamp(y + dy, 0, h - 1);
-                const QRgb* row = reinterpret_cast<const QRgb*>(img.constScanLine(yy));
-                for (int dx = -1; dx <= 1; ++dx) {
-                    const QRgb px = row[std::clamp(x + dx, 0, w - 1)];
-                    r[n] = qRed(px); g[n] = qGreen(px); b[n] = qBlue(px); ++n;
+    out.scanLine(0);                       // 单线程段强制 detach
+    lumenParallelRows(h, [&](int y0, int y1) {
+        for (int y = y0; y < y1; ++y) {
+            QRgb* d = reinterpret_cast<QRgb*>(out.scanLine(y));
+            for (int x = 0; x < w; ++x) {
+                int r[9], g[9], b[9], n = 0;
+                for (int dy = -1; dy <= 1; ++dy) {
+                    const int yy = std::clamp(y + dy, 0, h - 1);
+                    const QRgb* row = reinterpret_cast<const QRgb*>(img.constScanLine(yy));
+                    for (int dx = -1; dx <= 1; ++dx) {
+                        const QRgb px = row[std::clamp(x + dx, 0, w - 1)];
+                        r[n] = qRed(px); g[n] = qGreen(px); b[n] = qBlue(px); ++n;
+                    }
                 }
+                std::sort(r, r + 9); std::sort(g, g + 9); std::sort(b, b + 9);
+                d[x] = qRgb(r[4], g[4], b[4]);
             }
-            std::sort(r, r + 9); std::sort(g, g + 9); std::sort(b, b + 9);
-            d[x] = qRgb(r[4], g[4], b[4]);
         }
-    }
+    });
     return out;
 }
 
@@ -412,22 +421,25 @@ QImage LumenEngine::smoothFilter(const QImage& src)
     QImage out(img.size(), img.format());
     const int w = img.width(), h = img.height();
     static const int K[3][3] = {{1, 2, 1}, {2, 4, 2}, {1, 2, 1}};
-    for (int y = 0; y < h; ++y) {
-        QRgb* d = reinterpret_cast<QRgb*>(out.scanLine(y));
-        for (int x = 0; x < w; ++x) {
-            int acc[3] = {0, 0, 0};
-            for (int dy = -1; dy <= 1; ++dy) {
-                const int yy = std::clamp(y + dy, 0, h - 1);
-                const QRgb* row = reinterpret_cast<const QRgb*>(img.constScanLine(yy));
-                for (int dx = -1; dx <= 1; ++dx) {
-                    const QRgb px = row[std::clamp(x + dx, 0, w - 1)];
-                    const int kw = K[dy + 1][dx + 1];
-                    acc[0] += qRed(px) * kw; acc[1] += qGreen(px) * kw; acc[2] += qBlue(px) * kw;
+    out.scanLine(0);                       // 单线程段强制 detach
+    lumenParallelRows(h, [&](int y0, int y1) {
+        for (int y = y0; y < y1; ++y) {
+            QRgb* d = reinterpret_cast<QRgb*>(out.scanLine(y));
+            for (int x = 0; x < w; ++x) {
+                int acc[3] = {0, 0, 0};
+                for (int dy = -1; dy <= 1; ++dy) {
+                    const int yy = std::clamp(y + dy, 0, h - 1);
+                    const QRgb* row = reinterpret_cast<const QRgb*>(img.constScanLine(yy));
+                    for (int dx = -1; dx <= 1; ++dx) {
+                        const QRgb px = row[std::clamp(x + dx, 0, w - 1)];
+                        const int kw = K[dy + 1][dx + 1];
+                        acc[0] += qRed(px) * kw; acc[1] += qGreen(px) * kw; acc[2] += qBlue(px) * kw;
+                    }
                 }
+                d[x] = qRgb(clamp255(acc[0] / 16), clamp255(acc[1] / 16), clamp255(acc[2] / 16));
             }
-            d[x] = qRgb(clamp255(acc[0] / 16), clamp255(acc[1] / 16), clamp255(acc[2] / 16));
         }
-    }
+    });
     return out;
 }
 
@@ -1296,27 +1308,30 @@ QImage LumenEngine::minFilter(const QImage& src, int k)
     QImage img = gray ? src.copy() : src.convertToFormat(QImage::Format_RGB32);
     const int w = img.width(), h = img.height(), r = k / 2;
     QImage out(img.size(), img.format());
-    for (int y = 0; y < h; ++y) {
-        for (int x = 0; x < w; ++x) {
-            int mn[3] = {255, 255, 255};
-            for (int dy = -r; dy <= r; ++dy) {
-                const int yy = std::clamp(y + dy, 0, h - 1);
-                const uchar* row = img.constScanLine(yy);
-                for (int dx = -r; dx <= r; ++dx) {
-                    const int xx = std::clamp(x + dx, 0, w - 1);
-                    if (gray) mn[0] = std::min(mn[0], int(row[xx]));
-                    else {
-                        const QRgb px = reinterpret_cast<const QRgb*>(row)[xx];
-                        mn[0] = std::min(mn[0], qRed(px));
-                        mn[1] = std::min(mn[1], qGreen(px));
-                        mn[2] = std::min(mn[2], qBlue(px));
+    out.scanLine(0);                       // 单线程段强制 detach
+    lumenParallelRows(h, [&](int y0, int y1) {
+        for (int y = y0; y < y1; ++y) {
+            for (int x = 0; x < w; ++x) {
+                int mn[3] = {255, 255, 255};
+                for (int dy = -r; dy <= r; ++dy) {
+                    const int yy = std::clamp(y + dy, 0, h - 1);
+                    const uchar* row = img.constScanLine(yy);
+                    for (int dx = -r; dx <= r; ++dx) {
+                        const int xx = std::clamp(x + dx, 0, w - 1);
+                        if (gray) mn[0] = std::min(mn[0], int(row[xx]));
+                        else {
+                            const QRgb px = reinterpret_cast<const QRgb*>(row)[xx];
+                            mn[0] = std::min(mn[0], qRed(px));
+                            mn[1] = std::min(mn[1], qGreen(px));
+                            mn[2] = std::min(mn[2], qBlue(px));
+                        }
                     }
                 }
+                if (gray) out.scanLine(y)[x] = uchar(mn[0]);
+                else reinterpret_cast<QRgb*>(out.scanLine(y))[x] = qRgb(mn[0], mn[1], mn[2]);
             }
-            if (gray) out.scanLine(y)[x] = uchar(mn[0]);
-            else reinterpret_cast<QRgb*>(out.scanLine(y))[x] = qRgb(mn[0], mn[1], mn[2]);
         }
-    }
+    });
     return out;
 }
 
@@ -1328,25 +1343,28 @@ QImage LumenEngine::medianFilter(const QImage& rgb, int size)
     QImage out(img.size(), img.format());
     const int w = img.width(), h = img.height(), r = size / 2;
     const int nn = size * size;
-    QVector<int> vr(nn), vg(nn), vb(nn);
-    for (int y = 0; y < h; ++y) {
-        QRgb* d = reinterpret_cast<QRgb*>(out.scanLine(y));
-        for (int x = 0; x < w; ++x) {
-            int n = 0;
-            for (int dy = -r; dy <= r; ++dy) {
-                const int yy = std::clamp(y + dy, 0, h - 1);
-                const QRgb* row = reinterpret_cast<const QRgb*>(img.constScanLine(yy));
-                for (int dx = -r; dx <= r; ++dx) {
-                    const QRgb px = row[std::clamp(x + dx, 0, w - 1)];
-                    vr[n] = qRed(px); vg[n] = qGreen(px); vb[n] = qBlue(px); ++n;
+    out.scanLine(0);                       // 单线程段强制 detach
+    lumenParallelRows(h, [&](int y0, int y1) {
+        QVector<int> vr(nn), vg(nn), vb(nn);   // 暂存改为块局部（原跨行复用声明删除）
+        for (int y = y0; y < y1; ++y) {
+            QRgb* d = reinterpret_cast<QRgb*>(out.scanLine(y));
+            for (int x = 0; x < w; ++x) {
+                int n = 0;
+                for (int dy = -r; dy <= r; ++dy) {
+                    const int yy = std::clamp(y + dy, 0, h - 1);
+                    const QRgb* row = reinterpret_cast<const QRgb*>(img.constScanLine(yy));
+                    for (int dx = -r; dx <= r; ++dx) {
+                        const QRgb px = row[std::clamp(x + dx, 0, w - 1)];
+                        vr[n] = qRed(px); vg[n] = qGreen(px); vb[n] = qBlue(px); ++n;
+                    }
                 }
+                std::sort(vr.begin(), vr.begin() + n);
+                std::sort(vg.begin(), vg.begin() + n);
+                std::sort(vb.begin(), vb.begin() + n);
+                d[x] = qRgb(vr[n / 2], vg[n / 2], vb[n / 2]);
             }
-            std::sort(vr.begin(), vr.begin() + n);
-            std::sort(vg.begin(), vg.begin() + n);
-            std::sort(vb.begin(), vb.begin() + n);
-            d[x] = qRgb(vr[n / 2], vg[n / 2], vb[n / 2]);
         }
-    }
+    });
     return out;
 }
 
