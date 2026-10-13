@@ -96,18 +96,29 @@ EnhOutcome runEnhOp(const QImage& src, const QString& key)
         o.note = QCoreApplication::translate("LightAlbum", "红眼已修 %1 点").arg(pixels);
     } else if (key == QStringLiteral("portraitBeautify")) {
         double frac = -1.0;
-        o.img = LumenEngine::portraitBeautify(src, 1.0, &frac);
-        if (frac >= 0.0)
-            o.note = QCoreApplication::translate("LightAlbum", "美颜 · 肤色占比 %1%")
-                         .arg(frac * 100.0, 0, 'f', 1);
+        const QImage hit = LumenEngine::portraitBeautify(src, 1.0, &frac);
+        if (frac < 0.015) {                       // 引擎无肤色→返回原图副本：诚实 no-op，不追加 ops_/历史
+            o.note = QCoreApplication::translate("LightAlbum", "未检测到肤色区域 · 未改动");
+            return o;
+        }
+        o.img = hit;
+        o.note = QCoreApplication::translate("LightAlbum", "美颜 · 肤色占比 %1%")
+                     .arg(frac * 100.0, 0, 'f', 1);
     } else if (key == QStringLiteral("vignetteCorrect")) {
         double k = 0.0;
-        o.img = LumenEngine::vignetteCorrect(src, 1.0, &k);
+        const QImage hit = LumenEngine::vignetteCorrect(src, 1.0, &k);
+        if (k <= 0.0) {                            // 引擎 k<0.05→返回原图副本：诚实 no-op，不追加 ops_/历史
+            o.note = QCoreApplication::translate("LightAlbum", "未见明显暗角 · 未改动");
+            return o;
+        }
+        o.img = hit;
+        o.note = QCoreApplication::translate("LightAlbum", "暗角校正 · 强度 %1%")
+                     .arg(k * 100.0, 0, 'f', 1);
     } else if (key == QStringLiteral("levelCorrect")) {
         const double ang = LumenEngine::levelDetectAngle(src);
-        if (ang == 0.0) {
-            o.note = QCoreApplication::translate("LightAlbum", "未检测到可校正的倾斜 · 未改动");
-            return o;                                   // 诚实 no-op：不追加 ops_、不进历史
+        if (std::fabs(ang) < 0.5) {                // 引擎 |ang|<0.5→返回原图副本：与引擎阈值对齐，非 ==0
+            o.note = QCoreApplication::translate("LightAlbum", "倾斜过小(<0.5°) · 未改动");
+            return o;
         }
         o.img = LumenEngine::levelCorrect(src);
         o.note = QCoreApplication::translate("LightAlbum", "水平校正 %1°").arg(ang, 0, 'f', 2);

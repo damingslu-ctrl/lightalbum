@@ -1863,9 +1863,8 @@ int runLumenOpsUiQa()
         QStringLiteral("chromaticCorrect"), QStringLiteral("portraitBeautify"),
         QStringLiteral("levelCorrect"),  QStringLiteral("lensCorrect"),
     };
-    QStringList expected = kOps;
+    const QStringList expected = kOps;               // 期望值恒为规格 13 算子，绝不随反例开关变化（铁律22）
     const bool broken = !qEnvironmentVariableIsEmpty("LA_LUMEN_OPS_UI_QA_FORCE_BROKEN");
-    if (broken) expected << QStringLiteral("qaPhantomOp");   // 反例：注入不存在的算子名
 
     QString root;
     for (const QString& cand : { QCoreApplication::applicationDirPath() + QStringLiteral("/../src/ui"),
@@ -1888,8 +1887,8 @@ int runLumenOpsUiQa()
                 QRegularExpression::DotMatchesEverythingOption));      // 剥块注释
             text.remove(QRegularExpression(QStringLiteral("//[^\\n]*"))); // 剥行注释
             for (const QString& op : expected)
-                if (text.contains(QStringLiteral("LumenEngine::") + op + QLatin1Char('(')))
-                    covered.insert(op);
+                if (!broken && text.contains(QStringLiteral("LumenEngine::") + op + QLatin1Char('(')))
+                    covered.insert(op);              // 反例臂：不记覆盖→13 算子全落 missing→必红（期望值不变）
             if (fi.fileName() == QLatin1String("RetouchPage.cpp")
                 && text.contains(QStringLiteral("opBtn_"))
                 && text.contains(QStringLiteral("onEnhOpClicked")))

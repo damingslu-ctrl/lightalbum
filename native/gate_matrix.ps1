@@ -540,9 +540,9 @@ $GateTable = @(
   # Tier: FULL (QProcess lifecycle, no external env). measuredMs=12390 from qa_runner -Timing
   # (rule 13; re-measured after the 2.36.0 async + streamed-body rig; history 2210 sync -> 3141 async).
   # R3-T4 re-measure: G1/G2 groups pushed the gate to 12390ms (was 3667); still under the
-  # default 25s timeoutSec budget, so no override added.
+  # timeoutSec=60: measured 12390ms but 2 load-scaled QProcess children; headroom vs a ~2x-slower host (cf LA_LUMEN_SMOKE=90).
   # E1-group sub-assert: qaSetForceNoExecutor(true) -> fresh bridge parks its task as blocked_no_model (modelReady false, no process spawn); passes in both arms (rule 22).
-  @{n="LA_ERASE_QA"; png=$false; measuredMs=12390},
+  @{n="LA_ERASE_QA"; png=$false; timeoutSec=60; measuredMs=12390},
   # 2.35.0 opt-in real LaMa quality gate. need=LA_LAMA_MODEL (path to fetched lama.onnx):
   # absent -> qa_runner [SKIP] (non-regression, same as LA_SCAN_SMOKE/LA_RAW_QA). When the
   # env IS set but inpaint.exe is missing/resolves to the stub -> honest FAIL (rule 34).

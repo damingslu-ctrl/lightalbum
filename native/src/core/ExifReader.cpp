@@ -260,6 +260,7 @@ QByteArray extractHeicExif(const QByteArray& f)
     // 截断盒必须在此兜住，否则下面对 d[ilocOff+8]/d[q]/d[q+1] 的裸读可越过缓冲尾（不可信输入）。
     if (ilocOff + 18 > ilocEnd) return {};
     const int iver = d[ilocOff + 8];
+    if (iver > 2) return {};                        // ISOBMFF 仅定义 iloc v0/v1/v2；更高版本一律拒绝（诚实降级 mtime）
     qint64 q = ilocOff + 8 + 4;
     const int b1 = d[q], b2 = d[q + 1]; q += 2;
     const int offSize = b1 >> 4, lenSize = b1 & 0xF, baseOffSize = b2 >> 4, indexSize = b2 & 0xF;
@@ -285,7 +286,8 @@ QByteArray extractHeicExif(const QByteArray& f)
             const qint64 extOff = qint64(exifBe(d + q, offSize)); q += offSize;
             const qint64 extLen = qint64(exifBe(d + q, lenSize)); q += lenSize;
             if (itemId == exifItemId && cm == 0 && e == 0) {   // construction_method 0 = 文件内偏移
-                if (extOff <= 0 || extLen <= 0 || base + extOff + extLen > n) return {};
+                if (extOff <= 0 || extLen <= 0 || base > n
+                    || extOff > n - base || extLen > n - base - extOff) return {};
                 const QByteArray payload = f.mid(qsizetype(base + extOff), qsizetype(extLen));
                 if (payload.size() < 4) return {};
                 const qint64 ti = qint64(exifBe(reinterpret_cast<const uchar*>(payload.constData()), 4));

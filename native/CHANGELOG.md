@@ -12,6 +12,8 @@
 - 新门 LA_LUMEN_OPS_UI_QA（fast 层 exe 静态扫描，接线前必红）；修复 LA_RETOUCH_A_QA
   恒 exit 0 空心门 + 增 enhOps/eraseCancel 存在性断言。
 - 引擎数学零改动（LumenEngine.{h,cpp} 未触；LA_LUMEN_SMOKE 金样对拍为回归护栏）。
+- 诚实边界：预览在 ≤1024 缩略图上执行、导出在 ≤2400 全分辨率重放（RetouchPage 既有架构，非本轮引入），
+  故基于检测的算子（水平/红眼/美颜/暗角）导出结果可能在阈值附近比预览更精确；其余算子与几何链路预览=导出。
 
 ### R2 HEIC/WebP EXIF 容器补全
 - ExifReader 增 WebP（RIFF EXIF chunk，兼容 "Exif\0\0" 前缀）与 HEIC（ISOBMFF
@@ -20,6 +22,9 @@
 - 新门 LA_EXIF_CONTAINER_QA（full）：合成夹具字节确定 + 恒开反例（越界盒/自指子盒
   不崩且回退）；真样本臂 LA_HEIC_SAMPLE env 内判定（无值 skipped）。
 - JPEG/PNG/TIFF 三格式行为不变（既有解析断言全绿）。
+- 验证态诚实标注：LA_EXIF_CONTAINER_QA 基于字节确定的合成夹具（WebP/HEIC v0 + 越界/自指反例）
+  恒绿；真 .heic 样本臂需 env `LA_HEIC_SAMPLE` 显式提供，本收口未附真样本，故 HEIC 抽取仅经
+  夹具级验证，未经真机图片验证（导入真图前建议先跑该臂）。
 
 ### R3 Erase residual 收尾
 - EraseBridge 任务表淘汰（保留最近 8；running 永不淘汰；submit 尾修剪）；ES
