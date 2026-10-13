@@ -256,6 +256,9 @@ QByteArray extractHeicExif(const QByteArray& f)
     }
     if (exifItemId < 0 || ilocOff < 0) return {};
     const qint64 ilocEnd = ilocOff + ilocSize;
+    // 前导体最少 18 字节（8 盒头 + 4 ver/flags + 2 size/period + ≤4 itemCount）；
+    // 截断盒必须在此兜住，否则下面对 d[ilocOff+8]/d[q]/d[q+1] 的裸读可越过缓冲尾（不可信输入）。
+    if (ilocOff + 18 > ilocEnd) return {};
     const int iver = d[ilocOff + 8];
     qint64 q = ilocOff + 8 + 4;
     const int b1 = d[q], b2 = d[q + 1]; q += 2;
@@ -264,7 +267,7 @@ QByteArray extractHeicExif(const QByteArray& f)
     qint64 itemCount = qint64(exifBe(d + q, iver == 2 ? 4 : 2));
     q += (iver == 2) ? 4 : 2;
     for (qint64 i = 0; i < itemCount; ++i) {
-        if (q + 2 > ilocEnd) return {};
+        if (q + (iver < 2 ? 2 : 4) > ilocEnd) return {};
         const qint64 itemId = (iver < 2) ? qint64(exifBe(d + q, 2)) : qint64(exifBe(d + q, 4));
         q += (iver < 2) ? 2 : 4;
         int cm = 0;
@@ -272,6 +275,7 @@ QByteArray extractHeicExif(const QByteArray& f)
         q += 2;                                                // data_reference_index
         qint64 base = 0;
         if (baseOffSize > 0) { if (q + baseOffSize > ilocEnd) return {}; base = qint64(exifBe(d + q, baseOffSize)); }
+        if (base < 0) return {};                               // 8 字节高位→负 qint64：显式钳位，不依赖 Qt mid 负位行为
         q += baseOffSize;
         if (q + 2 > ilocEnd) return {};
         const qint64 extCount = qint64(exifBe(d + q, 2)); q += 2;
