@@ -95,12 +95,13 @@ $GateTable = @(
   # every full-tier gate and far under the 500 ms fast budget.
   @{n="LA_A11Y_CONTRAST_QA"; png=$false; tier="fast"; measuredMs=18},
   @{n="LA_A11Y_KEYBOARD_QA"; png=$false; tier="fast"; measuredMs=17},
-  # timeoutSec: real cost is 66585 ms (8 images x 12 ops = 96 full-frame pixel
-  # comparisons). The old measuredMs=7431 record was 9x optimistic, so a flat
-  # 25s budget killed a gate that genuinely PASSES (verified: exit=0 +
-  # LA_LUMEN_SMOKE PASS when given 120s). Hangs are still detected, just with a
-  # budget that matches reality.
-  @{n="LA_LUMEN_SMOKE";     png=$false; timeoutSec=90; measuredMs=66585},
+  # timeoutSec: R3 in-op parallel + float: re-measured via -Timing (was 66585
+  # serial CPU). Timed runs (qa_runner -Timing -Only LA_LUMEN_SMOKE):
+  # 3942 / 3930 / 3884 / 3908 ms, all PASS; conservative max 3942 recorded.
+  # Rule: M <= 30000 -> smallest 15s multiple >= 3xM (11.8s) with a 45s floor
+  # => timeoutSec=45. Hangs are still detected, just with a budget that
+  # matches the parallelized reality.
+  @{n="LA_LUMEN_SMOKE";     png=$false; timeoutSec=45; measuredMs=3942},
   @{n="LA_AGENT_SMOKE";     png=$false; measuredMs=1000},
   # Direction B gate deepening: LumenAgent pure-function value contracts.
   # Forensics: LA_AGENT_SMOKE asserts only 3 booleans (real/fb/clamp), while
