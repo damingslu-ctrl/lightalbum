@@ -275,15 +275,15 @@ QImage LumenEngine::LumenEngine::hsv2rgb(const QImage& h, const QImage& s, const
                     d[x] = qRgb(vv, vv, vv);
                     continue;
                 }
-                const double H = ph[x], S = ps[x] / 255.0, V = pv[x] / 255.0;
-                double h6 = (H / 255.0) * 6.0;
+                const float H = ph[x], S = ps[x] / 255.0f, V = pv[x] / 255.0f;
+                float h6 = (H / 255.0f) * 6.0f;
                 int i = int(std::floor(h6));
                 if (i > 5) i = 5;
-                const double f = h6 - i;
-                const double p = V * (1 - S);
-                const double q = V * (1 - S * f);
-                const double t = V * (1 - S * (1 - f));
-                double rf = 0, gf = 0, bf = 0;
+                const float f = h6 - i;
+                const float p = V * (1 - S);
+                const float q = V * (1 - S * f);
+                const float t = V * (1 - S * (1 - f));
+                float rf = 0, gf = 0, bf = 0;
                 switch (i) {
                     case 0: rf = V; gf = t; bf = p; break;
                     case 1: rf = q; gf = V; bf = p; break;
@@ -292,9 +292,9 @@ QImage LumenEngine::LumenEngine::hsv2rgb(const QImage& h, const QImage& s, const
                     case 4: rf = t; gf = p; bf = V; break;
                     default: rf = V; gf = p; bf = q; break;
                 }
-                d[x] = qRgb(clamp255(int(rf * 255.0 + 0.5)),
-                            clamp255(int(gf * 255.0 + 0.5)),
-                            clamp255(int(bf * 255.0 + 0.5)));
+                d[x] = qRgb(clamp255(int(rf * 255.0f + 0.5f)),
+                            clamp255(int(gf * 255.0f + 0.5f)),
+                            clamp255(int(bf * 255.0f + 0.5f)));
             }
         }
     });
@@ -325,19 +325,19 @@ QImage LumenEngine::LumenEngine::gaussianBlur(const QImage& src, double radius)
             const uchar* srow = img.constScanLine(y);
             uchar* drow = tmp.scanLine(y);
             for (int x = 0; x < w; ++x) {
-                double acc[3] = {0, 0, 0};
+                float acc[3] = {0.f, 0.f, 0.f};
                 for (int i = -kr; i <= kr; ++i) {
                     const int xx = std::clamp(x + i, 0, w - 1);
-                    const double kw = kern[i + kr];
+                    const float kw = float(kern[i + kr]);
                     if (ch == 1) acc[0] += srow[xx] * kw;
                     else {
                         const QRgb px = reinterpret_cast<const QRgb*>(srow)[xx];
                         acc[0] += qRed(px) * kw; acc[1] += qGreen(px) * kw; acc[2] += qBlue(px) * kw;
                     }
                 }
-                if (ch == 1) drow[x] = uchar(clamp255(int(acc[0] + 0.5)));
+                if (ch == 1) drow[x] = uchar(clamp255(int(acc[0] + 0.5f)));
                 else reinterpret_cast<QRgb*>(drow)[x] =
-                    qRgb(clamp255(int(acc[0] + 0.5)), clamp255(int(acc[1] + 0.5)), clamp255(int(acc[2] + 0.5)));
+                    qRgb(clamp255(int(acc[0] + 0.5f)), clamp255(int(acc[1] + 0.5f)), clamp255(int(acc[2] + 0.5f)));
             }
         }
     });
@@ -345,10 +345,10 @@ QImage LumenEngine::LumenEngine::gaussianBlur(const QImage& src, double radius)
         for (int y = y0; y < y1; ++y) {
             uchar* drow = img.scanLine(y);
             for (int x = 0; x < w; ++x) {
-                double acc[3] = {0, 0, 0};
+                float acc[3] = {0.f, 0.f, 0.f};
                 for (int i = -kr; i <= kr; ++i) {
                     const int yy = std::clamp(y + i, 0, h - 1);
-                    const double kw = kern[i + kr];
+                    const float kw = float(kern[i + kr]);
                     const uchar* srow = tmp.constScanLine(yy);
                     if (ch == 1) acc[0] += srow[x] * kw;
                     else {
@@ -356,9 +356,9 @@ QImage LumenEngine::LumenEngine::gaussianBlur(const QImage& src, double radius)
                         acc[0] += qRed(px) * kw; acc[1] += qGreen(px) * kw; acc[2] += qBlue(px) * kw;
                     }
                 }
-                if (ch == 1) drow[x] = uchar(clamp255(int(acc[0] + 0.5)));
+                if (ch == 1) drow[x] = uchar(clamp255(int(acc[0] + 0.5f)));
                 else reinterpret_cast<QRgb*>(drow)[x] =
-                    qRgb(clamp255(int(acc[0] + 0.5)), clamp255(int(acc[1] + 0.5)), clamp255(int(acc[2] + 0.5)));
+                    qRgb(clamp255(int(acc[0] + 0.5f)), clamp255(int(acc[1] + 0.5f)), clamp255(int(acc[2] + 0.5f)));
             }
         }
     });
@@ -535,15 +535,16 @@ QImage LumenEngine::boxDownscale(const QImage& src, int maxEdge)
 
 QImage LumenEngine::enhanceBrightness(const QImage& rgb, double f)
 {
+    const float ff = float(f);
     QImage img = rgb.convertToFormat(QImage::Format_RGB32);
     img.scanLine(0);                       // 单线程段强制 detach
     lumenParallelRows(img.height(), [&](int y0, int y1) {
         for (int y = y0; y < y1; ++y) {
             QRgb* d = reinterpret_cast<QRgb*>(img.scanLine(y));
             for (int x = 0; x < img.width(); ++x)
-                d[x] = qRgb(clamp255(int(qRed(d[x]) * f + 0.5)),
-                            clamp255(int(qGreen(d[x]) * f + 0.5)),
-                            clamp255(int(qBlue(d[x]) * f + 0.5)));
+                d[x] = qRgb(clamp255(int(qRed(d[x]) * ff + 0.5f)),
+                            clamp255(int(qGreen(d[x]) * ff + 0.5f)),
+                            clamp255(int(qBlue(d[x]) * ff + 0.5f)));
         }
     });
     return img;
@@ -920,6 +921,7 @@ QImage LumenEngine::blend(const QImage& a, const QImage& b, double f)
     QImage ia = a.convertToFormat(QImage::Format_RGB32);
     QImage ib = b.convertToFormat(QImage::Format_RGB32);
     if (ia.size() != ib.size()) return ia;
+    const float ff = float(f), fi = float(1.0 - f);
     ia.scanLine(0);                        // 单线程段强制 detach
     lumenParallelRows(ia.height(), [&](int y0, int y1) {
         for (int y = y0; y < y1; ++y) {
@@ -927,9 +929,9 @@ QImage LumenEngine::blend(const QImage& a, const QImage& b, double f)
             const QRgb* pb = reinterpret_cast<const QRgb*>(ib.constScanLine(y));
             QRgb* d = reinterpret_cast<QRgb*>(ia.scanLine(y));
             for (int x = 0; x < ia.width(); ++x)
-                d[x] = qRgb(clamp255(int(qRed(pa[x]) * (1 - f) + qRed(pb[x]) * f + 0.5)),
-                            clamp255(int(qGreen(pa[x]) * (1 - f) + qGreen(pb[x]) * f + 0.5)),
-                            clamp255(int(qBlue(pa[x]) * (1 - f) + qBlue(pb[x]) * f + 0.5)));
+                d[x] = qRgb(clamp255(int(qRed(pa[x]) * fi + qRed(pb[x]) * ff + 0.5f)),
+                            clamp255(int(qGreen(pa[x]) * fi + qGreen(pb[x]) * ff + 0.5f)),
+                            clamp255(int(qBlue(pa[x]) * fi + qBlue(pb[x]) * ff + 0.5f)));
         }
     });
     return ia;
@@ -981,15 +983,16 @@ QImage LumenEngine::composite(const QImage& a, const QImage& b, const QImage& ma
 
 QImage LumenEngine::LumenEngine::channelGain(const QImage& rgb, double gr, double gg, double gb)
 {
+    const float fr = float(gr), fg = float(gg), fb = float(gb);
     QImage img = rgb.convertToFormat(QImage::Format_RGB32);
     img.scanLine(0);                       // 单线程段强制 detach
     lumenParallelRows(img.height(), [&](int y0, int y1) {
         for (int y = y0; y < y1; ++y) {
             QRgb* d = reinterpret_cast<QRgb*>(img.scanLine(y));
             for (int x = 0; x < img.width(); ++x)
-                d[x] = qRgb(clamp255(int(qRed(d[x]) * gr + 0.5)),
-                            clamp255(int(qGreen(d[x]) * gg + 0.5)),
-                            clamp255(int(qBlue(d[x]) * gb + 0.5)));
+                d[x] = qRgb(clamp255(int(qRed(d[x]) * fr + 0.5f)),
+                            clamp255(int(qGreen(d[x]) * fg + 0.5f)),
+                            clamp255(int(qBlue(d[x]) * fb + 0.5f)));
         }
     });
     return img;
@@ -1194,22 +1197,24 @@ QImage LumenEngine::vignetteCorrect(const QImage& rgb, double strength, double* 
     // 2) 全分辨率径向增益（解析式，等价低分辨率掩膜双线性放大）
     QImage img = rgb.convertToFormat(QImage::Format_RGB32);
     const int w = img.width(), h = img.height();
-    const double cx2 = (w - 1) / 2.0, cy2 = (h - 1) / 2.0;
-    const double rmax2 = cx2 * cx2 + cy2 * cy2;
-    if (rmax2 < 1.0) return img;
+    const float cx2 = float((w - 1) / 2.0), cy2 = float((h - 1) / 2.0);
+    const float rmax2 = cx2 * cx2 + cy2 * cy2;
+    if (rmax2 < 1.0f) return img;
+    const float kf = float(k);
+    const float gmaxf = float(gmax);
     img.scanLine(0);                       // 单线程段强制 detach（就地写；k/gmax/cx2/cy2/rmax2 只读捕获）
     lumenParallelRows(h, [&](int y0, int y1) {
         for (int y = y0; y < y1; ++y) {
             QRgb* d = reinterpret_cast<QRgb*>(img.scanLine(y));
-            const double dy = y - cy2;
+            const float dy = y - cy2;
             for (int x = 0; x < w; ++x) {
-                const double dx = x - cx2;
-                const double r2 = (dx * dx + dy * dy) / rmax2;
-                const double inv = std::max(0.35, 1.0 - k * r2);
-                const double gain = std::min(gmax, 1.0 / inv);
-                d[x] = qRgb(clamp255(int(qRed(d[x]) * gain + 0.5)),
-                            clamp255(int(qGreen(d[x]) * gain + 0.5)),
-                            clamp255(int(qBlue(d[x]) * gain + 0.5)));
+                const float dx = x - cx2;
+                const float r2 = (dx * dx + dy * dy) / rmax2;
+                const float inv = std::max(0.35f, 1.0f - kf * r2);
+                const float gain = std::min(gmaxf, 1.0f / inv);
+                d[x] = qRgb(clamp255(int(qRed(d[x]) * gain + 0.5f)),
+                            clamp255(int(qGreen(d[x]) * gain + 0.5f)),
+                            clamp255(int(qBlue(d[x]) * gain + 0.5f)));
             }
         }
     });
