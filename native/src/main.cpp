@@ -4834,6 +4834,34 @@ int runEraseQa()
     }
     EraseRunner::qaSetForceNoExecutor(false);            // QA 钩子复位（不得泄漏给后续门）
 
+    // ---- G1 淘汰（2.38.0 R3）：连续 9 个任务后任务表保留最近 kTasksKeep=8，
+    //      最旧已不可见、最新仍在。共享 bridge 的执行器 DELAY=220 已在顶部设定，
+    //      串行等待终态即可（无随机、无时序依赖，铁律29）。
+    //      ★ 正确性修正：A/C/D/E 组已在同一 bridge 上先行提交 id 1..4（blocked 补组用
+    //      独立 blockedBridge，不计入），故 G1 的「最旧」并非硬编码 id=1（那是 A 组的），
+    //      而是本组自身第一个 id。用局部 g1ids 记录本组 9 个 id，断言 first() 已淘汰、
+    //      last() 仍在；cap 断言按 brief 原样保留。当前无淘汰实现：9 提交后
+    //      qaTaskCount()=13(>8)、task(g1ids.first()) 非空 → 两条 note(false) 必红。
+    {
+        QVector<int> g1ids;
+        int lastId = -1;
+        bool allTerminal = true;
+        for (int i = 0; i < 9; ++i) {
+            lastId = bridge.submit(base, mask);
+            g1ids.append(lastId);
+            allTerminal = eraseWaitUntil([&]{ const EraseTask* t = bridge.task(lastId);
+                return t && (t->status == QLatin1String("done") || t->status == QLatin1String("failed")); }, 8000);
+            if (!allTerminal) break;
+        }
+        note(allTerminal, QStringLiteral("G1 all 9 tasks reached terminal"));
+        note(bridge.qaTaskCount() <= 8,
+             QStringLiteral("G1 task table capped at 8, got=%1").arg(bridge.qaTaskCount()));
+        note(bridge.task(g1ids.first()) == nullptr,
+             QStringLiteral("G1 oldest task evicted (id=%1)").arg(g1ids.first()));
+        note(bridge.task(g1ids.last()) != nullptr,
+             QStringLiteral("G1 newest task still visible (id=%1)").arg(g1ids.last()));
+    }
+
     EraseRunner::qaInjectBadSize(false);             // 静态钩子复位（不得泄漏给后续门）
     qputenv("LA_ERASE_STUB_DELAY_MS", QByteArray()); // 桩延迟复位（同上纪律）
     qputenv("LA_ERASE_STUB_CHUNK_KB", QByteArray()); // 拆块装置复位（不得泄漏给后续门）

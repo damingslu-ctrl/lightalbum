@@ -47,6 +47,7 @@ public:
     // QA 钩子（LA_ERASE_QA 专用，不在正式 UI 路径上调用）：
     void qaKillExecutorForTest();
     void qaPeekRunnerPid(qint64& pid) const;
+    int qaTaskCount() const { return tasks_.size(); }   // 2.38.0 R3：G1 淘汰断言用
 
 signals:
     void taskUpdated(int id);   // 状态变化（入列 / 开跑 / 挂起 / 完成 / 失败）
