@@ -778,19 +778,25 @@ void RetouchPage::qaShootA(const QString& png)
     const QPair<int,int> st0 = bandStats(img0);
 
     // ext>1180 证明右栈整栏未被裁切（否则右栏内容会止于 ≈1120）；两页右栏均有内容。
+    // 2.38.0 R1：一键增强 13 入口存在性（objectName opBtn_<key>；构造即建，无需点击）。
+    int enhOps = 0;
+    for (auto* b : findChildren<QPushButton*>())
+        if (b->objectName().startsWith(QStringLiteral("opBtn_"))) ++enhOps;
     const bool ok = rightStack_->count() == 6 && sliders_.size() == 12 && modeBtns_.size() == 6
                     && pgPreset == 1 && pgAdj == 0 && gold > 0
                     && st1.second > 1180 && st0.second > 1180
-                    && st1.first > 500 && st0.first > 500;
+                    && st1.first > 500 && st0.first > 500
+                    && enhOps == 13;
     std::fprintf(stderr, "LA_RETOUCH_A_QA pages=%d sliders=%d modes=%d map=%d/%d "
-                          "adjExt=%d presetExt=%d gold=%d ok=%d png=%s\n",
+                          "adjExt=%d presetExt=%d gold=%d enhOps=%d ok=%d png=%s\n",
                  rightStack_->count(), sliders_.size(), modeBtns_.size(), pgPreset, pgAdj,
-                 st1.second, st0.second, gold, ok ? 1 : 0, qPrintable(png));
+                 st1.second, st0.second, gold, enhOps, ok ? 1 : 0, qPrintable(png));
+    std::fprintf(stderr, "LA_RETOUCH_A_QA %s ok=%d enhOps=%d\n", ok ? "PASS" : "FAIL", ok ? 1 : 0, enhOps);
     std::fflush(stderr);
     img1.save(png);
     const QString presetPng = QString(png).section(QLatin1Char('.'), 0, 0) + QStringLiteral("_preset.png");
     img0.save(presetPng);
-    QaExit::requestExit(0);   // 2.7.0：收敛到自退契约
+    QaExit::requestExit(ok ? 0 : 1);   // 2.38.0 R1：诚实判定（旧版恒 0 = 空心门，已实测证实）
 }
 void RetouchPage::clearCardSel()
 {
