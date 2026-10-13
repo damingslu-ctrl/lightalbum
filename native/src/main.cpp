@@ -1853,7 +1853,8 @@ int runRetouchOpQa()
 // 断言 src/ui/ 对 13 个 LumenEngine 显式算子各 >=1 处真实调用（先剥注释再匹配），
 // 且 RetouchPage.cpp 含事件接线（opBtn_ / onEnhOpClicked 同时出现）。
 // F1 fail-open 守卫：扫描根找不到或 0 文件 -> 直接 FAIL（绝不静默放行，铁律34）。
-// 反例：LA_LUMEN_OPS_UI_QA_FORCE_BROKEN=1 -> 期望表注入 phantom 算子名（覆盖 13/14）-> 必红。
+// 反例：LA_LUMEN_OPS_UI_QA_FORCE_BROKEN=1 -> 期望表冻结为 13 算子、绝不随开关变（铁律22），
+//        仅抑制覆盖统计 -> covered=0/13、分母不变 -> 必红（证明逐算子断言真的咬合，铁律34）。
 int runLumenOpsUiQa()
 {
     const QStringList kOps = {
