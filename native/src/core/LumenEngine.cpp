@@ -2,6 +2,7 @@
 #include <cmath>
 #include <cstring>
 #include <algorithm>
+#include <atomic>
 #include <functional>
 #include <random>
 #include <QtConcurrent>   // blockingMap（QtConcurrentRun 头不含 map 族，需总括头）
@@ -1116,27 +1117,36 @@ QImage LumenEngine::redeyeRemove(const QImage& rgb, int* pixels)
     const int w = img.width(), h = img.height();
     if (w < 32 || h < 32) return img;
     QVector<uchar> hit(w * h, 0);
-    int cnt = 0;
-    for (int y = 0; y < h; ++y) {
-        const QRgb* s = reinterpret_cast<const QRgb*>(img.constScanLine(y));
-        for (int x = 0; x < w; ++x) {
-            const int r = qRed(s[x]), g = qGreen(s[x]), b = qBlue(s[x]);
-            if (r < 120 || g > 110 || b > 110) continue;
-            if (r < 2.2 * g || r < 2.2 * b) continue;
-            hit[y * w + x] = 1; ++cnt;
+    uchar* hitBase = hit.data();   // 单线程段强制 detach；并行体按行偏移直写
+    std::atomic<int> cntAcc{0};
+    lumenParallelRows(h, [&](int y0, int y1) {
+        int local = 0;
+        for (int y = y0; y < y1; ++y) {
+            const QRgb* s = reinterpret_cast<const QRgb*>(img.constScanLine(y));
+            for (int x = 0; x < w; ++x) {
+                const int r = qRed(s[x]), g = qGreen(s[x]), b = qBlue(s[x]);
+                if (r < 120 || g > 110 || b > 110) continue;
+                if (r < 2.2 * g || r < 2.2 * b) continue;
+                hitBase[y * w + x] = 1; ++local;
+            }
         }
-    }
+        cntAcc.fetch_add(local, std::memory_order_relaxed);
+    });
+    int cnt = cntAcc.load();
     const long area = long(w) * h;
     if (cnt < 20 || cnt > 0.06 * area) return img;   // 面积闸门：太少无红眼 / 太多疑似整片红
-    for (int y = 0; y < h; ++y) {
-        QRgb* d = reinterpret_cast<QRgb*>(img.scanLine(y));
-        for (int x = 0; x < w; ++x) {
-            if (!hit[y * w + x]) continue;
-            const int g = qGreen(d[x]), b = qBlue(d[x]);
-            const int v = int(g * 0.35);
-            d[x] = qRgb(v, v, int(b * 0.35));
+    img.scanLine(0);                       // 单线程段强制 detach
+    lumenParallelRows(h, [&](int y0, int y1) {
+        for (int y = y0; y < y1; ++y) {
+            QRgb* d = reinterpret_cast<QRgb*>(img.scanLine(y));
+            for (int x = 0; x < w; ++x) {
+                if (!hitBase[y * w + x]) continue;
+                const int g = qGreen(d[x]), b = qBlue(d[x]);
+                const int v = int(g * 0.35);
+                d[x] = qRgb(v, v, int(b * 0.35));
+            }
         }
-    }
+    });
     if (pixels) *pixels = cnt;
     return img;
 }
@@ -1186,19 +1196,22 @@ QImage LumenEngine::vignetteCorrect(const QImage& rgb, double strength, double* 
     const double cx2 = (w - 1) / 2.0, cy2 = (h - 1) / 2.0;
     const double rmax2 = cx2 * cx2 + cy2 * cy2;
     if (rmax2 < 1.0) return img;
-    for (int y = 0; y < h; ++y) {
-        QRgb* d = reinterpret_cast<QRgb*>(img.scanLine(y));
-        const double dy = y - cy2;
-        for (int x = 0; x < w; ++x) {
-            const double dx = x - cx2;
-            const double r2 = (dx * dx + dy * dy) / rmax2;
-            const double inv = std::max(0.35, 1.0 - k * r2);
-            const double gain = std::min(gmax, 1.0 / inv);
-            d[x] = qRgb(clamp255(int(qRed(d[x]) * gain + 0.5)),
-                        clamp255(int(qGreen(d[x]) * gain + 0.5)),
-                        clamp255(int(qBlue(d[x]) * gain + 0.5)));
+    img.scanLine(0);                       // 单线程段强制 detach（就地写；k/gmax/cx2/cy2/rmax2 只读捕获）
+    lumenParallelRows(h, [&](int y0, int y1) {
+        for (int y = y0; y < y1; ++y) {
+            QRgb* d = reinterpret_cast<QRgb*>(img.scanLine(y));
+            const double dy = y - cy2;
+            for (int x = 0; x < w; ++x) {
+                const double dx = x - cx2;
+                const double r2 = (dx * dx + dy * dy) / rmax2;
+                const double inv = std::max(0.35, 1.0 - k * r2);
+                const double gain = std::min(gmax, 1.0 / inv);
+                d[x] = qRgb(clamp255(int(qRed(d[x]) * gain + 0.5)),
+                            clamp255(int(qGreen(d[x]) * gain + 0.5)),
+                            clamp255(int(qBlue(d[x]) * gain + 0.5)));
+            }
         }
-    }
+    });
     return img;
 }
 
