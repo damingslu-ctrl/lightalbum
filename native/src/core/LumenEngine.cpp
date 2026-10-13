@@ -7,6 +7,7 @@
 #include <random>
 #include <QtConcurrent>   // blockingMap（QtConcurrentRun 头不含 map 族，需总括头）
 #include <QThread>
+#include <QList>
 
 // ============================================================ 预设
 LumenPreset LumenPreset::byName(const QString& name)
@@ -1844,29 +1845,33 @@ QImage LumenEngine::lensCorrect(const QImage& rgb, double amount)
     const int N = std::max(8, std::min(32, w / 60));
     QImage out(pw, ph, QImage::Format_RGB32);
     out.fill(0);
+    out.scanLine(0);   // 单线程段强制 detach
+    QList<QPair<int, int>> tiles;
     for (int iy = 0; iy < N; ++iy)
-        for (int ix = 0; ix < N; ++ix) {
-            int x0 = int(ix * pw / N), x1 = int((ix + 1) * pw / N);
-            int y0 = int(iy * ph / N), y1 = int((iy + 1) * ph / N);
-            if (x1 <= x0) x1 = x0 + 1;
-            if (y1 <= y0) y1 = y0 + 1;
-            const int tw = x1 - x0, th = y1 - y0;
-            // 局部瓦片坐标(0..tw)→全局源坐标仿射（对齐 _affine_from）
-            double s00[2], sT0[2], sTH[2];
-            lensSrc(x0, y0, cx, cy, R, k, &s00[0], &s00[1]);
-            lensSrc(x0 + tw, y0, cx, cy, R, k, &sT0[0], &sT0[1]);
-            lensSrc(x0 + tw, y0 + th, cx, cy, R, k, &sTH[0], &sTH[1]);
-            double M[6];
-            solve3(0, 0, tw, 0, tw, th, s00[0], sT0[0], sTH[0], &M[0]);
-            solve3(0, 0, tw, 0, tw, th, s00[1], sT0[1], sTH[1], &M[3]);
-            for (int ly = 0; ly < th; ++ly)
-                for (int lx = 0; lx < tw; ++lx) {
-                    const double sx = M[0] * lx + M[1] * ly + M[2];
-                    const double sy = M[3] * lx + M[4] * ly + M[5];
-                    reinterpret_cast<QRgb*>(out.scanLine(y0 + ly))[x0 + lx] =
-                        bilinearSample(pad, sx, sy);
-                }
-        }
+        for (int ix = 0; ix < N; ++ix) tiles.append(qMakePair(ix, iy));
+    QtConcurrent::blockingMap(tiles, [&](const QPair<int, int>& tl) {
+        const int ix = tl.first, iy = tl.second;
+        int x0 = int(ix * pw / N), x1 = int((ix + 1) * pw / N);
+        int y0 = int(iy * ph / N), y1 = int((iy + 1) * ph / N);
+        if (x1 <= x0) x1 = x0 + 1;
+        if (y1 <= y0) y1 = y0 + 1;
+        const int tw = x1 - x0, th = y1 - y0;
+        // 局部瓦片坐标(0..tw)→全局源坐标仿射（对齐 _affine_from）
+        double s00[2], sT0[2], sTH[2];
+        lensSrc(x0, y0, cx, cy, R, k, &s00[0], &s00[1]);
+        lensSrc(x0 + tw, y0, cx, cy, R, k, &sT0[0], &sT0[1]);
+        lensSrc(x0 + tw, y0 + th, cx, cy, R, k, &sTH[0], &sTH[1]);
+        double M[6];
+        solve3(0, 0, tw, 0, tw, th, s00[0], sT0[0], sTH[0], &M[0]);
+        solve3(0, 0, tw, 0, tw, th, s00[1], sT0[1], sTH[1], &M[3]);
+        for (int ly = 0; ly < th; ++ly)
+            for (int lx = 0; lx < tw; ++lx) {
+                const double sx = M[0] * lx + M[1] * ly + M[2];
+                const double sy = M[3] * lx + M[4] * ly + M[5];
+                reinterpret_cast<QRgb*>(out.scanLine(y0 + ly))[x0 + lx] =
+                    bilinearSample(pad, sx, sy);
+            }
+    });
     return out.copy(margin, margin, w, h).convertToFormat(QImage::Format_RGB32);
 }
 
