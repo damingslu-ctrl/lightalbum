@@ -569,6 +569,11 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
         ml->addWidget(new QLabel(QCoreApplication::translate("LightAlbum", "笔刷"), mp)); ml->addWidget(brushSlider_);
         ml->addWidget(maskClearBtn_); ml->addWidget(maskApplyBtn_);
         ml->addWidget(eraseBtn_); ml->addWidget(eraseSlotLbl_);
+        eraseCancelBtn_ = new QPushButton(QCoreApplication::translate("LightAlbum", "取消任务"), mp);
+        eraseCancelBtn_->setObjectName(QStringLiteral("eraseCancelBtn"));
+        eraseCancelBtn_->setStyleSheet(Lumen::btnGhost(Lumen::INK));
+        eraseCancelBtn_->hide();                       // 有 queued/running 任务才出现
+        ml->addWidget(eraseCancelBtn_);
         ml->addStretch(1);
         rightStack_->addWidget(mp);
     }
@@ -639,6 +644,7 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
     connect(cropBtn_, &QPushButton::toggled, this, &RetouchPage::onCropToggle);
     connect(compareBtn_, &QPushButton::toggled, this, &RetouchPage::onCompareToggle);
     connect(eraseBtn_, &QPushButton::clicked, this, &RetouchPage::onEraseClicked);
+    connect(eraseCancelBtn_, &QPushButton::clicked, this, &RetouchPage::onEraseCancel);
     connect(eraseBridge_, &EraseBridge::taskUpdated, this, &RetouchPage::onEraseTaskUpdated);
     applyTimer_ = new QTimer(this);
     applyTimer_->setSingleShot(true);
@@ -782,16 +788,18 @@ void RetouchPage::qaShootA(const QString& png)
     int enhOps = 0;
     for (auto* b : findChildren<QPushButton*>())
         if (b->objectName().startsWith(QStringLiteral("opBtn_"))) ++enhOps;
+    // 2.38.0 R3：消除任务取消按钮存在性（objectName 契约 eraseCancelBtn）。
+    const bool hasEraseCancel = findChild<QPushButton*>(QStringLiteral("eraseCancelBtn")) != nullptr;
     const bool ok = rightStack_->count() == 6 && sliders_.size() == 12 && modeBtns_.size() == 6
                     && pgPreset == 1 && pgAdj == 0 && gold > 0
                     && st1.second > 1180 && st0.second > 1180
                     && st1.first > 500 && st0.first > 500
-                    && enhOps == 13;
+                    && enhOps == 13 && hasEraseCancel;
     std::fprintf(stderr, "LA_RETOUCH_A_QA pages=%d sliders=%d modes=%d map=%d/%d "
-                          "adjExt=%d presetExt=%d gold=%d enhOps=%d ok=%d png=%s\n",
+                          "adjExt=%d presetExt=%d gold=%d enhOps=%d eraseCancel=%d ok=%d png=%s\n",
                  rightStack_->count(), sliders_.size(), modeBtns_.size(), pgPreset, pgAdj,
-                 st1.second, st0.second, gold, enhOps, ok ? 1 : 0, qPrintable(png));
-    std::fprintf(stderr, "LA_RETOUCH_A_QA %s ok=%d enhOps=%d\n", ok ? "PASS" : "FAIL", ok ? 1 : 0, enhOps);
+                 st1.second, st0.second, gold, enhOps, hasEraseCancel ? 1 : 0, ok ? 1 : 0, qPrintable(png));
+    std::fprintf(stderr, "LA_RETOUCH_A_QA %s ok=%d enhOps=%d eraseCancel=%d\n", ok ? "PASS" : "FAIL", ok ? 1 : 0, enhOps, hasEraseCancel ? 1 : 0);
     std::fflush(stderr);
     img1.save(png);
     const QString presetPng = QString(png).section(QLatin1Char('.'), 0, 0) + QStringLiteral("_preset.png");
@@ -1151,7 +1159,7 @@ void RetouchPage::onEraseClicked()
         badge_->setText(QCoreApplication::translate("LightAlbum", "先用蒙版模式涂抹要消除的区域"));
         return;
     }
-    eraseBridge_->submit(geoImg_, canvas_->mask());
+    eraseLastTaskId_ = eraseBridge_->submit(geoImg_, canvas_->mask());
     // 状态展示在 onEraseTaskUpdated 统一更新（submit 会同步触发信号）
 }
 
@@ -1159,6 +1167,11 @@ void RetouchPage::onEraseTaskUpdated(int id)
 {
     const EraseTask* t = eraseBridge_->task(id);
     if (!t) return;
+    if (eraseCancelBtn_) {   // 2.38.0 R3：进行中任务才显示取消（按钮零 emoji，C5 棘轮不动）
+        const bool active = t->status == QStringLiteral("queued") || t->status == QStringLiteral("running");
+        eraseCancelBtn_->setVisible(active);
+        eraseCancelBtn_->setEnabled(active);
+    }
     eraseSlotLbl_->setText(
         QCoreApplication::translate("LightAlbum", "任务#%1 %2 · %3").arg(id).arg(t->status, t->note));
     if (t->status == QStringLiteral("done") && !t->result.isNull()) {
@@ -1171,6 +1184,13 @@ void RetouchPage::onEraseTaskUpdated(int id)
         badge_->setText(QCoreApplication::translate("LightAlbum", "AI消除结果已回填 · 零云端"));
         prog_->setValue(0);  // P12: 完成即回零，进度条只在 AI 决策期间可见
     }
+}
+
+void RetouchPage::onEraseCancel()
+{
+    if (eraseLastTaskId_ < 0) return;
+    if (eraseBridge_->cancel(eraseLastTaskId_))
+        badge_->setText(QCoreApplication::translate("LightAlbum", "取消已受理 · 本地执行器正在复位"));
 }
 
 // ----------------------------------------------------------------- 页面槽

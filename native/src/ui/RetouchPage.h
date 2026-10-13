@@ -93,6 +93,7 @@ private slots:
     // P4-4 AI 消除桥（表单壳）
     void onEraseClicked();
     void onEraseTaskUpdated(int id);
+    void onEraseCancel();   // 2.38.0 R3
 
     // 方向 B：非破坏式撤销/重做栈
     void onUndo();
@@ -204,6 +205,8 @@ QImage        geoSrc_;                    // 几何源（载入的缩略图，�
     EraseBridge*   eraseBridge_ = nullptr;
     QPushButton*   eraseBtn_ = nullptr;
     QLabel*        eraseSlotLbl_ = nullptr;
+    QPushButton*   eraseCancelBtn_ = nullptr;   // 2.38.0 R3：进行中任务取消（queued/running 才显示）
+    int            eraseLastTaskId_ = -1;       // 最近一次 submit 的任务 id
 
     // P16.3 右侧预设画廊（自美图 BeautyPage 迁移）
     QVector<RetouchPreset> presets_;

@@ -367,8 +367,9 @@ $GateTable = @(
   @{n="LA_EDIT_RAW_QA"; png=$false; need=@("LA_RAW_SAMPLE","LA_VIDEO_SAMPLE"); measuredMs=1581},
   @{n="LA_GALLERY_FILL_QA"; png=$true; measuredMs=2690},
   # R1-T4 re-measure: qaShootA now counts enhOps (13 wired ops), so the pre-R1
-  # record measuredMs=2707 was stale; 1113 is the fresh qa_runner -Timing value.
-  @{n="LA_RETOUCH_A_QA";    png=$true; measuredMs=1113},
+  # record measuredMs=2707 was stale; 1113 was that -Timing value. R3-T4 re-measure
+  # (qaShootA also asserts hasEraseCancel): 1122 from qa_runner -Timing.
+  @{n="LA_RETOUCH_A_QA";    png=$true; measuredMs=1122},
   @{n="LA_SCALE_SMOKE";     png=$false; measuredMs=3351},
   @{n="LA_SCALE_PERF";      png=$false; measuredMs=338},
   @{n="LA_BATCH_TX_QA";     png=$false; measuredMs=7004},
@@ -536,10 +537,12 @@ $GateTable = @(
   # LA_ERASE_QA_FORCE_BROKEN=1 arms EraseRunner::qaInjectBadSize BEFORE the first submit;
   # run() then returns an out-of-bounds-copy (null) QImage, applyResult rejects it, and the
   # done/pixel/recovery assertions turn RED together (rule 22: expectations never branch).
-  # Tier: FULL (QProcess lifecycle, no external env). measuredMs=3667 from qa_runner -Timing
+  # Tier: FULL (QProcess lifecycle, no external env). measuredMs=12390 from qa_runner -Timing
   # (rule 13; re-measured after the 2.36.0 async + streamed-body rig; history 2210 sync -> 3141 async).
+  # R3-T4 re-measure: G1/G2 groups pushed the gate to 12390ms (was 3667); still under the
+  # default 25s timeoutSec budget, so no override added.
   # E1-group sub-assert: qaSetForceNoExecutor(true) -> fresh bridge parks its task as blocked_no_model (modelReady false, no process spawn); passes in both arms (rule 22).
-  @{n="LA_ERASE_QA"; png=$false; measuredMs=3667},
+  @{n="LA_ERASE_QA"; png=$false; measuredMs=12390},
   # 2.35.0 opt-in real LaMa quality gate. need=LA_LAMA_MODEL (path to fetched lama.onnx):
   # absent -> qa_runner [SKIP] (non-regression, same as LA_SCAN_SMOKE/LA_RAW_QA). When the
   # env IS set but inpaint.exe is missing/resolves to the stub -> honest FAIL (rule 34).
