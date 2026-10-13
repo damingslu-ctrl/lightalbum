@@ -5766,6 +5766,9 @@ int runLumenSmoke()
             cmp("hdr", sHdr, pHdr);
             cmp("dehaze", sDeh, pDeh);
             cmp("portrait", sPor, pPor);
+        } else {
+            // in_0.png 缺失时整段 DET 空跑：显式留痕，防门 PASS 却无逐字节证据（空心）
+            std::fprintf(stderr, "LA_LUMEN_DET skipped reason=no_in_0\n");
         }
     }
     std::fprintf(stderr, "LA_LUMEN_SMOKE %s\n", pass ? "PASS" : "FAIL");

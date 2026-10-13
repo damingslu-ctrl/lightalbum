@@ -27,6 +27,9 @@ constexpr double P_SHADES = 6.0;
 // 逐行块并行执行器：把 [0,h) 切成行块用 QtConcurrent::blockingMap 分派。
 // body(y0,y1) 负责行区间 [y0,y1)，仅用于"每输出像素只读自身/邻域（只读源）、只写自身像素"的纯映射循环。
 // LA_LUMEN_THREADS=1 -> 强制串行（金样门串行/并行逐字节比对基准）；未设/坏值 -> idealThreadCount。
+// 生产不变量：引擎并行区可从全局池的 QtConcurrent::run 工作线程进入（RetouchPage 单飞 opBusy_ 保证
+// 至多一个此类嵌套等待者）；不要在多个全局池线程上并发引入引擎调用——若需要，先把 lumenParallelRows
+// 迁到专属 QThreadPool。
 static void lumenParallelRows(int h, const std::function<void(int, int)>& body)
 {
     int nt = 0;
@@ -1199,7 +1202,9 @@ QImage LumenEngine::vignetteCorrect(const QImage& rgb, double strength, double* 
     const int w = img.width(), h = img.height();
     const float cx2 = float((w - 1) / 2.0), cy2 = float((h - 1) / 2.0);
     const float rmax2 = cx2 * cx2 + cy2 * cy2;
-    if (rmax2 < 1.0f) return img;
+    // §4.2：二元守卫比较保持 double（cx2/cy2 为半整数，float 积和与之精确等值，输出不变）
+    const double rmax2d = double(cx2) * double(cx2) + double(cy2) * double(cy2);
+    if (rmax2d < 1.0) return img;
     const float kf = float(k);
     const float gmaxf = float(gmax);
     img.scanLine(0);                       // 单线程段强制 detach（就地写；k/gmax/cx2/cy2/rmax2 只读捕获）
@@ -1858,8 +1863,8 @@ QImage LumenEngine::lensCorrect(const QImage& rgb, double amount)
         const int ix = tl.first, iy = tl.second;
         int x0 = int(ix * pw / N), x1 = int((ix + 1) * pw / N);
         int y0 = int(iy * ph / N), y1 = int((iy + 1) * ph / N);
-        if (x1 <= x0) x1 = x0 + 1;
-        if (y1 <= y0) y1 = y0 + 1;
+        if (x1 <= x0) x1 = x0 + 1;   // 死码：现守卫（w>=64、N<=32）下瓦片必不相交；放宽守卫则相邻并行瓦片会双写同列
+        if (y1 <= y0) y1 = y0 + 1;   // 同上（行向）
         const int tw = x1 - x0, th = y1 - y0;
         // 局部瓦片坐标(0..tw)→全局源坐标仿射（对齐 _affine_from）
         double s00[2], sT0[2], sTH[2];
@@ -1878,7 +1883,7 @@ QImage LumenEngine::lensCorrect(const QImage& rgb, double amount)
             }
     };
     const QByteArray tv = qgetenv("LA_LUMEN_THREADS");
-    if (tv.toInt() == 1) {                       // "1" 或非法值->串行（unset 的 toInt()==0 走并行默认）
+    if (tv.toInt() == 1) {                       // "1" -> 串行退化；未设/非法值 -> 并行（toInt()==0）
         for (const QPair<int, int>& t : tiles) doTile(t);   // 行主序，与原嵌套循环同序
     } else {
         QtConcurrent::blockingMap(tiles, doTile);
