@@ -3,6 +3,43 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.39.0] - 2026-10-13
+
+引擎升级第三轮（路线 6 性能子集）：LumenEngine 算子内并行 + 量化安全 float。像素输出语义零变化、
+名册零变化（74 门 = fast 19 + full 55）。
+
+### R-lumen-parallel（spec §3.1 全清单覆盖）
+- 新增 `lumenParallelRows(int, const std::function<void(int,int)>&)` 行块执行器：按行切块并行，
+  `LA_LUMEN_THREADS=1` 串行退化（串行臂语义逐行等价）。六批接入：gaussianBlur 行并行（首杠杆）、
+  PIL 基础映射族（pointRgb/pointGray/chopGray/invertGray/toL8/rgb2hsv/hsv2rgb）、中层映射族
+  （enhance*/channelGain/blend/screen/composite/unsharp 应用/blackWhite mix）、halo 滤波族
+  （median3/median3G/smoothG/smoothFilter/minFilter/medianFilter，暂存降为块局部）、redeye 双 pass +
+  vignette 径向逐行（cnt 线程局部求和原子合并，与串行逐位等值）、lensCorrect N×N 瓦片并行
+  （含修 9be6a47：补尊重 LA_LUMEN_THREADS=1 串行退化）。
+- §3.2 红线遵守：rgb2hsv 仅并行、不切精度。
+
+### R-lumen-float（spec §4.1）
+- 量化后终末颜色算术 double→float：gaussianBlur 累加器、hsv2rgb、enhanceBrightness、channelGain、
+  blend、vignette 增益——均在 lround/clamp 量化终末之后，舍入语义不变。
+
+### 验证与反例
+- `LA_LUMEN_SMOKE` 增串行/并行**逐字节决定性子断言**：6 算子 × 金样 `LA_LUMEN_DET <op> equal=1`
+  （size/bytesPerLine/sizeInBytes/memcmp 四项硬校验；期望恒为「必须相等」，绝不随开关分支——铁律 22）；
+  `LA_LUMEN_SMOKE_FORCE_DIFF` 反例咬合为红。
+- 竞态反例实证首跑即咬（1/1）：把 medianFilter 暂存挪回跨块共享作用域 → `portrait equal=0` → 门 FAIL，
+  同跑金样 MAD 子断言仍绿 → **DET 逐字节相等严格强于 MAD 容差网**（铁律 34 立证，门非空心）。
+- float 红线反例实证（诚实记录 FINDING）：ycbcrSplit 整数定点截断→float+四舍五入，portrait 金样 mad
+  实测 11× 劣化（0.492→5.444）但仍 <8.0 容差且自动管线不经该算子 → 门保持绿；whiteBalance 累加器
+  double→float 兜底反例在金样上 3 位小数零变化。结论：现门硬保护**字节级确定性**（竞态轴），
+  未完全硬保护 §4.2 float 精度红线（精度轴）；补强候选（portrait 族收紧 kMadLimit 或给 ycbcr
+  消费算子加逐字节金样 DET）已登记移交下轮，不掩埋。
+
+### 实测
+- `LA_LUMEN_SMOKE` measuredMs **66585→3942**（`-Timing` 4 采样 3884–3942ms 取保守上界），
+  ≈16.9× 提速；timeoutSec 90→45。
+- 全量 74 门回归：`SUMMARY: PASS=62 FAIL=0 CHECK=0 KILL=0 SKIP=12`（SKIP 皆既有 need= 外部件/模型门，
+  含 `LA_ERASE_MODEL_QA`）。
+
 ## [2.38.0] - 2026-10-12
 
 ### R1 Lumen 13 显式算子产品化

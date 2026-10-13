@@ -541,7 +541,7 @@ $GateTable = @(
   # Tier: FULL (QProcess lifecycle, no external env). measuredMs=12390 from qa_runner -Timing
   # (rule 13; re-measured after the 2.36.0 async + streamed-body rig; history 2210 sync -> 3141 async).
   # R3-T4 re-measure: G1/G2 groups pushed the gate to 12390ms (was 3667); well under the 60s budget.
-  # timeoutSec=60: 2 load-scaled QProcess children; headroom vs a ~2x-slower host (cf LA_LUMEN_SMOKE=90).
+  # timeoutSec=60: 2 load-scaled QProcess children; headroom vs a ~2x-slower host (cf LA_LUMEN_SMOKE=45).
   # E1-group sub-assert: qaSetForceNoExecutor(true) -> fresh bridge parks its task as blocked_no_model (modelReady false, no process spawn); passes in both arms (rule 22).
   @{n="LA_ERASE_QA"; png=$false; timeoutSec=60; measuredMs=12390},
   # 2.35.0 opt-in real LaMa quality gate. need=LA_LAMA_MODEL (path to fetched lama.onnx):
