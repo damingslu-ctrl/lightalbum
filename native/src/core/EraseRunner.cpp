@@ -4,6 +4,7 @@
 #include "EraseProto.h"
 #include <QCoreApplication>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFileInfo>
 #include <QStringList>
 
@@ -112,12 +113,39 @@ void EraseRunner::submitAsync(quint32 id, QImage base, QImage mask)
     emit taskFinished(id, ok, out, err);                  // 跨线程：queued 回调用方（Bridge 在 GUI）
 }
 
+void EraseRunner::requestCancel(quint32 id) { cancelTarget_.store(id); }   // 任意线程：仅 atomic 写
+
 bool EraseRunner::run(quint32 id, const QImage& base, const QImage& mask, QImage& out, QString* err)
 {
+    // 2.38.0 R3：取消预检（排到队首前 / 冷启动握手后各一次），命中即中止。
+    if (cancelTarget_.load() == id) {
+        cancelTarget_.store(0);
+        if (err) *err = QStringLiteral("已取消");
+        return false;
+    }
     if (!ensureStarted()) { if (err) *err = QStringLiteral("executor unavailable"); return false; }
+    if (cancelTarget_.load() == id) {                     // 握手期间收到的取消：不写请求、不空跑
+        cancelTarget_.store(0);
+        if (err) *err = QStringLiteral("已取消");
+        qaKillChild();
+        return false;
+    }
     if (!LaEraseProto::writeRequest(proc_, id, base, mask, err)) return false;
     // Qt6：QIODevice 无 flush()；writeRequest 走 QProcess::write()，内部已 waitForBytesWritten()。
-    if (!proc_->waitForReadyRead(20000)) { if (err) *err = QStringLiteral("timeout"); qaKillChild(); return false; }
+    // 分片等待（100ms 粒度观测取消；总预算 20000 不变）。子进程死亡 -> 交回失败路径。
+    QElapsedTimer timer; timer.start();
+    bool ready = false;
+    while (timer.elapsed() < 20000) {
+        if (cancelTarget_.load() == id) {
+            cancelTarget_.store(0);
+            if (err) *err = QStringLiteral("已取消");
+            qaKillChild();                                // 杀子进程 + 复位（下次 submit 冷启动）
+            return false;
+        }
+        if (proc_->state() != QProcess::Running) break;   // 子进程已死：永远等不到应答
+        if (proc_->waitForReadyRead(100)) { ready = true; break; }
+    }
+    if (!ready) { if (err) *err = QStringLiteral("timeout"); qaKillChild(); return false; }
     if (!LaEraseProto::readResponse(proc_, id, out, err)) { qaKillChild(); return false; }
     // QA 反例：越界 copy → null QImage → applyResult 诚实拒收（期望值不动，铁律22）。
     if (g_bad.load() && !out.isNull()) out = out.copy(0, 0, out.width() + 1, out.height());

@@ -42,6 +42,14 @@ public:
     // 回填通道（模型接入后由本地执行器调用）：result 尺寸须与 base 一致。
     bool applyResult(int taskId, const QImage& result);
 
+    // 取消任务（2.38.0 R3）：queued/running → 立即定格终态 cancelled 并通知执行器中止；
+    // 已终态/未知 id 拒绝受理（false）。GUI 线程独占调用（单写者），跨线程只经
+    // EraseRunner::requestCancel 的 atomic 写。返回是否受理。
+    bool cancel(int taskId);
+
+    // ★ 生命周期：返回的指针直接指向 tasks_ 内元素，下一次入列触发的淘汰
+    //   （pruneTasks → removeFirst）会搬移数组使其失效——只在同步窗口内使用，
+    //   要跨事件循环就重新取 task(id)。
     const EraseTask* task(int id) const;
 
     // QA 钩子（LA_ERASE_QA 专用，不在正式 UI 路径上调用）：

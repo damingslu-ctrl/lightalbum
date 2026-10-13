@@ -56,6 +56,7 @@ void EraseBridge::onTaskFinished(quint32 id, bool ok, QImage out, QString err)
     EraseTask* q = nullptr;
     for (EraseTask& x : tasks_) if (x.id == int(id)) { q = &x; break; }
     if (!q) return;                               // 任务表里已无此 id（防御；正常不发生）
+    if (q->status == QLatin1String("cancelled")) return;   // 2.38.0 R3：取消终态由 cancel() 定格，回调不得覆写
     applyResult(int(id), ok ? out : QImage());    // 内部置 done/failed 并 emit taskUpdated
     if (!ok) {
         for (EraseTask& y : tasks_) if (y.id == int(id)) y.note = err;
@@ -103,6 +104,22 @@ void EraseBridge::qaPeekRunnerPid(qint64& pid) const
 {
     if (runner_) runner_->processId(pid);         // atomic 缓存读，跨线程安全
     else pid = 0;
+}
+
+bool EraseBridge::cancel(int taskId)
+{
+    if (!qEnvironmentVariableIsEmpty("LA_ERASE_QA_FORCE_IGNORE_CANCEL")) return true;   // QA 反例钩子：忽略取消
+    for (EraseTask& t : tasks_) {
+        if (t.id != taskId) continue;
+        if (t.status != QLatin1String("queued") && t.status != QLatin1String("running"))
+            return false;                                  // 终态任务拒绝受理
+        t.status = QStringLiteral("cancelled");
+        t.note = QStringLiteral("已取消 · 执行器正在复位（下次提交冷启动）");
+        emit taskUpdated(t.id);
+        if (runner_) runner_->requestCancel(quint32(taskId));   // 直调安全：仅 atomic 写
+        return true;
+    }
+    return false;
 }
 
 bool EraseBridge::applyResult(int taskId, const QImage& result)

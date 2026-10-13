@@ -4862,6 +4862,41 @@ int runEraseQa()
              QStringLiteral("G1 newest task still visible (id=%1)").arg(g1ids.last()));
     }
 
+    // ---- G2 取消（2.38.0 R3）：飞行中 cancel -> 态 cancelled + 子进程终止 +
+    //      复位后新任务仍能成功。专属桥 + 专属执行器：DELAY=1500 保证取消必然
+    //      落在飞行中（确定性；stub 冷启动为毫秒级，真模型 ~8s 是已文档化代价）。
+    qputenv("LA_ERASE_STUB_DELAY_MS", "1500");
+    {
+        EraseBridge cancelBridge;
+        const int cid = cancelBridge.submit(base, mask);
+        bool runningSeen = eraseWaitUntil([&]{ const EraseTask* t = cancelBridge.task(cid);
+            return t && t->status == QLatin1String("running"); }, 3000);
+        note(runningSeen, QStringLiteral("G2 task observed running before cancel"));
+        qint64 pidBefore = 0;
+        eraseWaitUntil([&]{ cancelBridge.qaPeekRunnerPid(pidBefore); return pidBefore != 0; }, 5000);
+        const bool accepted = cancelBridge.cancel(cid);
+        const EraseTask* ct = cancelBridge.task(cid);
+        note(accepted && ct && ct->status == QLatin1String("cancelled"),
+             QStringLiteral("G2 cancel accepted -> cancelled, got=%1").arg(ct ? ct->status : QStringLiteral("?")));
+        qint64 pidAfter = pidBefore;
+        eraseWaitUntil([&]{ cancelBridge.qaPeekRunnerPid(pidAfter); return pidAfter == 0; }, 5000);
+        note(pidAfter == 0, QStringLiteral("G2 runner child terminated pidBefore=%1 pidAfter=%2")
+                                .arg(pidBefore).arg(pidAfter));
+        // 状态定格：worker 的 taskFinished 回调抵达后不得把 cancelled 覆写成 failed/done
+        const bool overwritten = eraseWaitUntil([&]{
+            const EraseTask* t = cancelBridge.task(cid);
+            return !t || t->status != QLatin1String("cancelled");
+        }, 500);
+        note(!overwritten, QStringLiteral("G2 cancelled status survives worker callback"));
+        const int nid = cancelBridge.submit(base, mask);
+        const bool nf = eraseWaitUntil([&]{ const EraseTask* t = cancelBridge.task(nid);
+            return t && (t->status == QLatin1String("done") || t->status == QLatin1String("failed")); }, 8000);
+        const EraseTask* nt = cancelBridge.task(nid);
+        note(nf && nt && nt->status == QLatin1String("done"),
+             QStringLiteral("G2 post-cancel recovery: next task done, got=%1").arg(nt ? nt->status : QStringLiteral("?")));
+    }
+    qputenv("LA_ERASE_STUB_DELAY_MS", QByteArray());   // 桩延迟复位（既有纪律）
+
     EraseRunner::qaInjectBadSize(false);             // 静态钩子复位（不得泄漏给后续门）
     qputenv("LA_ERASE_STUB_DELAY_MS", QByteArray()); // 桩延迟复位（同上纪律）
     qputenv("LA_ERASE_STUB_CHUNK_KB", QByteArray()); // 拆块装置复位（不得泄漏给后续门）

@@ -25,6 +25,10 @@ public:
     bool ready();                                        // spawn + await READY（阻塞；仅限 owner 线程）
     bool run(quint32 id, const QImage& base, const QImage& mask, QImage& out, QString* err);
     bool processId(qint64& pid) const;                   // 读 atomic 缓存（跨线程安全）
+    // 2.38.0 R3 取消：任意线程安全——只写一个 atomic（先例 processId 的跨线程读）；
+    // owner 线程 run() 的分片等待循环负责观测并 kill+复位。id 语义 = 任务表 id（>0），
+    // 0 是「无取消请求」哨兵值：任务 id 从 1 起，故哨兵永不与真实 id 相撞。
+    void requestCancel(quint32 id);
     void qaKillChild();
     static void qaInjectBadSize(bool on);                // QA 反例钩子（Task 5/9 用）
     static void qaSetForceNoExecutor(bool on);           // QA 钩子：令探针/findExe 判空 -> blocked_no_model
@@ -44,4 +48,5 @@ private:
     QString exePath_;
     bool ready_ = false;
     std::atomic<qint64> pidCache_{0};                    // worker 写（spawn/kill 后），任意线程读
+    std::atomic<quint32> cancelTarget_{0};               // GUI 写（requestCancel），owner 线程 run() 观测
 };
