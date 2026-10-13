@@ -87,10 +87,13 @@ EnhOutcome runEnhOp(const QImage& src, const QString& key)
     else if (key == QStringLiteral("lensCorrect"))     o.img = LumenEngine::lensCorrect(src);
     else if (key == QStringLiteral("redeyeRemove")) {
         int pixels = 0;
-        o.img = LumenEngine::redeyeRemove(src, &pixels);
-        o.note = pixels > 0
-            ? QCoreApplication::translate("LightAlbum", "红眼已修 %1 点").arg(pixels)
-            : QCoreApplication::translate("LightAlbum", "未检测到红眼 · 未改动");
+        const QImage hit = LumenEngine::redeyeRemove(src, &pixels);
+        if (pixels == 0) {
+            o.note = QCoreApplication::translate("LightAlbum", "未检测到红眼 · 未改动");
+            return o;                                   // 诚实 no-op：不追加 ops_、不进历史（引擎 0 命中仍返回副本，须丢弃）
+        }
+        o.img = hit;
+        o.note = QCoreApplication::translate("LightAlbum", "红眼已修 %1 点").arg(pixels);
     } else if (key == QStringLiteral("portraitBeautify")) {
         double frac = -1.0;
         o.img = LumenEngine::portraitBeautify(src, 1.0, &frac);
@@ -981,7 +984,7 @@ void RetouchPage::onEnhOpClicked(const QString& key)
     for (auto* b : opBtns_) b->setEnabled(false);
     prog_->setRange(0, 0);               // 忙碌态（不确定进度；完成回落）
     badge_->setText(QCoreApplication::translate("LightAlbum", "一键增强处理中…（本地计算，零云端）"));
-    const QImage src = geoImg_.isNull() ? geoSrc_ : geoImg_;
+    const QImage src = enhImg_.isNull() ? geoSrc_ : enhImg_;   // 增强层叠在增强结果上，绝不取 geoImg_（会把已烘焙几何二次叠加，预览≠导出）
     auto* watcher = new QFutureWatcher<EnhOutcome>(this);
     connect(watcher, &QFutureWatcher<EnhOutcome>::finished, this, [this, watcher, key, gen]() {
         watcher->deleteLater();
