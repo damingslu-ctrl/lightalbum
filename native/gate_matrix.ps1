@@ -554,7 +554,15 @@ $GateTable = @(
   # standalone x3, rule 13). 2026-10-12 Task 12: F1 fail-open guard added to the script
   # (files-scanned=0 -> FAIL). Provenance: 1900 was the T1 measured value, not a
   # placeholder; the ~85ms delta is host noise (the scan predates the guard).
-  @{n="LA_PALETTE_QA"; png=$false; kind="ps1"; script="qa_palette_ratchet.ps1"; measuredMs=1984}
+  @{n="LA_PALETTE_QA"; png=$false; kind="ps1"; script="qa_palette_ratchet.ps1"; measuredMs=1984},
+  # 2.38.0 R1: one-tap enhancement wiring gate (13 LumenEngine explicit ops wired into
+  # src/ui + event hookup in RetouchPage.cpp). FAST tier exe gate: rules E5/E9d bar ps1
+  # gates from the fast layer, so the spec section 2.4 "fast tier" intent is delivered as
+  # an exe static-scan gate instead of a script gate (plan-level ruling 1). F1 fail-open
+  # guard: 0 files scanned -> FAIL. Counter-example LA_LUMEN_OPS_UI_QA_FORCE_BROKEN=1
+  # injects a phantom op name (13/14 coverage) -> RED. measuredMs=0 placeholder; E8
+  # requires the key, rule 25/31 require the -Timing value (backfilled in R1-T4).
+  @{n="LA_LUMEN_OPS_UI_QA"; png=$false; tier="fast"; measuredMs=0}
 )
 # Resolve a gate's tier. Absent key means "full" - the fail-safe default.
 function Get-GateTier {

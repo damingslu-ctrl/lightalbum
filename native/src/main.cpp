@@ -1848,6 +1848,63 @@ int runRetouchOpQa()
     return pass ? 0 : 1;
 }
 
+// 2.38.0 R1：一键增强接线门（fast 层 exe 门；E5/E9d 禁止 ps1 入 fast 层，spec §2.4 层级意图保留）。
+// 断言 src/ui/ 对 13 个 LumenEngine 显式算子各 >=1 处真实调用（先剥注释再匹配），
+// 且 RetouchPage.cpp 含事件接线（opBtn_ / onEnhOpClicked 同时出现）。
+// F1 fail-open 守卫：扫描根找不到或 0 文件 -> 直接 FAIL（绝不静默放行，铁律34）。
+// 反例：LA_LUMEN_OPS_UI_QA_FORCE_BROKEN=1 -> 期望表注入 phantom 算子名（覆盖 13/14）-> 必红。
+int runLumenOpsUiQa()
+{
+    const QStringList kOps = {
+        QStringLiteral("filmStyle"),     QStringLiteral("blackWhite"),   QStringLiteral("glowStyle"),
+        QStringLiteral("redeyeRemove"),  QStringLiteral("vignetteCorrect"), QStringLiteral("toneMapHdr"),
+        QStringLiteral("structure"),     QStringLiteral("dodge"),        QStringLiteral("dehaze"),
+        QStringLiteral("chromaticCorrect"), QStringLiteral("portraitBeautify"),
+        QStringLiteral("levelCorrect"),  QStringLiteral("lensCorrect"),
+    };
+    QStringList expected = kOps;
+    const bool broken = !qEnvironmentVariableIsEmpty("LA_LUMEN_OPS_UI_QA_FORCE_BROKEN");
+    if (broken) expected << QStringLiteral("qaPhantomOp");   // 反例：注入不存在的算子名
+
+    QString root;
+    for (const QString& cand : { QCoreApplication::applicationDirPath() + QStringLiteral("/../src/ui"),
+                                 QCoreApplication::applicationDirPath() + QStringLiteral("/src/ui"),
+                                 QStringLiteral("src/ui") }) {
+        if (QFileInfo(cand).isDir()) { root = cand; break; }
+    }
+    int files = 0;
+    QSet<QString> covered;
+    bool wiring = false;
+    if (!root.isEmpty()) {
+        const QFileInfoList list = QDir(root).entryInfoList(
+            { QStringLiteral("*.cpp"), QStringLiteral("*.h") }, QDir::Files, QDir::Name);
+        for (const QFileInfo& fi : list) {
+            QFile f(fi.absoluteFilePath());
+            if (!f.open(QIODevice::ReadOnly)) continue;
+            QString text = QString::fromUtf8(f.readAll());
+            ++files;
+            text.remove(QRegularExpression(QStringLiteral("/\\*.*?\\*/"),
+                QRegularExpression::DotMatchesEverythingOption));      // 剥块注释
+            text.remove(QRegularExpression(QStringLiteral("//[^\\n]*"))); // 剥行注释
+            for (const QString& op : expected)
+                if (text.contains(QStringLiteral("LumenEngine::") + op + QLatin1Char('(')))
+                    covered.insert(op);
+            if (fi.fileName() == QLatin1String("RetouchPage.cpp")
+                && text.contains(QStringLiteral("opBtn_"))
+                && text.contains(QStringLiteral("onEnhOpClicked")))
+                wiring = true;
+        }
+    }
+    QStringList missing;
+    for (const QString& op : expected) if (!covered.contains(op)) missing << op;
+    const bool ok = files > 0 && wiring && missing.isEmpty();
+    std::fprintf(stderr, "LA_LUMEN_OPS_UI_QA %s covered=%d/%d files=%d wiring=%d missing=[%s]\n",
+                 ok ? "PASS" : "FAIL", covered.size(), expected.size(), files, wiring ? 1 : 0,
+                 qPrintable(missing.join(QStringLiteral(","))));
+    std::fflush(stderr);
+    return ok ? 0 : 1;
+}
+
 // 方向 C 第一步：相册内搜索过滤断言（直接驱动 GalleryModel，无需 UI / 库）。
 int runGallerySearchQa()
 {
@@ -6160,6 +6217,10 @@ int main(int argc, char *argv[])
     // 方向 B 深化：12 算子逐项方向像素断言（每个算子单独施参，防互相掩盖）
     if (qEnvironmentVariableIsSet("LA_RETOUCH_OP_QA"))
         return runRetouchOpQa();
+
+    // 2.38.0 R1：一键增强 13 算子接线门（静态扫描 src/ui；接线前必红）
+    if (qEnvironmentVariableIsSet("LA_LUMEN_OPS_UI_QA"))
+        return runLumenOpsUiQa();
 
     // 方向 C 第一步：相册内搜索过滤断言（GalleryModel 直接驱动）
     if (qEnvironmentVariableIsSet("LA_GALLERY_SEARCH_QA"))
