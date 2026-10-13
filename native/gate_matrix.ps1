@@ -572,9 +572,9 @@ $GateTable = @(
   # expectations, plus always-on counter-examples: out-of-range box size and a self-
   # referential child box must not crash and must fall back to the file's own mtime date.
   # Real-sample arm is env-gated INSIDE the process (LA_HEIC_SAMPLE); the gate carries no
-  # need= by design (plan-level ruling 2), so the synthetic part always runs. measuredMs=0
-  # placeholder; E8 requires the key, rules 25/31 the -Timing value (backfilled in R2-T2).
-  @{n="LA_EXIF_CONTAINER_QA"; png=$false; measuredMs=0}
+  # need= by design (plan-level ruling 2), so the synthetic part always runs. measuredMs=124
+  # backfilled in R2-T2 from qa_runner -Timing (rules 25/31; E8 requires the key).
+  @{n="LA_EXIF_CONTAINER_QA"; png=$false; measuredMs=124}
 )
 # Resolve a gate's tier. Absent key means "full" - the fail-safe default.
 function Get-GateTier {

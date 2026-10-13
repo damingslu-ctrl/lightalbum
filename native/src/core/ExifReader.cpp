@@ -168,6 +168,132 @@ QByteArray extractPngExif(const QByteArray& f)
     return {};
 }
 
+// ---------------- WebP（RIFF）EXIF chunk 提取（2.38.0 R2） ----------------
+QByteArray extractWebpExif(const QByteArray& f)
+{
+    if (f.size() < 12 || std::memcmp(f.constData(), "RIFF", 4) != 0
+        || std::memcmp(f.constData() + 8, "WEBP", 4) != 0) return {};
+    qsizetype off = 12;
+    while (off + 8 <= f.size()) {
+        const quint32 len = quint32(uchar(f[off + 4])) | (quint32(uchar(f[off + 5])) << 8)
+                          | (quint32(uchar(f[off + 6])) << 16) | (quint32(uchar(f[off + 7])) << 24);
+        if (len > quint32(f.size())) return {};               // 防呆：尺寸越界即放弃
+        if (std::memcmp(f.constData() + off, "EXIF", 4) == 0) {
+            QByteArray payload = f.mid(off + 8, qsizetype(len));
+            if (payload.size() >= 6 && std::memcmp(payload.constData(), "Exif\0\0", 6) == 0)
+                payload.remove(0, 6);                          // 兼容带 "Exif\0\0" 前缀的写入器
+            return payload;
+        }
+        off += 8 + qsizetype(len) + (len & 1u);                // chunk 2 字节对齐
+    }
+    return {};
+}
+
+// ---------------- HEIC（ISOBMFF）EXIF 提取：meta/iinf/iloc 最小 walker（2.38.0 R2） ----------------
+// 防呆：盒尺寸越界 / 子盒超出父盒 / extent 越界 -> 返回空 -> 上层走 mtime 回退（诚实降级）。
+quint64 exifBe(const uchar* p, int n)
+{
+    quint64 v = 0;
+    for (int i = 0; i < n; ++i) v = (v << 8) | p[i];
+    return v;
+}
+
+QByteArray extractHeicExif(const QByteArray& f)
+{
+    const uchar* d = reinterpret_cast<const uchar*>(f.constData());
+    const qint64 n = f.size();
+    qint64 metaOff = -1, metaSize = 0, off = 0;
+    while (off + 8 <= n) {                                     // 顶层盒扫描
+        qint64 size = qint64(exifBe(d + off, 4));
+        const char* ty = reinterpret_cast<const char*>(d + off + 4);
+        qint64 hdr = 8;
+        if (size == 1) {                                       // 64 位 largesize
+            if (off + 16 > n) return {};
+            size = qint64(exifBe(d + off + 8, 8));
+            hdr = 16;
+        } else if (size == 0) {
+            size = n - off;                                    // 到文件尾
+        }
+        if (size < hdr || off + size > n) return {};           // 防呆：越界即放弃
+        if (std::memcmp(ty, "meta", 4) == 0) { metaOff = off; metaSize = size; break; }
+        off += size;
+    }
+    if (metaOff < 0) return {};
+    qint64 p = metaOff + 8 + 4;                                // meta FullBox：version/flags 4 字节
+    const qint64 metaEnd = metaOff + metaSize;
+    qint64 exifItemId = -1, ilocOff = -1, ilocSize = 0;
+    while (p + 8 <= metaEnd) {                                 // 子盒 walker（限于 meta 内）
+        const qint64 size = qint64(exifBe(d + p, 4));
+        const char* ty = reinterpret_cast<const char*>(d + p + 4);
+        if (size < 8 || p + size > metaEnd) break;             // 防呆：越界/自指 -> 放弃
+        if (std::memcmp(ty, "iinf", 4) == 0) {
+            const qint64 iinfEnd = p + size;
+            const int ver = d[p + 8];                          // iinf FullBox version
+            qint64 q = p + 8 + 4;
+            if (q > iinfEnd) return {};
+            q += (ver == 0) ? 2 : 4;                           // entry_count（v0: u16 / v1+: u32）
+            while (q + 8 <= iinfEnd) {                         // infe 条目扫描
+                const qint64 isz = qint64(exifBe(d + q, 4));
+                const char* ity = reinterpret_cast<const char*>(d + q + 4);
+                if (isz < 8 || q + isz > iinfEnd) break;
+                if (std::memcmp(ity, "infe", 4) == 0) {
+                    const int iver = d[q + 8];                 // infe FullBox version
+                    qint64 r = q + 8 + 4;
+                    qint64 itemId = 0;
+                    if (iver == 2 && r + 8 <= q + isz) { itemId = qint64(exifBe(d + r, 2)); r += 4; }
+                    else if (iver >= 3 && r + 10 <= q + isz) { itemId = qint64(exifBe(d + r, 4)); r += 6; }
+                    else { q += isz; continue; }
+                    if (r + 4 <= q + isz
+                        && std::memcmp(reinterpret_cast<const char*>(d + r), "Exif", 4) == 0)
+                        exifItemId = itemId;
+                }
+                q += isz;
+            }
+        } else if (std::memcmp(ty, "iloc", 4) == 0) {
+            ilocOff = p; ilocSize = size;
+        }
+        p += size;
+    }
+    if (exifItemId < 0 || ilocOff < 0) return {};
+    const qint64 ilocEnd = ilocOff + ilocSize;
+    const int iver = d[ilocOff + 8];
+    qint64 q = ilocOff + 8 + 4;
+    const int b1 = d[q], b2 = d[q + 1]; q += 2;
+    const int offSize = b1 >> 4, lenSize = b1 & 0xF, baseOffSize = b2 >> 4, indexSize = b2 & 0xF;
+    if ((offSize != 4 && offSize != 8) || (lenSize != 4 && lenSize != 8)) return {};
+    qint64 itemCount = qint64(exifBe(d + q, iver == 2 ? 4 : 2));
+    q += (iver == 2) ? 4 : 2;
+    for (qint64 i = 0; i < itemCount; ++i) {
+        if (q + 2 > ilocEnd) return {};
+        const qint64 itemId = (iver < 2) ? qint64(exifBe(d + q, 2)) : qint64(exifBe(d + q, 4));
+        q += (iver < 2) ? 2 : 4;
+        int cm = 0;
+        if (iver >= 1) { if (q + 2 > ilocEnd) return {}; cm = int(exifBe(d + q, 2)) & 0xF; q += 2; }
+        q += 2;                                                // data_reference_index
+        qint64 base = 0;
+        if (baseOffSize > 0) { if (q + baseOffSize > ilocEnd) return {}; base = qint64(exifBe(d + q, baseOffSize)); }
+        q += baseOffSize;
+        if (q + 2 > ilocEnd) return {};
+        const qint64 extCount = qint64(exifBe(d + q, 2)); q += 2;
+        for (qint64 e = 0; e < extCount; ++e) {
+            q += indexSize;                                    // extent_index（v1/2 且 index_size>0；v0 恒 0）
+            if (q + offSize + lenSize > ilocEnd) return {};
+            const qint64 extOff = qint64(exifBe(d + q, offSize)); q += offSize;
+            const qint64 extLen = qint64(exifBe(d + q, lenSize)); q += lenSize;
+            if (itemId == exifItemId && cm == 0 && e == 0) {   // construction_method 0 = 文件内偏移
+                if (extOff <= 0 || extLen <= 0 || base + extOff + extLen > n) return {};
+                const QByteArray payload = f.mid(qsizetype(base + extOff), qsizetype(extLen));
+                if (payload.size() < 4) return {};
+                const qint64 ti = qint64(exifBe(reinterpret_cast<const uchar*>(payload.constData()), 4));
+                const qint64 start = 4 + ti;                   // payload 前 4 字节 = 到 TIFF 头偏移
+                if (start < 0 || start > payload.size()) return {};
+                return payload.mid(qsizetype(start));
+            }
+        }
+    }
+    return {};
+}
+
 // ---------------- 语义字段（exif.py 的 _fmt_* / _parse_dt / 映射表）----------------
 QString wbLabel(int v)
 {
@@ -282,6 +408,11 @@ ExifData readExif(const QString& path)
         const bool tiffSig = head.size() >= 4
             && ((head[0] == 'I' && head[1] == 'I')
                 || (head[0] == 'M' && head[1] == 'M'));
+        const bool webpSig = head.size() >= 12
+            && std::memcmp(head.constData(), "RIFF", 4) == 0
+            && std::memcmp(head.constData() + 8, "WEBP", 4) == 0;
+        const bool heicSig = head.size() >= 8
+            && std::memcmp(head.constData() + 4, "ftyp", 4) == 0;
         if (jpegSig) {
             f.seek(0);                                         // head 已消费 16 字节
             blob = extractJpegExif(f.read(1024 * 1024));       // APP1 必在头部 1MB 内
@@ -290,6 +421,14 @@ ExifData readExif(const QString& path)
             QByteArray all = (f.size() < qint64(8) * 1024 * 1024)
                 ? f.readAll() : f.read(qint64(8) * 1024 * 1024);
             blob = extractPngExif(all);
+        } else if (webpSig) {
+            f.seek(0);
+            QByteArray all = (f.size() < qint64(8) * 1024 * 1024)
+                ? f.readAll() : f.read(qint64(8) * 1024 * 1024);
+            blob = extractWebpExif(all);
+        } else if (heicSig && f.size() < qint64(64) * 1024 * 1024) {
+            f.seek(0);
+            blob = extractHeicExif(f.readAll());               // 盒链读取总量上限 64MB
         } else if (tiffSig && f.size() < qint64(64) * 1024 * 1024) {
             f.seek(0);
             blob = f.readAll();
