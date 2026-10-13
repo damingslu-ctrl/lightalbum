@@ -597,7 +597,7 @@ $GateTable = @(
   # the 912 was the one-time cold disk-cache run right after linking the exe (same cold
   # inflation pattern as LA_ERASE_QA history 2210 sync -> 3141 async); conservative max
   # of the warm band recorded. 433 <= the 500ms E6 fast budget, so the FAST tier stands.
-  @{n="LA_FACE_AI_QA"; png=$false; tier="fast"; timeoutSec=30; measuredMs=318}
+  @{n="LA_FACE_AI_QA"; png=$false; tier="fast"; timeoutSec=30; measuredMs=433}
 )
 # Resolve a gate's tier. Absent key means "full" - the fail-safe default.
 function Get-GateTier {
