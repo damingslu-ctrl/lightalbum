@@ -48,40 +48,49 @@ QImage grayLike(const QImage& a) { return QImage(a.size(), QImage::Format_Graysc
 QImage chopGray(const QImage& a, const QImage& b, int op)
 {
     QImage out = grayLike(a);
-    for (int y = 0; y < a.height(); ++y) {
-        const uchar* pa = a.constScanLine(y);
-        const uchar* pb = b.constScanLine(y);
-        uchar* po = out.scanLine(y);
-        for (int x = 0; x < a.width(); ++x) {
-            int r = 0;
-            if (op == 0) r = chopMul(pa[x], pb[x]);
-            else if (op == 1) r = std::min(255, pa[x] + pb[x]);
-            else r = std::max(0, int(pa[x]) - int(pb[x]));
-            po[x] = uchar(r);
+    out.scanLine(0);                       // 单线程段强制 detach
+    lumenParallelRows(a.height(), [&](int y0, int y1) {
+        for (int y = y0; y < y1; ++y) {
+            const uchar* pa = a.constScanLine(y);
+            const uchar* pb = b.constScanLine(y);
+            uchar* po = out.scanLine(y);
+            for (int x = 0; x < a.width(); ++x) {
+                int r = 0;
+                if (op == 0) r = chopMul(pa[x], pb[x]);
+                else if (op == 1) r = std::min(255, pa[x] + pb[x]);
+                else r = std::max(0, int(pa[x]) - int(pb[x]));
+                po[x] = uchar(r);
+            }
         }
-    }
+    });
     return out;
 }
 
 QImage invertGray(const QImage& a)
 {
     QImage out = grayLike(a);
-    for (int y = 0; y < a.height(); ++y) {
-        const uchar* pa = a.constScanLine(y);
-        uchar* po = out.scanLine(y);
-        for (int x = 0; x < a.width(); ++x) po[x] = uchar(255 - pa[x]);
-    }
+    out.scanLine(0);                       // 单线程段强制 detach
+    lumenParallelRows(a.height(), [&](int y0, int y1) {
+        for (int y = y0; y < y1; ++y) {
+            const uchar* pa = a.constScanLine(y);
+            uchar* po = out.scanLine(y);
+            for (int x = 0; x < a.width(); ++x) po[x] = uchar(255 - pa[x]);
+        }
+    });
     return out;
 }
 
 QImage pointGray(const QImage& a, const int lut[256])
 {
     QImage out = grayLike(a);
-    for (int y = 0; y < a.height(); ++y) {
-        const uchar* pa = a.constScanLine(y);
-        uchar* po = out.scanLine(y);
-        for (int x = 0; x < a.width(); ++x) po[x] = uchar(lut[pa[x]]);
-    }
+    out.scanLine(0);                       // 单线程段强制 detach
+    lumenParallelRows(a.height(), [&](int y0, int y1) {
+        for (int y = y0; y < y1; ++y) {
+            const uchar* pa = a.constScanLine(y);
+            uchar* po = out.scanLine(y);
+            for (int x = 0; x < a.width(); ++x) po[x] = uchar(lut[pa[x]]);
+        }
+    });
     return out;
 }
 
@@ -133,11 +142,14 @@ QImage smoothG(const QImage& src)
 QImage pointRgb(const QImage& src, const int lut[256])
 {
     QImage img = src.convertToFormat(QImage::Format_RGB32);
-    for (int y = 0; y < img.height(); ++y) {
-        QRgb* d = reinterpret_cast<QRgb*>(img.scanLine(y));
-        for (int x = 0; x < img.width(); ++x)
-            d[x] = qRgb(lut[qRed(d[x])], lut[qGreen(d[x])], lut[qBlue(d[x])]);
-    }
+    img.scanLine(0);                       // 单线程段强制 detach（就地写）
+    lumenParallelRows(img.height(), [&](int y0, int y1) {
+        for (int y = y0; y < y1; ++y) {
+            QRgb* d = reinterpret_cast<QRgb*>(img.scanLine(y));
+            for (int x = 0; x < img.width(); ++x)
+                d[x] = qRgb(lut[qRed(d[x])], lut[qGreen(d[x])], lut[qBlue(d[x])]);
+        }
+    });
     return img;
 }
 
@@ -191,12 +203,15 @@ QImage LumenEngine::toL8(const QImage& rgb)
 {
     QImage src = rgb.convertToFormat(QImage::Format_RGB32);
     QImage out(src.size(), QImage::Format_Grayscale8);
-    for (int y = 0; y < src.height(); ++y) {
-        const QRgb* s = reinterpret_cast<const QRgb*>(src.constScanLine(y));
-        uchar* d = out.scanLine(y);
-        for (int x = 0; x < src.width(); ++x)
-            d[x] = uchar(toL(qRed(s[x]), qGreen(s[x]), qBlue(s[x])));
-    }
+    out.scanLine(0);                       // 单线程段强制 detach
+    lumenParallelRows(src.height(), [&](int y0, int y1) {
+        for (int y = y0; y < y1; ++y) {
+            const QRgb* s = reinterpret_cast<const QRgb*>(src.constScanLine(y));
+            uchar* d = out.scanLine(y);
+            for (int x = 0; x < src.width(); ++x)
+                d[x] = uchar(toL(qRed(s[x]), qGreen(s[x]), qBlue(s[x])));
+        }
+    });
     return out;
 }
 
@@ -206,67 +221,75 @@ void LumenEngine::LumenEngine::rgb2hsv(const QImage& rgb, QImage* H, QImage* S, 
     *H = QImage(src.size(), QImage::Format_Grayscale8);
     *S = QImage(src.size(), QImage::Format_Grayscale8);
     *V = QImage(src.size(), QImage::Format_Grayscale8);
-    for (int y = 0; y < src.height(); ++y) {
-        const QRgb* s = reinterpret_cast<const QRgb*>(src.constScanLine(y));
-        uchar* ph = H->scanLine(y);
-        uchar* ps = S->scanLine(y);
-        uchar* pv = V->scanLine(y);
-        for (int x = 0; x < src.width(); ++x) {
-            const int r = qRed(s[x]), g = qGreen(s[x]), b = qBlue(s[x]);
-            const int maxc = std::max({r, g, b});
-            const int minc = std::min({r, g, b});
-            const int d = maxc - minc;
-            int h = 0, sat = 0;
-            const int v = maxc;
-            if (maxc > 0) sat = (d * 255) / maxc;
-            if (d != 0) {
-                if (r == maxc)      h = (43 * (g - b)) / d;
-                else if (g == maxc) h = 85 + (43 * (b - r)) / d;
-                else                h = 170 + (43 * (r - g)) / d;
-                if (h < 0) h += 255;
-                h = clamp255(h);
+    H->scanLine(0);                        // 单线程段强制 detach
+    S->scanLine(0);
+    V->scanLine(0);
+    lumenParallelRows(src.height(), [&](int y0, int y1) {
+        for (int y = y0; y < y1; ++y) {
+            const QRgb* s = reinterpret_cast<const QRgb*>(src.constScanLine(y));
+            uchar* ph = H->scanLine(y);
+            uchar* ps = S->scanLine(y);
+            uchar* pv = V->scanLine(y);
+            for (int x = 0; x < src.width(); ++x) {
+                const int r = qRed(s[x]), g = qGreen(s[x]), b = qBlue(s[x]);
+                const int maxc = std::max({r, g, b});
+                const int minc = std::min({r, g, b});
+                const int d = maxc - minc;
+                int h = 0, sat = 0;
+                const int v = maxc;
+                if (maxc > 0) sat = (d * 255) / maxc;
+                if (d != 0) {
+                    if (r == maxc)      h = (43 * (g - b)) / d;
+                    else if (g == maxc) h = 85 + (43 * (b - r)) / d;
+                    else                h = 170 + (43 * (r - g)) / d;
+                    if (h < 0) h += 255;
+                    h = clamp255(h);
+                }
+                ph[x] = uchar(h); ps[x] = uchar(sat); pv[x] = uchar(v);
             }
-            ph[x] = uchar(h); ps[x] = uchar(sat); pv[x] = uchar(v);
         }
-    }
+    });
 }
 
 QImage LumenEngine::LumenEngine::hsv2rgb(const QImage& h, const QImage& s, const QImage& v)
 {
     QImage out(h.size(), QImage::Format_RGB32);
-    for (int y = 0; y < h.height(); ++y) {
-        const uchar* ph = h.constScanLine(y);
-        const uchar* ps = s.constScanLine(y);
-        const uchar* pv = v.constScanLine(y);
-        QRgb* d = reinterpret_cast<QRgb*>(out.scanLine(y));
-        for (int x = 0; x < h.width(); ++x) {
-            if (ps[x] == 0) {
-                const int vv = pv[x];
-                d[x] = qRgb(vv, vv, vv);
-                continue;
+    out.scanLine(0);                       // 单线程段强制 detach
+    lumenParallelRows(h.height(), [&](int y0, int y1) {
+        for (int y = y0; y < y1; ++y) {
+            const uchar* ph = h.constScanLine(y);
+            const uchar* ps = s.constScanLine(y);
+            const uchar* pv = v.constScanLine(y);
+            QRgb* d = reinterpret_cast<QRgb*>(out.scanLine(y));
+            for (int x = 0; x < h.width(); ++x) {
+                if (ps[x] == 0) {
+                    const int vv = pv[x];
+                    d[x] = qRgb(vv, vv, vv);
+                    continue;
+                }
+                const double H = ph[x], S = ps[x] / 255.0, V = pv[x] / 255.0;
+                double h6 = (H / 255.0) * 6.0;
+                int i = int(std::floor(h6));
+                if (i > 5) i = 5;
+                const double f = h6 - i;
+                const double p = V * (1 - S);
+                const double q = V * (1 - S * f);
+                const double t = V * (1 - S * (1 - f));
+                double rf = 0, gf = 0, bf = 0;
+                switch (i) {
+                    case 0: rf = V; gf = t; bf = p; break;
+                    case 1: rf = q; gf = V; bf = p; break;
+                    case 2: rf = p; gf = V; bf = t; break;
+                    case 3: rf = p; gf = q; bf = V; break;
+                    case 4: rf = t; gf = p; bf = V; break;
+                    default: rf = V; gf = p; bf = q; break;
+                }
+                d[x] = qRgb(clamp255(int(rf * 255.0 + 0.5)),
+                            clamp255(int(gf * 255.0 + 0.5)),
+                            clamp255(int(bf * 255.0 + 0.5)));
             }
-            const double H = ph[x], S = ps[x] / 255.0, V = pv[x] / 255.0;
-            double h6 = (H / 255.0) * 6.0;
-            int i = int(std::floor(h6));
-            if (i > 5) i = 5;
-            const double f = h6 - i;
-            const double p = V * (1 - S);
-            const double q = V * (1 - S * f);
-            const double t = V * (1 - S * (1 - f));
-            double rf = 0, gf = 0, bf = 0;
-            switch (i) {
-                case 0: rf = V; gf = t; bf = p; break;
-                case 1: rf = q; gf = V; bf = p; break;
-                case 2: rf = p; gf = V; bf = t; break;
-                case 3: rf = p; gf = q; bf = V; break;
-                case 4: rf = t; gf = p; bf = V; break;
-                default: rf = V; gf = p; bf = q; break;
-            }
-            d[x] = qRgb(clamp255(int(rf * 255.0 + 0.5)),
-                        clamp255(int(gf * 255.0 + 0.5)),
-                        clamp255(int(bf * 255.0 + 0.5)));
         }
-    }
+    });
     return out;
 }
 
