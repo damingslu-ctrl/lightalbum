@@ -47,6 +47,7 @@
 #include "core/MotionDriver.h"      // 2.34.0 引擎 Qt 驱动器（LA_MOTION_QA 直调）
 #include "core/EraseBridge.h"   // 2.35.0 AI 消除契约门（LA_ERASE_QA 直调）
 #include "core/EraseRunner.h"   // 2.35.0 执行器 QA 钩子（qaInjectBadSize）
+#include "core/ExifReader.h"    // 2.38.0 R2 EXIF 容器门（LA_EXIF_CONTAINER_QA 直调）
 #include <QTemporaryDir>
 #include <QPainter>
 #include <QSet>
@@ -4847,6 +4848,182 @@ int runEraseQa()
     return fails.isEmpty() ? 0 : 1;
 }
 
+// ---------------- 2.38.0 R2：HEIC/WebP EXIF 容器提取门（full 层） ----------------
+// 合成夹具字节确定（铁律29）：(a) WebP RIFF+EXIF chunk（直 TIFF / 带 "Exif\0\0" 前缀 两变体）
+// (b) 最小 HEIC ftyp+meta(iinf/infe "Exif"+iloc v0)+mdat（4 字节 BE 偏移 + 同款 TIFF blob）。
+// 反例恒开：越界盒尺寸 / 自指循环子盒 -> 不崩 + 走 mtime 回退（== 文件自身 mtime 日期）。
+// 真样本臂为进程内 env 判定（LA_HEIC_SAMPLE）：无值打印 skipped（本门无 need=，合成段恒跑）。
+static QByteArray exifBe16(quint16 v)
+{
+    QByteArray b; b.append(char(v >> 8)); b.append(char(v & 0xFF)); return b;
+}
+static QByteArray exifBe32(quint32 v)
+{
+    QByteArray b;
+    for (int i = 3; i >= 0; --i) b.append(char((v >> (8 * i)) & 0xFF));
+    return b;
+}
+static QByteArray exifBox(const char* ty, const QByteArray& payload)
+{
+    return exifBe32(quint32(8 + payload.size())) + QByteArray(ty, 4) + payload;
+}
+// 最小 TIFF（LE）：IFD0{0x8769->ExifIFD, 0x8825->GPS} / ExifIFD{0x9003="2019:07:04 12:34:56"} /
+// GPS{1="N", 2=(30/1,15/1,0/1), 3="E", 4=(121/1,30/1,0/1)}  —— 固定布局常量偏移。
+static QByteArray exifTiffFixture()
+{
+    QByteArray b;
+    auto u16 = [&](quint16 v){ b.append(char(v & 0xFF)); b.append(char(v >> 8)); };
+    auto u32 = [&](quint32 v){ for (int i = 0; i < 4; ++i) b.append(char((v >> (8 * i)) & 0xFF)); };
+    auto entry = [&](quint16 tag, quint16 ty, quint32 cnt, quint32 val){
+        u16(tag); u16(ty); u32(cnt); u32(val);
+    };
+    b.append("II", 2); u16(42); u32(8);                       // 头：IFD0 @ 8
+    u16(2);                                                   // IFD0：2 条目
+    entry(0x8769, 4, 1, 38);                                  // ExifIFD @ 38
+    entry(0x8825, 4, 1, 76);                                  // GPS IFD @ 76
+    u32(0);                                                   // next IFD
+    u16(1);                                                   // ExifIFD：1 条目
+    entry(0x9003, 2, 20, 56);                                 // DateTimeOriginal @ 56
+    u32(0);
+    b.append("2019:07:04 12:34:56\0", 20);                    // 56..75
+    u16(4);                                                   // GPS IFD：4 条目
+    entry(1, 2, 2, quint32('N'));                             // 内联 "N\0"
+    entry(2, 5, 3, 130);                                      // lat RATIONAL x3 @ 130
+    entry(3, 2, 2, quint32('E'));                             // 内联 "E\0"
+    entry(4, 5, 3, 154);                                      // lon RATIONAL x3 @ 154
+    u32(0);
+    const quint32 lats[6] = { 30, 1, 15, 1, 0, 1 };
+    for (quint32 v : lats) u32(v);                            // 130..153
+    const quint32 lons[6] = { 121, 1, 30, 1, 0, 1 };
+    for (quint32 v : lons) u32(v);                            // 154..177
+    return b;                                                 // 全长 178
+}
+static QByteArray exifWebpFixture(bool withPrefix)
+{
+    QByteArray payload = withPrefix ? QByteArray("Exif\0\0", 6) : QByteArray();
+    payload += exifTiffFixture();
+    QByteArray chunk = QByteArray("EXIF", 4);
+    const quint32 len = quint32(payload.size());
+    for (int i = 0; i < 4; ++i) chunk.append(char((len >> (8 * i)) & 0xFF));   // RIFF 小端
+    chunk += payload;
+    if (len & 1u) chunk.append('\0');                         // chunk 2 字节对齐
+    QByteArray body = QByteArray("WEBP", 4) + chunk;
+    QByteArray f = QByteArray("RIFF", 4);
+    const quint32 sz = quint32(body.size());
+    for (int i = 0; i < 4; ++i) f.append(char((sz >> (8 * i)) & 0xFF));
+    f += body;
+    return f;
+}
+static QByteArray exifHeicFixture()
+{
+    const QByteArray tiff = exifTiffFixture();
+    QByteArray mdatPayload(4, '\0');                          // 前 4 字节 BE：到 TIFF 头偏移 = 0
+    mdatPayload += tiff;
+    QByteArray infeBody;                                      // infe v2: item_ID=1, type "Exif"
+    infeBody.append(char(2)).append(3, '\0');
+    infeBody += exifBe16(1); infeBody += exifBe16(0);
+    infeBody.append("Exif", 4); infeBody.append('\0');
+    QByteArray iinfBody; iinfBody.append(4, '\0'); iinfBody += exifBe16(1);
+    iinfBody += exifBox("infe", infeBody);
+    QByteArray ilocBody; ilocBody.append(4, '\0');            // iloc v0
+    ilocBody.append(char(0x44)).append(char(0x00));           // 4/4 尺寸；base 0 / index 0
+    ilocBody += exifBe16(1);                                  // 1 item
+    ilocBody += exifBe16(1); ilocBody += exifBe16(0); ilocBody += exifBe16(1);  // id/dref/extCnt
+    const int offFieldAt = ilocBody.size();                   // extent offset 占位位置（体内）
+    ilocBody += exifBe32(0);                                  // 占位：绝对偏移后补
+    ilocBody += exifBe32(quint32(mdatPayload.size()));        // extent length
+    QByteArray metaBody; metaBody.append(4, '\0');
+    metaBody += exifBox("iinf", iinfBody);
+    metaBody += exifBox("iloc", ilocBody);
+    QByteArray ftypBody; ftypBody.append("heic", 4);
+    ftypBody.append(4, '\0'); ftypBody.append("mif1", 4);
+    const QByteArray ftyp = exifBox("ftyp", ftypBody);
+    const QByteArray meta = exifBox("meta", metaBody);
+    const QByteArray mdat = exifBox("mdat", mdatPayload);
+    QByteArray file = ftyp + meta + mdat;
+    const quint32 abs = quint32(ftyp.size() + meta.size() + 8);   // mdat payload 绝对偏移
+    const int absInFile = ftyp.size() + 8 + 4 + exifBox("iinf", iinfBody).size() + 8 + offFieldAt;
+    for (int i = 0; i < 4; ++i) file[absInFile + i] = char((abs >> (8 * (3 - i))) & 0xFF);
+    return file;
+}
+static bool exifWriteFile(const QString& path, const QByteArray& data)
+{
+    QFile f(path);
+    if (!f.open(QIODevice::WriteOnly)) return false;
+    return f.write(data) == data.size();
+}
+
+int runExifContainerQa()
+{
+    QStringList fails;
+    QTemporaryDir tmp;
+    if (!tmp.isValid()) { std::fprintf(stderr, "LA_EXIF_CONTAINER_QA FAIL tmpdir\n"); return 1; }
+    const auto check = [&](bool ok, const QString& what) {
+        if (!ok) fails << what;
+    };
+    // 简报原文 "const QString url = [&]..." 无法通过类型检查（lambda 不能初始化 QString），
+    // 按意图取 const auto，其余逐字照抄。
+    const auto url = [&](const QString& name){ return tmp.filePath(name); };
+
+    // ---- 正例：WebP 两变体 + HEIC（期望值 = 夹具写死值，铁律22：不随任何开关变）----
+    const QString f1 = url(QStringLiteral("a.webp"));
+    const QString f2 = url(QStringLiteral("b.webp"));
+    const QString f3 = url(QStringLiteral("c.heic"));
+    if (!exifWriteFile(f1, exifWebpFixture(false))
+        || !exifWriteFile(f2, exifWebpFixture(true))
+        || !exifWriteFile(f3, exifHeicFixture())) {
+        std::fprintf(stderr, "LA_EXIF_CONTAINER_QA FAIL fixture write\n");
+        return 1;
+    }
+    for (const QString& p : { f1, f2, f3 }) {
+        const ExifData e = ExifReader::readExif(p);
+        check(e.d == QStringLiteral("2019-07-04"), QStringLiteral("date %1 got=%2").arg(p, e.d));
+        check(e.tm == QStringLiteral("12:34"), QStringLiteral("time %1 got=%2").arg(p, e.tm));
+        check(e.hasGps, QStringLiteral("gps %1").arg(p));
+        check(qAbs(e.la - 30.25) < 1e-4, QStringLiteral("lat %1 got=%2").arg(p).arg(e.la));
+        check(qAbs(e.lo - 121.5) < 1e-4, QStringLiteral("lon %1 got=%2").arg(p).arg(e.lo));
+    }
+
+    // ---- 反例（恒开）：越界盒尺寸 / 自指循环子盒 -> 不崩 + mtime 回退 ----
+    {
+        QByteArray broken = exifHeicFixture();
+        for (int i = 0; i < 4; ++i) broken[i] = char(0x7F);          // 顶层盒尺寸 0x7FFFFFFF 越界
+        const QString bp = url(QStringLiteral("bad1.heic"));
+        exifWriteFile(bp, broken);
+        const ExifData e = ExifReader::readExif(bp);
+        const QString mdate = QFileInfo(bp).lastModified().date().toString(QStringLiteral("yyyy-MM-dd"));
+        check(e.d == mdate, QStringLiteral("counter out-of-range: fallback got=%1 expect=%2").arg(e.d, mdate));
+    }
+    {
+        QByteArray loop = exifHeicFixture();
+        // iinf 盒位于 meta 内：ftyp + meta 头 8 + FullBox 4 之后；把它的 size 改为覆盖 meta 外
+        const int iinfSizeAt = exifBox("ftyp", QByteArray("heic",4) + QByteArray(4,'\0') + QByteArray("mif1",4)).size() + 8 + 4;
+        for (int i = 0; i < 4; ++i) loop[iinfSizeAt + i] = char(0x7F);  // 子盒越界/自指 -> 放弃
+        const QString bp = url(QStringLiteral("bad2.heic"));
+        exifWriteFile(bp, loop);
+        const ExifData e = ExifReader::readExif(bp);
+        const QString mdate = QFileInfo(bp).lastModified().date().toString(QStringLiteral("yyyy-MM-dd"));
+        check(e.d == mdate, QStringLiteral("counter self-loop: fallback got=%1 expect=%2").arg(e.d, mdate));
+    }
+
+    // ---- 真样本臂：进程内 env 判定（无 need=；本地路径值不入仓）----
+    QString realLine = QStringLiteral("skipped");
+    const QByteArray sample = qgetenv("LA_HEIC_SAMPLE");
+    if (!sample.isEmpty()) {
+        const ExifData sd = ExifReader::readExif(QString::fromLocal8Bit(sample));
+        if (sd.d.isEmpty()) { fails << QStringLiteral("realSample no date parsed"); realLine = QStringLiteral("fail"); }
+        else realLine = QStringLiteral("ok");
+    }
+
+    if (fails.isEmpty())
+        std::fprintf(stderr, "LA_EXIF_CONTAINER_QA PASS webp=2 heic=1 counter=2 realSample=%s\n",
+                     qPrintable(realLine));
+    else
+        std::fprintf(stderr, "LA_EXIF_CONTAINER_QA FAIL reason=%s\n", qPrintable(fails.join(QChar(';'))));
+    std::fflush(stderr);
+    return fails.isEmpty() ? 0 : 1;
+}
+
 // 2.35.0 真模型质量门（opt-in）。前提由名册 need=@("LA_LAMA_MODEL") 把关：变量缺失时
 // qa_runner 直接 [SKIP]，不启动本门。启动即意味着用户声称模型已 fetch：
 // 此时若执行器仍不存在、或解析到的是 stub，都必须诚实 FAIL（绝不空心放行，铁律34）。
@@ -6221,6 +6398,10 @@ int main(int argc, char *argv[])
     // 2.38.0 R1：一键增强 13 算子接线门（静态扫描 src/ui；接线前必红）
     if (qEnvironmentVariableIsSet("LA_LUMEN_OPS_UI_QA"))
         return runLumenOpsUiQa();
+
+    // 2.38.0 R2：HEIC/WebP EXIF 容器提取门（合成夹具 + 恒开反例；实现前必红）
+    if (qEnvironmentVariableIsSet("LA_EXIF_CONTAINER_QA"))
+        return runExifContainerQa();
 
     // 方向 C 第一步：相册内搜索过滤断言（GalleryModel 直接驱动）
     if (qEnvironmentVariableIsSet("LA_GALLERY_SEARCH_QA"))

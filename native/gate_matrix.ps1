@@ -566,7 +566,15 @@ $GateTable = @(
   # R1-T4 from qa_runner -Timing (rule 25/31; E8 only requires the key to exist).
   # 155 <= the 500 ms E6 fast budget, so the FAST tier stands (plan-level ruling:
   # demote to full only if >500).
-  @{n="LA_LUMEN_OPS_UI_QA"; png=$false; tier="fast"; measuredMs=155}
+  @{n="LA_LUMEN_OPS_UI_QA"; png=$false; tier="fast"; measuredMs=155},
+  # 2.38.0 R2: HEIC/WebP EXIF container extraction gate (full tier). Byte-exact synthetic
+  # fixtures (WebP RIFF/EXIF x2 variants, minimal HEIC ftyp/meta/iinf/iloc/mdat) with fixed
+  # expectations, plus always-on counter-examples: out-of-range box size and a self-
+  # referential child box must not crash and must fall back to the file's own mtime date.
+  # Real-sample arm is env-gated INSIDE the process (LA_HEIC_SAMPLE); the gate carries no
+  # need= by design (plan-level ruling 2), so the synthetic part always runs. measuredMs=0
+  # placeholder; E8 requires the key, rules 25/31 the -Timing value (backfilled in R2-T2).
+  @{n="LA_EXIF_CONTAINER_QA"; png=$false; measuredMs=0}
 )
 # Resolve a gate's tier. Absent key means "full" - the fail-safe default.
 function Get-GateTier {
