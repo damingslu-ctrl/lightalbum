@@ -3,6 +3,23 @@
 #include <QMetaObject>
 #include <QThread>
 
+// 2.38.0 R3：任务表淘汰——保留最近 kTasksKeep 个；仅修剪「前缀中已终态」的最旧项，
+// running/queued 永不淘汰（spec §4.2）。终态 = done/failed/cancelled/blocked_no_model。
+static constexpr int kTasksKeep = 8;
+
+static bool isTerminalStatus(const QString& s)
+{
+    return s == QLatin1String("done") || s == QLatin1String("failed")
+        || s == QLatin1String("cancelled") || s == QLatin1String("blocked_no_model");
+}
+
+void EraseBridge::pruneTasks()
+{
+    if (!qEnvironmentVariableIsEmpty("LA_ERASE_QA_FORCE_NO_EVICT")) return;   // QA 反例钩子
+    while (tasks_.size() > kTasksKeep && isTerminalStatus(tasks_.first().status))
+        tasks_.removeFirst();                                                   // 淘汰即释放 QImage
+}
+
 EraseBridge::EraseBridge(QObject* parent) : QObject(parent) {}
 
 EraseBridge::~EraseBridge()
@@ -69,6 +86,7 @@ int EraseBridge::submit(const QImage& base, const QImage& mask)
         QMetaObject::invokeMethod(runner_, [r = runner_, id, b, m]{ r->submitAsync(quint32(id), b, m); },
                                   Qt::QueuedConnection);
     }
+    pruneTasks();                       // 2.38.0 R3：入列即淘汰最旧终态前缀，表长 <= kTasksKeep
     return t.id;
 }
 

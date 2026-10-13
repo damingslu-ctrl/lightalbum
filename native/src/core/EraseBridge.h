@@ -1,12 +1,12 @@
 #pragma once
-// P4-4 AI 消除桥（表单壳）：蒙版 → 任务 → 结果回填；模型槽位留空。
+// P4-4 AI 消除桥：蒙版 → 任务表（FIFO）→ 结果回填。2.35.0 起接入真引擎
+// （inpaint.exe 子进程帧协议，stub 为 MinGW 开发替身）；2.36.0 起任务经专属
+// QThread 上的 EraseRunner 异步执行、GUI 永不阻塞；2.38.0 增任务淘汰（保留最近
+// kTasksKeep=8，running 永不淘汰）与取消（kill 子进程 + 复位，下次提交冷启动）。
 // 零云端铁律：本桥仅接受**本地**模型执行器接入；无执行器时任务诚实挂起
 // （status=blocked_no_model），绝不伪造「消除成功」的结果。
-// 模型接入后的契约：执行器消费 queued 任务 → 产出 result → applyResult() 回填
-// → taskUpdated(id) 通知 UI 回填预览。
-// 2.36.0 线程化契约：对 GUI 侧调用方（RetouchPage 等）API 一字不变；modelReady()
-// 变为纯文件探针（零 spawn 零阻塞），任务经专属 QThread 上的 EraseRunner 异步执行，
-// 终态 queued 回 GUI 线程回填（tasks_ 表仍由 GUI 线程独占——AiWriter 单写者先例）。
+// 线程契约：tasks_ 表由 GUI 线程独占（AiWriter 单写者先例）；对 GUI 侧调用方
+// （RetouchPage 等）API 保持稳定；终态经 queued 信号回 GUI 线程回填。
 #include <QObject>
 #include <QVector>
 #include <QImage>
@@ -16,7 +16,7 @@ struct EraseTask {
     int id = 0;
     QImage base;        // 任务基准图（几何后）
     QImage mask;        // ARGB32 蒙版（alpha=强度）
-    QString status;     // queued / running / blocked_no_model / done / failed
+    QString status;     // queued / running / blocked_no_model / done / failed / cancelled
     QString note;       // 人读状态说明（诚实展示用）
     QImage result;      // 消除结果（仅 done 时非空）
 };
@@ -54,6 +54,7 @@ signals:
 
 private:
     void ensureThread();                                        // 懒建专属线程 + runner 搬迁
+    void pruneTasks();                                          // 2.38.0 R3：任务表淘汰（最旧且已终态前缀）
     void onTaskFinished(quint32 id, bool ok, QImage out, QString err);   // queued 回 GUI 线程
 
     QString modelPath_;          // 槽位（空 = 未配置）
