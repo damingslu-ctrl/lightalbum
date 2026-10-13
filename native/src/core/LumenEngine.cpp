@@ -1849,7 +1849,7 @@ QImage LumenEngine::lensCorrect(const QImage& rgb, double amount)
     QList<QPair<int, int>> tiles;
     for (int iy = 0; iy < N; ++iy)
         for (int ix = 0; ix < N; ++ix) tiles.append(qMakePair(ix, iy));
-    QtConcurrent::blockingMap(tiles, [&](const QPair<int, int>& tl) {
+    auto doTile = [&](const QPair<int, int>& tl) {
         const int ix = tl.first, iy = tl.second;
         int x0 = int(ix * pw / N), x1 = int((ix + 1) * pw / N);
         int y0 = int(iy * ph / N), y1 = int((iy + 1) * ph / N);
@@ -1871,7 +1871,13 @@ QImage LumenEngine::lensCorrect(const QImage& rgb, double amount)
                 reinterpret_cast<QRgb*>(out.scanLine(y0 + ly))[x0 + lx] =
                     bilinearSample(pad, sx, sy);
             }
-    });
+    };
+    const QByteArray tv = qgetenv("LA_LUMEN_THREADS");
+    if (tv.toInt() == 1) {                       // "1" 或非法值->串行（unset 的 toInt()==0 走并行默认）
+        for (const QPair<int, int>& t : tiles) doTile(t);   // 行主序，与原嵌套循环同序
+    } else {
+        QtConcurrent::blockingMap(tiles, doTile);
+    }
     return out.copy(margin, margin, w, h).convertToFormat(QImage::Format_RGB32);
 }
 
