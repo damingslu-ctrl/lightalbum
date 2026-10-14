@@ -670,8 +670,8 @@ $GateTable = @(
   #   consumption point of that hook) and Classifier::classify(batch=32) called from a real
   #   QtConcurrent worker thread (a main-thread call would get Busy -> probe false -> red,
   #   so this leg doubles as the R-20 "probe moved off the GUI thread" assertion). Asserts:
-  #   classify() returned true; all 7 rows carry the stub label after normalizeLabel in BOTH
-  #   memory and an independent on-disk SELECT (write-back really landed, not a cache);
+  #   classify() returned true; all 7 rows carry the stub label after normalizeLabel in memory
+  #   (p0 additionally via an independent on-disk SELECT -- one row proves the write-back landed);
   #   p7 stays empty (no thumb = no request, no write-back); p8 keeps its seed category;
   #   row count conserved; the progress sequence is exactly "0,5,7" and every delta <= 5,
   #   which is the observable face of the kClipMaxBatch=5 dispatch clamp (ledger R-80
@@ -697,7 +697,7 @@ $GateTable = @(
   # FINAL committed binary (main.cpp/Classifier.cpp as committed, after the G11 temp-dir
   # leak fix). Archives: .superpowers/sdd/2026-10-13-engine-round4-local-ai-subprocess/
   #   t8-final-clipai-{1,2,3}.txt  wall 7309 / 7352 / 7348 ms, gate [OK] 7230 / 7283 / 7287
-  #   t8-clipai-{1..5}.txt         wall 8380 / 7319 / 7352 / 7732 / 7489 (pre-leak-fix build)
+  #   t8-clipai-t{1..5}.txt        wall 8380 / 7319 / 7352 / 7732 / 7489 (pre-leak-fix build)
   # Warm max 7732 (t8-clipai-t4, the largest across both sets) stays under 8019, so the
   # bound is NOT lowered (rules 25/31). t8-clipai-t1 = 8380 is the cold first spawn of the
   # freshly linked exe and DOES exceed 8019; recorded here rather than quietly dropped.

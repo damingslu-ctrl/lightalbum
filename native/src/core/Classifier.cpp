@@ -24,7 +24,8 @@ void Classifier::clearSyntheticForQa() { g_synthetic.clear(); }
 // clip 轨逐张化后每个 REQ 天生只承载一张，409 那一类随该服务桥整体消失；本常量把
 // **调度分片**钳到 ≤5。钳制语义（达上限→连续分片，不丢弃、不报错）是本处置自定的
 // 决定，spec §8 没有对应条款（该节只有四行用户可见矩阵 + 内存纪律）；方向与 §8
-// 「单张失败→当张放过」一致。保留 batch 形参与 done += chunk.size() 的进度守恒（R-17）。
+// 「单张失败→当张放过」一致。保留 batch 形参；进度守恒自 T8 修复波起为 done += processed
+// （实际发出并被处置的张数，F-2），正常腿与 chunk.size() 逐张相等、进度序列不变（R-17）。
 static constexpr int kClipMaxBatch = 5;
 
 bool Classifier::probe()
@@ -124,23 +125,27 @@ bool Classifier::classify(const QVector<Photo>& photos, AiWriter& writer,
     if (progress) progress(0, total, QString());
 
     // 调度分片宽度 = min(batch, kClipMaxBatch)（R-80 第 1 条缺陷修复：达上限连续分片，
-    // 不丢弃、不报错）；batch 形参与 done += chunk.size() 的进度守恒语义原样保留（R-17）。
+    // 不丢弃、不报错）；batch 形参原样保留（R-17）。进度守恒口径 T8 修复波第 1 轮收紧为
+    // `done += processed`（本片**实际发出并被处置**的张数，F-2：张间取消后不再按整片超报）。
     const int chunkSize = std::max(1, std::min(batch, kClipMaxBatch));
     int failed = 0;                 // 单张可见失败数（spec §8「收尾汇总计数」）
+    bool stopped = false;           // 任一取消 break 支置真（F-1：本轮未干净跑完）
     for (int i = 0; i < total; i += chunkSize) {
-        if (cancel && cancel()) break;
+        if (cancel && cancel()) { stopped = true; break; }
         const QVector<const Photo*> chunk = missing.mid(i, chunkSize);
 
         QVector<QString> paths;     // 本张请求的路径清单（逐张传输 ⇒ 恒 1 元，R-17）
         paths.reserve(1);
         QVector<CatItem> items;
         items.reserve(chunk.size());
+        int processed = 0;          // 本片实际发出并被处置的张数（含失败/不采信，F-2）
         for (const Photo* p : chunk) {
             // 取消检查点收窄到每张之间（R-18：原语义是「在途批次跑完」，批内逐张后
             // 更早退出——行为收紧，方向与原「尽快中止且不脏写」一致）。
-            if (cancel && cancel()) break;
+            if (cancel && cancel()) { stopped = true; break; }
             const QString tp = QDir(thumbsDir).filePath(p->thumbFile);
             if (!QFileInfo::exists(tp)) continue;      // 跳过无缩略图/坏图（不发请求）
+            ++processed;                               // 已发出 ⇒ 计入进度（成功/失败都算处置）
             paths.clear();
             paths.append(p->path);
             // 协议：REQ kind="jpg"，body=缩略图绝对路径的 UTF-8 原字节（spec §5 R-75）。
@@ -163,11 +168,17 @@ bool Classifier::classify(const QVector<Photo>& photos, AiWriter& writer,
         }
 
         if (!items.isEmpty()) writer.categories(items);
-        done += chunk.size();
+        done += processed;
         if (progress) progress(done, total, QString());
     }
     if (failed > 0)
         qWarning().noquote() << "Classifier: clipinfer 单张失败" << failed << "/" << total
                              << "张——已按「失败即放行」跳过，未写回";
-    return true;
+    // F-1（T8 修复波第 1 轮）：返回值语义 = 「本轮是否全部干净写回」——任一可见失败
+    // （failed>0）或取消中断（stopped）→ false。**不是**「是否跑过」。GUI 侧
+    // （MainWindow::runClassify 的 finished 支）据此从「已为 N 张写入场景分类」的
+    // 预估假成功，如实落到已翻译的「分类过程中断（可能已部分写入）」支——全失败/
+    // 被取消不再对用户报成功。签名不变（spec §10:267 门面三函数签名零变化）、
+    // 零新增文案、零 i18n 触碰。
+    return failed == 0 && !stopped;
 }

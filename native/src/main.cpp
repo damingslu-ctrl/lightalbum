@@ -5680,6 +5680,8 @@ int runClipAiQa()
     const QByteArray reqPath = QByteArrayLiteral("C:/la/clip_qa_fixture.jpg");
 
     // 固定期望表：tamper 臂只篡改常量，流程/退出路径零分支（铁律22）。
+    // （G11 的 F-1 反例臂另有一处**夹具层**布防 LA_CLIP_FORCE_ERR——改的是桩答内容与
+    //   期望常量，本函数的流程与退出路径仍零分支；详见 G11 腿注释。）
     using Rst = AiSubprocessRunner::Rst;
     const QByteArray expG1Ready = tamper ? QByteArray("READY 0") : QByteArray("READY 1");
     const QByteArray expG2Ready = tamper ? QByteArray("READY 1") : QByteArray("READY 0");
@@ -5989,7 +5991,13 @@ int runClipAiQa()
     //      另断 R-80 第 1 条的分片钳制可观察面：7 张待分类 + batch=32 ⇒ 进度增量必须是 5+2
     //      （kClipMaxBatch=5 的降语义连续分片；若钳制被「顺手」删回 32 则 7>5 立刻红）。
     //      守恒面：已分类张不被覆盖、无缩略图张不发请求也不写回。
-    //      期望表只随 tamper 变（铁律22）：LA_CLIP_STUB 属**夹具选择**，不是期望分叉。----
+    //      T8 修复波第 1 轮（F-1）返回值语义面：classify() 的返回值 = 「本轮是否全部干净
+    //      写回」，不是「是否跑过」——正例臂（桩干净应答）必须 true；tamper 臂物理注入
+    //      F-1 的真实缺陷形态（LA_CLIP_FORCE_ERR：READY 1 但每 REQ 回 ERR ⇒ 7/7 全失败、
+    //      零写回）必须 false。布防装置与 #78/#77 的 `if (tamper)` 反例注入同源：缺陷只注入
+    //      反例臂、期望恒钉规格值——恒真实现被 tamper 臂咬红、恒假实现被正例臂咬红，两臂互锁。
+    //      期望表只随 tamper 变（铁律22）：LA_CLIP_STUB / tamper 臂的 LA_CLIP_FORCE_ERR 均属
+    //      **夹具层**（选哪个 exe、该 exe 答什么），不是期望分叉。----
     {
         const QString dir = QDir::tempPath() + QStringLiteral("/la_clipai_g11_%1")
                                 .arg(QCoreApplication::applicationPid());
@@ -6055,6 +6063,10 @@ int runClipAiQa()
         // 期望表（固定常量；tamper 只改期望、不改流程，铁律22）。
         const QString expG11Label = tamper ? QStringLiteral("黑白") : QStringLiteral("人像");
         const QString expG11Prog  = tamper ? QStringLiteral("0,7") : QStringLiteral("0,5,7");
+        // F-1（T8 修复波第 1 轮）：返回值期望——干净轮 true / 全失败轮 false。tamper 臂
+        // 用 LA_CLIP_FORCE_ERR 物理注入「引擎逐帧 ERR ⇒ 7/7 failed、零写回」的缺陷形态，
+        // 与 #78/#77 的 `if (tamper)` 注入装置同源；实现若「全失败仍 return true」即红。
+        const bool expG11Ret = !tamper;
         QVector<int> progMarks;
         QObject qaCtx;
         bool classifyRet = false;
@@ -6066,17 +6078,21 @@ int runClipAiQa()
             // 底座禁 GUI 线程调用（此处 = QA 主线程）：生产接线要求 worker 线程，
             // 本腿同时是 R-20「探测移入 worker」的同型断言——主线程直调会拿 Busy →
             // probe false → classify 返回 false → 红。
+            if (tamper) qputenv("LA_CLIP_FORCE_ERR", "1");   // F-1 反例布防（用毕下句解除）
             QtConcurrent::run([&] {
                 classifyRet = Classifier::classify(snap, writer, dir, 32, -1,
                     [&progMarks](int done, int, const QString&) { progMarks << done; },
                     [] { return false; });
             }).waitForFinished();
+            if (tamper) qputenv("LA_CLIP_FORCE_ERR", QByteArray());
             // 写回经 AiWriter 的 QueuedConnection 投递回本线程落地（#70 同式）。
             QCoreApplication::processEvents(QEventLoop::AllEvents, 500);
         }
         qputenv("LA_CLIP_STUB", QByteArray());
 
-        note(classifyRet, QStringLiteral("G11 classify returned false (engine not ready path)"));
+        note(classifyRet == expG11Ret,
+             QStringLiteral("G11 classify ret=%1 want=%2 (clean round true / all-failed round false)")
+                 .arg(int(classifyRet)).arg(int(expG11Ret)));
         // 写回落点（内存）：7 张 = 桩答标签，且经 normalizeLabel 恒等映射。
         int wroteExpected = 0;
         for (int i = 0; i < kPending; ++i) {

@@ -39,9 +39,14 @@ public:
     //   thumbsDir  : 缩略图目录（与 Photo.thumbFile 拼接取图）
     //   batch      : 每批调度张数（默认 32；实际分片宽度 = min(batch, kClipMaxBatch)）
     //   limit      : 最大处理张数（<0=不限；QA 用小值）
-    //   progress   : (done,total,name) 进度回调
+    //   progress   : (done,total,name) 进度回调（done = 实际发出并被处置的张数，
+    //                张间取消不再按整片超报——T8 修复波 F-2）
     //   cancel     : 返回 true 即尽快中止（检查点=每张之间，T8 语义收窄见 .cpp）
     // 守恒：只写 category 列，不增删照片。失败即放行（坏图不中断整批）。
+    // 返回值语义（T8 修复波 F-1 收紧）：= 「本轮是否全部干净写回」，**不是**「是否跑过」。
+    //   任一单张可见失败（引擎/传输失败、ok!=true 不采信）或被取消中断 → false；
+    //   GUI 侧据此不再对全失败/中断报「已为 N 张照片写入场景分类」的假成功。
+    //   签名零变化（spec §10:267），无新增文案。
     static bool classify(const QVector<Photo>& photos, AiWriter& writer,
                          const QString& thumbsDir,
                          int batch = 32, int limit = -1,
