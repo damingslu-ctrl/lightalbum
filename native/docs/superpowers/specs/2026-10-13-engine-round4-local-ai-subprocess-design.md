@@ -171,6 +171,15 @@ GUI）；门面是静态同步函数，调用点全部在 `QtConcurrent::run` �
   经 R-29b 实测证伪：`git ls-files native/3rdparty/lama/bin/` = **0**（`inpaint.exe` 从未入库），
   `.gitignore:14-16` 逐条忽略三个 `bin/`，本仓既定政策 = **第三方二进制磁盘就位、git 只放许可文本**。
   exe 与模型由 `native/fetch_ai.ps1` 就位，`3rdparty/{face,clip}/bin/` 同法忽略。
+  - **既有例外（2026-10-14 R-77，T7 评审范围外观察的裁定）**：`native/3rdparty/clip/bin/` 目前
+    `git ls-files` = **2**（`clip_vit_b32_img.onnx` 351,614,324 B + `prompts.bin` 16,436 B，由 T6 的
+    `d3e36d2` 入库）。裁定**保持跟踪、不 `git rm --cached`**：untrack 只改树态（历史载荷与未来 push
+    体积一条字节不减，真正的历史处置属 R-49 推送决断、属用户门），却会把「克隆即跑 #77」变成
+    「克隆必须先跑 fetch」——而 R-56 实测这份 onnx 是全机唯一副本，fetch 的 clip 分支只有
+    verify-only/重导出两条腿，比现状更脆；`prompts.bin` 另承载启动常量。因此 T9 的入库判据是
+    **分区断言**：`face/bin` ls-files = **0**（新政策正面证据）、`clip/bin` ls-files = **2** 且脚本注释
+    与报告必须写明这是 R-77 例外及其成因，不许伪装成 0。`.gitignore` 两行照加（tracked 优先于 ignore，
+    加行是给未来的自己指路）。
 - release.ps1：C9 家族扩展为 **C10**（staged faceinfer/clipinfer 无 LICENSE/无模型/无
   onnxruntime.dll → 硬 throw；注入测试 ×3 同 C9 模式）；装配腿照 lama 段逐样复制；
   zip 体积诚实记录（+≈0.95GB 级，本地 zip 可接受，MANIFEST/BUILDINFO 自动覆盖）。
