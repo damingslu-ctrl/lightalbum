@@ -5461,7 +5461,7 @@ int runFaceModelQa()
 
     const QString exe = faceModelFindExe();
     if (exe.isEmpty()) {
-        std::fprintf(stderr, "LA_FACE_MODEL_QA FAIL tamper=%d reason=exe_missing faceinfer.exe\n", int(tamper));
+        std::fprintf(stderr, "LA_FACE_MODEL_QA FAIL tamper=%d reason=exe_missing faceinfer.exe -- build faceinfer target first\n", int(tamper));
         std::fflush(stderr);
         return 1;
     }
@@ -5994,19 +5994,27 @@ int runClipAiQa()
 // R-14 裁定记录：sat 路径 = PIL convert('RGB').resize((48,48)) 默认 bicubic(Catmull-Rom)
 // 的 libImaging 定点核 verbatim 移植（brief「双线性」作废；dispatch「reducing_gap=3.0
 // 预滤波」经 Pillow 12.3.0 源码核实不存在——resize 默认 reducing_gap=None）。实测
-// 13/13 夹具最坏 sat Δ=0.1（IMG_2288/IMG_8530 量化末位），其余全列 Δ=0.000000，
-// 严格带保留不放宽。
+// 13/13 夹具：worst score Δ 0.0026（IMG_9387 gold 0.8588 vs mine 0.8614，score Δ 非零
+// 者 5/13、其余 8 条 Δ=0.0000）；worst sat Δ 0.1（量化末位）；label/note 全表逐字相等。
+// 严格带保留不放宽（与 gate_matrix.ps1 #77 注册注释逐字同数，T12 机械核对项）。
 // 隐私红线 R-06：真人图像与 gold JSON 永不入仓——门只从 env 路径读取：
 //   LA_CLIP_MODEL = 模型目录（clip_vit_b32_img.onnx + prompts.bin）；
 //   LA_CLIP_GOLD_DIR = gold JSON 目录（<stem>.gold.json 平铺）；
 //   LA_CLIP_IMGS = 逗号分隔图像文件或目录（jpg/jpeg/png/bmp/webp，目录取 Name 序）。
 // env 缺席 = qa_runner need= 机制自动 SKIP；opted-in 而前置缺失（exe/模型/gold/READY!=1）
-// = 诚实 FAIL（铁律34，禁静默放行）。
-// 反例 LA_CLIP_MODEL_QA_FORCE_BROKEN=1 只篡改期望表数据（MONO_SAT_THRESHOLD=0.0 仿真：
-// low_saturation 金标的黑白快捷路径禁用、回落普通分支），比较流程与退出路径零分支
-// （铁律22/34）：score/note 两列必红（IMG_8409 为 dispatch 指认哨兵）。
+// = 诚实 FAIL（铁律34，禁静默放行）。夹具↔金份数交叉校验：imgs 与 goldDir 内
+// *.gold.json 计数不等即红（防「少样本、计数自洽」的隐蔽降级，轴 10 判据 3 同族）。
+// 反例 LA_CLIP_MODEL_QA_FORCE_BROKEN=1 只篡改期望表数据，比较流程与退出路径零分支
+// （铁律22/34），两臂并列同笔生效：
+//   ① cqTamperMonoOff：MONO_SAT_THRESHOLD=0.0 仿真——low_saturation 金标的黑白快捷路径
+//     禁用、回落普通分支 => IMG_8409 LABEL/NOTE/SCORE 三列红；
+//   ② cqTamperOtherOff：OTHER_SCORE_THRESHOLD 侧永不触发仿真——low_confidence 金标改
+//     「top1 类名 + top1 prob + note=null」期望镜像 => synthetic_lowconf LABEL/NOTE 红
+//     （score 镜像同值故 SCORE_D=0，正是红意所在：分支本身必须被咬）。
 struct ClipQaVerdict
 {
+    bool hasOk = false;      // RES schema 首位字段 ok（gold JSON 无此键，仅应答侧解析）
+    bool okValue = true;
     QString label;
     bool hasNote = false;
     QString note;
@@ -6026,6 +6034,9 @@ static bool cqParseVerdict(const QByteArray& json, ClipQaVerdict& v, QString* er
         return false;
     }
     const QJsonObject o = doc.object();
+    const QJsonValue ov = o.value(QStringLiteral("ok"));
+    v.hasOk = ov.type() == QJsonValue::Bool;
+    v.okValue = !v.hasOk || ov.toBool();
     v.label = o.value(QStringLiteral("label")).toString();
     const QJsonValue nv = o.value(QStringLiteral("note"));
     v.hasNote = !nv.isNull();
@@ -6108,6 +6119,20 @@ static void cqTamperMonoOff(ClipQaVerdict& g)
     }
 }
 
+// 反例篡改器②（轴 12 判据 3 的反向证明）：OTHER_SCORE_THRESHOLD 侧「永不触发」语义仿真
+// ——low_confidence 金标回落普通分支：期望改为 (top1 类名, top1 prob, note=null)。
+// 真壳仍答 其他/low_confidence => LABEL+NOTE 两列红（SCORE_D=0.00000 恰证红来自分支
+// 判定本身而非数值扰动：期望 prob 与应答 prob 同源）。只作用于期望表（铁律22）。
+static void cqTamperOtherOff(ClipQaVerdict& g)
+{
+    if (!g.hasNote || g.note != QStringLiteral("low_confidence")) return;
+    if (g.top.isEmpty()) return;
+    g.label = g.top[0].first;
+    g.score = g.top[0].second;
+    g.note = QString();
+    g.hasNote = false;
+}
+
 int runClipModelQa()
 {
     const bool tamper = !qEnvironmentVariableIsEmpty("LA_CLIP_MODEL_QA_FORCE_BROKEN");
@@ -6115,7 +6140,7 @@ int runClipModelQa()
 
     const QString exe = clipModelFindExe();
     if (exe.isEmpty()) {
-        std::fprintf(stderr, "LA_CLIP_MODEL_QA FAIL tamper=%d reason=exe_missing clipinfer.exe\n", int(tamper));
+        std::fprintf(stderr, "LA_CLIP_MODEL_QA FAIL tamper=%d reason=exe_missing clipinfer.exe -- build clipinfer target first\n", int(tamper));
         std::fflush(stderr);
         return 1;
     }
@@ -6155,6 +6180,14 @@ int runClipModelQa()
         std::fflush(stderr);
         return 1;
     }
+    // I-4 交叉校验：枚举到的图像数必须与 goldDir 内 *.gold.json 份数相等——任何枚举漏样
+    // （大小写敏感挂载点、名单外格式如 .TIF、非 fsentry 命中）都会让「imgs=N ok=N」假绿，
+    // 正是轴 10 定义的隐蔽降级形态。计数进 PASS 行留档（imgs=13 golds=13 ok=13）。
+    const int goldCount = QDir(goldDir).entryList({ QStringLiteral("*.gold.json") },
+                                                  QDir::Files, QDir::Name).size();
+    if (goldCount != images.size())
+        fails << QStringLiteral("fixture/gold count mismatch imgs=%1 golds=%2")
+                     .arg(images.size()).arg(goldCount);
 
     // 真 clipinfer.exe 直起：子端 env 口径 = LA_CLIP_MODEL（模型目录唯一 env，R-15 无 Qt 自管）。
     FaceAiSession s;
@@ -6209,8 +6242,9 @@ int runClipModelQa()
         }
         gf.close();
 
-        // 反例臂：只篡改期望表数据本身（score/note 列必红），比较/退出零分支（铁律22）。
-        if (tamper) cqTamperMonoOff(gold);
+        // 反例臂：只篡改期望表数据本身，比较/退出零分支（铁律22）。两臂并列：
+        // OtherOff 先跑（咬 low_confidence 面）、MonoOff 咬 low_saturation 面，命中集互斥。
+        if (tamper) { cqTamperOtherOff(gold); cqTamperMonoOff(gold); }
 
         // REQ <id> jpg <len> + UTF-8 路径体（CLIP 轨唯一合法 kind）。
         const QByteArray pathBytes = img.toUtf8();
@@ -6252,18 +6286,21 @@ int runClipModelQa()
             std::fprintf(stderr, "LA_CLIP_MODEL_QA IMG %s ok=0 (res parse)\n", qPrintable(tag));
             continue;
         }
+        // M-k：RES schema 首位字段 ok 必须显式为真（brief Step 1）；缺键宽容、false 响亮。
+        if (mine.hasOk && !mine.okValue)
+            fails << QStringLiteral("%1 ok=false response").arg(tag);
         const bool ok = cqCompareVerdict(gold, mine, fails, tag);
         if (ok) ++okCount;
-        std::fprintf(stderr, "LA_CLIP_MODEL_QA IMG %s gold=(%s,%.4f) mine=(%s,%.4f) ok=%d\n",
+        std::fprintf(stderr, "LA_CLIP_MODEL_QA IMG %s gold=(%s,%.4f) mine=(%s,%.4f) sat=%.1f vs %.1f ok=%d\n",
                      qPrintable(tag), qPrintable(gold.label), gold.score,
-                     qPrintable(mine.label), mine.score, int(ok));
+                     qPrintable(mine.label), mine.score, gold.sat, mine.sat, int(ok));
     }
 
     faceAiStop(s);
 
     if (fails.isEmpty())
-        std::fprintf(stderr, "LA_CLIP_MODEL_QA PASS tamper=%d imgs=%d ok=%d ready_ms=%lld total_ms=%lld\n",
-                     int(tamper), images.size(), okCount, qint64(readyMs), qint64(total.elapsed()));
+        std::fprintf(stderr, "LA_CLIP_MODEL_QA PASS tamper=%d imgs=%d golds=%d ok=%d ready_ms=%lld total_ms=%lld\n",
+                     int(tamper), images.size(), goldCount, okCount, qint64(readyMs), qint64(total.elapsed()));
     else
         std::fprintf(stderr, "LA_CLIP_MODEL_QA FAIL tamper=%d reason=%s\n",
                      int(tamper), qPrintable(fails.join(QChar(';'))));

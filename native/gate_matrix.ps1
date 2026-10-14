@@ -681,21 +681,29 @@ $GateTable = @(
   # the dispatch's "reducing_gap=3.0 prefilter" does not exist -- Pillow 12.3.0 resize
   # defaults reducing_gap=None, source-verified). Measured 13/13 fixtures green: worst sat
   # delta 0.1 (quantization last digit), worst score delta 0.0026 (IMG_9387 gold 0.8588
-  # vs mine 0.8614), label/note columns exact on every fixture -> the strict band is
-  # kept, not widened.
+  # vs mine 0.8614; score delta nonzero on 5/13, the other 8 exact 0.0000), label/note
+  # columns exact on every fixture -> the strict band is kept, not widened.
+  # Cross-check (review I-4): the enumerated image count must equal the *.gold.json count
+  # in GOLD_DIR; mismatch -> "fixture/gold count mismatch imgs=X golds=Y" red. This kills
+  # the silent-fewer-samples path on the directory mount form (LA_CLIP_IMGS=<dir> verified
+  # live, archived t7f1-m77-dirform.txt). PASS line prints imgs=N golds=N ok=N.
   # Env opted in but preconditions broken (exe missing / model dir missing / gold
   # missing / READY != 1) -> honest FAIL, never silent pass (rule 34).
   # Counterexample LA_CLIP_MODEL_QA_FORCE_BROKEN=1 corrupts ONLY the parsed expectation
-  # table (simulates MONO_SAT_THRESHOLD=0.0: low_saturation golds fall back to the
-  # regular branch -- sentinel IMG_8409 per the T7 dispatch). Measured red: exactly one
-  # fixture breaks, reason=IMG_8409 LABEL + IMG_8409 NOTE (gold has none, mine gains
-  # low_saturation(3.8)) + IMG_8409 SCORE_D=0.06650, gate exits 1 (12/13 still ok=1);
-  # the comparison flow and exit path never branch on the env (rule 22/34).
+  # table, two parallel tamper arms (rule 22/34, exit path identical):
+  # (1) MONO_SAT_THRESHOLD=0.0 simulation -- sentinel IMG_8409 red on LABEL + NOTE (gold
+  #     has none, mine gains low_saturation(3.8)) + SCORE_D=0.06650 (per T7 dispatch);
+  # (2) OTHER_SCORE_THRESHOLD-never-fires simulation (review I-2, axis-12 criterion 3
+  #     reverse proof) -- synthetic_lowconf gold expects (top1 class, top1 prob, note
+  #     null); real shell still answers the low_confidence branch -> LABEL + NOTE red,
+  #     SCORE_D=0.00000 by construction (same source prob: the red IS the branch).
+  #     Measured (t7f1-m77-otheroff.txt): both fixtures red, 11/13 still ok=1, exit 1.
   # Tier: full. timeoutSec=120 covers cold ORT tower load on slow hosts (#78 isomorphic).
-  # measuredMs=13723 from real qa_runner -Timing WITH env mounted x3 (rules 25/31):
-  # 10877 / 13723 / 11197 ms (ready_ms swings 528..3105 with ORT tower page-cache state,
-  # which is gate-intrinsic cost, so the conservative max is recorded).
-  @{n="LA_CLIP_MODEL_QA"; png=$false; need=@("LA_CLIP_MODEL","LA_CLIP_GOLD_DIR"); measuredMs=13723; timeoutSec=120}
+  # measuredMs=13787 from real qa_runner -Timing WITH env mounted, max-of-warm (rules
+  # 25/31): T7f1 wave x3 = 13787 / 13252 / 13457 ms (file-list form x2 + directory form,
+  # supersedes T7 x3 = 10877 / 13723 / 11197; ready_ms swings 528..3105 with ORT tower
+  # page-cache state, which is gate-intrinsic cost, so the conservative max is recorded).
+  @{n="LA_CLIP_MODEL_QA"; png=$false; need=@("LA_CLIP_MODEL","LA_CLIP_GOLD_DIR"); measuredMs=13787; timeoutSec=120}
 )
 # Resolve a gate's tier. Absent key means "full" - the fail-safe default.
 function Get-GateTier {
