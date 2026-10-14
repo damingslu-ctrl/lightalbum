@@ -597,7 +597,28 @@ $GateTable = @(
   # the 912 was the one-time cold disk-cache run right after linking the exe (same cold
   # inflation pattern as LA_ERASE_QA history 2210 sync -> 3141 async); conservative max
   # of the warm band recorded. 433 <= the 500ms E6 fast budget, so the FAST tier stands.
-  @{n="LA_FACE_AI_QA"; png=$false; tier="fast"; timeoutSec=30; measuredMs=433}
+  @{n="LA_FACE_AI_QA"; png=$false; tier="fast"; timeoutSec=30; measuredMs=433},
+  # 2.40.0 round4 T3: real face-model end-to-end quality gate (gate #78, LA_FACE_MODEL_QA).
+  # Opt-in: need=@("LA_FACE_MODEL","LA_FACE_IMG") -- absent -> qa_runner [SKIP] (privacy
+  # red line R-06: real face images and gold JSONs never enter the repo; the gate only
+  # reads them from env paths, same SKIP semantics as the LA_ERASE_MODEL_QA row above).
+  # When opted in, the app spawns the REAL faceinfer.exe (det+rec ORT sessions; no
+  # runner yet -- thread lifecycle belongs to Task 4/#75 chain) and asserts the five
+  # spec section 3 columns per fixture against its sibling <stem>.gold.json:
+  # exact face count, per-face greedy 1:1 IoU >= 0.98, mean 5-point kps distance <= 2.0
+  # source px, embedding cosine >= 0.999, |score delta| <= 0.02.
+  # Env opted in but preconditions broken (exe missing / READY != 1 / gold missing)
+  # -> honest FAIL, never silent pass (rule 34).
+  # Counterexample LA_FACE_MODEL_QA_FORCE_BROKEN=1 corrupts ONLY the parsed expectation
+  # table (bbox right edge +30% width, embedding[0] +10.0) so IoU and cosine columns
+  # go RED together; the comparison flow and exit path never branch on the env (rule 22).
+  # Tier: full. timeoutSec=120 covers cold ORT session load on slow hosts.
+  # measuredMs=21082 from real qa_runner -Timing runs WITH env mounted (rule 25/31):
+  # 21082/20772 ms, conservative max recorded (app bootstrap dominates; the faceinfer
+  # READY handshake itself measured 435-632 ms). First green 2026-10-13 T3: 4 fixtures,
+  # 48/48 faces PASS all five columns; counterexample arm verified RED (exit 1, same
+  # exit path, expectation table corrupted only).
+  @{n="LA_FACE_MODEL_QA"; png=$false; need=@("LA_FACE_MODEL","LA_FACE_IMG"); measuredMs=21082; timeoutSec=120}
 )
 # Resolve a gate's tier. Absent key means "full" - the fail-safe default.
 function Get-GateTier {

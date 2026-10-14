@@ -5136,6 +5136,307 @@ int runFaceAiQa()
     return fails.isEmpty() ? 0 : 1;
 }
 
+// ---------------- 第四轮 T3 第 78 门 LA_FACE_MODEL_QA：人脸模型端到端五列对表门（full 层，opt-in） ----------------
+// 真 faceinfer.exe（det+rec 双会话）直起（本任务无 runner，线程机制归 T4/#75 链路，此处纯同步
+// QProcess 逐 REQ 应答）；对 T2 金标注 JSON 断言 spec §3 五列全表：
+//   人脸数精确相等；逐脸贪心 1:1 IoU ≥ 0.98；kps 五点欧距均值 ≤ 2.0 原图像素；
+//   embedding 余弦 ≥ 0.999；|scoreΔ| ≤ 0.02。比较核与 faceinfer --face-selftest 同口径。
+// 隐私红线 R-06：真人图像与 gold JSON 永不入仓——门只从 env 路径读取：
+//   LA_FACE_MODEL = 模型目录（detection.onnx + recognition.onnx）；
+//   LA_FACE_IMG   = 分号分隔的图像文件或目录（jpg/jpeg/png/bmp/webp，目录取 Name 序）。
+// env 缺席 = qa_runner need= 机制自动 SKIP； opted-in 而前置缺失（exe/模型/图像/gold/READY≠1）
+// = 诚实 FAIL（铁律34，禁静默放行）。
+// 反例 LA_FACE_MODEL_QA_FORCE_BROKEN=1 只篡改期望表数据（bbox 右界 +30% 宽、emb[0] +10.0），
+// 比较流程与退出路径零分支（铁律22/34）：IoU/COS 两列必红，exit 走同一 fails 判据。
+// stderr 打印 READY ms 供 spec 附录A 回填。
+struct FmFace
+{
+    float box[4] = {0.f, 0.f, 0.f, 0.f};
+    float kps[5][2] = {};
+    float score = 0.f;
+    QVector<float> emb;
+};
+
+static QString faceModelFindExe()
+{
+    const QString appDir = QCoreApplication::applicationDirPath();
+    const QStringList candidates = {
+        appDir + "/faceinfer.exe",                                        // dev：native/build 扁平产物（POST_BUILD 拷机）
+        QDir::cleanPath(appDir + "/../../faceinfer/build/faceinfer.exe"),  // dev build tree 源
+    };
+    for (const QString& p : candidates) if (QFileInfo::exists(p)) return p;
+    return QString();
+}
+
+static double fmIou(const float a[4], const float b[4])
+{
+    const double ix1 = std::max(double(a[0]), double(b[0]));
+    const double iy1 = std::max(double(a[1]), double(b[1]));
+    const double ix2 = std::min(double(a[2]), double(b[2]));
+    const double iy2 = std::min(double(a[3]), double(b[3]));
+    const double inter = ix2 > ix1 && iy2 > iy1 ? (ix2 - ix1) * (iy2 - iy1) : 0.0;
+    const double arA = (double(a[2]) - a[0]) * (double(a[3]) - a[1]);
+    const double arB = (double(b[2]) - b[0]) * (double(b[3]) - b[1]);
+    const double un = arA + arB - inter;
+    return un > 0.0 ? inter / un : 0.0;
+}
+
+static double fmKpsMean(const float g[5][2], const float m[5][2])
+{
+    double s = 0.0;
+    for (int k = 0; k < 5; ++k) {
+        const double dx = double(g[k][0]) - double(m[k][0]);
+        const double dy = double(g[k][1]) - double(m[k][1]);
+        s += std::sqrt(dx * dx + dy * dy);
+    }
+    return s / 5.0;
+}
+
+static double fmCos(const QVector<float>& a, const QVector<float>& b)
+{
+    if (a.size() != b.size() || a.size() != 512) return -2.0;   // 维数不符 = 立即红
+    double dot = 0.0, na = 0.0, nb = 0.0;
+    for (int i = 0; i < a.size(); ++i) {
+        dot += double(a[i]) * double(b[i]);
+        na  += double(a[i]) * double(a[i]);
+        nb  += double(b[i]) * double(b[i]);
+    }
+    if (na <= 0.0 || nb <= 0.0) return -2.0;
+    return dot / (std::sqrt(na) * std::sqrt(nb));
+}
+
+// faces[] JSON → 表（RES 体与 gold JSON 同 schema：bbox/score/kps/embedding）。
+static bool fmParseFaces(const QByteArray& json, QVector<FmFace>& out, QString* err)
+{
+    QJsonParseError perr;
+    const QJsonDocument doc = QJsonDocument::fromJson(json, &perr);
+    if (doc.isNull() || !doc.isObject()) {
+        if (err) *err = QStringLiteral("json parse failed at offset %1: %2")
+            .arg(perr.offset).arg(perr.errorString());
+        return false;
+    }
+    const QJsonArray faces = doc.object().value(QStringLiteral("faces")).toArray();
+    for (const QJsonValue& v : faces) {
+        const QJsonObject o = v.toObject();
+        FmFace f;
+        const QJsonArray bb = o.value(QStringLiteral("bbox")).toArray();
+        if (bb.size() != 4) { if (err) *err = QStringLiteral("bad bbox"); return false; }
+        for (int q = 0; q < 4; ++q) f.box[q] = float(bb[q].toDouble());
+        const QJsonArray kk = o.value(QStringLiteral("kps")).toArray();
+        if (kk.size() != 5) { if (err) *err = QStringLiteral("bad kps"); return false; }
+        for (int k = 0; k < 5; ++k) {
+            const QJsonArray pt = kk[k].toArray();
+            if (pt.size() != 2) { if (err) *err = QStringLiteral("bad kps pt"); return false; }
+            f.kps[k][0] = float(pt[0].toDouble());
+            f.kps[k][1] = float(pt[1].toDouble());
+        }
+        f.score = float(o.value(QStringLiteral("score")).toDouble());
+        const QJsonArray ee = o.value(QStringLiteral("embedding")).toArray();
+        f.emb.reserve(ee.size());
+        for (const QJsonValue& e : ee) f.emb.append(float(e.toDouble()));
+        out.append(f);
+    }
+    return true;
+}
+
+// 五列断言（期望表 vs 实测表）；两臂共用同一函数，tamper 只作用于传入的期望表数据（铁律22）。
+static bool fmCompareImage(const QVector<FmFace>& gold, const QVector<FmFace>& mine,
+                           QStringList& fails, const QString& tag)
+{
+    bool allOk = true;
+    if (gold.size() != mine.size()) {
+        fails << QStringLiteral("%1 count gold=%2 mine=%3").arg(tag).arg(gold.size()).arg(mine.size());
+        return false;
+    }
+    QVector<bool> used(mine.size(), false);
+    for (int j = 0; j < gold.size(); ++j) {
+        int best = -1; double bestIou = -1.0;
+        for (int k = 0; k < mine.size(); ++k) {
+            if (used[k]) continue;
+            const double v = fmIou(gold[j].box, mine[k].box);
+            if (v > bestIou) { bestIou = v; best = k; }
+        }
+        if (best < 0) {
+            fails << QStringLiteral("%1 face%2 no candidate").arg(tag).arg(j);
+            allOk = false;
+            continue;
+        }
+        used[best] = true;
+        const double kd = fmKpsMean(gold[j].kps, mine[best].kps);
+        const double sd = std::fabs(double(gold[j].score) - double(mine[best].score));
+        const double cos = fmCos(gold[j].emb, mine[best].emb);
+        const bool ok = bestIou >= 0.98 && kd <= 2.0 && sd <= 0.02 && cos >= 0.999;
+        if (!ok) {
+            fails << QStringLiteral("%1 face%2 IOU=%3 KPS=%4 SCORE_D=%5 COS=%6")
+                         .arg(tag).arg(j)
+                         .arg(bestIou, 0, 'f', 4).arg(kd, 0, 'f', 3)
+                         .arg(sd, 0, 'f', 5).arg(cos, 0, 'f', 6);
+            allOk = false;
+        }
+    }
+    return allOk;
+}
+
+int runFaceModelQa()
+{
+    const bool tamper = !qEnvironmentVariableIsEmpty("LA_FACE_MODEL_QA_FORCE_BROKEN");
+    QStringList fails;
+
+    const QString exe = faceModelFindExe();
+    if (exe.isEmpty()) {
+        std::fprintf(stderr, "LA_FACE_MODEL_QA FAIL tamper=%d reason=exe_missing faceinfer.exe\n", int(tamper));
+        std::fflush(stderr);
+        return 1;
+    }
+    const QString modelDir = QString::fromLocal8Bit(qgetenv("LA_FACE_MODEL"));
+    if (modelDir.isEmpty() || !QDir(modelDir).exists()) {
+        std::fprintf(stderr, "LA_FACE_MODEL_QA FAIL tamper=%d reason=model_dir_missing\n", int(tamper));
+        std::fflush(stderr);
+        return 1;
+    }
+    const QString imgSpec = QString::fromLocal8Bit(qgetenv("LA_FACE_IMG"));
+    QStringList images;
+    for (const QString& part : imgSpec.split(QChar(';'))) {
+        const QString p = part.trimmed();
+        if (p.isEmpty()) continue;
+        const QFileInfo fi(p);
+        if (fi.isFile()) {
+            images << fi.absoluteFilePath();
+        } else if (fi.isDir()) {
+            QDir d(p);
+            const QStringList filters = { QStringLiteral("*.jpg"), QStringLiteral("*.jpeg"),
+                                         QStringLiteral("*.png"), QStringLiteral("*.bmp"),
+                                         QStringLiteral("*.webp") };
+            const QFileInfoList lst = d.entryInfoList(filters, QDir::Files, QDir::Name);
+            for (const QFileInfo& e : lst) images << e.absoluteFilePath();
+        }
+    }
+    images.removeDuplicates();
+    images.sort();
+    if (images.isEmpty()) {
+        std::fprintf(stderr, "LA_FACE_MODEL_QA FAIL tamper=%d reason=no_images (LA_FACE_IMG)\n", int(tamper));
+        std::fflush(stderr);
+        return 1;
+    }
+
+    // 真 faceinfer.exe 直起：子端 env 口径 = LA_FACE_MODEL_DIR（模型解析唯一 env）。
+    FaceAiSession s;
+    {
+        QProcessEnvironment e = QProcessEnvironment::systemEnvironment();
+        e.insert(QStringLiteral("LA_FACE_MODEL_DIR"), modelDir);
+        s.proc.setProcessEnvironment(e);
+        s.proc.setProcessChannelMode(QProcess::SeparateChannels);
+        s.proc.start(exe, {});
+    }
+    if (!s.proc.waitForStarted(5000)) {
+        std::fprintf(stderr, "LA_FACE_MODEL_QA FAIL tamper=%d reason=spawn_failed\n", int(tamper));
+        std::fflush(stderr);
+        return 1;
+    }
+    QElapsedTimer total; total.start();
+    QByteArray line;
+    const bool gotReady = faceAiReadLine(s.proc, s.buf, line, 90000);   // 真会话冷启动预算
+    const qint64 readyMs = total.elapsed();
+    if (!gotReady || line != QByteArray("READY 1")) {                   // READY≠1 = 会话未齐，诚实红
+        faceAiStop(s);
+        std::fprintf(stderr, "LA_FACE_MODEL_QA FAIL tamper=%d reason=ready line=%s ms=%lld\n",
+                     int(tamper), gotReady ? line.constData() : "<none>", qint64(readyMs));
+        std::fflush(stderr);
+        return 1;
+    }
+    std::fprintf(stderr, "LA_FACE_MODEL_QA READY1 ms=%lld\n", qint64(readyMs));
+
+    int totalFaces = 0;
+    quint64 reqId = 0;
+    for (const QString& img : images) {
+        ++reqId;
+        const QFileInfo ifi(img);
+        const QString tag = ifi.completeBaseName();
+        const QString goldPath = ifi.absolutePath() + QStringLiteral("/")
+                               + ifi.completeBaseName() + QStringLiteral(".gold.json");
+        QFile gf(goldPath);
+        if (!gf.open(QIODevice::ReadOnly)) {
+            fails << QStringLiteral("%1 gold json missing: %2").arg(tag, goldPath);
+            std::fprintf(stderr, "LA_FACE_MODEL_QA IMG %s ok=0 (gold missing)\n",
+                         qPrintable(tag));
+            continue;
+        }
+        QVector<FmFace> gold;
+        QString perr;
+        if (!fmParseFaces(gf.readAll(), gold, &perr)) {
+            fails << QStringLiteral("%1 gold parse: %2").arg(tag, perr);
+            gf.close();
+            std::fprintf(stderr, "LA_FACE_MODEL_QA IMG %s ok=0 (gold parse)\n", qPrintable(tag));
+            continue;
+        }
+        gf.close();
+
+        // 反例臂：只篡改期望表数据本身（IoU 红 + COS 红），比较/退出零分支（铁律22）。
+        if (tamper) {
+            for (FmFace& f : gold) {
+                f.box[2] += 0.30f * (f.box[2] - f.box[0]);
+                if (!f.emb.isEmpty()) f.emb[0] += 10.0f;
+            }
+        }
+
+        // REQ <id> det <len> + UTF-8 路径体（面侧 det/path 同义，canonical det 归 T4）。
+        const QByteArray pathBytes = img.toUtf8();
+        const QByteArray hdr = QByteArray("REQ ") + QByteArray::number(qint64(reqId))
+                             + QByteArray(" det ") + QByteArray::number(pathBytes.size())
+                             + QByteArray("\n");
+        s.proc.write(hdr);
+        s.proc.write(pathBytes);
+        if (!s.proc.waitForBytesWritten(3000)) {
+            fails << QStringLiteral("%1 req write failed").arg(tag);
+            std::fprintf(stderr, "LA_FACE_MODEL_QA IMG %s ok=0 (req write)\n", qPrintable(tag));
+            continue;
+        }
+
+        QByteArray respHdr, body;
+        const bool gotHdr = faceAiReadLine(s.proc, s.buf, respHdr, 60000);
+        const QList<QByteArray> tk = respHdr.split(' ');
+        if (!gotHdr || tk.size() != 3 || tk[0] != QByteArray("RES")
+            || tk[1] != QByteArray::number(qint64(reqId))) {
+            fails << QStringLiteral("%1 frame: %2").arg(tag, QString::fromUtf8(respHdr));
+            std::fprintf(stderr, "LA_FACE_MODEL_QA IMG %s ok=0 (frame)\n", qPrintable(tag));
+            continue;
+        }
+        const qint64 len = tk[2].toLongLong();
+        if (len <= 0 || len > (1 << 20) * 64) {      // 64MiB 守卫（同面侧 kMaxReqBody 口径）
+            fails << QStringLiteral("%1 body len out of range: %2").arg(tag).arg(len);
+            std::fprintf(stderr, "LA_FACE_MODEL_QA IMG %s ok=0 (len)\n", qPrintable(tag));
+            continue;
+        }
+        if (!faceAiReadExact(s.proc, s.buf, body, len, 60000)) {
+            fails << QStringLiteral("%1 body read failed").arg(tag);
+            std::fprintf(stderr, "LA_FACE_MODEL_QA IMG %s ok=0 (body read)\n", qPrintable(tag));
+            continue;
+        }
+        QVector<FmFace> mine;
+        QString jerr;
+        if (!fmParseFaces(body, mine, &jerr)) {
+            fails << QStringLiteral("%1 res parse: %2").arg(tag, jerr);
+            std::fprintf(stderr, "LA_FACE_MODEL_QA IMG %s ok=0 (res parse)\n", qPrintable(tag));
+            continue;
+        }
+        totalFaces += gold.size();
+        const bool ok = fmCompareImage(gold, mine, fails, tag);
+        std::fprintf(stderr, "LA_FACE_MODEL_QA IMG %s gold=%d mine=%d ok=%d\n",
+                     qPrintable(tag), gold.size(), mine.size(), int(ok));
+    }
+
+    faceAiStop(s);
+
+    if (fails.isEmpty())
+        std::fprintf(stderr, "LA_FACE_MODEL_QA PASS tamper=%d imgs=%d faces=%d ready_ms=%lld total_ms=%lld\n",
+                     int(tamper), images.size(), totalFaces, qint64(readyMs), qint64(total.elapsed()));
+    else
+        std::fprintf(stderr, "LA_FACE_MODEL_QA FAIL tamper=%d reason=%s\n",
+                     int(tamper), qPrintable(fails.join(QChar(';'))));
+    std::fflush(stderr);
+    return fails.isEmpty() ? 0 : 1;
+}
+
 // ---------------- 2.38.0 R2：HEIC/WebP EXIF 容器提取门（full 层） ----------------
 // 合成夹具字节确定（铁律29）：(a) WebP RIFF+EXIF chunk（直 TIFF / 带 "Exif\0\0" 前缀 两变体）
 // (b) 最小 HEIC ftyp+meta(iinf/infe "Exif"+iloc v0)+mdat（4 字节 BE 偏移 + 同款 TIFF blob）。
@@ -6809,6 +7110,10 @@ int main(int argc, char *argv[])
     // 第四轮 T1 第 75 门：AiProto 帧协议骨架门（QProcess 直起 faceinfer_stub，G1/G2/G4/G5）
     if (qEnvironmentVariableIsSet("LA_FACE_AI_QA"))
         return runFaceAiQa();
+
+    // 第四轮 T3 第 78 门：人脸模型端到端五列对表门（真 faceinfer.exe + T2 金标注，opt-in）
+    if (qEnvironmentVariableIsSet("LA_FACE_MODEL_QA"))
+        return runFaceModelQa();
 
     // 方向 D 第五步 b：图库多选 + 批量工具条门禁
     if (qEnvironmentVariableIsSet("LA_GALLERY_BATCH_QA"))

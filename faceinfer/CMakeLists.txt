@@ -37,6 +37,7 @@ set(LA_NATIVE_SRC "${CMAKE_CURRENT_LIST_DIR}/../native/src")
 add_executable(faceinfer
     faceinfer.cpp
     scrfd.h    scrfd.cpp
+    align.h    align.cpp
     imgkit.h   imgkit.cpp)
 find_package(Qt6 REQUIRED COMPONENTS Core Gui)
 target_include_directories(faceinfer PRIVATE "${ONNXRUNTIME_ROOT}/include" "${LA_NATIVE_SRC}")
@@ -59,6 +60,23 @@ foreach(_dll ${_ort_dlls})
     add_custom_command(TARGET faceinfer POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_dll}" $<TARGET_FILE_DIR:faceinfer>)
 endforeach()
+
+# 开发树投递（T3 扩）：#78 门（runFaceModelQa）沿用 EraseRunner::findExe 的 dev-fallback
+# 口径起真 faceinfer.exe——候选 1 = native/build/ 扁平。真壳比桩多两类运行时依赖
+# （Qt6 已在 native/build；ORT dll 必须同 exe 目录才被子进程首序搜索命中），
+# 故 faceinfer.exe + onnxruntime*.dll 一并 POST_BUILD 拷入 native/build。
+# configure 时该目录存在才挂拷贝腿，保证全新克隆（无 native/build）不因缺目录而构建失败。
+if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/../native/build/CMakeCache.txt")
+    add_custom_command(TARGET faceinfer POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_FILE:faceinfer>
+                "${CMAKE_CURRENT_LIST_DIR}/../native/build/")
+    foreach(_dll ${_ort_dlls})
+        add_custom_command(TARGET faceinfer POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_dll}"
+                    "${CMAKE_CURRENT_LIST_DIR}/../native/build/")
+    endforeach()
+endif()
 
 # ---- faceinfer_stub：#75 门 hermetic 装置，零 ORT（纯 stdio/winmm 级依赖）----
 add_executable(faceinfer_stub faceinfer_stub.cpp)
