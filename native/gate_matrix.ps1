@@ -633,7 +633,69 @@ $GateTable = @(
   # only). Fixture screening note (T5 R-11): faces whose cross-runtime det-kps noise
   # reaches ~0.15px push embedding cosine below 0.999 - kept-out-of-set boundary fixtures
   # are documented in faceinfer.cpp, not gate regressions.
-  @{n="LA_FACE_MODEL_QA"; png=$false; need=@("LA_FACE_MODEL","LA_FACE_IMG"); measuredMs=22464; timeoutSec=120}
+  @{n="LA_FACE_MODEL_QA"; png=$false; need=@("LA_FACE_MODEL","LA_FACE_IMG"); measuredMs=22464; timeoutSec=120},
+  # 2.40.0 round4 T7: CLIP-track AiProto contract gate (gate #76, LA_CLIP_AI_QA).
+  # Hermetic: clipinfer_stub.exe drives the frame spectrum with kind="jpg" (the only
+  # legal CLIP-track token). G1..G8 mirror gate #75 one-for-one:
+  # G1 READY 1 handshake; G2 READY 0 then every REQ answered ERR <id> nomodel (keepalive);
+  # G3 full RES roundtrip through the real AiSubprocessRunner (byte-exact + parsed
+  #   deep-equal; body arrives via the one-shot FRAG hook);
+  # G4 RES JSON body streamed in 64-byte flushed fragments must be read fully;
+  # G5 ERR frames structured (token+id+code, id strictly matches the REQ);
+  # G5p parseReq whole-token regression ("REQX" rejected, "REQ" accepted), wire REQX
+  #   answered ERR badframe, plus the sIsMainThread predicate;
+  # G6 HANG -> Timeout (1500ms budget) -> auto-restart once -> second call green;
+  # G7 concurrent second caller gets Busy inside the stub's 3s slow-frame window;
+  # G8 all exe candidates missing -> NoExe (probe and call agree, never spawns).
+  # T7 adds two prompts-state legs:
+  # G9 stub LA_CLIP_PROMPTS_BAD=1 -> READY 0 + every REQ ERR badprompts (badprompts
+  #   outranks nomodel, same ordering as the real binary);
+  # G10 REAL clipinfer.exe + throwaway temp model dir (1-byte junk clip_vit_b32_img.onnx
+  #   + synthetic 16436-byte prompts.bin: magic/N/D all correct, matrix SHA deliberately
+  #   wrong) -> the prompts-before-ORT startup order must answer READY 0 + ERR badprompts
+  #   within seconds. The counterexample genuinely bites (rule 34): a startup-order
+  #   regression to ORT-first would answer loadfail, and a missing prompts check would
+  #   mislabel or hang on the 351MB tower -- both red here. Temp dir deleted after the leg.
+  # Counterexample LA_CLIP_AI_QA_FORCE_BROKEN=1 corrupts ONLY the fixed expectation
+  # table so ALL ten groups go RED together (rule 22; identical exit path).
+  # Tier: FULL (same demotion note as #75): the plan ruling was "fast per plan, demote
+  # to full only if >500"; live arms G6 (1500ms timeout) + G7 (3s stub sleep) + G10
+  # (real-exe spawn with ORT dll load) put the measured cost far over the E6 500ms
+  # fast budget. timeoutSec=30 kept per the T7 dispatch.
+  # measuredMs=8019 from real qa_runner -Timing x4 (rules 25/31): 8019 / 7102 / 7149 /
+  # 7011 ms; conservative max-of-warm recorded.
+  @{n="LA_CLIP_AI_QA"; png=$false; timeoutSec=30; measuredMs=8019},
+  # 2.40.0 round4 T7: real CLIP model end-to-end quality gate (gate #77, LA_CLIP_MODEL_QA).
+  # Opt-in: need=@("LA_CLIP_MODEL","LA_CLIP_GOLD_DIR") -- absent -> qa_runner [SKIP]
+  # (privacy red line R-06: real photos and gold JSONs never enter the repo; the gate
+  # reads them only from env paths; fixture list comes from LA_CLIP_IMGS, comma-
+  # separated files or directories, name-sorted).
+  # When opted in, the app spawns the REAL clipinfer.exe (CLIP ViT-B-32 image tower
+  # ORT session + verbatim classifier_server.py decision rules; no runner yet -- the
+  # thread lifecycle belongs to the #75 chain) and asserts the five spec section 4
+  # columns per fixture against <GOLD_DIR>/<stem>.gold.json:
+  # label verbatim equal, note verbatim equal (null aligned), |score delta| <= 0.005,
+  # top3 per-pair label equal + |prob delta| <= 0.02, |sat delta| <= 1.0.
+  # R-14b/R-55 adjudication: the sat path is the PIL default-bicubic (Catmull-Rom) fixed-point
+  # kernel ported verbatim from libImaging Resample.c (the brief's "bilinear" was void;
+  # the dispatch's "reducing_gap=3.0 prefilter" does not exist -- Pillow 12.3.0 resize
+  # defaults reducing_gap=None, source-verified). Measured 13/13 fixtures green: worst sat
+  # delta 0.1 (quantization last digit), worst score delta 0.0026 (IMG_9387 gold 0.8588
+  # vs mine 0.8614), label/note columns exact on every fixture -> the strict band is
+  # kept, not widened.
+  # Env opted in but preconditions broken (exe missing / model dir missing / gold
+  # missing / READY != 1) -> honest FAIL, never silent pass (rule 34).
+  # Counterexample LA_CLIP_MODEL_QA_FORCE_BROKEN=1 corrupts ONLY the parsed expectation
+  # table (simulates MONO_SAT_THRESHOLD=0.0: low_saturation golds fall back to the
+  # regular branch -- sentinel IMG_8409 per the T7 dispatch). Measured red: exactly one
+  # fixture breaks, reason=IMG_8409 LABEL + IMG_8409 NOTE (gold has none, mine gains
+  # low_saturation(3.8)) + IMG_8409 SCORE_D=0.06650, gate exits 1 (12/13 still ok=1);
+  # the comparison flow and exit path never branch on the env (rule 22/34).
+  # Tier: full. timeoutSec=120 covers cold ORT tower load on slow hosts (#78 isomorphic).
+  # measuredMs=13723 from real qa_runner -Timing WITH env mounted x3 (rules 25/31):
+  # 10877 / 13723 / 11197 ms (ready_ms swings 528..3105 with ORT tower page-cache state,
+  # which is gate-intrinsic cost, so the conservative max is recorded).
+  @{n="LA_CLIP_MODEL_QA"; png=$false; need=@("LA_CLIP_MODEL","LA_CLIP_GOLD_DIR"); measuredMs=13723; timeoutSec=120}
 )
 # Resolve a gate's tier. Absent key means "full" - the fail-safe default.
 function Get-GateTier {

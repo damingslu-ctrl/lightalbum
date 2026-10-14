@@ -5614,6 +5614,659 @@ int runFaceModelQa()
     return fails.isEmpty() ? 0 : 1;
 }
 
+// ---------------- 第四轮 T7 第 76 门 LA_CLIP_AI_QA：CLIP 轨 AiProto 契约门（hermetic 桩） ----------------
+// 镜像 #75 组谱（G1..G8 逐腿同构，kind="jpg" CLIP 轨唯一合法词），新增两组 prompts 态腿：
+//   G9 桩侧 LA_CLIP_PROMPTS_BAD=1 -> READY 0 起步 + 每 REQ 回 ERR badprompts（桩内
+//      prompts 坏优先于 nomodel 的线契约复刻，保活不退出）；
+//   G10 真 clipinfer.exe + 临时模型目录（1B 垃圾 clip_vit_b32_img.onnx + 合成 16436B
+//      prompts.bin：魔数/N/D 全对、尾段矩阵 SHA 故意错位）——启动时序 prompts 先于 ORT
+//      必须秒级 READY 0 + ERR badprompts。反例真咬（铁律34）：若时序回归成 ORT 先行
+//      收 code 变 loadfail；若 prompts 校验缺失则 READY 行/ERR 码双双失配——两红路都
+//      比 351MB 加载失败更快更可辨。临时目录门后必删。
+// 桩按 LA_CLIP_FORCE_* env 分支；门期望表是固定常量、永不随桩分支（铁律22）。
+// 反例 LA_CLIP_AI_QA_FORCE_BROKEN=1 只篡改期望常量 -> 十组同红，退出路径与正跑一致。
+static QString clipAiFindStub()
+{
+    const QString appDir = QCoreApplication::applicationDirPath();
+    const QStringList candidates = {
+        appDir + "/clipinfer_stub.exe",                                        // dev：native/build 扁平产物
+        QDir::cleanPath(appDir + "/../../clipinfer/build/clipinfer_stub.exe"), // dev build tree 源
+    };
+    for (const QString& p : candidates) if (QFileInfo::exists(p)) return p;
+    return QString();
+}
+
+static QString clipModelFindExe()
+{
+    const QString appDir = QCoreApplication::applicationDirPath();
+    const QStringList candidates = {
+        appDir + "/clipinfer.exe",                                        // dev：native/build 扁平产物（POST_BUILD 拷机 + ORT dll 同机）
+        QDir::cleanPath(appDir + "/../../clipinfer/build/clipinfer.exe"), // dev build tree 源
+    };
+    for (const QString& p : candidates) if (QFileInfo::exists(p)) return p;
+    return QString();
+}
+
+// REQ 一行 + jpg 体（CLIP 轨 kind 唯一合法词 "jpg"，body=UTF-8 绝对路径；面侧 "path" 同构异词）。
+static bool clipAiSendReq(FaceAiSession& s, quint64 id, const QByteArray& path)
+{
+    const QByteArray hdr = QByteArray("REQ ") + QByteArray::number(id)
+                         + QByteArray(" jpg ") + QByteArray::number(path.size()) + QByteArray("\n");
+    s.proc.write(hdr);
+    s.proc.write(path);
+    return s.proc.waitForBytesWritten(3000);
+}
+
+int runClipAiQa()
+{
+    const bool tamper = !qEnvironmentVariableIsEmpty("LA_CLIP_AI_QA_FORCE_BROKEN");
+    QStringList fails;
+    const auto note = [&fails](bool ok, const QString& w){ if (!ok) fails << w; };
+
+    const QString stub = clipAiFindStub();
+    if (stub.isEmpty()) {
+        std::fprintf(stderr, "LA_CLIP_AI_QA FAIL clipinfer_stub.exe missing -- build clipinfer target first\n");
+        std::fflush(stderr);
+        return 1;
+    }
+
+    // 与桩 clipinfer_stub.cpp clipJson() 逐字节一致的确定性夹具（铁律29：无随机无宿主因子；
+    // 中文标签 \x 转义直出 UTF-8：人像/风光/美食）。
+    const QByteArray expectBody = QByteArray(
+        "{\"ok\":true,\"label\":\"\xe4\xba\xba\xe5\x83\x8f\",\"score\":0.8700,"
+        "\"note\":null,\"top\":[[\"\xe4\xba\xba\xe5\x83\x8f\",0.8700],"
+        "[\"\xe9\xa3\x8e\xe5\x85\x89\",0.0500],"
+        "[\"\xe7\xbe\x8e\xe9\xa3\x9f\",0.0400]],\"sat\":42.0}");
+    const QByteArray reqPath = QByteArrayLiteral("C:/la/clip_qa_fixture.jpg");
+
+    // 固定期望表：tamper 臂只篡改常量，流程/退出路径零分支（铁律22）。
+    using Rst = AiSubprocessRunner::Rst;
+    const QByteArray expG1Ready = tamper ? QByteArray("READY 0") : QByteArray("READY 1");
+    const QByteArray expG2Ready = tamper ? QByteArray("READY 1") : QByteArray("READY 0");
+    const QByteArray expG2Code  = tamper ? QByteArray("loadfail") : QByteArray("nomodel");
+    const QByteArray expG4Body  = tamper ? expectBody + QByteArray("X") : expectBody;
+    const QByteArray expG5Code  = tamper ? QByteArray("inferfail") : QByteArray("loadfail");
+    const int expG3Rst     = tamper ? int(Rst::Err)     : int(Rst::Ok);
+    const QByteArray expG3Json = tamper ? expectBody + QByteArray("X") : expectBody;
+    const QByteArray expG5pWire = tamper ? QByteArray("ERR 1 badframe") : QByteArray("ERR 0 badframe");
+    const int expG5pReject = tamper ? 1 : 0;
+    const int expG5pAccept = tamper ? 0 : 1;
+    const int expGpMain    = tamper ? 0 : 1;
+    const int expGpWorker  = tamper ? 1 : 0;
+    const int expG6a       = tamper ? int(Rst::Ok)      : int(Rst::Timeout);
+    const int expG6b       = tamper ? int(Rst::Timeout) : int(Rst::Ok);
+    const QByteArray expG6bJson = tamper ? expectBody + QByteArray("X") : expectBody;
+    const int expG7a       = tamper ? int(Rst::Err)     : int(Rst::Ok);
+    const int expG7b       = tamper ? int(Rst::Ok)      : int(Rst::Busy);
+    const int expG8Ready   = tamper ? int(Rst::Ok)      : int(Rst::NoExe);
+    const int expG8Call    = tamper ? int(Rst::Ok)      : int(Rst::NoExe);
+    const QByteArray expG9Ready  = tamper ? QByteArray("READY 1") : QByteArray("READY 0");
+    const QByteArray expG9Code   = tamper ? QByteArray("nomodel") : QByteArray("badprompts");
+    const QByteArray expG10Ready = tamper ? QByteArray("READY 1") : QByteArray("READY 0");
+    const QByteArray expG10Code  = tamper ? QByteArray("loadfail") : QByteArray("badprompts");
+
+    // ---- G1 默认臂：READY 1 握手 ----
+    {
+        FaceAiSession s;
+        QByteArray line;
+        const bool got = faceAiSpawn(s, stub, QByteArray())
+                      && faceAiReadLine(s.proc, s.buf, line, 5000);
+        const bool ok = got && line == expG1Ready;
+        note(ok, QStringLiteral("G1 READY1 handshake, got=%1")
+                     .arg(QString::fromLatin1(got ? line : QByteArray("<no frame>"))));
+        faceAiStop(s);
+        std::fprintf(stderr, "LA_CLIPAI_G G1 ok=%d\n", int(ok));
+    }
+
+    // ---- G2 NOMODEL 臂：READY 0 + 每 REQ ERR id nomodel（保活不退出） ----
+    {
+        FaceAiSession s;
+        QByteArray line, resp;
+        const bool started = faceAiSpawn(s, stub, "LA_CLIP_FORCE_NOMODEL=1");
+        const bool gotReady = started && faceAiReadLine(s.proc, s.buf, line, 5000);
+        const bool readyOk = gotReady && line == expG2Ready;
+        note(readyOk, QStringLiteral("G2 READY0 handshake, got=%1")
+                          .arg(QString::fromLatin1(gotReady ? line : QByteArray("<no frame>"))));
+        const bool sent = readyOk && clipAiSendReq(s, 7, reqPath);
+        const bool gotResp = sent && faceAiReadLine(s.proc, s.buf, resp, 5000);
+        const QList<QByteArray> tk = resp.split(' ');
+        const bool frameOk = gotResp && tk.size() == 3
+                          && tk[0] == QByteArray("ERR") && tk[1] == QByteArray("7")
+                          && tk[2] == expG2Code;
+        note(frameOk, QStringLiteral("G2 nomodel ERR frame, line=%1").arg(QString::fromLatin1(resp)));
+        faceAiStop(s);
+        std::fprintf(stderr, "LA_CLIPAI_G G2 ok=%d\n", int(readyOk && frameOk));
+    }
+
+    // ---- G3 真底座全量 roundtrip：REQ(jpg)->RES JSON 逐字节 + 解析后 deep-equal。
+    //      FRAG 钩子经 runner qaHookEnvName 一次性注入首 spawn 子进程（判例继承 #75）。----
+    {
+        qputenv("LA_CLIP_FORCE_FRAG", "1");    // 布防：底座 spawn 时注入子 env 并一次性消耗（分支只在桩侧，铁律22）
+        AiSubprocessRunner r;
+        r.configure({stub}, {}, 5000, QStringLiteral("LA_CLIP_FORCE_FRAG"));
+        const auto rp = faceAiCall(r, QStringLiteral("jpg"), 21, reqPath, 8000);
+        const bool rstOk = int(rp.rst) == expG3Rst;
+        const bool bytesOk = rp.json == expG3Json;
+        QJsonParseError pe1, pe2;
+        const QJsonDocument dGot = QJsonDocument::fromJson(rp.json, &pe1);
+        const QJsonDocument dExp = QJsonDocument::fromJson(expG3Json, &pe2);
+        const bool deepOk = pe1.error == QJsonParseError::NoError
+                         && pe2.error == QJsonParseError::NoError && dGot == dExp;
+        note(rstOk, QStringLiteral("G3 runner roundtrip rst=%1 exp=%2")
+                         .arg(int(rp.rst)).arg(expG3Rst));
+        note(bytesOk, QStringLiteral("G3 runner roundtrip body bytes=%1 exp=%2")
+                          .arg(rp.json.size()).arg(expG3Json.size()));
+        note(deepOk, QStringLiteral("G3 RES json deep-equal (parsed)"));
+        std::fprintf(stderr, "LA_CLIPAI_G G3 ok=%d json_bytes=%d\n",
+                     int(rstOk && bytesOk && deepOk), int(rp.json.size()));
+    }
+    qputenv("LA_CLIP_FORCE_FRAG", QByteArray());   // 复位纪律：每次布防必显式解除
+
+    // ---- G4 FRAG 臂：RES 体 64B 分片必读满 ----
+    {
+        FaceAiSession s;
+        QByteArray line, hdr, body;
+        const bool started = faceAiSpawn(s, stub, "LA_CLIP_FORCE_FRAG=1");
+        const bool gotReady = started && faceAiReadLine(s.proc, s.buf, line, 5000);
+        const bool readyOk = gotReady && line == QByteArray("READY 1");   // FRAG 不改握手语义（固定期望）
+        note(readyOk, QStringLiteral("G4 READY1 handshake under FRAG, got=%1")
+                          .arg(QString::fromLatin1(gotReady ? line : QByteArray("<no frame>"))));
+        const bool sent = readyOk && clipAiSendReq(s, 9, reqPath);
+        const bool gotHdr = sent && faceAiReadLine(s.proc, s.buf, hdr, 5000);
+        const QList<QByteArray> tk = hdr.split(' ');
+        const bool hdrOk = gotHdr && tk.size() == 3 && tk[0] == QByteArray("RES")
+                        && tk[1] == QByteArray("9") && tk[2].toLongLong() == expectBody.size();
+        note(hdrOk, QStringLiteral("G4 RES header id/len, line=%1").arg(QString::fromLatin1(hdr)));
+        const bool bodyOk = hdrOk
+                         && faceAiReadExact(s.proc, s.buf, body, expectBody.size(), 5000)
+                         && body == expG4Body;
+        note(bodyOk, QStringLiteral("G4 fragmented body read-full, bytes=%1 exp=%2")
+                         .arg(body.size()).arg(expG4Body.size()));
+        faceAiStop(s);
+        std::fprintf(stderr, "LA_CLIPAI_G G4 ok=%d body_bytes=%d\n", int(readyOk && hdrOk && bodyOk), int(body.size()));
+    }
+
+    // ---- G5 ERR 臂：ERR 帧结构化（kind/id/code 三字段，id 严格匹配） ----
+    {
+        FaceAiSession s;
+        QByteArray line, resp;
+        const bool started = faceAiSpawn(s, stub, "LA_CLIP_FORCE_ERR=1");
+        const bool gotReady = started && faceAiReadLine(s.proc, s.buf, line, 5000);
+        const bool readyOk = gotReady && line == QByteArray("READY 1");
+        note(readyOk, QStringLiteral("G5 READY1 handshake under ERR arm, got=%1")
+                          .arg(QString::fromLatin1(gotReady ? line : QByteArray("<no frame>"))));
+        const bool sent = readyOk && clipAiSendReq(s, 11, reqPath);
+        const bool gotResp = sent && faceAiReadLine(s.proc, s.buf, resp, 5000);
+        const QList<QByteArray> tk = resp.split(' ');
+        const bool frameOk = gotResp && tk.size() == 3
+                          && tk[0] == QByteArray("ERR") && tk[1] == QByteArray("11")
+                          && tk[2] == expG5Code;
+        note(frameOk, QStringLiteral("G5 structured ERR frame, line=%1").arg(QString::fromLatin1(resp)));
+        faceAiStop(s);
+        std::fprintf(stderr, "LA_CLIPAI_G G5 ok=%d\n", int(readyOk && frameOk));
+    }
+
+    // ---- G5p AiProto 首词全词比对回归腿（#75 同构）：parseReq 直调拒 "REQX" 收 "REQ"；
+    //   线腿喂 REQX 行必收 ERR badframe；谓词腿 sIsMainThread 主真 worker 假。----
+    {
+        aiproto::Header hh;
+        const QByteArray badLine  = QByteArrayLiteral("REQX 5 jpg 4");
+        const QByteArray goodLine = QByteArrayLiteral("REQ 5 jpg 4");
+        const int gotReject = aiproto::parseReq(badLine.constData(), size_t(badLine.size()), hh) ? 1 : 0;
+        const int gotAccept = aiproto::parseReq(goodLine.constData(), size_t(goodLine.size()), hh) ? 1 : 0;
+        const bool rejOk = gotReject == expG5pReject;
+        const bool accOk = gotAccept == expG5pAccept;
+        note(rejOk, QStringLiteral("G5p parseReq rejects REQX prefix (got=%1 exp=%2)")
+                        .arg(gotReject).arg(expG5pReject));
+        note(accOk, QStringLiteral("G5p parseReq still accepts well-formed REQ (got=%1 exp=%2)")
+                        .arg(gotAccept).arg(expG5pAccept));
+        bool wireOk = false;
+        {
+            FaceAiSession s;
+            QByteArray line, resp;
+            const bool started = faceAiSpawn(s, stub, QByteArray());
+            const bool readyOk = started && faceAiReadLine(s.proc, s.buf, line, 5000)
+                              && line == QByteArray("READY 1");
+            s.proc.write(QByteArrayLiteral("REQX 5 jpg 4\ntest"));
+            const bool wrote = s.proc.waitForBytesWritten(3000);
+            const bool got = readyOk && wrote && faceAiReadLine(s.proc, s.buf, resp, 5000);
+            wireOk = got && resp == expG5pWire;
+            note(wireOk, QStringLiteral("G5p stub wire REQX answered badframe, line=%1")
+                             .arg(QString::fromLatin1(got ? resp : QByteArray("<none>"))));
+            faceAiStop(s);
+        }
+        const int gotMain = AiSubprocessRunner::sIsMainThread() ? 1 : 0;
+        int gotWorker = -1;
+        { std::thread th([&] { gotWorker = AiSubprocessRunner::sIsMainThread() ? 1 : 0; }); th.join(); }
+        const bool predOk = gotMain == expGpMain && gotWorker == expGpWorker;
+        note(predOk, QStringLiteral("G5p sIsMainThread predicate main=%1 worker=%2")
+                         .arg(gotMain).arg(gotWorker));
+        std::fprintf(stderr, "LA_CLIPAI_G G5p ok=%d\n", int(rejOk && accOk && wireOk && predOk));
+    }
+
+    // ---- G6 HANG -> Timeout -> 自动重启一次 -> 复绿（一次性钩子，第二 call 干净应答）。----
+    {
+        qputenv("LA_CLIP_FORCE_HANG", "1");
+        AiSubprocessRunner r;
+        r.configure({stub}, {}, 5000, QStringLiteral("LA_CLIP_FORCE_HANG"));
+        const auto rp1 = faceAiCall(r, QStringLiteral("jpg"), 31, reqPath, 1500);
+        const bool toOk = int(rp1.rst) == expG6a;
+        note(toOk, QStringLiteral("G6 hung call rst=%1 exp=%2").arg(int(rp1.rst)).arg(expG6a));
+        const auto rp2 = faceAiCall(r, QStringLiteral("jpg"), 32, reqPath, 8000);
+        const bool greenOk = int(rp2.rst) == expG6b && rp2.json == expG6bJson;
+        note(greenOk, QStringLiteral("G6 restarted call green rst=%1 bytes=%2")
+                          .arg(int(rp2.rst)).arg(rp2.json.size()));
+        std::fprintf(stderr, "LA_CLIPAI_G G6 ok=%d\n", int(toOk && greenOk));
+    }
+    qputenv("LA_CLIP_FORCE_HANG", QByteArray());
+
+    // ---- G7 并发单飞拒绝：SLOW 3s 在飞窗口内第二调用者即收 Busy（不排队不死锁）。----
+    {
+        qputenv("LA_CLIP_FORCE_SLOW", "1");
+        AiSubprocessRunner r;
+        r.configure({stub}, {}, 5000, QStringLiteral("LA_CLIP_FORCE_SLOW"));
+        AiSubprocessRunner::Reply rpA;
+        std::atomic<bool> aStarted{false};
+        std::thread aTh([&] { aStarted.store(true); rpA = r.call(QStringLiteral("jpg"), 41, reqPath, 12000); });
+        while (!aStarted.load()) QThread::msleep(5);
+        QThread::msleep(300);
+        const auto rpB = faceAiCall(r, QStringLiteral("jpg"), 42, reqPath, 5000);
+        aTh.join();
+        const bool busyOk = int(rpB.rst) == expG7b;
+        const bool aOk = int(rpA.rst) == expG7a && rpA.json == expectBody;
+        note(busyOk, QStringLiteral("G7 second concurrent caller rst=%1 exp=%2")
+                         .arg(int(rpB.rst)).arg(expG7b));
+        note(aOk, QStringLiteral("G7 first caller completes rst=%1").arg(int(rpA.rst)));
+        std::fprintf(stderr, "LA_CLIPAI_G G7 ok=%d\n", int(busyOk && aOk));
+    }
+    qputenv("LA_CLIP_FORCE_SLOW", QByteArray());
+
+    // ---- G8 exe 候选全缺 -> NoExe（probe 与 call 一致，绝不 spawn）。----
+    {
+        AiSubprocessRunner r;
+        r.configure({stub + QStringLiteral(".missing_a.exe"),
+                     stub + QStringLiteral(".missing_b.exe")}, {}, 5000, QString());
+        Rst st = Rst::Err;
+        const bool pOk = faceAiProbe(r, &st);
+        const bool readyNoExe = !pOk && int(st) == expG8Ready;
+        note(readyNoExe, QStringLiteral("G8 ensureReady exe_missing ok=%1 rst=%2 exp=%3")
+                             .arg(int(pOk)).arg(int(st)).arg(expG8Ready));
+        const auto rp = faceAiCall(r, QStringLiteral("jpg"), 51, reqPath, 3000);
+        const bool callNoExe = int(rp.rst) == expG8Call;
+        note(callNoExe, QStringLiteral("G8 call exe_missing rst=%1 exp=%2")
+                            .arg(int(rp.rst)).arg(expG8Call));
+        std::fprintf(stderr, "LA_CLIPAI_G G8 ok=%d\n", int(readyNoExe && callNoExe));
+    }
+
+    // ---- G9 桩侧 PROMPTS_BAD 臂：READY 0 + 每 REQ ERR badprompts（prompts 坏优先于
+    //      nomodel 的启动时序契约复刻，G10 真壳腿的 hermetic 兄弟）。----
+    {
+        FaceAiSession s;
+        QByteArray line, resp;
+        const bool started = faceAiSpawn(s, stub, "LA_CLIP_PROMPTS_BAD=1");
+        const bool gotReady = started && faceAiReadLine(s.proc, s.buf, line, 5000);
+        const bool readyOk = gotReady && line == expG9Ready;
+        note(readyOk, QStringLiteral("G9 READY0 handshake under PROMPTS_BAD, got=%1")
+                          .arg(QString::fromLatin1(gotReady ? line : QByteArray("<no frame>"))));
+        const bool sent = readyOk && clipAiSendReq(s, 13, reqPath);
+        const bool gotResp = sent && faceAiReadLine(s.proc, s.buf, resp, 5000);
+        const QList<QByteArray> tk = resp.split(' ');
+        const bool frameOk = gotResp && tk.size() == 3
+                          && tk[0] == QByteArray("ERR") && tk[1] == QByteArray("13")
+                          && tk[2] == expG9Code;
+        note(frameOk, QStringLiteral("G9 badprompts ERR frame, line=%1").arg(QString::fromLatin1(resp)));
+        faceAiStop(s);
+        std::fprintf(stderr, "LA_CLIPAI_G G9 ok=%d\n", int(readyOk && frameOk));
+    }
+
+    // ---- G10 真 clipinfer.exe prompts 反例：临时模型目录 = 1B 垃圾 onnx + 合成
+    //      prompts.bin（16436B、魔数/N/D 全对、尾段 SHA 错位）。启动时序 prompts 先于
+    //      ORT => 秒级 READY 0 + ERR badprompts（垃圾 onnx 永不被触碰；若时序倒置
+    //      则 351MB 级失败信号 loadfail——本腿以其为红）。门后必删临时目录（R-06 卫生）。----
+    {
+        bool groupOk = false;
+        const QString exe = clipModelFindExe();
+        if (exe.isEmpty()) {
+            note(false, QStringLiteral("G10 clipinfer.exe missing -- build clipinfer target first"));
+        } else {
+            const QString dir = QDir::tempPath() + QStringLiteral("/la_clip_g10_%1")
+                                    .arg(QCoreApplication::applicationPid());
+            QDir().mkpath(dir);
+            bool staged = false;
+            QFile ox(dir + QStringLiteral("/clip_vit_b32_img.onnx"));
+            if (ox.open(QIODevice::WriteOnly)) { ox.write(QByteArray(1, '\0')); ox.close(); staged = true; }
+            QFile pr(dir + QStringLiteral("/prompts.bin"));
+            if (staged && pr.open(QIODevice::WriteOnly)) {
+                QByteArray t(16436, '\0');                       // 头部全对：只有尾段 SHA 是错的
+                t.replace(0, 10, QByteArray("LAPROMPTv1"));      // 魔数
+                t[12] = char(8);                                 // N=8 int32LE
+                t[17] = char(2);                                 // D=512 int32LE（0x0200）
+                // bytes[16404..16436) 尾段保持全零 => 矩阵 SHA 必失配（正 SHA 是随机 32B）
+                pr.write(t); pr.close();
+            } else staged = false;
+            if (staged) {
+                FaceAiSession s;
+                QProcessEnvironment e = QProcessEnvironment::systemEnvironment();
+                e.insert(QStringLiteral("LA_CLIP_MODEL"), QDir::toNativeSeparators(dir));
+                s.proc.setProcessEnvironment(e);
+                s.proc.setProcessChannelMode(QProcess::SeparateChannels);
+                s.proc.start(exe, {});
+                QByteArray line, resp;
+                const bool started = s.proc.waitForStarted(5000);
+                const bool gotReady = started && faceAiReadLine(s.proc, s.buf, line, 10000);
+                const bool readyOk = gotReady && line == expG10Ready;
+                note(readyOk, QStringLiteral("G10 real exe READY0(prompts-first), got=%1")
+                                  .arg(QString::fromLatin1(gotReady ? line : QByteArray("<no frame>"))));
+                const bool sent = readyOk && clipAiSendReq(s, 15, reqPath);
+                const bool gotResp = sent && faceAiReadLine(s.proc, s.buf, resp, 5000);
+                const QList<QByteArray> tk = resp.split(' ');
+                const bool frameOk = gotResp && tk.size() == 3
+                                  && tk[0] == QByteArray("ERR") && tk[1] == QByteArray("15")
+                                  && tk[2] == expG10Code;
+                note(frameOk, QStringLiteral("G10 badprompts ERR frame, line=%1")
+                                  .arg(QString::fromLatin1(resp)));
+                faceAiStop(s);
+                groupOk = readyOk && frameOk;
+            } else {
+                note(false, QStringLiteral("G10 temp model dir staging failed: %1").arg(dir));
+            }
+            QFile::remove(dir + QStringLiteral("/clip_vit_b32_img.onnx"));
+            QFile::remove(dir + QStringLiteral("/prompts.bin"));
+            QDir().rmdir(dir);
+        }
+        std::fprintf(stderr, "LA_CLIPAI_G G10 ok=%d\n", int(groupOk));
+    }
+
+    if (fails.isEmpty())
+        std::fprintf(stderr, "LA_CLIP_AI_QA PASS tamper=%d g1=1 g2=1 g3=1 g4=1 g5=1 g5p=1 g6=1 g7=1 g8=1 g9=1 g10=1\n", int(tamper));
+    else
+        std::fprintf(stderr, "LA_CLIP_AI_QA FAIL tamper=%d reason=%s\n",
+                     int(tamper), qPrintable(fails.join(QChar(';'))));
+    std::fflush(stderr);
+    return fails.isEmpty() ? 0 : 1;
+}
+
+// ---------------- 第四轮 T7 第 77 门 LA_CLIP_MODEL_QA：CLIP 模型端到端五列对表门（full 层，opt-in） ----------------
+// 真 clipinfer.exe（图像塔 ORT 会话 + 判定三段）直起（同 #78：本任务无 runner，纯同步
+// QProcess 逐 REQ 应答）；对 T7 金标 JSON 断言 spec §4 五列全表：
+//   label verbatim 全等；note verbatim 全等（null 对齐）；|score-Δ| <= 0.005；
+//   top3 逐对 label 全等 + |prob-Δ| <= 0.02；|sat-Δ| <= 1.0。
+// R-14 裁定记录：sat 路径 = PIL convert('RGB').resize((48,48)) 默认 bicubic(Catmull-Rom)
+// 的 libImaging 定点核 verbatim 移植（brief「双线性」作废；dispatch「reducing_gap=3.0
+// 预滤波」经 Pillow 12.3.0 源码核实不存在——resize 默认 reducing_gap=None）。实测
+// 13/13 夹具最坏 sat Δ=0.1（IMG_2288/IMG_8530 量化末位），其余全列 Δ=0.000000，
+// 严格带保留不放宽。
+// 隐私红线 R-06：真人图像与 gold JSON 永不入仓——门只从 env 路径读取：
+//   LA_CLIP_MODEL = 模型目录（clip_vit_b32_img.onnx + prompts.bin）；
+//   LA_CLIP_GOLD_DIR = gold JSON 目录（<stem>.gold.json 平铺）；
+//   LA_CLIP_IMGS = 逗号分隔图像文件或目录（jpg/jpeg/png/bmp/webp，目录取 Name 序）。
+// env 缺席 = qa_runner need= 机制自动 SKIP；opted-in 而前置缺失（exe/模型/gold/READY!=1）
+// = 诚实 FAIL（铁律34，禁静默放行）。
+// 反例 LA_CLIP_MODEL_QA_FORCE_BROKEN=1 只篡改期望表数据（MONO_SAT_THRESHOLD=0.0 仿真：
+// low_saturation 金标的黑白快捷路径禁用、回落普通分支），比较流程与退出路径零分支
+// （铁律22/34）：score/note 两列必红（IMG_8409 为 dispatch 指认哨兵）。
+struct ClipQaVerdict
+{
+    QString label;
+    bool hasNote = false;
+    QString note;
+    double score = 0.0;
+    double sat = 0.0;
+    QVector<QPair<QString, double>> top;    // [label, prob] 序 = RES/gold top 数组序
+};
+
+// RES 体与 gold JSON 同 schema 子集（gold 附加键 image/oracle/model/thresholds/screen 忽略）。
+static bool cqParseVerdict(const QByteArray& json, ClipQaVerdict& v, QString* err)
+{
+    QJsonParseError perr;
+    const QJsonDocument doc = QJsonDocument::fromJson(json, &perr);
+    if (doc.isNull() || !doc.isObject()) {
+        if (err) *err = QStringLiteral("json parse failed at offset %1: %2")
+            .arg(perr.offset).arg(perr.errorString());
+        return false;
+    }
+    const QJsonObject o = doc.object();
+    v.label = o.value(QStringLiteral("label")).toString();
+    const QJsonValue nv = o.value(QStringLiteral("note"));
+    v.hasNote = !nv.isNull();
+    v.note = v.hasNote ? nv.toString() : QString();
+    v.score = o.value(QStringLiteral("score")).toDouble();
+    v.sat = o.value(QStringLiteral("sat")).toDouble();
+    v.top.clear();
+    const QJsonArray ta = o.value(QStringLiteral("top")).toArray();
+    for (const QJsonValue& tv : ta) {
+        const QJsonArray pa = tv.toArray();
+        if (pa.size() != 2) { if (err) *err = QStringLiteral("bad top pair"); return false; }
+        v.top.append(qMakePair(pa[0].toString(), pa[1].toDouble()));
+    }
+    return true;
+}
+
+// 五列断言（期望表 vs 实测表）；两臂共用同一函数，tamper 只作用于传入的期望表数据（铁律22）。
+static bool cqCompareVerdict(const ClipQaVerdict& g, const ClipQaVerdict& m,
+                             QStringList& fails, const QString& tag)
+{
+    bool ok = true;
+    if (g.label != m.label) {
+        fails << QStringLiteral("%1 LABEL gold=%2 mine=%3").arg(tag, g.label, m.label);
+        ok = false;
+    }
+    if (g.hasNote != m.hasNote || (g.hasNote && g.note != m.note)) {
+        fails << QStringLiteral("%2 NOTE gold=%3 mine=%4")
+                     .arg(tag,
+                          g.hasNote ? g.note : QStringLiteral("<null>"),
+                          m.hasNote ? m.note : QStringLiteral("<null>"));
+        ok = false;
+    }
+    const double sd = std::fabs(g.score - m.score);
+    if (sd > 0.005) {
+        fails << QStringLiteral("%1 SCORE_D=%2").arg(tag).arg(sd, 0, 'f', 5);
+        ok = false;
+    }
+    const double satd = std::fabs(g.sat - m.sat);
+    if (satd > 1.0) {
+        fails << QStringLiteral("%1 SAT_D=%2").arg(tag).arg(satd, 0, 'f', 2);
+        ok = false;
+    }
+    if (g.top.size() != m.top.size() || g.top.size() < 3) {
+        fails << QStringLiteral("%1 TOP size gold=%2 mine=%3").arg(tag).arg(g.top.size()).arg(m.top.size());
+        ok = false;
+    } else {
+        for (int i = 0; i < 3; ++i) {
+            const double d = std::fabs(g.top[i].second - m.top[i].second);
+            if (g.top[i].first != m.top[i].first || d > 0.02) {
+                fails << QStringLiteral("%1 TOP%2 gold=(%3,%4) mine=(%5,%6) D=%7")
+                             .arg(tag).arg(i)
+                             .arg(g.top[i].first).arg(g.top[i].second, 0, 'f', 4)
+                             .arg(m.top[i].first).arg(m.top[i].second, 0, 'f', 4)
+                             .arg(d, 0, 'f', 5);
+                ok = false;
+            }
+        }
+    }
+    return ok;
+}
+
+// 反例篡改器：MONO_SAT_THRESHOLD=0.0 语义仿真——黑白快捷路径永久禁用，low_saturation
+// 金标回落普通分支（top1<0.20 -> 其他/low_confidence；否则 top1 名 + score=top1 prob +
+// note=null；sat<=18 恒不触发 mono_guard(>45)）。真壳仍答 0.99/low_saturation => 红。
+static void cqTamperMonoOff(ClipQaVerdict& g)
+{
+    if (!g.hasNote || !g.note.startsWith(QStringLiteral("low_saturation"))) return;
+    if (g.top.isEmpty()) return;
+    const QString t1 = g.top[0].first;
+    const double p1 = g.top[0].second;
+    if (p1 < 0.20) {
+        g.label = QStringLiteral("\xe5\x85\xb6\xe4\xbb\x96");   // 其他
+        g.score = p1;
+        g.note = QStringLiteral("low_confidence");
+    } else {
+        g.label = t1;
+        g.score = p1;
+        g.note = QString();
+        g.hasNote = false;
+    }
+}
+
+int runClipModelQa()
+{
+    const bool tamper = !qEnvironmentVariableIsEmpty("LA_CLIP_MODEL_QA_FORCE_BROKEN");
+    QStringList fails;
+
+    const QString exe = clipModelFindExe();
+    if (exe.isEmpty()) {
+        std::fprintf(stderr, "LA_CLIP_MODEL_QA FAIL tamper=%d reason=exe_missing clipinfer.exe\n", int(tamper));
+        std::fflush(stderr);
+        return 1;
+    }
+    const QString modelDir = QString::fromLocal8Bit(qgetenv("LA_CLIP_MODEL"));
+    if (modelDir.isEmpty() || !QDir(modelDir).exists()) {
+        std::fprintf(stderr, "LA_CLIP_MODEL_QA FAIL tamper=%d reason=model_dir_missing\n", int(tamper));
+        std::fflush(stderr);
+        return 1;
+    }
+    const QString goldDir = QString::fromLocal8Bit(qgetenv("LA_CLIP_GOLD_DIR"));
+    if (goldDir.isEmpty() || !QDir(goldDir).exists()) {
+        std::fprintf(stderr, "LA_CLIP_MODEL_QA FAIL tamper=%d reason=gold_dir_missing\n", int(tamper));
+        std::fflush(stderr);
+        return 1;
+    }
+    const QString imgSpec = QString::fromLocal8Bit(qgetenv("LA_CLIP_IMGS"));
+    QStringList images;
+    for (const QString& part : imgSpec.split(QChar(','))) {
+        const QString p = part.trimmed();
+        if (p.isEmpty()) continue;
+        const QFileInfo fi(p);
+        if (fi.isFile()) {
+            images << fi.absoluteFilePath();
+        } else if (fi.isDir()) {
+            QDir d(p);
+            const QStringList filters = { QStringLiteral("*.jpg"), QStringLiteral("*.jpeg"),
+                                         QStringLiteral("*.png"), QStringLiteral("*.bmp"),
+                                         QStringLiteral("*.webp") };
+            const QFileInfoList lst = d.entryInfoList(filters, QDir::Files, QDir::Name);
+            for (const QFileInfo& e : lst) images << e.absoluteFilePath();
+        }
+    }
+    images.removeDuplicates();
+    images.sort();
+    if (images.isEmpty()) {
+        std::fprintf(stderr, "LA_CLIP_MODEL_QA FAIL tamper=%d reason=no_images (LA_CLIP_IMGS)\n", int(tamper));
+        std::fflush(stderr);
+        return 1;
+    }
+
+    // 真 clipinfer.exe 直起：子端 env 口径 = LA_CLIP_MODEL（模型目录唯一 env，R-15 无 Qt 自管）。
+    FaceAiSession s;
+    {
+        QProcessEnvironment e = QProcessEnvironment::systemEnvironment();
+        e.insert(QStringLiteral("LA_CLIP_MODEL"), modelDir);
+        s.proc.setProcessEnvironment(e);
+        s.proc.setProcessChannelMode(QProcess::SeparateChannels);
+        s.proc.start(exe, {});
+    }
+    if (!s.proc.waitForStarted(5000)) {
+        std::fprintf(stderr, "LA_CLIP_MODEL_QA FAIL tamper=%d reason=spawn_failed\n", int(tamper));
+        std::fflush(stderr);
+        return 1;
+    }
+    QElapsedTimer total; total.start();
+    QByteArray line;
+    const bool gotReady = faceAiReadLine(s.proc, s.buf, line, 90000);   // 真塔冷启动预算（#78 同式）
+    const qint64 readyMs = total.elapsed();
+    if (!gotReady || line != QByteArray("READY 1")) {                   // READY!=1 = 会话未齐，诚实红
+        faceAiStop(s);
+        std::fprintf(stderr, "LA_CLIP_MODEL_QA FAIL tamper=%d reason=ready line=%s ms=%lld\n",
+                     int(tamper), gotReady ? line.constData() : "<none>", qint64(readyMs));
+        std::fflush(stderr);
+        return 1;
+    }
+    std::fprintf(stderr, "LA_CLIP_MODEL_QA READY1 ms=%lld\n", qint64(readyMs));
+
+    int okCount = 0;
+    quint64 reqId = 0;
+    for (const QString& img : images) {
+        ++reqId;
+        const QString tag = QFileInfo(img).completeBaseName();
+        const QString goldPath = goldDir + QStringLiteral("/") + tag + QStringLiteral(".gold.json");
+        QFile gf(goldPath);
+        if (!gf.open(QIODevice::ReadOnly)) {
+            fails << QStringLiteral("%1 gold json missing: %2").arg(tag, goldPath);
+            std::fprintf(stderr, "LA_CLIP_MODEL_QA IMG %s ok=0 (gold missing)\n", qPrintable(tag));
+            continue;
+        }
+        ClipQaVerdict gold;
+        QString perr;
+        if (!cqParseVerdict(gf.readAll(), gold, &perr)) {
+            fails << QStringLiteral("%1 gold parse: %2").arg(tag, perr);
+            gf.close();
+            std::fprintf(stderr, "LA_CLIP_MODEL_QA IMG %s ok=0 (gold parse)\n", qPrintable(tag));
+            continue;
+        }
+        gf.close();
+
+        // 反例臂：只篡改期望表数据本身（score/note 列必红），比较/退出零分支（铁律22）。
+        if (tamper) cqTamperMonoOff(gold);
+
+        // REQ <id> jpg <len> + UTF-8 路径体（CLIP 轨唯一合法 kind）。
+        const QByteArray pathBytes = img.toUtf8();
+        const QByteArray hdr = QByteArray("REQ ") + QByteArray::number(qint64(reqId))
+                             + QByteArray(" jpg ") + QByteArray::number(pathBytes.size())
+                             + QByteArray("\n");
+        s.proc.write(hdr);
+        s.proc.write(pathBytes);
+        if (!s.proc.waitForBytesWritten(3000)) {
+            fails << QStringLiteral("%1 req write failed").arg(tag);
+            std::fprintf(stderr, "LA_CLIP_MODEL_QA IMG %s ok=0 (req write)\n", qPrintable(tag));
+            continue;
+        }
+
+        QByteArray respHdr, body;
+        const bool gotHdr = faceAiReadLine(s.proc, s.buf, respHdr, 60000);
+        const QList<QByteArray> tk = respHdr.split(' ');
+        if (!gotHdr || tk.size() != 3 || tk[0] != QByteArray("RES")
+            || tk[1] != QByteArray::number(qint64(reqId))) {
+            fails << QStringLiteral("%1 frame: %2").arg(tag, QString::fromUtf8(respHdr));
+            std::fprintf(stderr, "LA_CLIP_MODEL_QA IMG %s ok=0 (frame)\n", qPrintable(tag));
+            continue;
+        }
+        const qint64 len = tk[2].toLongLong();
+        if (len <= 0 || len > (1 << 20) * 64) {      // 64MiB 守卫（同真壳 kMaxReqBody 口径）
+            fails << QStringLiteral("%1 body len out of range: %2").arg(tag).arg(len);
+            std::fprintf(stderr, "LA_CLIP_MODEL_QA IMG %s ok=0 (len)\n", qPrintable(tag));
+            continue;
+        }
+        if (!faceAiReadExact(s.proc, s.buf, body, len, 60000)) {
+            fails << QStringLiteral("%1 body read failed").arg(tag);
+            std::fprintf(stderr, "LA_CLIP_MODEL_QA IMG %s ok=0 (body read)\n", qPrintable(tag));
+            continue;
+        }
+        ClipQaVerdict mine;
+        QString jerr;
+        if (!cqParseVerdict(body, mine, &jerr)) {
+            fails << QStringLiteral("%1 res parse: %2").arg(tag, jerr);
+            std::fprintf(stderr, "LA_CLIP_MODEL_QA IMG %s ok=0 (res parse)\n", qPrintable(tag));
+            continue;
+        }
+        const bool ok = cqCompareVerdict(gold, mine, fails, tag);
+        if (ok) ++okCount;
+        std::fprintf(stderr, "LA_CLIP_MODEL_QA IMG %s gold=(%s,%.4f) mine=(%s,%.4f) ok=%d\n",
+                     qPrintable(tag), qPrintable(gold.label), gold.score,
+                     qPrintable(mine.label), mine.score, int(ok));
+    }
+
+    faceAiStop(s);
+
+    if (fails.isEmpty())
+        std::fprintf(stderr, "LA_CLIP_MODEL_QA PASS tamper=%d imgs=%d ok=%d ready_ms=%lld total_ms=%lld\n",
+                     int(tamper), images.size(), okCount, qint64(readyMs), qint64(total.elapsed()));
+    else
+        std::fprintf(stderr, "LA_CLIP_MODEL_QA FAIL tamper=%d reason=%s\n",
+                     int(tamper), qPrintable(fails.join(QChar(';'))));
+    std::fflush(stderr);
+    return fails.isEmpty() ? 0 : 1;
+}
+
 // ---------------- 2.38.0 R2：HEIC/WebP EXIF 容器提取门（full 层） ----------------
 // 合成夹具字节确定（铁律29）：(a) WebP RIFF+EXIF chunk（直 TIFF / 带 "Exif\0\0" 前缀 两变体）
 // (b) 最小 HEIC ftyp+meta(iinf/infe "Exif"+iloc v0)+mdat（4 字节 BE 偏移 + 同款 TIFF blob）。
@@ -7294,6 +7947,14 @@ int main(int argc, char *argv[])
     // 第四轮 T3 第 78 门：人脸模型端到端五列对表门（真 faceinfer.exe + T2 金标注，opt-in）
     if (qEnvironmentVariableIsSet("LA_FACE_MODEL_QA"))
         return runFaceModelQa();
+
+    // 第四轮 T7 第 76 门：CLIP 轨 AiProto 契约门（clipinfer_stub 直起 + 真壳 prompts 反例 G1-G10）
+    if (qEnvironmentVariableIsSet("LA_CLIP_AI_QA"))
+        return runClipAiQa();
+
+    // 第四轮 T7 第 77 门：CLIP 模型端到端五列对表门（真 clipinfer.exe + T7 金标，opt-in）
+    if (qEnvironmentVariableIsSet("LA_CLIP_MODEL_QA"))
+        return runClipModelQa();
 
     // 方向 D 第五步 b：图库多选 + 批量工具条门禁
     if (qEnvironmentVariableIsSet("LA_GALLERY_BATCH_QA"))

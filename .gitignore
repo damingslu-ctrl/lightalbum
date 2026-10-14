@@ -18,6 +18,8 @@ native/3rdparty/lama/bin/
 inpaint/build/
 # faceinfer.exe/桩构建产物（第四轮 T1，同 inpaint 口径；见 faceinfer/CMakeLists.txt）
 faceinfer/build/
+# clipinfer.exe/桩构建产物（第四轮 T7，同 faceinfer 口径；见 clipinfer/CMakeLists.txt）
+clipinfer/build/
 native/LightAlbum_autogen/
 native/_ui_shot_*/
 native/_probe_*
