@@ -1452,10 +1452,6 @@ Errors: %1 — %2</translation>
         <translation>Next Frame</translation>
     </message>
     <message>
-        <source>人脸服务未就绪</source>
-        <translation>Face Service Not Ready</translation>
-    </message>
-    <message>
         <source>全部故事 %1</source>
         <translation>All Stories %1</translation>
     </message>
@@ -1552,12 +1548,12 @@ Errors: %1 — %2</translation>
         <translation>Please start the local CLIP service (D:\lightalbum_ai\start_classifier.bat), then click “AI Classify”. Loopback only; photos are never sent out.</translation>
     </message>
     <message>
-        <source>请先启动本地人脸服务（D:\lightalbum_ai\face_server.py），再点「智能聚类」。仅支持本机回环地址，照片不会外传。</source>
-        <translation>Please start the local face service (D:\lightalbum_ai\face_server.py), then click “Smart Clustering”. Loopback only; photos are never sent out.</translation>
+        <source>AI 引擎未就绪（缺模型或引擎文件，先运行 native/fetch_ai.ps1 并构建 faceinfer），再点「智能聚类」。照片仅在本机处理，绝不外传。</source>
+        <translation>AI engine not ready (missing model or engine file — run native/fetch_ai.ps1 and build faceinfer first), then click “Smart Clustering”. Photos are processed only on this machine and never sent out.</translation>
     </message>
     <message>
-        <source>请先启动本地人脸服务（D:\lightalbum_ai\face_server.py），再点「识别人物」。仅支持本机回环地址，照片不会外传。</source>
-        <translation>Please start the local face service (D:\lightalbum_ai\face_server.py), then click “Detect People”. Loopback only; photos are never sent out.</translation>
+        <source>AI 引擎未就绪（缺模型或引擎文件，先运行 native/fetch_ai.ps1 并构建 faceinfer），再点「识别人物」。照片仅在本机处理，绝不外传。</source>
+        <translation>AI engine not ready (missing model or engine file — run native/fetch_ai.ps1 and build faceinfer first), then click “Detect People”. Photos are processed only on this machine and never sent out.</translation>
     </message>
     <message>
         <source>重命名人物</source>

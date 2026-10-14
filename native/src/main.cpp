@@ -40,7 +40,7 @@
 #include "core/BrowseScope.h"   // 2.33.0 灯箱翻图作用域纯函数（LA_PRIVACY_QA 直调）
 #include "core/GeoHotspot.h"     // 方向 C·联动：地理热点聚合（与渲染/筛选同源）
 #include "core/Classifier.h"   // 方向 C·智能分类：CLIP 客户端桥（QA 门用合成钩子）
-#include "core/PersonDetector.h"  // 方向 C·人脸识别（方案A）：face_server 客户端桥（QA 门用合成钩子）
+#include "core/PersonDetector.h"  // 方向 C·人脸识别（方案A）：faceinfer 子进程编排层（QA 门用合成钩子）
 #include "core/AiWriter.h"     // 单写者投递器：门在主线程，写回经 QueuedConnection + processEvents 落地
 #include "core/FaceCluster.h"     // 方向 C·人物自动聚类：阈值余弦聚类纯函数（QA 门直调）
 #include "core/StoryGen.h"        // 人物故事方向·B：自动故事相册纯函数（LA_STORY_QA 直调）
@@ -3732,7 +3732,7 @@ int runGuiThreadQa()
         const QVector<Photo> snap = lib.photos();
         AiWriter writer(&lib, &guiCtx);
         QtConcurrent::run([&writer, snap] {
-            PersonDetector::detect(snap, writer, QStringLiteral("http://127.0.0.1:8767"));
+            PersonDetector::detect(snap, writer);
         }).waitForFinished();
         PersonDetector::clearSyntheticForQa();
         QCoreApplication::processEvents(QEventLoop::AllEvents, 200);
@@ -3989,7 +3989,7 @@ int runFaceClusterQa()
     //   门在主线程：processEvents 让 QueuedConnection 写回落地后，③ 才能读回。
     QObject qaCtx;
     AiWriter writer(&lib, &qaCtx);
-    const bool okEmb = PersonDetector::detectEmbeddings(lib.photos(), writer, QStringLiteral("http://127.0.0.1:8767"));
+    const bool okEmb = PersonDetector::detectEmbeddings(lib.photos(), writer);
     QCoreApplication::processEvents(QEventLoop::AllEvents, 200);
     note(okEmb, QStringLiteral("detectEmbeddings returned false"));
 
@@ -5981,7 +5981,7 @@ int runPersonQa()
     //   门在主线程：processEvents 让 QueuedConnection 写回落地。
     QObject qaCtx;
     AiWriter writer(&lib, &qaCtx);
-    const bool ok = PersonDetector::detect(lib.photos(), writer, QStringLiteral("http://127.0.0.1:8767"));
+    const bool ok = PersonDetector::detect(lib.photos(), writer);
     QCoreApplication::processEvents(QEventLoop::AllEvents, 200);
     note(ok, QStringLiteral("detect returned false"));
 
@@ -6967,7 +6967,10 @@ int main(int argc, char *argv[])
         i18nCheck("正在查找相似照片（%1 张）…", QStringLiteral("Finding similar photos (%1)…"));
         i18nCheck("只看视频", QStringLiteral("Videos Only"));
         i18nCheck("重命名人物", QStringLiteral("Rename Person"));
-        i18nCheck("人脸服务未就绪", QStringLiteral("Face Service Not Ready"));
+        // 2.40.0 T4b：人脸 HTTP 桥净替换后旧串「人脸服务未就绪」退役，
+        //   换代为新「AI 引擎未就绪」长文案代表断言（缺译→回落源码→变红）。
+        i18nCheck("AI 引擎未就绪（缺模型或引擎文件，先运行 native/fetch_ai.ps1 并构建 faceinfer），再点「识别人物」。照片仅在本机处理，绝不外传。",
+                  QStringLiteral("AI engine not ready (missing model or engine file — run native/fetch_ai.ps1 and build faceinfer first), then click \u201cDetect People\u201d. Photos are processed only on this machine and never sent out."));
 
         // 默认路径语言决策断言（2.11.1）：构造 locale 跨机确定性——
         // zh 系显示语言必须不加载 en（本事故根因）；en 系必须加载；forced 覆盖优先。

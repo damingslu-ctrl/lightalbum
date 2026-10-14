@@ -75,10 +75,10 @@ private:
     // 方向 C·智能分类：探测 CLIP 服务 → 异步跑分类（QtConcurrent）+ 进度/取消 → 刷新重建 chips
     void runClassify();
 
-    // 方向 C·人脸识别（方案A）：探测 face_server → 异步跑人脸检测（QtConcurrent）+ 进度/取消 → 刷新重建 chips
+    // 方向 C·人脸识别（方案A）：worker 线程探测 faceinfer 引擎 + 异步跑人脸检测（QtConcurrent）+ 进度/取消 → 刷新重建 chips
     void runPersonDetect();
 
-    // 方向 C·人物自动聚类：探测 face_server → 异步抽 embedding（落库 face_emb）→ FaceCluster
+    // 方向 C·人物自动聚类：worker 线程探测引擎 → 异步抽 embedding（落库 face_emb）→ FaceCluster
     // 阈值余弦聚类 → applyClusters 写回 person → 刷新重建人物 chips。
     void runFaceCluster();
 

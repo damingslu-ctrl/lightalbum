@@ -13,7 +13,7 @@
 #include "../core/ICloudSource.h"
 #include "../core/qaExit.h"      // 2.7.0 门禁自退契约（禁裸调 quit）
 #include "../core/Classifier.h"   // 方向 C·智能分类：CLIP 客户端桥
-#include "../core/PersonDetector.h"  // 方向 C·人脸识别（方案A）：face_server 客户端桥
+#include "../core/PersonDetector.h"  // 方向 C·人脸识别（方案A）：faceinfer 子进程编排层
 #include "../core/FaceCluster.h"     // 方向 C·人物自动聚类：阈值余弦聚类纯函数
 #include "FullCache.h"                // 2.22.0：原图字节预算 LRU（后台解码）
 #include "../core/MotionPref.h"
@@ -1524,23 +1524,16 @@ void MainWindow::runClassify()
     }));
 }
 
-// 方向 C·人脸识别（方案A）：收到图库「识别人物」信号后，探测本地 face_server，
-// 异步跑人脸检测（QtConcurrent 不阻塞 GUI），带进度对话框与取消；完成后重建 chips。
-// 单写者（core/AiWriter.h）：worker 只碰快照与网络，setPersons 落库经 AiWriter 恒回 GUI 线程。
+// 方向 C·人脸识别（方案A）：收到图库「识别人物」信号后，异步跑人脸检测
+// （QtConcurrent 不阻塞 GUI），带进度对话框与取消；完成后重建 chips。
+// 引擎就绪探测 + 检测全部在 worker 线程：AiSubprocessRunner 禁 GUI 线程调用
+// （GUI 线程 = Q_ASSERT + Busy），故此处绝不在 GUI 线程 probe（旧实现在 GUI 线程
+// 同步 QNAM probe 无害，换子进程底座后即为崩溃点——本次接线修正）。
+// 单写者（core/AiWriter.h）：worker 只碰快照与子进程，setPersons 落库经 AiWriter 恒回 GUI 线程。
 void MainWindow::runPersonDetect()
 {
     if (!lib_) return;
-    const QString url = QStringLiteral("http://127.0.0.1:8767");   // 仅回环（PersonDetector 守卫）
-    // 1) 探测服务（不可用 → 提示启动，不报错）
-    if (!PersonDetector::probe(url)) {
-        QMessageBox::information(this,
-            QCoreApplication::translate("LightAlbum", "人脸服务未就绪"),
-            QCoreApplication::translate("LightAlbum",
-                "请先启动本地人脸服务（D:\\lightalbum_ai\\face_server.py），"
-                "再点「识别人物」。仅支持本机回环地址，照片不会外传。"));
-        return;
-    }
-    // 2) 统计待检测数（person 为空）
+    // 1) 统计待检测数（person 为空；GUI 线程纯内存读快照，可）
     int pending = 0;
     for (const Photo& p : lib_->photos())
         if (p.person.isEmpty()) ++pending;
@@ -1550,7 +1543,7 @@ void MainWindow::runPersonDetect()
             QCoreApplication::translate("LightAlbum", "库内照片均已标注人物，无需再跑。"));
         return;
     }
-    // 3) 进度对话框 + 后台跑
+    // 2) 进度对话框 + 后台跑（探测与检测全在 worker 线程）
     auto* dlg = new QProgressDialog(
         QCoreApplication::translate("LightAlbum", "正在识别人物…"),
         QCoreApplication::translate("LightAlbum", "取消"), 0, pending, this);
@@ -1562,12 +1555,14 @@ void MainWindow::runPersonDetect()
     connect(watcher, &QFutureWatcher<bool>::finished, this,
             [this, dlg, watcher, cancelled, pending] {
                 dlg->close();
-                gallery_->refresh();   // 重建人物 chips + 计数（新人物生效）
                 const bool ok = watcher->result();
+                if (ok) gallery_->refresh();   // 重建人物 chips + 计数（新人物生效）
                 QMessageBox::information(this,
                     QCoreApplication::translate("LightAlbum", "识别人物"),
                     ok ? QCoreApplication::translate("LightAlbum", "已为 %1 张照片标注人物。").arg(pending)
-                       : QCoreApplication::translate("LightAlbum", "识别过程中断（可能已部分写入）。"));
+                       : QCoreApplication::translate("LightAlbum",
+                           "AI 引擎未就绪（缺模型或引擎文件，先运行 native/fetch_ai.ps1 "
+                           "并构建 faceinfer），再点「识别人物」。照片仅在本机处理，绝不外传。"));
                 watcher->deleteLater();
                 delete cancelled;
                 dlg->deleteLater();
@@ -1577,34 +1572,30 @@ void MainWindow::runPersonDetect()
     };
     const auto cancelPred = [cancelled] { return cancelled->load(); };
     const QVector<Photo> snap = lib_->photos();   // GUI 线程快照，见 runClassify 同款约束
-    watcher->setFuture(QtConcurrent::run([this, snap, url, prog, cancelPred] {
+    watcher->setFuture(QtConcurrent::run([this, snap, prog, cancelPred] {
+        // 探测在 worker 线程（子进程 runner 禁 GUI 线程调用）：未就绪 → false →
+        // finished 弹「AI 引擎未就绪」文案。detect 内部亦先 probe，语义一致。
+        if (!PersonDetector::probe()) return false;
         AiWriter writer(lib_, this);
-        return PersonDetector::detect(snap, writer, url, -1, prog, cancelPred);
+        return PersonDetector::detect(snap, writer, -1, prog, cancelPred);
     }));
 }
 
-// 方向 C·人物自动聚类：收到图库「智能聚类」信号后，探测本地 face_server，异步
+// 方向 C·人物自动聚类：收到图库「智能聚类」信号后，异步
 // ① worker 抽取代表脸 embedding（经 AiWriter 投递 face_emb 落库）②③④ finished
 // 处理器（GUI 线程）读回 embedding → FaceCluster 阈值余弦聚类 → applyClusters 写回 person
 // → 刷新人物 chips。QtConcurrent 不阻塞 GUI，带进度对话框与取消。
-// 单写者（core/AiWriter.h）：worker 只碰快照与网络；读回/聚类/写库恒在 GUI 线程，
+// 引擎就绪探测 + 抽取全在 worker 线程：AiSubprocessRunner 禁 GUI 线程调用（旧实现在
+// GUI 线程同步 QNAM probe，换子进程底座后即崩溃点——本次接线修正）。detectEmbeddings
+// 内部先 probe()，未就绪返回 false，finished 据此弹「AI 引擎未就绪」文案。
+// 单写者（core/AiWriter.h）：worker 只碰快照与子进程；读回/聚类/写库恒在 GUI 线程，
 // 且 finished 晚于 detectEmbeddings 的投递入队，故能读到刚落库的 embedding。
 // 起始编号：扫描既有 person token 中的「人物N」取最大 N，startIndex=N+1，避免与用户
 // 已重命名的既有标签撞号（撞号会把两个人的照片混进同一人物 chips）。
 void MainWindow::runFaceCluster()
 {
     if (!lib_) return;
-    const QString url = QStringLiteral("http://127.0.0.1:8767");   // 仅回环（PersonDetector 守卫）
-    // 1) 探测服务（不可用 → 提示启动，不报错）
-    if (!PersonDetector::probe(url)) {
-        QMessageBox::information(this,
-            QCoreApplication::translate("LightAlbum", "人脸服务未就绪"),
-            QCoreApplication::translate("LightAlbum",
-                "请先启动本地人脸服务（D:\\lightalbum_ai\\face_server.py），"
-                "再点「智能聚类」。仅支持本机回环地址，照片不会外传。"));
-        return;
-    }
-    // 2) 统计待聚类数（person 为空）
+    // 1) 统计待聚类数（person 为空）
     int pending = 0;
     for (const Photo& p : lib_->photos())
         if (p.person.isEmpty()) ++pending;
@@ -1615,7 +1606,7 @@ void MainWindow::runFaceCluster()
                 "库内照片均已标注人物，无需再聚类。要重新聚类请先清空人物标注。"));
         return;
     }
-    // 3) 起始编号：既有「人物N」的最大 N + 1
+    // 2) 起始编号：既有「人物N」的最大 N + 1
     int maxN = 0;
     for (const Photo& p : lib_->photos()) {
         for (const QString& t : p.person.split(',', Qt::SkipEmptyParts)) {
@@ -1664,7 +1655,9 @@ void MainWindow::runFaceCluster()
                 QMessageBox::information(this,
                     QCoreApplication::translate("LightAlbum", "智能聚类"),
                     extracted ? QCoreApplication::translate("LightAlbum", "已聚类 %1 张照片为不同人物。").arg(pending)
-                       : QCoreApplication::translate("LightAlbum", "聚类过程中断（可能已部分写入）。"));
+                       : QCoreApplication::translate("LightAlbum",
+                           "AI 引擎未就绪（缺模型或引擎文件，先运行 native/fetch_ai.ps1 "
+                           "并构建 faceinfer），再点「智能聚类」。照片仅在本机处理，绝不外传。"));
                 watcher->deleteLater();
                 delete cancelled;
                 dlg->deleteLater();
@@ -1674,10 +1667,11 @@ void MainWindow::runFaceCluster()
     };
     const auto cancelPred = [cancelled] { return cancelled->load(); };
     const QVector<Photo> snap = lib_->photos();   // GUI 线程快照，见 runClassify 同款约束
-    watcher->setFuture(QtConcurrent::run([this, snap, url, prog, cancelPred] {
+    watcher->setFuture(QtConcurrent::run([this, snap, prog, cancelPred] {
         // ① 抽代表脸 embedding 并经 AiWriter 投递 face_emb 写回（落库恒在 GUI 线程）
+        //    探测/推理全在 worker 线程的子进程门面里（runner 禁 GUI 线程调用）。
         AiWriter writer(lib_, this);
-        return PersonDetector::detectEmbeddings(snap, writer, url, -1, prog, cancelPred);
+        return PersonDetector::detectEmbeddings(snap, writer, -1, prog, cancelPred);
     }));
 }
 
