@@ -673,7 +673,10 @@ $GateTable = @(
   # When opted in, the app spawns the REAL clipinfer.exe (CLIP ViT-B-32 image tower
   # ORT session + verbatim classifier_server.py decision rules; no runner yet -- the
   # thread lifecycle belongs to the #75 chain) and asserts the five spec section 4
-  # columns per fixture against <GOLD_DIR>/<stem>.gold.json:
+  # columns per fixture against <GOLD_DIR>/<full-basename>.gold.json (review I-3/T6-M3:
+  # gold name INCLUDES the extension, matching the producer basename+".gold.json", so
+  # a.png/a.JPG can never collide on one gold; the count cross-check below pins the
+  # roster):
   # label verbatim equal, note verbatim equal (null aligned), |score delta| <= 0.005,
   # top3 per-pair label equal + |prob delta| <= 0.02, |sat delta| <= 1.0.
   # R-14b/R-55 adjudication: the sat path is the PIL default-bicubic (Catmull-Rom) fixed-point
@@ -698,6 +701,13 @@ $GateTable = @(
   #     null); real shell still answers the low_confidence branch -> LABEL + NOTE red,
   #     SCORE_D=0.00000 by construction (same source prob: the red IS the branch).
   #     Measured (t7f1-m77-otheroff.txt): both fixtures red, 11/13 still ok=1, exit 1.
+  # Low-confidence fixture exception (review I-5, recorded in clip-gold-margins.txt and
+  # ai_export/gen_clip_synthetic_lowconf.py): the producer GAP_MIN=0.10 CANNOT be met by
+  # any score<0.20 sample (8-class softmax: gap <= (8*top1-1)/7 < 0.0857), so the
+  # low_confidence family takes a documented GAP_MIN exception but must still clear
+  # 2*0.02=0.04 ordering margin -- the gate loudly asserts gold screen.gap_top1_top2
+  # > 0.04 for every low_confidence gold (missing field or <=0.04 -> FAIL, no silent
+  # order-flip fragility).
   # Tier: full. timeoutSec=120 covers cold ORT tower load on slow hosts (#78 isomorphic).
   # measuredMs=13787 from real qa_runner -Timing WITH env mounted, max-of-warm (rules
   # 25/31): T7f1 wave x3 = 13787 / 13252 / 13457 ms (file-list form x2 + directory form,

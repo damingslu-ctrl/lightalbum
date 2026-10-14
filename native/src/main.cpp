@@ -5999,7 +5999,8 @@ int runClipAiQa()
 // 严格带保留不放宽（与 gate_matrix.ps1 #77 注册注释逐字同数，T12 机械核对项）。
 // 隐私红线 R-06：真人图像与 gold JSON 永不入仓——门只从 env 路径读取：
 //   LA_CLIP_MODEL = 模型目录（clip_vit_b32_img.onnx + prompts.bin）；
-//   LA_CLIP_GOLD_DIR = gold JSON 目录（<stem>.gold.json 平铺）；
+//   LA_CLIP_GOLD_DIR = gold JSON 目录（<完整basename>.gold.json 平铺，I-3：金名含扩展名，
+//                      与生产者 basename+".gold.json" 同契约，同干异扩展不撞金）；
 //   LA_CLIP_IMGS = 逗号分隔图像文件或目录（jpg/jpeg/png/bmp/webp，目录取 Name 序）。
 // env 缺席 = qa_runner need= 机制自动 SKIP；opted-in 而前置缺失（exe/模型/gold/READY!=1）
 // = 诚实 FAIL（铁律34，禁静默放行）。夹具↔金份数交叉校验：imgs 与 goldDir 内
@@ -6020,6 +6021,8 @@ struct ClipQaVerdict
     QString note;
     double score = 0.0;
     double sat = 0.0;
+    bool hasScreenGap = false;   // gold.screen.gap_top1_top2（夹具选点留量，RES 无此键）
+    double screenGap = 0.0;
     QVector<QPair<QString, double>> top;    // [label, prob] 序 = RES/gold top 数组序
 };
 
@@ -6043,6 +6046,10 @@ static bool cqParseVerdict(const QByteArray& json, ClipQaVerdict& v, QString* er
     v.note = v.hasNote ? nv.toString() : QString();
     v.score = o.value(QStringLiteral("score")).toDouble();
     v.sat = o.value(QStringLiteral("sat")).toDouble();
+    const QJsonObject scr = o.value(QStringLiteral("screen")).toObject();
+    const QJsonValue gv = scr.value(QStringLiteral("gap_top1_top2"));
+    v.hasScreenGap = gv.type() == QJsonValue::Double;
+    v.screenGap = v.hasScreenGap ? gv.toDouble() : 0.0;
     v.top.clear();
     const QJsonArray ta = o.value(QStringLiteral("top")).toArray();
     for (const QJsonValue& tv : ta) {
@@ -6220,12 +6227,14 @@ int runClipModelQa()
     quint64 reqId = 0;
     for (const QString& img : images) {
         ++reqId;
-        // 金侧配对名 = completeBaseName()（只剥最后一段扩展名，大小写不敏感）：
-        // "IMG_2540.PNG"→"IMG_2540"、"a.b.png"→"a.b"。当前 13 份夹具名全是单点，
-        // 多点行为无法在跑批里分辨，故在此钉死语义（禁用 lastIndexOf('.') 手切或
-        // replace(".png","") 这类大小写敏感写法）。
+        // 金侧配对名 = 图像文件完整 basename（含扩展名）：生产者 gen_clip_fixtures.py
+        // 与本波 gen_clip_synthetic_lowconf.py 均写 basename(dst)+".gold.json"，消费侧
+        // 用 fileName() 拼同一名字（I-3/T6-M3：同干不同扩展 a.png/a.JPG 的金不再撞名互
+        // 覆盖——「干名撞车」在契约层不可能）。tag 仍取 completeBaseName()，仅作显示归因，
+        // 绝不参与配金；禁止回退成手切 stem（那会重新引入撞名路径）。
         const QString tag = QFileInfo(img).completeBaseName();
-        const QString goldPath = goldDir + QStringLiteral("/") + tag + QStringLiteral(".gold.json");
+        const QString goldPath = goldDir + QStringLiteral("/")
+                               + QFileInfo(img).fileName() + QStringLiteral(".gold.json");
         QFile gf(goldPath);
         if (!gf.open(QIODevice::ReadOnly)) {
             fails << QStringLiteral("%1 gold json missing: %2").arg(tag, goldPath);
@@ -6241,6 +6250,19 @@ int runClipModelQa()
             continue;
         }
         gf.close();
+
+        // I-5 记档例外护栏：低置信族对生产者 GAP_MIN=0.10 走文档化例外（8 类 softmax 下
+        // top1<0.20 数学上限 gap ≤ (8·top1−1)/7 < 0.0857，真实退化图不可能同时满足，
+        // 见 ai_export/gen_clip_synthetic_lowconf.py 与 clip-gold-margins.txt），但对
+        // 2Δ=0.04（top3 逐对容差×2 的翻序保序下限）仍须留量：金内 screen.gap_top1_top2
+        // 缺字段或 ≤0.04 即响亮 FAIL。判据/容差/档位零改动，只是把潜伏脆弱性收进断言面。
+        if (gold.hasNote && gold.note == QLatin1String("low_confidence")
+            && (!gold.hasScreenGap || !(gold.screenGap > 0.04))) {
+            fails << QStringLiteral("%1 low_confidence gold screen.gap_top1_top2 missing or <=0.04 (gap=%2)")
+                         .arg(tag)
+                         .arg(gold.hasScreenGap ? QString::number(gold.screenGap, 'f', 4)
+                                                : QStringLiteral("<absent>"));
+        }
 
         // 反例臂：只篡改期望表数据本身，比较/退出零分支（铁律22）。两臂并列：
         // OtherOff 先跑（咬 low_confidence 面）、MonoOff 咬 low_saturation 面，命中集互斥。

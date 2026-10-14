@@ -4,7 +4,10 @@
 同进程直调 `D:\\lightalbum_ai\\classifier_server.py`（**不起 HTTP**，杜绝端口漂移/服务
 版本歧义）：`load_model()` → 把 PIL 图喂给 `classify_batch()`，让 gold 由**服务器自己的
 判定代码路径**产出（黑白确定性 / low_confidence / mono_guard 三段 + top3 4dp + sat），
-而不是手抄一份等价逻辑。返回行 verbatim 写成 `<name>.gold.json`。
+而不是手抄一份等价逻辑。返回行 verbatim 写成 `<完整basename>.gold.json`（I-3/T6-M3：
+金名 = `os.path.basename(dst) + ".gold.json"`，**含扩展名**——同干不同扩展 `a.png`/`a.JPG`
+不再共写一份金互相覆盖；`#77` 消费侧 `QFileInfo(img).fileName()+".gold.json"` 同笔同口径，
+改任何一侧必须同步另一侧与夹具目录金名册）。
 
 候选预筛（R-12c，face 轨 R-11 教训的 CLIP 版）：从 `LA_CLIP_IMGS`（逗号分隔的图路径或
 目录）确定性等距抽样 `LA_CLIP_SCREEN_MAX` 张，逐张算判定余量，**剔除任何落在决策边界
@@ -314,7 +317,9 @@ def main() -> int:
         m = by_path.get(dst, {}).get("m") or c["m"]
         out_dir = gold_dir or os.path.dirname(dst)
         os.makedirs(out_dir, exist_ok=True)
-        gold = os.path.join(out_dir, os.path.splitext(os.path.basename(dst))[0] + ".gold.json")
+        # I-3/T6-M3：金名 = 完整 basename（含扩展名）+ ".gold.json"，与 #77 消费侧
+        # QFileInfo(img).fileName() 同一契约（<stem> 拼名会让 a.png/a.JPG 撞同一份金）。
+        gold = os.path.join(out_dir, os.path.basename(dst) + ".gold.json")
         payload = {
             "image": os.path.abspath(dst),
             "oracle": "classifier_server.classify_batch (in-process, CPU fp32, no HTTP)",
