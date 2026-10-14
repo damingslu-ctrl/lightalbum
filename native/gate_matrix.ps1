@@ -709,11 +709,16 @@ $GateTable = @(
   # > 0.04 for every low_confidence gold (missing field or <=0.04 -> FAIL, no silent
   # order-flip fragility).
   # Tier: full. timeoutSec=120 covers cold ORT tower load on slow hosts (#78 isomorphic).
-  # measuredMs=13787 from real qa_runner -Timing WITH env mounted, max-of-warm (rules
-  # 25/31): T7f1 wave x3 = 13787 / 13252 / 13457 ms (file-list form x2 + directory form,
-  # supersedes T7 x3 = 10877 / 13723 / 11197; ready_ms swings 528..3105 with ORT tower
-  # page-cache state, which is gate-intrinsic cost, so the conservative max is recorded).
-  @{n="LA_CLIP_MODEL_QA"; png=$false; need=@("LA_CLIP_MODEL","LA_CLIP_GOLD_DIR"); measuredMs=13787; timeoutSec=120}
+  # measuredMs=18067 from real qa_runner -Timing WITH env mounted, max-of-warm (rules
+  # 25/31). Every cited value has an archived run in this plan's scratch dir:
+  #   file-list form x2 = 13787 (t7f1-run77-a.txt) / 13252 (t7f1-run77-b.txt),
+  #   directory form x3 = 18067 / 15896 / 16634 (f1-dirform-1..3.u8.txt, controller
+  #   re-measure closing re-review F-1: the previous third value 13457 had NO archive,
+  #   so it is withdrawn rather than kept as an unverifiable citation).
+  # ready_ms alone swung 493..3680 across those five runs (ORT tower page-cache state is
+  # gate-intrinsic cost, not a defect), which is why the conservative max is recorded.
+  # Supersedes T7 x3 = 10877 / 13723 / 11197.
+  @{n="LA_CLIP_MODEL_QA"; png=$false; need=@("LA_CLIP_MODEL","LA_CLIP_GOLD_DIR"); measuredMs=18067; timeoutSec=120}
 )
 # Resolve a gate's tier. Absent key means "full" - the fail-safe default.
 function Get-GateTier {
