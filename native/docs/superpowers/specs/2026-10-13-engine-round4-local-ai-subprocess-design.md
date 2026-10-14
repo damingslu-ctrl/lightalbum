@@ -71,7 +71,12 @@ GUI）；门面是静态同步函数，调用点全部在 `QtConcurrent::run` �
   （`{"ok":true,"count":N,"faces":[{bbox,score,embedding,kps}]}`，embedding 保持
   **5 位小数舍入**后入 2048B float32-LE BLOB——库里既有嵌入的语义契约不破）。
   「网络层失败→整张放过」「无脸→faces:[]不标注」「已标注跳过」三条既有容错逐字保留。
-- `Classifier::classify`：multipart 批 32 → 逐张 `REQ jpg <len>` + JPEG 字节流
+- `Classifier::classify`：multipart 批 32 → 逐张 `REQ jpg <len>` + **UTF-8 图像绝对路径字节**
+  （**2026-10-14 R-75 订正**：本行原写「JPEG 字节流」，与已落地并通过 13/13 平价实测的
+  clipinfer 帧口径矛盾——body 是路径不是图片字节，见 `clipinfer/clipinfer.cpp:224-238`、
+  `native/src/main.cpp:6211-6217`；与 §5 的 face 侧 `det` 路径体同族，见 §5 末 R-75 块。
+  好处：子进程自持解码，Qt 侧不再重复读盘/转码，且 `Classifier.cpp:162-170` 既有
+  「按路径读盘」语义直接继承）
   （**逐张失败放过** = 原整批放过的收窄版，语义方向一致）；响应 JSON 与 `/classify`
   的 `results` 逐字段同形，`normalizeLabel` 最后一英里映射保留不动。
 - `probe()` 签名去掉 `url` 参数（`static bool probe()`），语义 = 进程可拉起且 READY 1
@@ -128,7 +133,16 @@ GUI）；门面是静态同步函数，调用点全部在 `QtConcurrent::run` �
 
 - 请求一行：`REQ <id> <kind> <len>\n`；kind：face 侧 `det`（canonical，T2 评审裁定；
   len=UTF-8 路径字节数，body=路径原字节；faceinfer 对旧词 `path` 同义接受，历史兼容）；
-  clip 侧 `jpg`（body=JPEG 原始字节）。
+  clip 侧 `jpg`（**len=UTF-8 图像绝对路径字节数，body=路径原字节**）。
+  - **2026-10-14 T7 收口订正（R-75）**：本条原文写「clip 侧 `jpg`（body=JPEG 原始字节）」，
+    与 T1–T5 已落地并评审通过的 face 轨（body=路径）不对称；T7 实现按 **path** 落地
+    （`clipinfer/clipinfer.cpp:224-238` + `preproc::loadRgb` 走 `MultiByteToWideChar(CP_UTF8)`，
+    #77 侧 `native/src/main.cpp:6211-6217` 发 `img.toUtf8()`），13/13 oracle 平价实测绿。
+    采认 path 口径并以此为准：**等价性**在于退役中的 HTTP 桥发送的 part body 本就是
+    `QFile(QDir(thumbsDir).filePath(p->thumbFile)).readAll()`（`Classifier.cpp:162-170`），
+    子端按同一路径读回的字节与之逐字相同，分类结果不因搬运方式改变；**收益**是与 face 轨
+    同一套 body 语义（底座 `AiSubprocessRunner` 零分叉）、父进程无需为 32 张缩略图驻留内存
+    （spec §8 内存纪律同向）。若日后要让 clipinfer 收字节流，属**新需求**，须另立任务并重取平价。
 - 成功应答：`RES <id> <len>\n` + len 字节 UTF-8 JSON；失败应答：`ERR <id> <code>\n`
   （code：`nomodel|loadfail|inferfail|badframe`）。stdout 只走协议帧（`_O_BINARY`
   强制，日志全走 stderr）——三条 lama 血泪规约 verbatim 继承。

@@ -213,7 +213,7 @@ inline bool parseReq(const char* line, size_t n, Header& h) {
 - Create: `native/src/core/ClipRunner.h/.cpp`
 - Modify: `native/src/core/Classifier.cpp`、`native/src/ui/MainWindow.cpp`（:1473 文案）、`.ts`、`main.cpp`/`gate_matrix.ps1`（#76 G3/G6/G7/G8 补全 + measuredMs）
 
-- [ ] **Step 1: ClipRunner**（基于 T4 runner，REQ kind="jpg"，body=缩略 JPEG 字节——现 HTTP multipart 读的同一 `QFile::readAll` 源）。批 32 循环保留为**批次调度**（进度计数不漂），传输逐张化；**per-image 失败→该张放过**（原「整批放过」的收窄，方向一致），`normalizeLabel` 与 `items/paths[idx]` 组装零改动。probe 无参化。
+- [ ] **Step 1: ClipRunner**（基于 T4 runner，REQ kind="jpg"，body=**图像绝对路径的 UTF-8 原字节**（len=路径字节数，**不是**图片字节——本行原文写「缩略 JPEG 字节」已被 T7 实物订正，见 spec §2.3/§5 的 R-75 块；开工前先读 `clipinfer/clipinfer.cpp:224-238` 与 `native/src/main.cpp:6211-6217` 两处实物对齐口径）。批 32 循环保留为**批次调度**（进度计数不漂），传输逐张化；**per-image 失败→该张放过**（原「整批放过」的收窄，方向一致），`normalizeLabel` 与 `items/paths[idx]` 组装零改动。probe 无参化。
 - [ ] **Step 2: MainWindow 文案替换 + .ts**。
 - [ ] **Step 3: #76 补全 + 反例 + 全绿（#70/#75 回归）+ `git grep` 无 `8766`**。
 - [ ] **Step 4: Commit**。
