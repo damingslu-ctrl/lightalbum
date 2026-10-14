@@ -1,0 +1,45 @@
+LICENSE -- native/3rdparty/face/  (buffalo_l family face weights)
+
+This file records the license posture of the two ONNX weights shipped in
+native\3rdparty\face\bin\ :
+    detection.onnx   = SCRFD-10GF   (insightface file name det_10g.onnx)
+    recognition.onnx = ArcFace w600k_r50 (insightface file name w600k_r50.onnx)
+
+It is NOT a license grant by this project. The terms below are quoted verbatim
+from the upstream project that produced the weights. The upstream ships no
+standalone LICENSE blob for these weights (HuggingFace cardData of
+immich-app/buffalo_l says license=other / license_name=insightface and points at
+the python-package License section), which is why this file is a quoted record
+rather than a copied license text.
+
+Upstream project: DeepInsight InsightFace
+  license_link (from the HuggingFace model card metadata, retrieved 2026-10-15):
+    https://github.com/deepinsight/insightface/tree/master/python-package#license
+  Model source as recorded by D:\lightalbum_ai\face_server.py line 4:
+    https://hf-mirror.com/immich-app/buffalo_l
+      detection/model.onnx    -> SCRFD-10GF       (~17 MB, detection + 5-point keypoints)
+      recognition/model.onnx  -> ArcFace w600k_r50 (~174 MB, 512-d identity embedding)
+
+Verbatim License section of the upstream python-package README
+(https://raw.githubusercontent.com/deepinsight/insightface/master/python-package/README.md,
+HTTP 200, retrieved 2026-10-15):
+
+    The library code is released under the MIT License, for academic and
+    commercial use. The pretrained models provided with this library are for
+    non-commercial research only, whether downloaded automatically or manually.
+
+Consequences for this repository:
+
+  * Upstream library CODE: MIT -- academic and commercial use allowed.
+  * The PRETRAINED WEIGHTS shipped in bin/: NON-COMMERCIAL RESEARCH ONLY.
+    Nothing in this repository claims, or may be read as claiming, a
+    commercial-use grant for detection.onnx or recognition.onnx.
+  * Any commercial distribution of these weights requires separate authorization
+    from the upstream model authors first.
+  * ONNX Runtime (bin/onnxruntime.dll) is a separate dependency under the MIT
+    License; see THIRD_PARTY-NOTICE.md section 2 for its verbatim text.
+
+Provenance / integrity: native/fetch_ai.ps1 hard-checks this file, the NOTICE and
+the two SHA-256 digests pinned above-in-the-NOTICE before any byte is placed in
+bin\ (verify-before-land), and offers a -SelfTest mode that injects the counter-
+examples (bad SHA, deleted LICENSE, missing source) to prove those checks bite.
