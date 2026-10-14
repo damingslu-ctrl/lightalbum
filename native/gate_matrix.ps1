@@ -579,25 +579,36 @@ $GateTable = @(
   # need= by design (plan-level ruling 2), so the synthetic part always runs. measuredMs=124
   # backfilled in R2-T2 from qa_runner -Timing (rules 25/31; E8 requires the key).
   @{n="LA_EXIF_CONTAINER_QA"; png=$false; measuredMs=124},
-  # 2.40.0 round4 T1: AiProto frame-protocol skeleton gate (gate #75, LA_FACE_AI_QA).
-  # Hermetic: the app spawns faceinfer_stub.exe directly via QProcess (discovery mirrors
-  # EraseRunner::findExe dev fallback; stub built by the standalone faceinfer/ CMake
-  # project and POST_BUILD-copied into native/build). Protocol-level assertions:
+  # 2.40.0 round4 T1+T4a: AiProto frame-protocol contract gate (gate #75, LA_FACE_AI_QA).
+  # Hermetic: faceinfer_stub.exe drives the full frame spectrum. T1 direct-QProcess arms:
   # G1 READY 1 handshake; G2 READY 0 then every REQ answered ERR <id> nomodel;
-  # G4 RES JSON body streamed by the stub in 64-byte flushed fragments must be read
-  # fully by the runner-side body loop (EraseProto short-read lesson);
-  # G5 ERR frames are structured (kind token + exact id + known code).
-  # Reserved for Task 4 runner integration (no assertions this task): G3 full RES
-  # roundtrip semantics, G6 timeout + restart, G7 busy single-flight, G8 exe_missing.
-  # Counterexample LA_FACE_AI_QA_FORCE_BROKEN=1 corrupts the fixed expectation table
-  # so all four groups go RED together (rule 22: the stub branches on env, the
+  # G4 RES JSON body streamed in 64-byte flushed fragments must be read fully by the
+  # body loop (EraseProto short-read lesson); G5 ERR frames structured (token+id+code).
+  # T4a adds the REAL AiSubprocessRunner arms (owner-thread QProcess base, all runner
+  # entries called from worker threads because spec 2.2 forbids the GUI thread):
+  # G3 full RES roundtrip equality through the runner (REQ det -> RES JSON byte-exact
+  #   plus parsed deep-equal; body arrives via the one-shot FRAG hook = runner-side
+  #   fragmented-stream read-full leg);
+  # G5p parseReq whole-token regression (T1 review carry-over): in-app "REQX" rejected
+  #   and "REQ" still accepted, wire REQX line answered ERR badframe by the stub, plus
+  #   the sIsMainThread predicate (guard behind the GUI-thread refusal);
+  # G6 HANG -> Timeout (crash-aware read bail, not atEnd()-only spinning) -> auto-restart
+  #   once -> second call green with full body;
+  # G7 concurrent second caller gets Busy inside the stub's 3s slow-frame window
+  #   (single-flight invariant, spec 2.2: no queueing, no deadlock);
+  # G8 all exe candidates missing -> NoExe (ensureReady and call agree, never spawns).
+  # Counterexample LA_FACE_AI_QA_FORCE_BROKEN=1 corrupts ONLY the fixed expectation
+  # table so ALL groups go RED together (rule 22: the stub branches on env, the
   # expectations never do; identical exit path).
-  # Tier: fast per plan ruling (hermetic protocol gate, no external env). timeoutSec=30.
-  # measuredMs=433 from real qa_runner -Timing x7 (rule 31): 912/294/306/312/318/306/433 ms;
-  # the 912 was the one-time cold disk-cache run right after linking the exe (same cold
-  # inflation pattern as LA_ERASE_QA history 2210 sync -> 3141 async); conservative max
-  # of the warm band recorded. 433 <= the 500ms E6 fast budget, so the FAST tier stands.
-  @{n="LA_FACE_AI_QA"; png=$false; tier="fast"; timeoutSec=30; measuredMs=433},
+  # Tier: FULL. The plan-level ruling was "fast per plan, demote to full only if >500"
+  # (T1 skeleton measured 433ms); with the real runner arms live the measured cost is
+  # dominated by G6's 1500ms timeout budget + G7's 3s stub sleep, far over the 500ms
+  # E6 fast budget. LA_ERASE_QA (runner gate, full tier, measuredMs 12390) is the
+  # isomorphic precedent; fail-safe rule "absent tier = full" applies. timeoutSec=30
+  # kept (worst observed arm ~7s, plus cold-disk margin; self-exit timeout still INFRA-RED).
+  # measuredMs=6992 from real qa_runner -Timing x5 (rule 31): 7000 (cold, right after
+  # linking) / 6992 / 6923 / 6906 / 6911 ms; conservative max-of-warm recorded.
+  @{n="LA_FACE_AI_QA"; png=$false; timeoutSec=30; measuredMs=6992},
   # 2.40.0 round4 T3: real face-model end-to-end quality gate (gate #78, LA_FACE_MODEL_QA).
   # Opt-in: need=@("LA_FACE_MODEL","LA_FACE_IMG") -- absent -> qa_runner [SKIP] (privacy
   # red line R-06: real face images and gold JSONs never enter the repo; the gate only

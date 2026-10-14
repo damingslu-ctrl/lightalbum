@@ -27,6 +27,8 @@
 #include <QLocale>
 #include <cstdio>
 #include <cmath>
+#include <thread>      // 2.40.0 T4a #75 真底座臂：runner 入口必须经非 GUI worker 线程（spec §2.2）
+#include <atomic>      // 2.40.0 T4a #75 G7 并发窗口在飞标志
 #include <cstring>                      // R3-T1 DET 决定性子断言：std::memcmp 逐字节比对
 #include <algorithm>          // 2.35.0 std::reverse / std::rotate（O 组顺序不变性排列）
 #include "core/Library.h"
@@ -48,6 +50,8 @@
 #include "core/MotionDriver.h"      // 2.34.0 引擎 Qt 驱动器（LA_MOTION_QA 直调）
 #include "core/EraseBridge.h"   // 2.35.0 AI 消除契约门（LA_ERASE_QA 直调）
 #include "core/EraseRunner.h"   // 2.35.0 执行器 QA 钩子（qaInjectBadSize）
+#include "core/AiProto.h"      // 2.40.0 第四轮 T4a：#75 G5p 全词比对回归腿直调 parseReq
+#include "core/AiSubprocessRunner.h"  // 2.40.0 第四轮 T4a：#75 G3/G6/G7/G8 经真底座断言
 #include "core/ExifReader.h"    // 2.38.0 R2 EXIF 容器门（LA_EXIF_CONTAINER_QA 直调）
 #include <QTemporaryDir>
 #include <QPainter>
@@ -4912,21 +4916,32 @@ int runEraseQa()
     return fails.isEmpty() ? 0 : 1;
 }
 
-// ---------------- 第四轮 T1 第 75 门 LA_FACE_AI_QA：AiProto 帧协议骨架门（fast 层，hermetic 桩） ----------------
-// runner 尚不存在（T4 接入），门以 QProcess 直起 faceinfer_stub.exe 做协议级断言。
+// ---------------- 第四轮 T1 第 75 门 LA_FACE_AI_QA：AiProto 帧协议契约门（fast 层，hermetic 桩） ----------------
+// T1 直spawn臂（G1/G2/G4/G5）：门以 QProcess 直起 faceinfer_stub.exe 做协议级断言。
+// T4a 真底座臂（G3/G5p线腿/G6/G7/G8）：经 AiSubprocessRunner 全线程机械（owner 线程
+// + BlockingQueuedConnection + 单飞闸 + 重启一次 + NoExe 判定），桩同一只，env 钩子经
+// runner qaHookEnvName 一次性注入消耗。spec §2.2 GUI 线程禁调 request：门侧全部
+// runner 入口经 std::thread worker 调用（主线程直调即被拒 Busy——门自身先守纪律）。
 // 执行器发现沿用 EraseRunner::findExe 的 dev-fallback 口径：候选 1 = native/build/ 扁平产物
 // （faceinfer/CMakeLists POST_BUILD 拷机注入），候选 2 = 仓根 faceinfer/build/。桩缺席 =
 // 开发构建坏了 -> 诚实 FAIL（return 1 即 RED，不许静默放行）。
-// 本任务断言组（controller 裁定的 T1 子集）：
+// 断言组全谱（八组齐，spec §7#75）：
 //   G1 默认桩 `READY 1` 握手；
 //   G2 LA_FACE_FORCE_NOMODEL -> `READY 0` 后每 REQ 收 `ERR <id> nomodel`（spec §5 保活语义）；
+//   G3 [T4a] 真底座全量 roundtrip：REQ(det)->RES JSON 逐字节 + 解析后 deep-equal，
+//      体经 FRAG 钩子首 spawn 子进程 64B 分片流式送达（底座体读循环读满的 runner 级兄弟腿）；
 //   G4 LA_FACE_FORCE_FRAG -> RES 体（2162B 确定性 JSON）被桩按 64B 分片+片间 fflush 写出，
 //      门侧必须按 EraseProto 血泪判例逐批读满（waitForReadyRead 到达批次边界任意）；
-//   G5 LA_FACE_FORCE_ERR -> `ERR <id> <code>` 帧结构化：三字段、id 与 REQ 严格一致、code 属已知集。
-// 预留名（T4 随 AiSubprocessRunner 引入，本任务门侧无断言）：
-//   G3 = RES path 语义全量 roundtrip；G6 = READY/应答超时 + 崩溃重启；G7 = busy 单飞拒绝；G8 = exe_missing。
+//   G5 LA_FACE_FORCE_ERR -> `ERR <id> <code>` 帧结构化：三字段、id 与 REQ 严格一致、code 属已知集；
+//   G5p [T4a] AiProto 首词全词比对回归腿（T1 评审遗留#1，规则#34 反例纪律）：
+//      parseReq 应用层直调拒 "REQX" 且仍收合法帧 + 线腿喂 REQX 行必收 ERR badframe
+//      + sIsMainThread 谓词（主线程真/worker 假，runner GUI 拒绝的依据）；
+//   G6 [T4a] LA_FACE_FORCE_HANG 一次性钩子 -> 90s 挂起 1500ms 预算内 Timeout 逃逸
+//      （崩溃感知读逃逸，T1 评审遗留#2）-> 自动重启一次的干净子进程第二 call 复绿；
+//   G7 [T4a] 并发单飞：LA_FACE_FORCE_SLOW 帧间 3s 睡眠窗口内第二调用者即收 Busy（不排队不死锁）；
+//   G8 [T4a] exe 候选全缺 -> ensureReady 与 call 一致 NoExe（spec §2.2 exe_missing）。
 // 桩按 LA_FACE_FORCE_* env 分支；门期望表是固定常量、永不随桩分支（铁律22）。
-// 反例 LA_FACE_AI_QA_FORCE_BROKEN=1 只篡改期望常量 -> G1/G2/G4/G5 四组同红，
+// 反例 LA_FACE_AI_QA_FORCE_BROKEN=1 只篡改期望常量 -> 八组同红，
 // 退出路径与正跑完全一致（return fails.isEmpty()?0:1 不按 broken 分支，铁律22/34）。
 struct FaceAiSession
 {
@@ -5019,6 +5034,26 @@ static bool faceAiSendReq(FaceAiSession& s, quint64 id, const QByteArray& path)
     return s.proc.waitForBytesWritten(3000);
 }
 
+// ---- T4a 真底座臂助件：spec §2.2 禁 GUI 线程调 runner——门自身先守纪律，
+// 一切 AiSubprocessRunner 入口经独立 worker 线程执行（主线程直调即被底座拒 Busy，
+// 这正是被断言的防线本身，不能拿来当调用路径）。----
+static AiSubprocessRunner::Reply faceAiCall(AiSubprocessRunner& r, const QString& kind,
+                                            quint64 id, const QByteArray& body, int timeoutMs)
+{
+    AiSubprocessRunner::Reply out;
+    std::thread th([&] { out = r.call(kind, id, body, timeoutMs); });
+    th.join();
+    return out;
+}
+
+static bool faceAiProbe(AiSubprocessRunner& r, AiSubprocessRunner::Rst* st)
+{
+    bool ok = false;
+    std::thread th([&] { ok = r.ensureReady(st); });
+    th.join();
+    return ok;
+}
+
 int runFaceAiQa()
 {
     const bool tamper = !qEnvironmentVariableIsEmpty("LA_FACE_AI_QA_FORCE_BROKEN");
@@ -5049,6 +5084,22 @@ int runFaceAiQa()
     const QByteArray expG2Code  = tamper ? QByteArray("loadfail") : QByteArray("nomodel");
     const QByteArray expG4Body  = tamper ? expectBody + QByteArray("X") : expectBody;
     const QByteArray expG5Code  = tamper ? QByteArray("inferfail") : QByteArray("loadfail");
+    // T4a 新组期望常量（Rst 值经 int 落表比对——期望表仍是固定常量，铁律22 同构）。
+    using Rst = AiSubprocessRunner::Rst;
+    const int expG3Rst     = tamper ? int(Rst::Err)     : int(Rst::Ok);       // roundtrip 成功臂
+    const QByteArray expG3Json = tamper ? expectBody + QByteArray("X") : expectBody;
+    const QByteArray expG5pWire = tamper ? QByteArray("ERR 1 badframe") : QByteArray("ERR 0 badframe");
+    const int expG5pReject = tamper ? 1 : 0;   // parseReq("REQX...") 返回码：拒=0（false）
+    const int expG5pAccept = tamper ? 0 : 1;   // parseReq("REQ ...") 返回码：收=1（true，防收紧过界）
+    const int expGpMain    = tamper ? 0 : 1;   // sIsMainThread 主线程真
+    const int expGpWorker  = tamper ? 1 : 0;   // sIsMainThread worker 线程假
+    const int expG6a       = tamper ? int(Rst::Ok)      : int(Rst::Timeout);  // 挂起臂：超时
+    const int expG6b       = tamper ? int(Rst::Timeout) : int(Rst::Ok);       // 重启臂：复绿
+    const QByteArray expG6bJson = tamper ? expectBody + QByteArray("X") : expectBody;
+    const int expG7a       = tamper ? int(Rst::Err)     : int(Rst::Ok);       // 第一路完成
+    const int expG7b       = tamper ? int(Rst::Ok)      : int(Rst::Busy);     // 第二路单飞拒
+    const int expG8Ready   = tamper ? int(Rst::Ok)      : int(Rst::NoExe);    // 候选全缺 probe
+    const int expG8Call    = tamper ? int(Rst::Ok)      : int(Rst::NoExe);    // 候选全缺 call
 
     // ---- G1 默认臂：READY 1 握手 ----
     {
@@ -5082,6 +5133,31 @@ int runFaceAiQa()
         faceAiStop(s);
         std::fprintf(stderr, "LA_FACEAI_G G2 ok=%d\n", int(readyOk && frameOk));
     }
+
+    // ---- G3 [T4a] 真底座全量 roundtrip：REQ(det)->RES JSON 逐字节 + 解析后 deep-equal。
+    //      FRAG 钩子经 runner qaHookEnvName 一次性注入首 spawn 子进程（64B 分片流式送达
+    //      = 底座体读循环读满的 runner 级兄弟腿，G4 判例在真机械上复验）。----
+    {
+        qputenv("LA_FACE_FORCE_FRAG", "1");    // 布防：底座 spawn 时注入子 env 并一次性消耗（分支只在桩侧，铁律22）
+        AiSubprocessRunner r;
+        r.configure({stub}, {}, 5000, QStringLiteral("LA_FACE_FORCE_FRAG"));
+        const auto rp = faceAiCall(r, QStringLiteral("det"), 21, reqPath, 8000);
+        const bool rstOk = int(rp.rst) == expG3Rst;
+        const bool bytesOk = rp.json == expG3Json;                                   // 逐字节等值
+        QJsonParseError pe1, pe2;
+        const QJsonDocument dGot = QJsonDocument::fromJson(rp.json, &pe1);
+        const QJsonDocument dExp = QJsonDocument::fromJson(expG3Json, &pe2);
+        const bool deepOk = pe1.error == QJsonParseError::NoError
+                         && pe2.error == QJsonParseError::NoError && dGot == dExp;   // 解析后结构化 deep-equal
+        note(rstOk, QStringLiteral("G3 runner roundtrip rst=%1 exp=%2")
+                         .arg(int(rp.rst)).arg(expG3Rst));
+        note(bytesOk, QStringLiteral("G3 runner roundtrip body bytes=%1 exp=%2")
+                          .arg(rp.json.size()).arg(expG3Json.size()));
+        note(deepOk, QStringLiteral("G3 RES json deep-equal (parsed)"));
+        std::fprintf(stderr, "LA_FACEAI_G G3 ok=%d json_bytes=%d\n",
+                     int(rstOk && bytesOk && deepOk), int(rp.json.size()));
+    }
+    qputenv("LA_FACE_FORCE_FRAG", QByteArray());   // 复位纪律同 LA_ERASE_QA：每次布防必显式解除
 
     // ---- G4 FRAG 臂：RES 体 64B 分片必读满 ----
     {
@@ -5127,8 +5203,109 @@ int runFaceAiQa()
         std::fprintf(stderr, "LA_FACEAI_G G5 ok=%d\n", int(readyOk && frameOk));
     }
 
+    // ---- G5p [T4a] AiProto 首词全词比对回归腿（T1 评审遗留#1，规则#34 反例纪律）：
+    //   应用层 parseReq 直调——"REQX 5 det 4" 必须拒（旧 strncmp(3) 前缀放行 = 本腿为红），
+    //   "REQ 5 det 4" 必须收（防收紧过界误杀合法帧）；
+    //   线腿——默认桩喂 REQX 行必收 ERR badframe 且不消费 body（收紧前桩会误读 body 回 RES）；
+    //   谓词腿——sIsMainThread 主线程真/worker 假（runner GUI 线程拒绝的依据）。----
+    {
+        aiproto::Header hh;
+        const QByteArray badLine  = QByteArrayLiteral("REQX 5 det 4");
+        const QByteArray goodLine = QByteArrayLiteral("REQ 5 det 4");
+        const int gotReject = aiproto::parseReq(badLine.constData(), size_t(badLine.size()), hh) ? 1 : 0;
+        const int gotAccept = aiproto::parseReq(goodLine.constData(), size_t(goodLine.size()), hh) ? 1 : 0;
+        const bool rejOk = gotReject == expG5pReject;
+        const bool accOk = gotAccept == expG5pAccept;
+        note(rejOk, QStringLiteral("G5p parseReq rejects REQX prefix (got=%1 exp=%2)")
+                        .arg(gotReject).arg(expG5pReject));
+        note(accOk, QStringLiteral("G5p parseReq still accepts well-formed REQ (got=%1 exp=%2)")
+                        .arg(gotAccept).arg(expG5pAccept));
+        bool wireOk = false;
+        {
+            FaceAiSession s;
+            QByteArray line, resp;
+            const bool started = faceAiSpawn(s, stub, QByteArray());
+            const bool readyOk = started && faceAiReadLine(s.proc, s.buf, line, 5000)
+                              && line == QByteArray("READY 1");
+            s.proc.write(QByteArrayLiteral("REQX 5 det 4\ntest"));
+            const bool wrote = s.proc.waitForBytesWritten(3000);
+            const bool got = readyOk && wrote && faceAiReadLine(s.proc, s.buf, resp, 5000);
+            wireOk = got && resp == expG5pWire;
+            note(wireOk, QStringLiteral("G5p stub wire REQX answered badframe, line=%1")
+                             .arg(QString::fromLatin1(got ? resp : QByteArray("<none>"))));
+            faceAiStop(s);
+        }
+        const int gotMain = AiSubprocessRunner::sIsMainThread() ? 1 : 0;
+        int gotWorker = -1;
+        { std::thread th([&] { gotWorker = AiSubprocessRunner::sIsMainThread() ? 1 : 0; }); th.join(); }
+        const bool predOk = gotMain == expGpMain && gotWorker == expGpWorker;
+        note(predOk, QStringLiteral("G5p sIsMainThread predicate main=%1 worker=%2")
+                         .arg(gotMain).arg(gotWorker));
+        std::fprintf(stderr, "LA_FACEAI_G G5p ok=%d\n", int(rejOk && accOk && wireOk && predOk));
+    }
+
+    // ---- G6 [T4a] HANG -> Timeout -> 自动重启一次 -> 复绿（spec §2.2 重启机械 +
+    //   T1 评审遗留#2 崩溃感知读逃逸）：桩收 REQ 后睡 90s 不回帧，底座必须 1500ms 预算
+    //   内 Timeout 且拔换卡死子进程（未应答 REQ 流位不可信）；钩子一次性消耗 => 第二
+    //   call 的重启子进程干净应答 Ok + 全量 JSON 复绿。----
+    {
+        qputenv("LA_FACE_FORCE_HANG", "1");    // 布防：首 spawn 注入并消耗，重启臂不再挂起（桩分支门不分支，铁律22）
+        AiSubprocessRunner r;
+        r.configure({stub}, {}, 5000, QStringLiteral("LA_FACE_FORCE_HANG"));
+        const auto rp1 = faceAiCall(r, QStringLiteral("det"), 31, reqPath, 1500);
+        const bool toOk = int(rp1.rst) == expG6a;
+        note(toOk, QStringLiteral("G6 hung call rst=%1 exp=%2").arg(int(rp1.rst)).arg(expG6a));
+        const auto rp2 = faceAiCall(r, QStringLiteral("det"), 32, reqPath, 8000);
+        const bool greenOk = int(rp2.rst) == expG6b && rp2.json == expG6bJson;
+        note(greenOk, QStringLiteral("G6 restarted call green rst=%1 bytes=%2")
+                          .arg(int(rp2.rst)).arg(rp2.json.size()));
+        std::fprintf(stderr, "LA_FACEAI_G G6 ok=%d\n", int(toOk && greenOk));
+    }
+    qputenv("LA_FACE_FORCE_HANG", QByteArray());
+
+    // ---- G7 [T4a] 并发单飞拒绝（spec §2.2 单飞不变式）：桩帧间 3s 睡眠造在飞窗口；
+    //   第一路（worker A）持闸完成 Ok，窗口内第二路（worker B）tryLock 失败即 Busy——
+    //   不排队、不死锁。窗口余量 3s vs 300ms 布防等待，慢机亦稳。----
+    {
+        qputenv("LA_FACE_FORCE_SLOW", "1");
+        AiSubprocessRunner r;
+        r.configure({stub}, {}, 5000, QStringLiteral("LA_FACE_FORCE_SLOW"));
+        AiSubprocessRunner::Reply rpA;
+        std::atomic<bool> aStarted{false};
+        std::thread aTh([&] { aStarted.store(true); rpA = r.call(QStringLiteral("det"), 41, reqPath, 12000); });
+        while (!aStarted.load()) QThread::msleep(5);   // 等 A 进 call（拿闸在 store 之后数 ns，300ms 后必在飞）
+        QThread::msleep(300);
+        const auto rpB = faceAiCall(r, QStringLiteral("det"), 42, reqPath, 5000);
+        aTh.join();
+        const bool busyOk = int(rpB.rst) == expG7b;
+        const bool aOk = int(rpA.rst) == expG7a && rpA.json == expectBody;
+        note(busyOk, QStringLiteral("G7 second concurrent caller rst=%1 exp=%2")
+                         .arg(int(rpB.rst)).arg(expG7b));
+        note(aOk, QStringLiteral("G7 first caller completes rst=%1").arg(int(rpA.rst)));
+        std::fprintf(stderr, "LA_FACEAI_G G7 ok=%d\n", int(busyOk && aOk));
+    }
+    qputenv("LA_FACE_FORCE_SLOW", QByteArray());
+
+    // ---- G8 [T4a] exe 候选全缺 -> NoExe（spec §2.2 exe_missing 结构化失败）：
+    //   ensureReady 与 call 一致判 NoExe，绝不 spawn、绝不误报模型态/超时。----
+    {
+        AiSubprocessRunner r;
+        r.configure({stub + QStringLiteral(".missing_a.exe"),
+                     stub + QStringLiteral(".missing_b.exe")}, {}, 5000, QString());
+        Rst st = Rst::Err;
+        const bool pOk = faceAiProbe(r, &st);
+        const bool readyNoExe = !pOk && int(st) == expG8Ready;
+        note(readyNoExe, QStringLiteral("G8 ensureReady exe_missing ok=%1 rst=%2 exp=%3")
+                             .arg(int(pOk)).arg(int(st)).arg(expG8Ready));
+        const auto rp = faceAiCall(r, QStringLiteral("det"), 51, reqPath, 3000);
+        const bool callNoExe = int(rp.rst) == expG8Call;
+        note(callNoExe, QStringLiteral("G8 call exe_missing rst=%1 exp=%2")
+                            .arg(int(rp.rst)).arg(expG8Call));
+        std::fprintf(stderr, "LA_FACEAI_G G8 ok=%d\n", int(readyNoExe && callNoExe));
+    }
+
     if (fails.isEmpty())
-        std::fprintf(stderr, "LA_FACE_AI_QA PASS tamper=%d g1=1 g2=1 g4=1 g5=1\n", int(tamper));
+        std::fprintf(stderr, "LA_FACE_AI_QA PASS tamper=%d g1=1 g2=1 g3=1 g4=1 g5=1 g5p=1 g6=1 g7=1 g8=1\n", int(tamper));
     else
         std::fprintf(stderr, "LA_FACE_AI_QA FAIL tamper=%d reason=%s\n",
                      int(tamper), qPrintable(fails.join(QChar(';'))));

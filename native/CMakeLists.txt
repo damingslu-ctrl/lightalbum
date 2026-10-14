@@ -119,6 +119,10 @@ set(LA_SOURCES
     src/core/EraseBridge.cpp
     src/core/EraseRunner.h
     src/core/EraseRunner.cpp
+    src/core/AiSubprocessRunner.h
+    src/core/AiSubprocessRunner.cpp
+    src/core/FaceRunner.h
+    src/core/FaceRunner.cpp
     src/core/MotionKit.h
     src/core/MotionKit.cpp
     src/core/MotionDriver.h

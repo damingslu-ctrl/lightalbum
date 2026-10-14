@@ -126,8 +126,9 @@ GUI）；门面是静态同步函数，调用点全部在 `QtConcurrent::run` �
 
 ## 5. 线协议（`native/src/core/AiProto.h`，face/clip 共用；EraseProto 不动）
 
-- 请求一行：`REQ <id> <kind> <len>\n`；kind：face 侧 `path`（len=UTF-8 路径字节数，
-  body=路径原字节）；clip 侧 `jpg`（body=JPEG 原始字节）。
+- 请求一行：`REQ <id> <kind> <len>\n`；kind：face 侧 `det`（canonical，T2 评审裁定；
+  len=UTF-8 路径字节数，body=路径原字节；faceinfer 对旧词 `path` 同义接受，历史兼容）；
+  clip 侧 `jpg`（body=JPEG 原始字节）。
 - 成功应答：`RES <id> <len>\n` + len 字节 UTF-8 JSON；失败应答：`ERR <id> <code>\n`
   （code：`nomodel|loadfail|inferfail|badframe`）。stdout 只走协议帧（`_O_BINARY`
   强制，日志全走 stderr）——三条 lama 血泪规约 verbatim 继承。
