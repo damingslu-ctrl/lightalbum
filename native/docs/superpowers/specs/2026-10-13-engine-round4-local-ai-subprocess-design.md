@@ -144,7 +144,10 @@ GUI）；门面是静态同步函数，调用点全部在 `QtConcurrent::run` �
     同一套 body 语义（底座 `AiSubprocessRunner` 零分叉）、父进程无需为 32 张缩略图驻留内存
     （spec §8 内存纪律同向）。若日后要让 clipinfer 收字节流，属**新需求**，须另立任务并重取平价。
 - 成功应答：`RES <id> <len>\n` + len 字节 UTF-8 JSON；失败应答：`ERR <id> <code>\n`
-  （code：`nomodel|loadfail|inferfail|badframe`）。stdout 只走协议帧（`_O_BINARY`
+  （code：`nomodel|loadfail|inferfail|badframe`，**clip 侧另加 `badprompts`**——R-76 补记，
+  T7 实物 `clipinfer/clipinfer.cpp:114` 在 `prompts.bin` 内嵌矩阵 SHA 失配时即刻 `READY 0` 保活、
+  每 REQ 诚实回 `ERR badprompts`，避免把 351MB 塔的加载失败误读成模型缺失；码表由子进程各自持有，
+  `AiProto.h` 不列枚举，故此处即唯一文档真源）。stdout 只走协议帧（`_O_BINARY`
   强制，日志全走 stderr）——三条 lama 血泪规约 verbatim 继承。
 - 握手：会话全部建好才发 `READY 1`；模型缺失发 `READY 0` 后**保活等 SIGTERM**，
   每 REQ 回 `ERR nomodel`。
@@ -158,26 +161,41 @@ GUI）；门面是静态同步函数，调用点全部在 `QtConcurrent::run` �
   **先验 SHA256 后落地**（钉死值见附录 A，已实测复核）；clip 产物走 `ai_export` 导出的
   onnx+prompts.bin 同规则；onnxruntime.dll 从既有 v1.19.2 钉死 zip 复用（三处 bin
   各放一份副本，进程 cwd 隔离）；LICENSE 硬检（buffalo_l 系 insightface 研究用许可、
-  open_clip MIT + laion2b 数据 CC-BY-4.0——逐包 LICENSE/THIRD_PARTY-NOTICES.md 齐备
+  open_clip MIT + laion2b 数据 CC-BY-4.0——逐包 LICENSE/`THIRD_PARTY-NOTICE.md`（**单数**，
+  R-28b：与仓内既有先例 `inpaint/THIRD_PARTY-NOTICE.md` 及 `release.ps1:370` C9 的断言对象
+  一致；本节原写复数 NOTICES 会让 T10 的 C10 无法照 C9 逐样复制）齐备
   才放行）；`-SelfTest` 注入反例复用生产校验。
 - 构建：`faceinfer/`、`clipinfer/` 两独立 CMake 工程（MinGW `-static` +
-  `ort_mingw_shim.h` 复用，同 inpaint 模板）；exe 入库于
-  `native/3rdparty/{face,clip}/bin/`（inpaint.exe 先例：exe 不进 fetch 清单，构建产物
-  手工入库随 git 走）。
+  `ort_mingw_shim.h` 复用，同 inpaint 模板）；构建产物**不入库**——
+  本节原写「exe 入库于 `native/3rdparty/{face,clip}/bin/`（inpaint.exe 先例：手工入库随 git 走）」，
+  经 R-29b 实测证伪：`git ls-files native/3rdparty/lama/bin/` = **0**（`inpaint.exe` 从未入库），
+  `.gitignore:14-16` 逐条忽略三个 `bin/`，本仓既定政策 = **第三方二进制磁盘就位、git 只放许可文本**。
+  exe 与模型由 `native/fetch_ai.ps1` 就位，`3rdparty/{face,clip}/bin/` 同法忽略。
 - release.ps1：C9 家族扩展为 **C10**（staged faceinfer/clipinfer 无 LICENSE/无模型/无
   onnxruntime.dll → 硬 throw；注入测试 ×3 同 C9 模式）；装配腿照 lama 段逐样复制；
   zip 体积诚实记录（+≈0.95GB 级，本地 zip 可接受，MANIFEST/BUILDINFO 自动覆盖）。
   windeployqt 需同时验证 Qt6Concurrent.dll 随包（2.39.0 遗留前置项，同次打包腿解决）。
 
-## 7. 门禁设计（roster 74 → 78：fast +1，full +3）
+## 7. 门禁设计（roster 74 → 78：**fast +0，full +4**）
+
+> **2026-10-14 T7 收口订正（R-76）**：本节原预测「fast +1，full +3」，把 #76 记在 fast 层。
+> 实测推翻：`qa_runner -Timing` ×4 = 8019 / 7102 / 7149 / 7011 ms，max-of-warm **8019ms**
+> 远超 E6 的 500ms fast 预算，注册即落 full（`Get-GateTier` 默认 full，`gate_matrix.ps1:701-705`）。
+> `-SelfTest` 实跑终态 = **gates=78 fast=19 full=59 E6 overBudget=0**，与 #75 的
+> T4a 先例同型（6992ms → full）。连带 §「R-39 CHANGELOG 数字」的 78 = fast 19 + full 59。
 
 - **#75 `LA_FACE_AI_QA`（full，hermetic；T4a 由 fast 降级）**：门驱动真
   AiSubprocessRunner 底座（faceinfer_stub.exe 仅作子进程，同 inpaint_stub 模式），
   跑协议全谱：READY1/READY0→blocked_no_model、REQ/RES/ERR 帧、体分片读满、
   超时、crash 重启、单飞拒绝、FORCE 钩子。反例须咬（铁律 #34）。
   T4a 实测 measuredMs=6992（G3-G8 真实 runner 全谱 ≈7s，超 E6 fast 500ms 预算）→ full。
-- **#76 `LA_CLIP_AI_QA`（fast，hermetic 桩）**：同构，含 prompts.bin 校验头反例。
-- **#77 `LA_CLIP_MODEL_QA`（full，opt-in `need=@("LA_CLIP_MODEL")`）**：真
+- **#76 `LA_CLIP_AI_QA`（full，hermetic 桩；R-76 由 fast 订正为 full，实测 8019ms）**：同构，
+  含 prompts.bin 校验头反例。
+- **#77 `LA_CLIP_MODEL_QA`（full，opt-in `need=@("LA_CLIP_MODEL","LA_CLIP_GOLD_DIR")`；
+  R-76 订正：原写单 env。模型目录与黄金目录两项都必须声明——`qa_runner.ps1:75-82` 的语义是
+  「`need` 里任一项缺失 → `[SKIP] (needs …)` 诚实计数」，只声明一项会让「有模型没夹具」的
+  半挂载态被误报为实跑；两项齐全后的 8 条前置破坏（exe 缺 / READY≠1 / 目录缺 / 金缺失等）
+  才落进 #77 内部的诚实 FAIL）**：真
   clipinfer.exe + 导出产物 + 黄金 fixture JSON 跑 §4 容差断言；env 缺 → SKIP 诚实计数。
 - **#78 `LA_FACE_MODEL_QA`（full，opt-in `need=@("LA_FACE_MODEL","LA_FACE_IMG")`）**：
   真 faceinfer.exe vs 黄金 JSON 跑 §3 容差断言（T3 落地时 env 名定为 LA_FACE_IMG，
