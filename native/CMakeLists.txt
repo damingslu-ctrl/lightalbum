@@ -123,6 +123,8 @@ set(LA_SOURCES
     src/core/AiSubprocessRunner.cpp
     src/core/FaceRunner.h
     src/core/FaceRunner.cpp
+    src/core/ClipRunner.h
+    src/core/ClipRunner.cpp
     src/core/MotionKit.h
     src/core/MotionKit.cpp
     src/core/MotionDriver.h

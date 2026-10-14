@@ -408,8 +408,11 @@ $GateTable = @(
   @{n="LA_PRIVACY_QA"; png=$false; tier="fast"; measuredMs=170},
   # Direction C step 3: smart scene classification write-back + retrieval contract.
   # Pure offscreen self-exit, no MainWindow, no external env. Calls
-  # Classifier::classify() with a synthetic result hook (bypassing the CLIP HTTP
-  # service) and asserts: (A) DB category column written; (B) in-memory
+  # Classifier::classify() with the synthetic result hook (Classifier::setSyntheticForQa),
+  # which short-circuits BEFORE probe so no subprocess is ever spawned here -- this gate
+  # owns the write-back/retrieval contract only. Transport coverage lives in gate #76
+  # (LA_CLIP_AI_QA), whose T8 G11 leg drives the real Classifier -> ClipRunner ->
+  # AiSubprocessRunner chain end to end. Asserts: (A) DB category column written; (B) in-memory
   # Photo.category synced (GalleryModel reads memory); (C) GalleryModel rowCount
   # per category + kNoCategory + "all" correct; (D) total photo count conserved;
   # (E) Classifier::normalizeLabel maps raw labels to the 8 fixed classes.
@@ -635,6 +638,7 @@ $GateTable = @(
   # are documented in faceinfer.cpp, not gate regressions.
   @{n="LA_FACE_MODEL_QA"; png=$false; need=@("LA_FACE_MODEL","LA_FACE_IMG"); measuredMs=22464; timeoutSec=120},
   # 2.40.0 round4 T7: CLIP-track AiProto contract gate (gate #76, LA_CLIP_AI_QA).
+  # Extended by round4 T8 with the G11 production-path leg (see the T8 block below).
   # Hermetic: clipinfer_stub.exe drives the frame spectrum with kind="jpg" (the only
   # legal CLIP-track token). G1..G8 mirror gate #75 one-for-one:
   # G1 READY 1 handshake; G2 READY 0 then every REQ answered ERR <id> nomodel (keepalive);
@@ -656,14 +660,52 @@ $GateTable = @(
   #   within seconds. The counterexample genuinely bites (rule 34): a startup-order
   #   regression to ORT-first would answer loadfail, and a missing prompts check would
   #   mislabel or hang on the 351MB tower -- both red here. Temp dir deleted after the leg.
+  # T8 adds the production-path leg (this is the only gate that drives the real
+  # Classifier -> ClipRunner -> AiSubprocessRunner chain; gate #70 LA_CLASSIFY_QA answers
+  # through the setSyntheticForQa hook and never touches the transport, and G1..G10 drive
+  # the base class directly, so after T8 replaced the HTTP bridge this chain was uncovered):
+  # G11 temp SQLite library (9 rows: p0..p6 unclassified WITH staged thumbs = the 7 pending
+  #   photos; p7 unclassified WITHOUT thumb; p8 pre-classified and must not be rewritten),
+  #   LA_CLIP_STUB=1 (the facade candidate-chain hop-1 stub marker, i.e. the documented QA
+  #   consumption point of that hook) and Classifier::classify(batch=32) called from a real
+  #   QtConcurrent worker thread (a main-thread call would get Busy -> probe false -> red,
+  #   so this leg doubles as the R-20 "probe moved off the GUI thread" assertion). Asserts:
+  #   classify() returned true; all 7 rows carry the stub label after normalizeLabel in BOTH
+  #   memory and an independent on-disk SELECT (write-back really landed, not a cache);
+  #   p7 stays empty (no thumb = no request, no write-back); p8 keeps its seed category;
+  #   row count conserved; the progress sequence is exactly "0,5,7" and every delta <= 5,
+  #   which is the observable face of the kClipMaxBatch=5 dispatch clamp (ledger R-80
+  #   item 1: the
+  #   retiring HTTP bridge answered 409 for batches >5, so the shipped default batch=32
+  #   silently produced zero write-back in production). Deleting the clamp restores 32 and
+  #   the sequence becomes "0,7" -> red, so the leg genuinely bites (rule 34).
+  #   Expectation table branches ONLY on tamper (rule 22); LA_CLIP_STUB is fixture choice.
+  #   Temp dir removed at the end of the leg (rule 06 hygiene) -- but removeRecursively
+  #   alone is NOT enough: Library::open registers the readonly 'la_lib' + lazy 'la_rw'
+  #   connections in Qt's GLOBAL pool, which outlive the local Library object (no dtor,
+  #   no close()), and Windows refuses to delete an open sqlite file. The leg therefore
+  #   closes + removeDatabase() both connections first; without that it leaked one dir
+  #   containing only g11.db per run (observed 11 leaked dirs).
   # Counterexample LA_CLIP_AI_QA_FORCE_BROKEN=1 corrupts ONLY the fixed expectation
-  # table so ALL ten groups go RED together (rule 22; identical exit path).
+  # table so ALL eleven groups go RED together (rule 22; identical exit path).
   # Tier: FULL (same demotion note as #75): the plan ruling was "fast per plan, demote
   # to full only if >500"; live arms G6 (1500ms timeout) + G7 (3s stub sleep) + G10
   # (real-exe spawn with ORT dll load) put the measured cost far over the E6 500ms
   # fast budget. timeoutSec=30 kept per the T7 dispatch.
   # measuredMs=8019 from real qa_runner -Timing x4 (rules 25/31): 8019 / 7102 / 7149 /
-  # 7011 ms; conservative max-of-warm recorded.
+  # 7011 ms; conservative max-of-warm recorded. T8 re-measured WITH the G11 leg on the
+  # FINAL committed binary (main.cpp/Classifier.cpp as committed, after the G11 temp-dir
+  # leak fix). Archives: .superpowers/sdd/2026-10-13-engine-round4-local-ai-subprocess/
+  #   t8-final-clipai-{1,2,3}.txt  wall 7309 / 7352 / 7348 ms, gate [OK] 7230 / 7283 / 7287
+  #   t8-clipai-{1..5}.txt         wall 8380 / 7319 / 7352 / 7732 / 7489 (pre-leak-fix build)
+  # Warm max 7732 (t8-clipai-t4, the largest across both sets) stays under 8019, so the
+  # bound is NOT lowered (rules 25/31). t8-clipai-t1 = 8380 is the cold first spawn of the
+  # freshly linked exe and DOES exceed 8019; recorded here rather than quietly dropped.
+  # G11 bite proof (rule 34), archive t8-clampbite-RED.txt: with Classifier.cpp's clamp
+  # replaced by chunkSize = max(1, batch) (i.e. batch=32), the same run answers
+  # "[FAIL] ... G11 ok=0 written=7 prog=0,7" and reason "G11 progress seq=0,7 want=0,5,7;
+  # G11 chunk delta exceeds maxBatch cap" -- both clamp assertions bite, then the temp
+  # edit was reverted and the binary rebuilt.
   @{n="LA_CLIP_AI_QA"; png=$false; timeoutSec=30; measuredMs=8019},
   # 2.40.0 round4 T7: real CLIP model end-to-end quality gate (gate #77, LA_CLIP_MODEL_QA).
   # Opt-in: need=@("LA_CLIP_MODEL","LA_CLIP_GOLD_DIR") -- absent -> qa_runner [SKIP]
@@ -671,8 +713,10 @@ $GateTable = @(
   # reads them only from env paths; fixture list comes from LA_CLIP_IMGS, comma-
   # separated files or directories, name-sorted).
   # When opted in, the app spawns the REAL clipinfer.exe (CLIP ViT-B-32 image tower
-  # ORT session + verbatim classifier_server.py decision rules; no runner yet -- the
-  # thread lifecycle belongs to the #75 chain) and asserts the five spec section 4
+  # ORT session + verbatim classifier_server.py decision rules) with a direct synchronous
+  # QProcess -- by design this gate never goes through the runner layer; the production
+  # thread lifecycle (Classifier -> ClipRunner -> AiSubprocessRunner) is gate #76's job,
+  # where T8 added the G11 production-path leg -- and asserts the five spec section 4
   # columns per fixture against <GOLD_DIR>/<full-basename>.gold.json (review I-3/T6-M3:
   # gold name INCLUDES the extension, matching the producer basename+".gold.json", so
   # a.png/a.JPG can never collide on one gold; the count cross-check below pins the
@@ -718,6 +762,11 @@ $GateTable = @(
   # ready_ms alone swung 493..3680 across those five runs (ORT tower page-cache state is
   # gate-intrinsic cost, not a defect), which is why the conservative max is recorded.
   # Supersedes T7 x3 = 10877 / 13723 / 11197.
+  # T8 regression re-run (gate code untouched by T8, directory-form mount): archived
+  #   t8-clipmodel77.txt wall 24990 / t8-clipmodel77-2.txt 13710 / -3.txt 11541 ms.
+  # The 24990 is the cold first spawn after a relink (351MB tower page-in); the two warm
+  # runs sit under the recorded 18067, so the bound stays (rules 25/31) and the cold
+  # outlier is recorded here. imgs=13 golds=13 ok=13 in all three archives.
   @{n="LA_CLIP_MODEL_QA"; png=$false; need=@("LA_CLIP_MODEL","LA_CLIP_GOLD_DIR"); measuredMs=18067; timeoutSec=120}
 )
 # Resolve a gate's tier. Absent key means "full" - the fail-safe default.

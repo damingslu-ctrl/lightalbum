@@ -20,7 +20,9 @@
 #include <QInputDialog>
 #include <algorithm>
 
-// P16 分类固定次序（与 classifier_server.py LABELS 单一事实源一致；空分类不展示）
+// P16 分类固定次序（单一事实源 = clipinfer/rules.cpp:17 kLabels[8]，其行序即
+// native/3rdparty/clip/bin/prompts.bin 的 8 类行序；第四轮 T8 净替换后该表取代
+// 退役的外部分类脚本成为权威。空分类不展示）
 static QStringList catOrder()
 {
     return {QStringLiteral("人像"), QStringLiteral("风光"), QStringLiteral("夜景·星空"),

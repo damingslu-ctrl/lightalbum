@@ -12,7 +12,7 @@
 #include "../core/BrowseScope.h"   // 2.33.0 灯箱翻图作用域 + 隐私门（纯函数，与门禁同源）
 #include "../core/ICloudSource.h"
 #include "../core/qaExit.h"      // 2.7.0 门禁自退契约（禁裸调 quit）
-#include "../core/Classifier.h"   // 方向 C·智能分类：CLIP 客户端桥
+#include "../core/Classifier.h"   // 方向 C·智能分类：CLIP 子进程门面（T8 净替换外部服务桥）
 #include "../core/PersonDetector.h"  // 方向 C·人脸识别（方案A）：faceinfer 子进程编排层
 #include "../core/FaceCluster.h"     // 方向 C·人物自动聚类：阈值余弦聚类纯函数
 #include "FullCache.h"                // 2.22.0：原图字节预算 LRU（后台解码）
@@ -802,7 +802,7 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
                 gallery_->refresh();
                 Q_UNUSED(r);
             });
-    // 方向 C·智能分类：AI 分类按钮 → 探测 CLIP 服务 → 异步跑分类（视图不持写能力，只发信号）
+    // 方向 C·智能分类：AI 分类按钮 → 异步跑分类（探测与逐张推理都在 worker 线程；视图不持写能力，只发信号）
     connect(gallery_, &GalleryPage::classifyRequested, this, [this] { runClassify(); });
     // 方向 C·人脸识别（方案A）：识别人物按钮 → 探测 face_server → 异步跑检测（视图不持写能力）
     connect(gallery_, &GalleryPage::personDetectRequested, this, [this] { runPersonDetect(); });
@@ -1462,23 +1462,18 @@ void MainWindow::runImportInto(const QString& dir, const QString& title)
     }));
 }
 
-// 方向 C·智能分类：收到图库「AI 分类」信号后，探测本地 CLIP 服务，
-// 异步跑分类（QtConcurrent 不阻塞 GUI），带进度对话框与取消；完成后重建 chips。
-// 单写者（core/AiWriter.h）：worker 只跑网络与快照，落库经 AiWriter 恒回 GUI 线程执行。
+// 方向 C·智能分类：收到图库「AI 分类」信号后，异步跑分类
+// （QtConcurrent 不阻塞 GUI），带进度对话框与取消；完成后重建 chips。
+// 引擎就绪探测 + 逐张分类全部在 worker 线程：AiSubprocessRunner 禁 GUI 线程调用
+//（GUI 线程 = Q_ASSERT + Busy），故此处绝不在 GUI 线程 probe（旧实现在 GUI 线程
+// 同步 QNAM 探活无害，换子进程底座后即为崩溃点——T4b runPersonDetect 判例，R-20）。
+// worker 返回码 + engineMissing 旗标做三态判别（R-20）：「引擎未就绪」/「跑完」/「中断」，
+// UI 只在「引擎未就绪」弹新引擎文案。
+// 单写者（core/AiWriter.h）：worker 只碰快照与子进程，落库经 AiWriter 恒回 GUI 线程执行。
 void MainWindow::runClassify()
 {
     if (!lib_) return;
-    const QString url = QStringLiteral("http://127.0.0.1:8766");   // 仅回环（Classifier 守卫）
-    // 1) 探测服务（不可用 → 提示启动，不报错）
-    if (!Classifier::probe(url)) {
-        QMessageBox::information(this,
-            QCoreApplication::translate("LightAlbum", "AI 分类服务未就绪"),
-            QCoreApplication::translate("LightAlbum",
-                "请先启动本地 CLIP 分类服务（D:\\lightalbum_ai\\start_classifier.bat），"
-                "再点「AI 分类」。仅支持本机回环地址，照片不会外传。"));
-        return;
-    }
-    // 2) 统计待分类数（未分类且已有缩略图）
+    // 1) 统计待分类数（未分类且已有缩略图；GUI 线程纯内存读快照，可）
     int pending = 0;
     for (const Photo& p : lib_->photos())
         if (p.category.isEmpty() && !p.thumbFile.isEmpty()) ++pending;
@@ -1488,7 +1483,7 @@ void MainWindow::runClassify()
             QCoreApplication::translate("LightAlbum", "库内照片均已分类，无需再跑。"));
         return;
     }
-    // 3) 进度对话框 + 后台跑
+    // 2) 进度对话框 + 后台跑（探测与分类全在 worker 线程）
     auto* dlg = new QProgressDialog(
         QCoreApplication::translate("LightAlbum", "AI 正在分类…"),
         QCoreApplication::translate("LightAlbum", "取消"), 0, pending, this);
@@ -1496,18 +1491,26 @@ void MainWindow::runClassify()
     dlg->setMinimumDuration(0);
     auto* watcher = new QFutureWatcher<bool>(this);
     auto* cancelled = new std::atomic<bool>(false);
+    auto* engineMissing = new std::atomic<bool>(false);   // R-20 三态旗标（worker 写、GUI 线程读）
     connect(dlg, &QProgressDialog::canceled, this, [cancelled] { cancelled->store(true); });
     connect(watcher, &QFutureWatcher<bool>::finished, this,
-            [this, dlg, watcher, cancelled, pending] {
+            [this, dlg, watcher, cancelled, engineMissing, pending] {
                 dlg->close();
                 gallery_->refresh();   // 重建分类 chips + 计数（新分类生效）
                 const bool ok = watcher->result();
+                QString msg;
+                if (engineMissing->load()) {
+                    msg = QCoreApplication::translate("LightAlbum",
+                        "AI 引擎未就绪（缺模型或引擎文件，先运行 native/fetch_ai.ps1 并构建 clipinfer），再点「AI 分类」。照片仅在本机处理，绝不外传。");
+                } else {
+                    msg = ok ? QCoreApplication::translate("LightAlbum", "已为 %1 张照片写入场景分类。").arg(pending)
+                             : QCoreApplication::translate("LightAlbum", "分类过程中断（可能已部分写入）。");
+                }
                 QMessageBox::information(this,
-                    QCoreApplication::translate("LightAlbum", "AI 分类"),
-                    ok ? QCoreApplication::translate("LightAlbum", "已为 %1 张照片写入场景分类。").arg(pending)
-                       : QCoreApplication::translate("LightAlbum", "分类过程中断（可能已部分写入）。"));
+                    QCoreApplication::translate("LightAlbum", "AI 分类"), msg);
                 watcher->deleteLater();
                 delete cancelled;
+                delete engineMissing;
                 dlg->deleteLater();
             });
     const auto prog = [dlg](int done, int, const QString&) {
@@ -1518,9 +1521,12 @@ void MainWindow::runClassify()
     // GUI 线程取快照：worker 只读此副本，绝不在 worker 线程碰 lib_->photos()
     //（Library 无锁，GalleryModel 以引用读 photos_）；落库经 AiWriter 恒回 GUI 线程。
     const QVector<Photo> snap = lib_->photos();
-    watcher->setFuture(QtConcurrent::run([this, snap, td, url, prog, cancelPred] {
+    watcher->setFuture(QtConcurrent::run([this, snap, td, prog, cancelPred, engineMissing] {
+        // 探测在 worker 线程（子进程 runner 禁 GUI 线程调用）：未就绪 → 置旗标 + 返回
+        // false → finished 弹「AI 引擎未就绪」文案。classify 内部亦先 probe，语义一致。
+        if (!Classifier::probe()) { engineMissing->store(true); return false; }
         AiWriter writer(lib_, this);
-        return Classifier::classify(snap, writer, td, url, 32, -1, prog, cancelPred);
+        return Classifier::classify(snap, writer, td, 32, -1, prog, cancelPred);
     }));
 }
 

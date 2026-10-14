@@ -5977,8 +5977,182 @@ int runClipAiQa()
         std::fprintf(stderr, "LA_CLIPAI_G G10 ok=%d\n", int(groupOk));
     }
 
+    // ---- G11 [T8] 生产路径腿：Classifier::classify（**不吃合成钩子**）→ ClipRunner 门面
+    //      → AiSubprocessRunner 底座 → 子进程（LA_CLIP_STUB=1 走门面候选链第 1 跳的桩，
+    //      与 FaceRunner 的 LA_FACE_STUB 同构；桩文件头钩子表明写「runner 侧强制选桩
+    //      标记，QA 接线消费」，本腿即该消费点）。
+    //      为什么这条腿必须存在：T8 净替换掉的正是 Classifier 的传输段，而 #70 全程用
+    //      setSyntheticForQa 绕过传输，#76 的 G1..G10 只驱动底座本身——净替换后的真实
+    //      通路（逐张 REQ jpg → RES JSON → normalizeLabel → AiWriter 写回）此前无任何
+    //      门禁覆盖。桩答固定 label=人像/score=0.87（与 G3 期望体同源），故「DB+内存同时
+    //      出现人像」只可能来自一次真 REQ/RES 往返，不是本地伪造。
+    //      另断 R-80 第 1 条的分片钳制可观察面：7 张待分类 + batch=32 ⇒ 进度增量必须是 5+2
+    //      （kClipMaxBatch=5 的降语义连续分片；若钳制被「顺手」删回 32 则 7>5 立刻红）。
+    //      守恒面：已分类张不被覆盖、无缩略图张不发请求也不写回。
+    //      期望表只随 tamper 变（铁律22）：LA_CLIP_STUB 属**夹具选择**，不是期望分叉。----
+    {
+        const QString dir = QDir::tempPath() + QStringLiteral("/la_clipai_g11_%1")
+                                .arg(QCoreApplication::applicationPid());
+        QDir(dir).removeRecursively();
+        QDir().mkpath(dir);
+        const QString dbPath = QDir(dir).filePath(QStringLiteral("g11.db"));
+        // 名册：p0..p6 未分类且各有缩略图（7 张 = 待分类全集，触达 5+2 两片）；
+        //       p7 未分类但**无缩略图**（thumb 列为空）；p8 已分类=夜景·星空（不得被覆盖）。
+        const int kPending = 7;
+        const int kRows = 9;
+        // p8 的预置分类（=「已分类不得被覆盖」的守恒锚；断言侧复用同一常量，避免两处转义劈叉）。
+        const QString seededCat = QStringLiteral("夜景·星空");
+        bool thumbsOk = true;
+        for (int i = 0; i < kPending; ++i) {
+            QFile tf(QDir(dir).filePath(QStringLiteral("t%1.jpg").arg(i)));
+            if (!tf.open(QIODevice::WriteOnly)) { thumbsOk = false; break; }
+            tf.write("x", 1);
+            tf.close();
+        }
+        note(thumbsOk, QStringLiteral("G11 thumb fixture staging failed under %1").arg(dir));
+        bool seeded = false;
+        {
+            QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"),
+                                                       QStringLiteral("la_clipai_g11_seed"));
+            db.setDatabaseName(dbPath);
+            if (db.open()) {
+                QSqlQuery q(db);
+                q.exec(QStringLiteral(
+                    "CREATE TABLE photos (path TEXT PRIMARY KEY, rel TEXT, thumb TEXT, "
+                    "missing INTEGER DEFAULT 0, exif_json TEXT, category TEXT, person TEXT, "
+                    "private INTEGER DEFAULT 0, rating INTEGER DEFAULT 0, mark TEXT)"));
+                q.exec(QStringLiteral("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)"));
+                bool allRows = true;
+                for (int i = 0; i < kRows; ++i) {
+                    // 列/占位符严格对齐 Library::open 的 SELECT（形参照抄 #70 的 seed 语句）。
+                    q.prepare(QStringLiteral(
+                        "INSERT INTO photos(path,rel,thumb,missing,exif_json,category,person,private,rating,mark) "
+                        "VALUES(?,?,?,0,?,?,?,0,0,?)"));
+                    q.addBindValue(QStringLiteral("C:/la/p%1.jpg").arg(i));
+                    q.addBindValue(QStringLiteral("p%1.jpg").arg(i));
+                    q.addBindValue(i < kPending
+                        ? QStringLiteral("t%1.jpg").arg(i) : QString());   // p7 未分类且无缩略图
+                    q.addBindValue(QStringLiteral("{}"));                  // exif_json
+                    q.addBindValue(i == 8 ? seededCat : QString());        // 其余 category 空=待分类
+                    q.addBindValue(QString());                             // person
+                    q.addBindValue(QString());                             // mark
+                    if (!q.exec()) allRows = false;
+                }
+                db.close();
+                seeded = allRows;
+            }
+            QSqlDatabase::removeDatabase(QStringLiteral("la_clipai_g11_seed"));
+        }
+        note(seeded, QStringLiteral("G11 temp library seed failed"));
+
+        Library lib;
+        QString operr;
+        const bool opened = seeded && lib.open(dbPath, &operr);
+        note(opened, QStringLiteral("G11 library open=%1").arg(operr));
+
+        // 生产侧的桩标记：布防 + 用毕显式解除（与 G3/G6/G7 的 FORCE_* 复位纪律同式）。
+        qputenv("LA_CLIP_STUB", "1");
+        // 期望表（固定常量；tamper 只改期望、不改流程，铁律22）。
+        const QString expG11Label = tamper ? QStringLiteral("黑白") : QStringLiteral("人像");
+        const QString expG11Prog  = tamper ? QStringLiteral("0,7") : QStringLiteral("0,5,7");
+        QVector<int> progMarks;
+        QObject qaCtx;
+        bool classifyRet = false;
+        if (opened && thumbsOk) {
+            AiWriter writer(&lib, &qaCtx);
+            // 快照取在 QA 主线程：Library 非线程安全，生产侧 MainWindow::runClassify 同款
+            // （worker 只吃快照，绝不回头碰 lib）。
+            const QVector<Photo> snap = lib.photos();
+            // 底座禁 GUI 线程调用（此处 = QA 主线程）：生产接线要求 worker 线程，
+            // 本腿同时是 R-20「探测移入 worker」的同型断言——主线程直调会拿 Busy →
+            // probe false → classify 返回 false → 红。
+            QtConcurrent::run([&] {
+                classifyRet = Classifier::classify(snap, writer, dir, 32, -1,
+                    [&progMarks](int done, int, const QString&) { progMarks << done; },
+                    [] { return false; });
+            }).waitForFinished();
+            // 写回经 AiWriter 的 QueuedConnection 投递回本线程落地（#70 同式）。
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 500);
+        }
+        qputenv("LA_CLIP_STUB", QByteArray());
+
+        note(classifyRet, QStringLiteral("G11 classify returned false (engine not ready path)"));
+        // 写回落点（内存）：7 张 = 桩答标签，且经 normalizeLabel 恒等映射。
+        int wroteExpected = 0;
+        for (int i = 0; i < kPending; ++i) {
+            for (const Photo& ph : lib.photos())
+                if (ph.path == QStringLiteral("C:/la/p%1.jpg").arg(i) && ph.category == expG11Label)
+                    ++wroteExpected;
+        }
+        note(wroteExpected == kPending,
+             QStringLiteral("G11 written=%1 want=%2 label=%3")
+                 .arg(wroteExpected).arg(kPending).arg(expG11Label));
+        // 无缩略图张不写回（跳过不发请求），已分类张不被覆盖（守恒）。
+        QString p7cat, p8cat;
+        for (const Photo& ph : lib.photos()) {
+            if (ph.path == QStringLiteral("C:/la/p7.jpg")) p7cat = ph.category;
+            if (ph.path == QStringLiteral("C:/la/p8.jpg")) p8cat = ph.category;
+        }
+        note(p7cat.isEmpty(), QStringLiteral("G11 p7 (no thumb) got category=%1").arg(p7cat));
+        note(p8cat == seededCat,
+             QStringLiteral("G11 p8 overwritten=%1").arg(p8cat));
+        note(lib.photos().size() == kRows,
+             QStringLiteral("G11 conserve rows=%1 want=%2").arg(lib.photos().size()).arg(kRows));
+        // 落盘面（独立连接读磁盘）：内存对了不算落地，AiWriter→Library::setCategories 的
+        // SQL 写回必须由磁盘侧复核（#70 的 dbCat 同式，只复核一张即足以证明真写库）。
+        {
+            QString dbP0 = QStringLiteral("__unreadable__");
+            QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"),
+                                                       QStringLiteral("la_clipai_g11_read"));
+            db.setDatabaseName(dbPath);
+            if (db.open()) {
+                QSqlQuery q(db);
+                q.prepare(QStringLiteral("SELECT category FROM photos WHERE path=?"));
+                q.addBindValue(QStringLiteral("C:/la/p0.jpg"));
+                if (q.exec() && q.next()) dbP0 = q.value(0).toString();
+                db.close();
+            }
+            QSqlDatabase::removeDatabase(QStringLiteral("la_clipai_g11_read"));
+            note(dbP0 == expG11Label,
+                 QStringLiteral("G11 db p0=%1 want=%2").arg(dbP0, expG11Label));
+        }
+        // 分片钳制可观察面：进度序列（首帧 0 起算）逐片增量 <= 上限且累计到 total。
+        const int expG11ChunkCap = tamper ? 32 : 5;    // tamper 臂只放宽上限期望 ⇒ 真 5+2 序列照样红
+        QStringList seq;
+        int prev = 0;
+        bool deltaOk = true;
+        for (const int m : progMarks) {
+            seq << QString::number(m);
+            if (m - prev > expG11ChunkCap) deltaOk = false;
+            prev = m;
+        }
+        const QString gotSeq = seq.join(QLatin1Char(','));
+        note(gotSeq == expG11Prog,
+             QStringLiteral("G11 progress seq=%1 want=%2").arg(gotSeq, expG11Prog));
+        note(deltaOk, QStringLiteral("G11 chunk delta exceeds maxBatch cap"));
+        const bool g11Ok = classifyRet && wroteExpected == kPending && p7cat.isEmpty()
+                           && p8cat == seededCat && gotSeq == expG11Prog && deltaOk;
+        std::fprintf(stderr, "LA_CLIPAI_G G11 ok=%d written=%d prog=%s\n",
+                     int(g11Ok), wroteExpected, qPrintable(gotSeq));
+        // R-06 卫生：门后必删临时目录。⚠ 必须先摘掉 Library 留下的两条**全局命名连接**
+        // （la_lib 只读 + la_rw 惰性读写）——连接句柄活在全局池里，不受本腿 lib 的
+        // 作用域/析构影响；Windows 上被打开的 sqlite 文件删不掉，于是 removeRecursively
+        // 只删得掉 t*.jpg、独独留下 g11.db（实测：每次跑泄漏一个目录，内容只有 g11.db）。
+        // 本腿此后不再触碰 lib，摘连接安全（QSqlDatabase 局部对象先出作用域再 remove）。
+        for (const QString& conn : {QStringLiteral("la_rw"), QStringLiteral("la_lib")}) {
+            if (QSqlDatabase::contains(conn)) {
+                {
+                    QSqlDatabase db = QSqlDatabase::database(conn);
+                    db.close();
+                }
+                QSqlDatabase::removeDatabase(conn);
+            }
+        }
+        QDir(dir).removeRecursively();
+    }
+
     if (fails.isEmpty())
-        std::fprintf(stderr, "LA_CLIP_AI_QA PASS tamper=%d g1=1 g2=1 g3=1 g4=1 g5=1 g5p=1 g6=1 g7=1 g8=1 g9=1 g10=1\n", int(tamper));
+        std::fprintf(stderr, "LA_CLIP_AI_QA PASS tamper=%d g1=1 g2=1 g3=1 g4=1 g5=1 g5p=1 g6=1 g7=1 g8=1 g9=1 g10=1 g11=1\n", int(tamper));
     else
         std::fprintf(stderr, "LA_CLIP_AI_QA FAIL tamper=%d reason=%s\n",
                      int(tamper), qPrintable(fails.join(QChar(';'))));
@@ -7687,6 +7861,12 @@ int main(int argc, char *argv[])
         //   换代为新「AI 引擎未就绪」长文案代表断言（缺译→回落源码→变红）。
         i18nCheck("AI 引擎未就绪（缺模型或引擎文件，先运行 native/fetch_ai.ps1 并构建 faceinfer），再点「识别人物」。照片仅在本机处理，绝不外传。",
                   QStringLiteral("AI engine not ready (missing model or engine file — run native/fetch_ai.ps1 and build faceinfer first), then click \u201cDetect People\u201d. Photos are processed only on this machine and never sent out."));
+        // 2.40.0 T8：分类外部服务桥净替换后旧标题串（陈述「服务未就绪」）与旧正文串
+        //   （引导用户去启动外部分类服务，含 .bat 路径）双双退役，换代为第三条
+        //   「AI 引擎未就绪」双胞胎（clipinfer 侧）代表断言（缺译→回落源码→变红；
+        //   标题改指已译功能名「AI 分类」）。
+        i18nCheck("AI 引擎未就绪（缺模型或引擎文件，先运行 native/fetch_ai.ps1 并构建 clipinfer），再点「AI 分类」。照片仅在本机处理，绝不外传。",
+                  QStringLiteral("AI engine not ready (missing model or engine file — run native/fetch_ai.ps1 and build clipinfer first), then click \u201cAI Classify\u201d. Photos are processed only on this machine and never sent out."));
 
         // 默认路径语言决策断言（2.11.1）：构造 locale 跨机确定性——
         // zh 系显示语言必须不加载 en（本事故根因）；en 系必须加载；forced 覆盖优先。

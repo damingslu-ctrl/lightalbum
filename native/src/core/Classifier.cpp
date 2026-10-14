@@ -1,66 +1,41 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2026 LightAlbum Contributors
 #include "Classifier.h"
-#include <QNetworkAccessManager>
-#include <QNetworkRequest>
-#include <QNetworkReply>
-#include <QHttpMultiPart>
-#include <QEventLoop>
-#include <QTimer>
+#include "ClipRunner.h"
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QJsonArray>
-#include <QUrl>
 #include <QDir>
-#include <QFile>
 #include <QFileInfo>
 #include <QHash>
+#include <QDebug>
 #include <algorithm>
 
-// ---- QA 钩子状态（非空→classify 绕过网络）----
+// ---- QA 钩子状态（非空→classify 绕过子进程）----
 static QVector<CatItem> g_synthetic;
 void Classifier::setSyntheticForQa(const QVector<CatItem>& items) { g_synthetic = items; }
 void Classifier::clearSyntheticForQa() { g_synthetic.clear(); }
 
-// ---- 本地守卫：仅回环地址（对齐 Python brain.assert_local）----
-static bool isLocalUrl(const QUrl& u)
-{
-    if (!u.isValid()) return false;
-    const QString s = u.scheme().toLower();
-    if (s != QStringLiteral("http") && s != QStringLiteral("https")) return false;
-    const QString h = u.host().toLower();
-    return h == QStringLiteral("127.0.0.1") || h == QStringLiteral("localhost")
-        || h == QStringLiteral("::1") || h == QStringLiteral("[::1]");
-}
+// ---- 调度分片上限（派发单 R-80 第 1 条：这是真缺陷，不是保险丝）----
+// 退役中的外部分类服务桥（QNAM multipart POST）把整块缩略图打进一个请求；控制端
+// 15:50 直打该服务实测：batch=5 得 5 条真标签，batch=15/40/409 一律 409 拒收
+// 「batch size N exceeds configured
+// maximum batch size 5」⇒ 默认 batch=32 的**在库分类在生产里整批失败**（非 2xx → 既有
+// continue → 零写回），而 probe 恰用 5 条 ⇒ 门是绿的、坏的是真实用户路径。
+// clip 轨逐张化后每个 REQ 天生只承载一张，409 那一类随该服务桥整体消失；本常量把
+// **调度分片**钳到 ≤5。钳制语义（达上限→连续分片，不丢弃、不报错）是本处置自定的
+// 决定，spec §8 没有对应条款（该节只有四行用户可见矩阵 + 内存纪律）；方向与 §8
+// 「单张失败→当张放过」一致。保留 batch 形参与 done += chunk.size() 的进度守恒（R-17）。
+static constexpr int kClipMaxBatch = 5;
 
-// 同步等一个 reply（带超时），返回是否成功读完。reply 由调用方 deleteLater。
-static bool waitReply(QNetworkReply* reply, int timeoutMs)
+bool Classifier::probe()
 {
-    QEventLoop loop;
-    QTimer timer;
-    timer.setSingleShot(true);
-    QObject::connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
-    QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
-    timer.start(timeoutMs);
-    loop.exec();
-    if (!reply->isFinished()) { reply->abort(); return false; }
-    return reply->error() == QNetworkReply::NoError;
-}
-
-bool Classifier::probe(const QString& url)
-{
-    const QUrl u(url);
-    if (!isLocalUrl(u)) return false;   // 守卫：拒绝外网
-    QNetworkAccessManager mgr;
-    QNetworkRequest req(u.resolved(QStringLiteral("/health")));
-    req.setTransferTimeout(2000);
-    QNetworkReply* reply = mgr.get(req);
-    const bool ok = waitReply(reply, 2000);
-    if (!ok) { reply->deleteLater(); return false; }
-    const QJsonObject info = QJsonDocument::fromJson(reply->readAll()).object();
-    reply->deleteLater();
-    return info.value(QLatin1String("ok")).toBool(false)
-        && info.value(QLatin1String("loaded")).toBool(false);
+    // 第四轮 T8：外部分类服务桥（QNAM GET 探活 + 仅回环地址守卫）净替换为 clipinfer
+    // 子进程门面。probe 语义 = ClipRunner::probe()（拉起子进程 + READY 1 + 模型两件
+    // 齐备）；READY 0 是「可用进程 + 不可用功能」，与缺 exe 一样归入本函数 false，
+    // 由调用侧（MainWindow）映射到面向用户的「AI 引擎未就绪」文案（spec §8 矩阵）。
+    // ⚠ 只能在非 GUI 线程调用：底座对 GUI 线程调用响亮拒（Q_ASSERT + Busy），
+    //   Classifier::classify 的既有 worker 线程契约天然满足（T4b runPersonDetect 判例）。
+    return ClipRunner::probe();
 }
 
 QString Classifier::normalizeLabel(const QString& raw)
@@ -124,19 +99,19 @@ QString Classifier::normalizeLabel(const QString& raw)
 
 bool Classifier::classify(const QVector<Photo>& photos, AiWriter& writer,
                           const QString& thumbsDir,
-                          const QString& url, int batch, int limit,
+                          int batch, int limit,
                           std::function<void(int, int, const QString&)> progress,
                           std::function<bool()> cancel)
 {
-    // ---- QA 确定路径：直接套用合成结果，不触网、不探测 ----
+    // ---- QA 确定路径：直接套用合成结果，不触子进程、不探测 ----
     if (!g_synthetic.isEmpty()) {
         writer.categories(g_synthetic);
         if (progress) progress(g_synthetic.size(), g_synthetic.size(), QString());
         return true;
     }
 
-    // ---- 真路径：先探测服务（失败即返回 false，UI 据此提示启动服务）----
-    if (!probe(url)) return false;
+    // ---- 真路径：先探测引擎（失败即返回 false，UI 据此提示引擎未就绪）----
+    if (!probe()) return false;
 
     QVector<const Photo*> missing;
     missing.reserve(photos.size());
@@ -148,66 +123,51 @@ bool Classifier::classify(const QVector<Photo>& photos, AiWriter& writer,
     int done = 0;
     if (progress) progress(0, total, QString());
 
-    QNetworkAccessManager mgr;
-    for (int i = 0; i < total; i += batch) {
+    // 调度分片宽度 = min(batch, kClipMaxBatch)（R-80 第 1 条缺陷修复：达上限连续分片，
+    // 不丢弃、不报错）；batch 形参与 done += chunk.size() 的进度守恒语义原样保留（R-17）。
+    const int chunkSize = std::max(1, std::min(batch, kClipMaxBatch));
+    int failed = 0;                 // 单张可见失败数（spec §8「收尾汇总计数」）
+    for (int i = 0; i < total; i += chunkSize) {
         if (cancel && cancel()) break;
-        const QVector<const Photo*> chunk = missing.mid(i, batch);
+        const QVector<const Photo*> chunk = missing.mid(i, chunkSize);
 
-        // Qt 约定：post(req, QHttpMultiPart*) 后由 reply 接管堆对象，reply 销毁时自动 delete。
-        // 绝不能用栈对象——异步/循环路径会悬垂（UB）。
-        QHttpMultiPart* multi = new QHttpMultiPart(QHttpMultiPart::FormDataType);
-        QVector<QString> paths;
-        paths.reserve(chunk.size());
-        for (const Photo* p : chunk) {
-            const QString tp = QDir(thumbsDir).filePath(p->thumbFile);
-            QFile f(tp);
-            if (!f.open(QIODevice::ReadOnly)) continue;     // 跳过无缩略图/坏图
-            QHttpPart part;
-            part.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("image/jpeg"));
-            part.setHeader(QNetworkRequest::ContentDispositionHeader,
-                QStringLiteral("form-data; name=\"files\"; filename=\"%1\"")
-                    .arg(QFileInfo(tp).fileName()));
-            part.setBody(f.readAll());
-            multi->append(part);
-            paths.append(p->path);
-        }
-
-        if (paths.isEmpty()) {                 // 整批都没缩略图，未发请求 → 手动释放
-            delete multi;
-            done += chunk.size();
-            if (progress) progress(done, total, QString());
-            continue;
-        }
-
-        QNetworkRequest req(QUrl(url).resolved(QStringLiteral("/classify")));
-        req.setTransferTimeout(60000);
-        QNetworkReply* reply = mgr.post(req, multi);
-        const bool ok = waitReply(reply, 60000);
-        if (!ok) {                              // 网络层失败 → 整批放过
-            reply->deleteLater();
-            done += chunk.size();
-            if (progress) progress(done, total, QString());
-            continue;
-        }
-        const QJsonObject res = QJsonDocument::fromJson(reply->readAll()).object();
-        reply->deleteLater();
-
+        QVector<QString> paths;     // 本张请求的路径清单（逐张传输 ⇒ 恒 1 元，R-17）
+        paths.reserve(1);
         QVector<CatItem> items;
-        items.reserve(paths.size());
-        if (res.value(QLatin1String("ok")).toBool(false)) {
-            const QJsonArray results = res.value(QLatin1String("results")).toArray();
-            for (const QJsonValue& v : results) {
-                const QJsonObject r = v.toObject();
-                const int idx = r.value(QLatin1String("i")).toInt(-1);
-                if (idx < 0 || idx >= paths.size()) continue;
-                const QString label = normalizeLabel(r.value(QLatin1String("label")).toString());
-                const double score = r.value(QLatin1String("score")).toDouble();
-                items.append({paths[idx], label, score});
+        items.reserve(chunk.size());
+        for (const Photo* p : chunk) {
+            // 取消检查点收窄到每张之间（R-18：原语义是「在途批次跑完」，批内逐张后
+            // 更早退出——行为收紧，方向与原「尽快中止且不脏写」一致）。
+            if (cancel && cancel()) break;
+            const QString tp = QDir(thumbsDir).filePath(p->thumbFile);
+            if (!QFileInfo::exists(tp)) continue;      // 跳过无缩略图/坏图（不发请求）
+            paths.clear();
+            paths.append(p->path);
+            // 协议：REQ kind="jpg"，body=缩略图绝对路径的 UTF-8 原字节（spec §5 R-75）。
+            QJsonDocument doc;
+            if (!ClipRunner::classifyOne(tp, doc)) {   // 传输/引擎失败 → **该张**放过（R-18）
+                ++failed;
+                continue;
             }
-            if (!items.isEmpty()) writer.categories(items);
+            const QJsonObject r = doc.object();
+            // R-80 第 1 条保守口径：ok!=true 的应答**绝不采信**其 label/score——要么该张有效，
+            // 要么该张计入可见失败数，绝无「半条结果入库」。
+            if (!r.value(QLatin1String("ok")).toBool(false)) { ++failed; continue; }
+            // 单张应答没有批服务时代的 "i" 字段（clipinfer/rules.cpp renderJson 的
+            // 逐字节形状里没有它）⇒ 索引恒 0；越界守卫同款保留（R-17）。
+            const int idx = r.value(QLatin1String("i")).toInt(0);
+            if (idx < 0 || idx >= paths.size()) continue;
+            const QString label = normalizeLabel(r.value(QLatin1String("label")).toString());
+            const double score = r.value(QLatin1String("score")).toDouble();
+            items.append({paths[idx], label, score});
         }
+
+        if (!items.isEmpty()) writer.categories(items);
         done += chunk.size();
         if (progress) progress(done, total, QString());
     }
+    if (failed > 0)
+        qWarning().noquote() << "Classifier: clipinfer 单张失败" << failed << "/" << total
+                             << "张——已按「失败即放行」跳过，未写回";
     return true;
 }

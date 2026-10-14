@@ -1436,10 +1436,6 @@ Errors: %1 — %2</translation>
         <translation>AI Classify</translation>
     </message>
     <message>
-        <source>AI 分类服务未就绪</source>
-        <translation>AI Classification Service Not Ready</translation>
-    </message>
-    <message>
         <source>AI 正在分类…</source>
         <translation>AI is classifying…</translation>
     </message>
@@ -1544,8 +1540,8 @@ Errors: %1 — %2</translation>
         <translation>Detection interrupted (partial results may have been written).</translation>
     </message>
     <message>
-        <source>请先启动本地 CLIP 分类服务（D:\lightalbum_ai\start_classifier.bat），再点「AI 分类」。仅支持本机回环地址，照片不会外传。</source>
-        <translation>Please start the local CLIP service (D:\lightalbum_ai\start_classifier.bat), then click “AI Classify”. Loopback only; photos are never sent out.</translation>
+        <source>AI 引擎未就绪（缺模型或引擎文件，先运行 native/fetch_ai.ps1 并构建 clipinfer），再点「AI 分类」。照片仅在本机处理，绝不外传。</source>
+        <translation>AI engine not ready (missing model or engine file — run native/fetch_ai.ps1 and build clipinfer first), then click “AI Classify”. Photos are processed only on this machine and never sent out.</translation>
     </message>
     <message>
         <source>AI 引擎未就绪（缺模型或引擎文件，先运行 native/fetch_ai.ps1 并构建 faceinfer），再点「智能聚类」。照片仅在本机处理，绝不外传。</source>
