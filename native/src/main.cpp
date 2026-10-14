@@ -6187,6 +6187,10 @@ int runClipModelQa()
     quint64 reqId = 0;
     for (const QString& img : images) {
         ++reqId;
+        // 金侧配对名 = completeBaseName()（只剥最后一段扩展名，大小写不敏感）：
+        // "IMG_2540.PNG"→"IMG_2540"、"a.b.png"→"a.b"。当前 13 份夹具名全是单点，
+        // 多点行为无法在跑批里分辨，故在此钉死语义（禁用 lastIndexOf('.') 手切或
+        // replace(".png","") 这类大小写敏感写法）。
         const QString tag = QFileInfo(img).completeBaseName();
         const QString goldPath = goldDir + QStringLiteral("/") + tag + QStringLiteral(".gold.json");
         QFile gf(goldPath);
