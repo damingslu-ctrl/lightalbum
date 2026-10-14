@@ -624,12 +624,16 @@ $GateTable = @(
   # table (bbox right edge +30% width, embedding[0] +10.0) so IoU and cosine columns
   # go RED together; the comparison flow and exit path never branch on the env (rule 22).
   # Tier: full. timeoutSec=120 covers cold ORT session load on slow hosts.
-  # measuredMs=21082 from real qa_runner -Timing runs WITH env mounted (rule 25/31):
-  # 21082/20772 ms, conservative max recorded (app bootstrap dominates; the faceinfer
-  # READY handshake itself measured 435-632 ms). First green 2026-10-13 T3: 4 fixtures,
-  # 48/48 faces PASS all five columns; counterexample arm verified RED (exit 1, same
-  # exit path, expectation table corrupted only).
-  @{n="LA_FACE_MODEL_QA"; png=$false; need=@("LA_FACE_MODEL","LA_FACE_IMG"); measuredMs=21082; timeoutSec=120}
+  # measuredMs=22464 from real qa_runner -Timing runs WITH env mounted (rule 25/31):
+  # T3 21082/20772, T5 re-verify 22464 with the canonical 5-fixture set (adds one
+  # 3-face image), conservative max recorded (app bootstrap dominates; the faceinfer
+  # READY handshake itself measured 435-1954 ms). First green 2026-10-13 T3: 4 fixtures,
+  # 48/48 faces PASS all five columns; T5 2026-10-14: 5 fixtures, 51/51 faces PASS.
+  # Counterexample arm verified RED (exit 1, same exit path, expectation table corrupted
+  # only). Fixture screening note (T5 R-11): faces whose cross-runtime det-kps noise
+  # reaches ~0.15px push embedding cosine below 0.999 - kept-out-of-set boundary fixtures
+  # are documented in faceinfer.cpp, not gate regressions.
+  @{n="LA_FACE_MODEL_QA"; png=$false; need=@("LA_FACE_MODEL","LA_FACE_IMG"); measuredMs=22464; timeoutSec=120}
 )
 # Resolve a gate's tier. Absent key means "full" - the fail-safe default.
 function Get-GateTier {

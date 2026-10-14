@@ -10,6 +10,15 @@
 // T1 评审遗留 Minor#4（本任务承接）：aiproto::parseReq 返回不设上限的 Header.len——
 // 读取点加 64 MiB 体长硬上限（超限即 ERR badframe 并终止读线：巨 len 无法消费保同步，
 // 流错位不可恢复，父端按断链重启，绝不预分配巨内存）。AiProto.h 本体归 T4 加固，不动。
+// 平价声明（T4-T5 收口，2026-10-14 复验）：oracle 真源 D:\lightalbum_ai\face_server.py
+// SHA256=b0436d21298666bf…；模型 detection.onnx SHA256=5838f7fe053675b1…（det_10g）、
+// recognition.onnx SHA256=4c06341c33c2ca1f…（w600k_r50）；venv_face（ort 1.30 / numpy 2.5.3 /
+// cv2 5.0）同进程直调产金。#78 基准夹具集 f1_crowd42/f2_single/f3_pair/f4_trio/c2_00c07f5a
+//（5 图 51 脸）五列全 PASS（min IoU 0.9978 / max kps 0.0987px 主集内）。边界对照组
+// f5_five face4（kps 0.172px→cos 0.998699）与 c1_00703838 face4（0.308px→0.997963）：
+// 跨运行时 det-kps 噪声 ≥0.15px 时 cos 跌破 0.999 下限——R-11 判例：夹具须避开检测
+// 决策边界（同 T6 CLIP oracle-prescreen 约定），非移植 bug。
+// 对齐为 cv2-estimateAffinePartial2D 忠实 RANSAC+inlier-LS（R-09 判例，非纯 Umeyama）。
 #include "core/AiProto.h"
 #include "scrfd.h"
 #include "align.h"

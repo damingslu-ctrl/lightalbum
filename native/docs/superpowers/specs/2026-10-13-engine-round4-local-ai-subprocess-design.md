@@ -155,18 +155,21 @@ GUI）；门面是静态同步函数，调用点全部在 `QtConcurrent::run` �
   zip 体积诚实记录（+≈0.95GB 级，本地 zip 可接受，MANIFEST/BUILDINFO 自动覆盖）。
   windeployqt 需同时验证 Qt6Concurrent.dll 随包（2.39.0 遗留前置项，同次打包腿解决）。
 
-## 7. 门禁设计（roster 74 → 78：fast +2，full +2）
+## 7. 门禁设计（roster 74 → 78：fast +1，full +3）
 
-- **#75 `LA_FACE_AI_QA`（fast，hermetic 桩）**：faceinfer_stub.exe（同 inpaint_stub
-  模式）跑协议全谱：READY1/READY0→blocked_no_model、REQ/RES/ERR 帧、体分片读满、
+- **#75 `LA_FACE_AI_QA`（full，hermetic；T4a 由 fast 降级）**：门驱动真
+  AiSubprocessRunner 底座（faceinfer_stub.exe 仅作子进程，同 inpaint_stub 模式），
+  跑协议全谱：READY1/READY0→blocked_no_model、REQ/RES/ERR 帧、体分片读满、
   超时、crash 重启、单飞拒绝、FORCE 钩子。反例须咬（铁律 #34）。
+  T4a 实测 measuredMs=6992（G3-G8 真实 runner 全谱 ≈7s，超 E6 fast 500ms 预算）→ full。
 - **#76 `LA_CLIP_AI_QA`（fast，hermetic 桩）**：同构，含 prompts.bin 校验头反例。
 - **#77 `LA_CLIP_MODEL_QA`（full，opt-in `need=@("LA_CLIP_MODEL")`）**：真
   clipinfer.exe + 导出产物 + 黄金 fixture JSON 跑 §4 容差断言；env 缺 → SKIP 诚实计数。
-- **#78 `LA_FACE_MODEL_QA`（full，opt-in `need=@("LA_FACE_MODEL","LA_FACE_FIXTURE")`）**：
-  真 faceinfer.exe vs 黄金 JSON 跑 §3 容差断言。**fixture 隐私红线**：含真人脸的
-  fixture 图与黄金 JSON 只放本地 env 指定目录，**绝不入库**（沿用户样本 env-only
-  铁律）；oracle 生成脚本 `ai_export/gen_face_fixtures.py` 入库、产物不入库。
+- **#78 `LA_FACE_MODEL_QA`（full，opt-in `need=@("LA_FACE_MODEL","LA_FACE_IMG")`）**：
+  真 faceinfer.exe vs 黄金 JSON 跑 §3 容差断言（T3 落地时 env 名定为 LA_FACE_IMG，
+  与 oracle 生成脚本 `ai_export/gen_face_fixtures.py` 同名复用）。**fixture 隐私红线**：
+  含真人脸的 fixture 图与黄金 JSON 只放本地 env 指定目录，**绝不入库**（沿用户样本
+  env-only 铁律）；oracle 生成脚本入库，产物不入库。
 - 既有门影响：LA_GUI_THREAD_QA/AiWriter 相关门不动（门面语义未变）；三处
   `MainWindow` 静态接线门若引用旧文案/端口常量，实现期同步改。
 - gate_matrix.ps1 纯 ASCII 铁律（#37）适用全部新增行。
