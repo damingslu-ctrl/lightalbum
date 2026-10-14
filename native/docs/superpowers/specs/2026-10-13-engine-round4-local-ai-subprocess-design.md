@@ -128,6 +128,19 @@ GUI）；门面是静态同步函数，调用点全部在 `QtConcurrent::run` �
 - **平价门禁（第 77 门，opt-in）容差**：fixture 图上 label/note 逐字符相等、
   top-probs 逐类差 ≤ 0.02、sat 差 ≤ 1.0。fixture 选取须避开判定边界（用 oracle
   概率预筛 |Δp|<0.05 的样本剔除）。
+  - **2026-10-14 T7 修复波订正（R-87）：`low_confidence` 族对上述「避开判定边界」预筛是记档例外**。
+    预筛的仓内机械化在 `ai_export/gen_clip_fixtures.py:60`（`GAP_MIN = 0.10`）与 `:175-176`（剔除判据），
+    比本条的 |Δp|<0.05 更严。对 `note=low_confidence` 族它**数学上不可满足**：8 类 softmax 下
+    top-1=p 时 top-2 ≥ (1−p)/7，故 gap = top1−top2 ≤ (8p−1)/7；该族定义要求
+    p < `OTHER_SCORE_THRESHOLD=0.20`，代入得 gap < 0.6/7 ≈ 0.0857 < 0.10 ⇒ 真实图里
+    不存在同时满足 `score<0.20` 与 `gap>0.10` 的样本（实证同向：T6 预筛 160 张候选池无 top1<0.20；
+    在册 12 真图 min gap 0.7838）。故此族夹具由确定性合成器 `ai_export/gen_clip_synthetic_lowconf.py`
+    产出（生成代码入库；PNG 与 `.gold.json` 按 R-06 绝不入库），族内自带下限
+    `GAP_MIN_FAMILY=0.055`（= 2×top3 容差 0.02 + 安全垫 0.015）并在生产侧响亮校验。
+    **例外的边界（不许退化成「两次都判错也算绿」）**：`#77` 对每一份 `low_confidence` 金
+    断言 `screen.gap_top1_top2 > 0.04`（`native/src/main.cpp:6254-6262`，字段由
+    `gen_clip_fixtures.py:160` 写入金内 `screen`）；**缺该字段或不满足即 FAIL**，不许静默跳过。
+    注：本条例外破的是仓内更严常量，§4 自身的 |Δp|<0.05 地板未被破（在册合成金 gap=0.0589 > 0.05）。
 
 ## 5. 线协议（`native/src/core/AiProto.h`，face/clip 共用；EraseProto 不动）
 
