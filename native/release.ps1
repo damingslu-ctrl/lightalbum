@@ -3,9 +3,10 @@
 # Build first (native/build/LightAlbum.exe), then run:
 #   powershell -File release.ps1# clean deploy, no trim
 #   powershell -File release.ps1 -TrimNetwork    # also drop Qt6Network+tls+networkinformation+generic
+#   powershell -File release.ps1 -StageOnly     # stop after staging + contracts (no zip; dry-run boundary)
 #   powershell -File release.ps1 -SelfTest      # contract self-test (QA gate LA_RELEASE_QA)
 #
-# Contracts C1..C9, all enforced inline below AND driven by -SelfTest:
+# Contracts C1..C10, all enforced inline below AND driven by -SelfTest:
 #   C1 version sync (CHANGELOG <-> CMakeLists <-> requested)
 #   C2 user manual in the dist AND it describes the version being packaged
 #   C3 core artifacts present and non-empty
@@ -15,6 +16,9 @@
 #   C7 MANIFEST is reproducible (twice == same bytes) and totally ordered
 #   C8 build type is Release (a Debug artifact must never be shipped)
 #   C9 lama model license (inpaint.exe present in staging without LICENSE is a hard error)
+#   C10 face/clip AI executors: staged set complete + licenses (notice content
+#      grep) + imageformats/qjpeg.dll + faceinfer.exe EXECUTED (--version) from
+#      the staged dir, so "present but unloadable" is caught, not just "missing"
 # Plus BUILDINFO.txt (SBOM: commit, build type, Qt/compiler versions).
 #
 # Clean approach: copy only the exe, then windeployqt deploys exactly the
@@ -29,6 +33,7 @@ param(
   [string]$Version = "",
   [switch]$TrimNetwork,
   [switch]$SkipGate,
+  [switch]$StageOnly,
   [switch]$SelfTest,
   [switch]$NoInject,
   [string]$Windeployqt = ""
@@ -371,6 +376,108 @@ function Assert-LamaLicense($staging) {
   if (-not (Test-Path $mit)) { throw "C9 onnxruntime MIT notice missing from 3rdparty/lama" }
 }
 
+# C10: the face/clip AI executors (round-4 subprocess track) must ship COMPLETE,
+# ATTRIBUTED and -- decisively -- LOADABLE. Same graceful-skip idiom as C9 (the
+# fetch is an optional pre-build step), but three independent legs, each with
+# its own -SelfTest injection so none of them can rot into theater (#34):
+#   (a) existence  : every file of the staged package present and non-empty,
+#                    incl. 3rdparty/face/bin/imageformats/qjpeg.dll. Qt decodes
+#                    JPEG as a PLUGIN (PNG is built into QtGui), the executor
+#                    reads library photos without any suffix filter, and the
+#                    packaged plugin dir is the staged bin's own imageformats/
+#                    -- so a missing qjpeg means "exe starts, every JPEG fails".
+#                    Only a file check catches it: --version decodes nothing (R-120a).
+#   (b) attribution: LICENSE non-empty, THIRD_PARTY-NOTICE.md non-empty AND the
+#                    staged clip notice still CONTAINS the stb_image credit --
+#                    non-emptiness would pass a notice with the credit line
+#                    silently deleted; the substantive R-54 requirement is the
+#                    content, and fetch_ai.ps1 only proves it on the source tree.
+#   (c) loadability: EXECUTE the staged faceinfer.exe with --version, CWD = the
+#                    staged bin dir and PATH reduced to the system dirs. That
+#                    mirrors the packaged child exactly (AiSubprocessRunner sets
+#                    working dir = exe dir, injects no PATH), minus any rescue a
+#                    developer's Qt-in-PATH would silently supply. objdump -p:
+#                    faceinfer.exe imports Qt6Core/Qt6Gui/onnxruntime, and
+#                    Qt6Core itself pulls the MinGW runtime trio, so a missing
+#                    one dies at LOADING (0xC0000135) long before --version
+#                    prints -- "file present" cannot prove that, only a run can
+#                    (R-120b). The Qt/minGW dlls are deliberately NOT on the
+#                    existence list: the Qt6Core.dll deletion injection must
+#                    bite HERE, not in (a), or the exec leg is a lie (R-120c).
+# clipinfer.exe is Qt-free per its own import table -- no Qt closure on that side.
+function Assert-FaceClipLicense($staging) {
+  $faceBin = Join-Path $staging "3rdparty/face/bin"
+  $clipBin = Join-Path $staging "3rdparty/clip/bin"
+  if (-not (Test-Path $faceBin) -and -not (Test-Path $clipBin)) {
+    Write-Host "WARN: face/clip executors not staged -- AI face clustering and semantic search degrade to blocked_no_model in this build"
+    return
+  }
+  if (Test-Path $faceBin) {
+    foreach ($f in @("faceinfer.exe", "detection.onnx", "recognition.onnx", "onnxruntime.dll", "imageformats/qjpeg.dll")) {
+      $p = Join-Path $faceBin $f
+      if (-not (Test-Path $p)) { throw ("C10 face file missing: 3rdparty/face/bin/" + $f) }
+      if ((Get-Item $p).Length -le 0) { throw ("C10 face file empty: 3rdparty/face/bin/" + $f) }
+    }
+    $fl = Join-Path $staging "3rdparty/face/LICENSE"
+    if (-not (Test-Path $fl)) { throw "C10 faceinfer staged but 3rdparty/face/LICENSE missing" }
+    if ((Get-Item $fl).Length -le 0) { throw "C10 face LICENSE is empty" }
+    $fn = Join-Path $staging "3rdparty/face/THIRD_PARTY-NOTICE.md"
+    if (-not (Test-Path $fn)) { throw "C10 face THIRD_PARTY-NOTICE.md missing from 3rdparty/face" }
+    if ((Get-Item $fn).Length -le 0) { throw "C10 face THIRD_PARTY-NOTICE.md is empty" }
+    # leg (c): run the executor, packaged-child search order, no PATH rescue.
+    $exe = Join-Path $faceBin "faceinfer.exe"
+    $oldPath = $env:PATH
+    $oldEa = $ErrorActionPreference
+    $rc = -1
+    $out = ""
+    try {
+      $env:PATH = (Join-Path $env:SystemRoot "System32") + ";" + $env:SystemRoot
+      # Native stderr must not become a NativeCommandError under EAP=Stop
+      # (P13/P17 lesson); it is data for the assertion, not a terminating error.
+      $ErrorActionPreference = "Continue"
+      Push-Location $faceBin
+      try {
+        $out = (& $exe --version 2>&1 | Out-String)
+        $rc = $LASTEXITCODE
+      } finally { Pop-Location }
+    } catch {
+      # A process that cannot even load may surface as ApplicationFailedException
+      # depending on the host; that is a failed load, not a harness crash.
+      $out = $_.Exception.Message
+      $rc = -1
+    } finally {
+      $ErrorActionPreference = $oldEa
+      $env:PATH = $oldPath
+    }
+    if ($rc -ne 0) {
+      throw ("C10 faceinfer --version load check failed (rc=0x" + ('{0:X8}' -f $rc) + "): staged faceinfer.exe does not load with CWD=3rdparty/face/bin and PATH=system-only -- its import closure (Qt6Core/Qt6Gui + the MinGW runtime peers Qt6Core pulls, + onnxruntime) must be staged INSIDE 3rdparty/face/bin. stdout/stderr: [" + $out.Trim() + "]")
+    }
+    if ($out -notmatch "faceinfer") { throw ("C10 faceinfer --version answered but did not identify itself: [" + $out.Trim() + "]") }
+  } else {
+    Write-Host "WARN: 3rdparty/face/bin not staged -- face clustering degrades to blocked_no_model in this build"
+  }
+  if (Test-Path $clipBin) {
+    foreach ($f in @("clipinfer.exe", "clip_vit_b32_img.onnx", "prompts.bin", "onnxruntime.dll")) {
+      $p = Join-Path $clipBin $f
+      if (-not (Test-Path $p)) { throw ("C10 clip file missing: 3rdparty/clip/bin/" + $f) }
+      if ((Get-Item $p).Length -le 0) { throw ("C10 clip file empty: 3rdparty/clip/bin/" + $f) }
+    }
+    $cl = Join-Path $staging "3rdparty/clip/LICENSE"
+    if (-not (Test-Path $cl)) { throw "C10 clipinfer staged but 3rdparty/clip/LICENSE missing" }
+    if ((Get-Item $cl).Length -le 0) { throw "C10 clip LICENSE is empty" }
+    $cn = Join-Path $staging "3rdparty/clip/THIRD_PARTY-NOTICE.md"
+    if (-not (Test-Path $cn)) { throw "C10 clip THIRD_PARTY-NOTICE.md missing from 3rdparty/clip" }
+    if ((Get-Item $cn).Length -le 0) { throw "C10 clip THIRD_PARTY-NOTICE.md is empty" }
+    # Content grep, not non-emptiness: the stb_image credit line is the
+    # substantive R-54 requirement, and a notice with that line surgically
+    # removed is still "non-empty".
+    $cnTxt = Get-Content $cn -Raw -Encoding UTF8
+    if ($cnTxt -notmatch "stb_image") { throw "C10 clip THIRD_PARTY-NOTICE.md lost its required stb_image attribution line (R-54)" }
+  } else {
+    Write-Host "WARN: 3rdparty/clip/bin not staged -- semantic search degrades to blocked_no_model in this build"
+  }
+}
+
 # =====================================================================
 # -SelfTest: prove the contracts actually fire.
 #
@@ -383,10 +490,17 @@ function Assert-LamaLicense($staging) {
 # The contract roster: single source of truth for how many contracts exist.
 # Adding C8 here is enough -- Get-ContractTags, the baseline loop and the PASS
 # report all count this list instead of repeating a literal.
-$script:contractIds = @("C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8", "C9")
+$script:contractIds = @("C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8", "C9", "C10")
+
+# Captured throw messages of the most recent Get-ContractTags pass, keyed by
+# contract id. -SelfTest injections that pin WHICH leg must fire (C10's exec
+# leg, R-120c) read their message here; a plain ":CAUGHT" tag cannot tell an
+# existence-leg throw from an execute-leg one.
+$script:LastCaughtMsgs = @{}
 
 function Get-ContractTags($want, $cmPath, $clPath, $staging, $manName, $zipPath, $noticeName, $srcRoot, $derivedRel, $cachePath = "") {
   $tags = @()
+  $script:LastCaughtMsgs = @{}
   $probes = @(
     @{ t = "C1"; f = { Assert-VersionSync $want $cmPath $clPath } },
     @{ t = "C2"; f = { Assert-ManualPresent $staging $want } },
@@ -396,13 +510,14 @@ function Get-ContractTags($want, $cmPath, $clPath, $staging, $manName, $zipPath,
     @{ t = "C6"; f = { Assert-LicenseCompliance $staging $noticeName $srcRoot $derivedRel } },
     @{ t = "C7"; f = { Assert-ManifestReproducible $staging $manName } },
     @{ t = "C8"; f = { Assert-ReleaseBuildType $cachePath } },
-    @{ t = "C9"; f = { Assert-LamaLicense $staging } }
+    @{ t = "C9"; f = { Assert-LamaLicense $staging } },
+    @{ t = "C10"; f = { Assert-FaceClipLicense $staging } }
   )
   foreach ($p in $probes) {
     # Assign to $null: several Assert-* return values (entry count, hash)
     # and an unassigned call would leak them into the returned tag list.
     try { $null = & $p.f; $tags += ($p.t + ":PASS") }
-    catch { $tags += ($p.t + ":CAUGHT") }
+    catch { $tags += ($p.t + ":CAUGHT"); $script:LastCaughtMsgs[$p.t] = $_.Exception.Message }
   }
   return $tags
 }
@@ -440,6 +555,55 @@ function New-Sandbox($dir, $version) {
   Set-Content -Path (Join-Path $dist "Zz.txt") -Encoding ASCII -Value "upper"
   Set-Content -Path (Join-Path $dist "zz.txt") -Encoding ASCII -Value "lower"
   return $dist
+}
+
+# C10's staged tree must be LOADABLE in the sandbox, not just present: leg (c)
+# proves loadability by RUNNING the staged faceinfer.exe, and a text-file
+# stand-in would make the Qt6Core-deletion injection bite an existence leg (or
+# nothing) instead of the exec leg -- the unfired-assertion case R-120c forbids. So
+# the sandbox stages the real faceinfer.exe + its full import closure (Qt6Core,
+# Qt6Gui, the MinGW trio Qt6Core pulls, onnxruntime) from this machine, mirroring
+# what production staging holds; only the load-irrelevant content (models, the
+# Qt-free clip side) is faked small. Preconditions are named loudly because a
+# silent skip here would silently un-fire leg (c).
+function New-FaceClipSandboxStaging($dist) {
+  $faceBinSrc = Join-Path $root "3rdparty/face/bin"
+  $bld = Join-Path $root "build"
+  $real = @(
+    @{ src = (Join-Path $faceBinSrc "faceinfer.exe");            rel = "3rdparty/face/bin/faceinfer.exe" },
+    @{ src = (Join-Path $faceBinSrc "onnxruntime.dll");          rel = "3rdparty/face/bin/onnxruntime.dll" },
+    @{ src = (Join-Path $bld "Qt6Core.dll");                     rel = "3rdparty/face/bin/Qt6Core.dll" },
+    @{ src = (Join-Path $bld "Qt6Gui.dll");                      rel = "3rdparty/face/bin/Qt6Gui.dll" },
+    @{ src = (Join-Path $bld "libgcc_s_seh-1.dll");              rel = "3rdparty/face/bin/libgcc_s_seh-1.dll" },
+    @{ src = (Join-Path $bld "libstdc++-6.dll");                 rel = "3rdparty/face/bin/libstdc++-6.dll" },
+    @{ src = (Join-Path $bld "libwinpthread-1.dll");             rel = "3rdparty/face/bin/libwinpthread-1.dll" },
+    @{ src = (Join-Path $bld "imageformats/qjpeg.dll");          rel = "3rdparty/face/bin/imageformats/qjpeg.dll" },
+    @{ src = (Join-Path $root "3rdparty/face/LICENSE");          rel = "3rdparty/face/LICENSE" },
+    @{ src = (Join-Path $root "3rdparty/face/THIRD_PARTY-NOTICE.md"); rel = "3rdparty/face/THIRD_PARTY-NOTICE.md" },
+    @{ src = (Join-Path $root "3rdparty/clip/LICENSE");          rel = "3rdparty/clip/LICENSE" },
+    @{ src = (Join-Path $root "3rdparty/clip/THIRD_PARTY-NOTICE.md"); rel = "3rdparty/clip/THIRD_PARTY-NOTICE.md" }
+  )
+  foreach ($e in $real) {
+    if (-not (Test-Path $e.src)) {
+      throw ("C10 sandbox precondition missing: " + $e.src + " -- build native/ (Qt runtime lands in build/) and run fetch_ai.ps1 before release.ps1 -SelfTest, otherwise leg (c) cannot fire")
+    }
+  }
+  foreach ($e in $real) {
+    $dst = Join-Path $dist ($e.rel -replace '/', '\')
+    $parent = Split-Path -Parent $dst
+    if (-not (Test-Path $parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+    Copy-Item $e.src $dst -Force
+  }
+  # the dirs exist even though no real entry lands in clip/bin (Qt-free side)
+  New-Item -ItemType Directory -Force -Path (Join-Path $dist "3rdparty/face/bin/imageformats") | Out-Null
+  New-Item -ItemType Directory -Force -Path (Join-Path $dist "3rdparty/clip/bin") | Out-Null
+  # content-irrelevant stand-ins (existence/size legs only; never loaded here)
+  Set-Content -Path (Join-Path $dist "3rdparty/face/bin/detection.onnx") -Encoding ASCII -Value "fake-detection-onnx-payload"
+  Set-Content -Path (Join-Path $dist "3rdparty/face/bin/recognition.onnx") -Encoding ASCII -Value "fake-recognition-onnx-payload"
+  Set-Content -Path (Join-Path $dist "3rdparty/clip/bin/clipinfer.exe") -Encoding ASCII -Value "fake-clipinfer-payload"
+  Set-Content -Path (Join-Path $dist "3rdparty/clip/bin/clip_vit_b32_img.onnx") -Encoding ASCII -Value "fake-clip-onnx-payload"
+  Set-Content -Path (Join-Path $dist "3rdparty/clip/bin/prompts.bin") -Encoding ASCII -Value "fake-prompts-payload"
+  Set-Content -Path (Join-Path $dist "3rdparty/clip/bin/onnxruntime.dll") -Encoding ASCII -Value "fake-ort-payload"
 }
 
 function Invoke-ReleaseSelfTest($noInject) {
@@ -549,6 +713,41 @@ function Invoke-ReleaseSelfTest($noInject) {
           New-Item -ItemType Directory -Force -Path $lb | Out-Null
           Set-Content -Path (Join-Path $lb "inpaint.exe") -Encoding ASCII -Value "fake-inpaint-payload"
           Set-Content -Path (Join-Path $lr "LICENSE") -Encoding ASCII -Value "fake lama license (sandbox)"
+        } },
+      # C10: six injections, one per falsifiable leg family (R-33 three +
+      # R-120c exec leg + R-52 clip dll + the R-54 content grep that is the
+      # only check able to notice a surgically deleted credit line). The staged
+      # tree is the real load-closure tree, so "present but unloadable" is a
+      # reachable state here. Expect-pins below are the teeth of R-120c: the
+      # Qt6Core deletion must be caught BY the exec leg (existence legs stay
+      # green for it BY DESIGN), and the credit deletion by the CONTENT leg.
+      @{ id = "C10"; apply = {
+          New-FaceClipSandboxStaging $dist
+          Remove-Item (Join-Path $dist "3rdparty/face/LICENSE") -Force
+        } },
+      @{ id = "C10"; apply = {
+          New-FaceClipSandboxStaging $dist
+          Remove-Item (Join-Path $dist "3rdparty/face/bin/detection.onnx") -Force
+        } },
+      @{ id = "C10"; apply = {
+          New-FaceClipSandboxStaging $dist
+          Remove-Item (Join-Path $dist "3rdparty/face/bin/onnxruntime.dll") -Force
+        } },
+      @{ id = "C10"; expect = 'C10 faceinfer --version'; apply = {
+          New-FaceClipSandboxStaging $dist
+          Remove-Item (Join-Path $dist "3rdparty/face/bin/Qt6Core.dll") -Force
+        } },
+      @{ id = "C10"; apply = {
+          New-FaceClipSandboxStaging $dist
+          Remove-Item (Join-Path $dist "3rdparty/clip/bin/onnxruntime.dll") -Force
+        } },
+      @{ id = "C10"; expect = 'stb_image'; apply = {
+          New-FaceClipSandboxStaging $dist
+          $np = Join-Path $dist "3rdparty/clip/THIRD_PARTY-NOTICE.md"
+          # notice stays present and NON-EMPTY; only the credited line is gone
+          $kept = @(Get-Content $np -Encoding UTF8 | Where-Object { $_ -notmatch 'stb_image' })
+          if ($kept.Count -le 0) { throw "C10 sandbox: stripping stb_image emptied the notice (injection broken)" }
+          Set-Content -Path $np -Value $kept -Encoding UTF8
         } }
     )
     foreach ($inj in $injections) {
@@ -560,7 +759,15 @@ function Invoke-ReleaseSelfTest($noInject) {
       & $inj.apply
       $tags = Get-ContractTags $fakeVer $cmPath $clPath $dist $MANIFEST_NAME $zipPath $NOTICE_NAME $sandbox $sandboxDerived $sandboxCache
       if ($tags -contains ($inj.id + ":CAUGHT") -and $tags -notcontains ($inj.id + ":PASS")) {
-        $caught++
+        # A ":CAUGHT" tag does not say WHICH leg threw. Injections that pin the
+        # leg (expect=) are asserted against the captured message, so an
+        # existence-leg catch cannot impersonate the exec-leg catch (R-120c).
+        if ($inj.ContainsKey("expect") -and ($script:LastCaughtMsgs[$inj.id] -notmatch $inj.expect)) {
+          $fails += ("inject:" + $inj.id + " fired the WRONG leg: expected /" + $inj.expect + "/ got: " + $script:LastCaughtMsgs[$inj.id])
+        } else {
+          Write-Output ("  caught[" + $inj.id + "]: " + $script:LastCaughtMsgs[$inj.id])
+          $caught++
+        }
       } else {
         $fails += ("inject:" + $inj.id + " defect was NOT caught (tags=" + ($tags -join ",") + ")")
       }
@@ -851,6 +1058,81 @@ if (Test-Path (Join-Path $lamaBin "inpaint.exe")) {
   Write-Host "WARN: lama not fetched -- AI erase degrades to blocked_no_model in this build"
 }
 
+# 3.68) face/clip AI executors (round-4 subprocess track) + licenses + LOAD closure.
+# Layout = <exe dir>/3rdparty/{face,clip}/bin, byte-for-byte the fetch_ai.ps1
+# landing dirs and candidate #2 of FaceRunner.cpp:23-29 / ClipRunner (packaged
+# state MUST hit it; dev flat layout hits candidate #3 -- both legs stay alive).
+# Absent sources only WARN here; the honest throw is Assert-FaceClipLicense
+# running BELOW on the staged tree (C9 idiom: staging can half-succeed, so the
+# contract reads the staging, never the source).
+# R-120a: faceinfer.exe is NOT Qt-free (objdump -p: Qt6Core.dll + Qt6Gui.dll +
+# onnxruntime.dll, and Qt6Core.dll itself imports libgcc_s_seh-1/libstdc++-6/
+# libwinpthread-1 -- the closure was measured, not assumed: with only the two
+# Qt dlls the run dies 0xC0000135). AiSubprocessRunner sets the child CWD to the
+# exe dir and injects no PATH, so the packaged child can ONLY see its own dir --
+# face/bin must carry the closure ITSELF. Sources are the windeployqt copies
+# already in the STAGING ROOT, never D:\qt: one package holding two files with
+# the same DLL name at possibly different versions is worse than the bug fixed.
+# clipinfer.exe imports KERNEL32/msvcrt/onnxruntime only (objdump -p): it ships
+# WITHOUT Qt dlls -- copying them "for symmetry" with face would be dead weight
+# and a version hazard. qjpeg.dll travels because JPEG is a Qt PLUGIN decoder
+# (PNG is built into QtGui): without it every JPEG in the library fails to decode
+# at runtime while --version still passes.
+$faceSrc = Join-Path $root "3rdparty/face"
+$faceSrcBin = Join-Path $faceSrc "bin"
+if (Test-Path (Join-Path $faceSrcBin "faceinfer.exe")) {
+  $dst = Join-Path $staging "3rdparty/face/bin"
+  New-Item -ItemType Directory -Path (Join-Path $dst "imageformats") -Force | Out-Null
+  foreach ($f in @("faceinfer.exe", "detection.onnx", "recognition.onnx", "onnxruntime.dll")) {
+    $src = Join-Path $faceSrcBin $f
+    if (Test-Path $src) { Copy-Item $src $dst -Force }
+    else { Write-Host ("WARN: face source missing: " + $src) }
+  }
+  New-Item -ItemType Directory -Path (Join-Path $staging "3rdparty/face") -Force | Out-Null
+  foreach ($f in @("LICENSE", "THIRD_PARTY-NOTICE.md")) {
+    $src = Join-Path $faceSrc $f
+    if (Test-Path $src) { Copy-Item $src (Join-Path $staging "3rdparty/face") -Force }
+    else { Write-Host ("WARN: face license source not found: " + $src) }
+  }
+  foreach ($f in @("Qt6Core.dll", "Qt6Gui.dll", "libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll")) {
+    $src = Join-Path $staging $f
+    if (Test-Path $src) { Copy-Item $src $dst -Force }
+    else { Write-Host ("WARN: staging-root runtime missing for face/bin closure: " + $f) }
+  }
+  $qj = Join-Path $staging "imageformats/qjpeg.dll"
+  if (Test-Path $qj) { Copy-Item $qj (Join-Path $dst "imageformats") -Force }
+  else { Write-Host "WARN: staging-root imageformats/qjpeg.dll missing for face/bin" }
+  Write-Host "3rdparty/face staged (executor + models + ORT + Qt/minGW load closure + qjpeg + licenses)"
+} else {
+  Write-Host "WARN: face not fetched -- face clustering degrades to blocked_no_model in this build"
+}
+$clipSrc = Join-Path $root "3rdparty/clip"
+$clipSrcBin = Join-Path $clipSrc "bin"
+if (Test-Path (Join-Path $clipSrcBin "clipinfer.exe")) {
+  $dst = Join-Path $staging "3rdparty/clip/bin"
+  New-Item -ItemType Directory -Path $dst -Force | Out-Null
+  foreach ($f in @("clipinfer.exe", "clip_vit_b32_img.onnx", "prompts.bin", "onnxruntime.dll")) {
+    $src = Join-Path $clipSrcBin $f
+    if (Test-Path $src) { Copy-Item $src $dst -Force }
+    else { Write-Host ("WARN: clip source missing: " + $src) }
+  }
+  New-Item -ItemType Directory -Path (Join-Path $staging "3rdparty/clip") -Force | Out-Null
+  foreach ($f in @("LICENSE", "THIRD_PARTY-NOTICE.md")) {
+    $src = Join-Path $clipSrc $f
+    if (Test-Path $src) { Copy-Item $src (Join-Path $staging "3rdparty/clip") -Force }
+    else { Write-Host ("WARN: clip license source not found: " + $src) }
+  }
+  Write-Host "3rdparty/clip staged (Qt-free executor + tower + prompts + ORT + licenses)"
+} else {
+  Write-Host "WARN: clip not fetched -- semantic search degrades to blocked_no_model in this build"
+}
+# Second call site of C10 (the first is the $probes list, which ONLY -SelfTest
+# reaches -- a contract registered there alone can never fire in a real
+# release, same lesson that put Assert-LamaLicense at the lama block). Runs
+# unconditionally so a half-staged tree throws even when one package was skipped.
+Assert-FaceClipLicense $staging
+Write-Host "C10 ok: face/clip staged sets complete, licenses shipped (clip notice holds its stb_image credit), faceinfer.exe LOADS and answers --version from the staged dir"
+
 # 3.7) contracts C2/C6 on the staged tree, before anything is zipped.
 # C3 is deliberately NOT here: it requires BUILDINFO.txt, which can only be
 # written once the trim is done (the trim changes the file set the SBOM
@@ -895,6 +1177,15 @@ Assert-ManifestConsistent $staging $MANIFEST_NAME
 $reproHash = Assert-ManifestReproducible $staging $MANIFEST_NAME
 Assert-ManifestConsistent $staging $MANIFEST_NAME
 Write-Host ("MANIFEST: " + $MANIFEST_NAME + " (" + ($manifestLines - 3) + " files, self-verified, reproducible=" + $reproHash.Substring(0, 12) + ")")
+
+# 4.9) -StageOnly: the R-35 dry-run boundary. Everything above is staging and
+# contract verification; the zip below is the release artifact and stays under
+# the user's release ceremony. The switch only SKIPS output, it never changes
+# what staging or the contracts see.
+if ($StageOnly) {
+  Write-Host ("STAGE-ONLY: staging + all contracts verified at " + $staging + " ; zip skipped (release ceremony is the user's gate)")
+  exit 0
+}
 
 # 5) zip (relocate any prior zip instead of deleting)
 $zip = Join-Path $root "$stagingName.zip"
