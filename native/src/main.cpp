@@ -5304,8 +5304,190 @@ int runFaceAiQa()
         std::fprintf(stderr, "LA_FACEAI_G G8 ok=%d\n", int(readyNoExe && callNoExe));
     }
 
+    // ---- G9 [T12 修复波 FIX-8] face 轨「子进程驱动的生产路径腿」（照抄 G11 结构，**不吃合成钩子**）：
+    //      PersonDetector::detect → FaceRunner::probe/detect 门面 → AiSubprocessRunner 底座 →
+    //      faceinfer 子进程（qputenv LA_FACE_STUB=1 走门面候选链第 1 跳桩，与 G11 的 LA_CLIP_STUB
+    //      同构；桩文件头 E1 组「runner 侧强制选桩标记，T4 接线消费」，本腿即该消费点）。
+    //      为什么必须存在：#70 全程 setSyntheticForQa 绕过传输、#75 的 G1..G8 只驱动底座本身——
+    //      T4b 净替换掉的正是 PersonDetector 的传输段，其真实通路（逐张 REQ kind=det → RES JSON →
+    //      Library::setPersons 的 person 列写回）此前无任何门禁覆盖。桩对任意 body 恒答 faces
+    //      count=1（与 G3 期望体同源），故「person 列出现 defaultPerson」只可能来自一次真往返。
+    //      ⚠ 与 G11 的两处 face 特有分歧（据实断言，绝不照搬 CLIP 判据）：
+    //        (1) PersonDetector **无缩略图闸**：pending 过滤只认 person.isEmpty()（PersonDetector.cpp:54），
+    //            每张未标注照片（含 p5 无缩略图）都发 REQ、桩都答 count=1 → 都写回。G11 的
+    //            「无缩略图不发请求也不写回」在 face 轨**不成立**，故 p5 仍被写回，本腿据此**正向**
+    //            断言（证明 face 轨逐张真驱动子进程、无 thumb 捷径）——这是有意据实断言，非放宽。
+    //        (2) detect 返回值诚实性**只由 probe 决定**：probe 失败即 false（PersonDetector.cpp:49，
+    //            返回发生在循环之前）；每 REQ「失败→整张放过」分支（:71）即使全失败仍 return true
+    //            （:87，净替换保留的坏图不中断语义，非 Classifier 的 F-1 全失败 false）。故「全失败轮
+    //            false」只能靠 LA_FACE_FORCE_NOMODEL（READY 0 → probe false → detect false）真实达成，
+    //            不能像 G11 用 FORCE_ERR（force_err 臂 READY 1、probe 仍成功 → detect 仍 true，
+    //            若断 expRet=!tamper 会失真）。这是 face 与 CLIP 返回值契约的真实差异，据实反映。
+    //      两臂互锁（铁律22）：正臂（仅 LA_FACE_STUB）detect true + kPending 张写回 defaultPerson；
+    //      tamper 臂物理注入 LA_FACE_FORCE_NOMODEL 且把期望标签翻成「错误标注」——写回数与盘面独立
+    //      复核两路各自咬红，返回值真值表两臂恒绿（诚实互锁：恒真实现被 tamper 臂咬红、恒假被正臂咬红）。----
+    {
+        const QString dir = QDir::tempPath() + QStringLiteral("/la_faceai_g9_%1")
+                                .arg(QCoreApplication::applicationPid());
+        QDir(dir).removeRecursively();
+        QDir().mkpath(dir);
+        const QString dbPath = QDir(dir).filePath(QStringLiteral("g9.db"));
+        // 名册：p0..p4 未标注（有缩略图占位）；p5 未标注但**无缩略图**（face 轨无 thumb 闸→仍写回）；
+        //       p6 已标注=「老王」（守恒锚：detect 只认 person.isEmpty，绝不再发 REQ/覆盖）。
+        const int kPending = 6;      // p0..p5（含无缩略图 p5）
+        const int kRows    = 7;      // 含 p6 已标注
+        const QString seededPerson = QStringLiteral("老王");   // 「已标注不得被覆盖」守恒锚
+        const QString dp = PersonDetector::defaultPerson();    // 干净臂写回目标（与实现同源，避免两处转义劈叉）
+        // 临时目录自造 4x4 合成 PNG（绝不引用户照片）；face 轨 REQ body=图像绝对路径，
+        // 桩按 count=1 恒答、不读盘，但用真 PNG 满足「只用合成图」纪律。
+        bool pngsOk = true;
+        QStringList pendingPaths;
+        for (int i = 0; i < kPending; ++i) {
+            const QString png = QDir(dir).filePath(QStringLiteral("pending_%1.png").arg(i));
+            QImage im(4, 4, QImage::Format_RGB32);
+            im.fill(QColor(30 + i * 10, 90, 150));
+            if (!im.save(png, "PNG")) { pngsOk = false; break; }
+            pendingPaths << png;
+        }
+        note(pngsOk, QStringLiteral("G9 self-made PNG fixture staging failed under %1").arg(dir));
+        bool seeded = false;
+        {
+            QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"),
+                                                       QStringLiteral("la_faceai_g9_seed"));
+            db.setDatabaseName(dbPath);
+            if (db.open()) {
+                QSqlQuery q(db);
+                q.exec(QStringLiteral(
+                    "CREATE TABLE photos (path TEXT PRIMARY KEY, rel TEXT, thumb TEXT, "
+                    "missing INTEGER DEFAULT 0, exif_json TEXT, category TEXT, person TEXT, "
+                    "private INTEGER DEFAULT 0, rating INTEGER DEFAULT 0, mark TEXT)"));
+                q.exec(QStringLiteral("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)"));
+                bool allRows = true;
+                for (int i = 0; i < kRows; ++i) {
+                    // 列/占位符严格对齐 Library::open 的 SELECT（形参照抄 G11 的 seed 语句）。
+                    q.prepare(QStringLiteral(
+                        "INSERT INTO photos(path,rel,thumb,missing,exif_json,category,person,private,rating,mark) "
+                        "VALUES(?,?,?,0,?,?,?,0,0,?)"));
+                    const QString path = i < kPending
+                        ? pendingPaths.value(i, QStringLiteral("C:/la/g9_missing_%1.jpg").arg(i))
+                        : QStringLiteral("C:/la/p6_conservative.jpg");
+                    q.addBindValue(path);                                                    // path
+                    q.addBindValue(QStringLiteral("pending_%1.png").arg(i));                 // rel
+                    q.addBindValue(i == 5 ? QString() : QStringLiteral("t%1.jpg").arg(i));   // p5 无缩略图
+                    q.addBindValue(QStringLiteral("{}"));                                    // exif_json
+                    q.addBindValue(QString());                                               // category（face 轨不碰）
+                    q.addBindValue(i == 6 ? seededPerson : QString());                       // person：p6 已标注
+                    q.addBindValue(QString());                                               // mark
+                    if (!q.exec()) allRows = false;
+                }
+                db.close();
+                seeded = allRows;
+            }
+            QSqlDatabase::removeDatabase(QStringLiteral("la_faceai_g9_seed"));
+        }
+        note(seeded, QStringLiteral("G9 temp library seed failed"));
+
+        Library lib;
+        QString operr;
+        const bool opened = seeded && lib.open(dbPath, &operr);
+        note(opened, QStringLiteral("G9 library open=%1").arg(operr));
+
+        // 生产侧桩标记：布防 + 用毕显式解除（与 G3/G6/G7/G11 同式）。
+        qputenv("LA_FACE_STUB", "1");
+        // 期望表（固定常量；tamper 只翻标签期望 + 物理注入 NOMODEL，流程零分支，铁律22）。
+        const QString expG9Person = tamper ? QStringLiteral("错误标注") : dp;
+        const bool    expG9Ret    = !tamper;   // 干净轮 true / NOMODEL 轮 false（detect 只在 probe 失败时 false）
+        bool detectRet = false;
+        if (opened && pngsOk) {
+            QObject qaCtx;                       // 写回投递目标在主线程（AiWriter QueuedConnection 落点）
+            AiWriter writer(&lib, &qaCtx);
+            // 快照取在 QA 主线程：Library 非线程安全，生产侧 MainWindow::runPersonDetect 同款
+            // （worker 只吃快照，绝不回头碰 lib）。
+            const QVector<Photo> snap = lib.photos();
+            // 底座禁 GUI 线程调用（此处 = QA 主线程）：生产接线要求 worker 线程
+            // （PersonDetector.h §线程：probe/detect 均须非 GUI 线程），主线程直调拿 Busy→
+            // probe false→detect 返回 false→本腿转红（同 G11 的 R-20 同型断言）。
+            if (tamper) qputenv("LA_FACE_FORCE_NOMODEL", "1");   // 全失败轮布防（用毕下句解除）
+            QtConcurrent::run([&] {
+                detectRet = PersonDetector::detect(snap, writer, -1,
+                    [](int, int, const QString&) {}, [] { return false; });
+            }).waitForFinished();
+            if (tamper) qputenv("LA_FACE_FORCE_NOMODEL", QByteArray());
+            // 写回经 AiWriter 的 QueuedConnection 投递回本线程落地（#70/G11 同式）。
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 500);
+        }
+        qputenv("LA_FACE_STUB", QByteArray());
+
+        note(detectRet == expG9Ret,
+             QStringLiteral("G9 detect ret=%1 want=%2 (clean round true / NOMODEL round false)")
+                 .arg(int(detectRet)).arg(int(expG9Ret)));
+        // person 列写回落点（内存）：kPending 张 = 期望标签（干净=defaultPerson）。
+        int wroteExpected = 0;
+        for (int i = 0; i < kPending; ++i) {
+            const QString& want = pendingPaths.value(i);
+            for (const Photo& ph : lib.photos())
+                if (ph.path == want && ph.person == expG9Person) ++wroteExpected;
+        }
+        note(wroteExpected == kPending,
+             QStringLiteral("G9 person writeback=%1 want=%2 label=%3")
+                 .arg(wroteExpected).arg(kPending).arg(expG9Person));
+        // face 轨无 thumb 闸：无缩略图张 p5 也被写回（正向断言，与 G11 的 p7 恰好相反）。
+        QString p5person;
+        if (pendingPaths.size() == kPending)
+            for (const Photo& ph : lib.photos())
+                if (ph.path == pendingPaths[5]) p5person = ph.person;
+        note(p5person == expG9Person,
+             QStringLiteral("G9 p5 (no thumb) person=%1 want=%2 (face track has no thumb gate)")
+                 .arg(p5person, expG9Person));
+        // 已标注张 p6 不被覆盖（守恒）。
+        QString p6person;
+        for (const Photo& ph : lib.photos())
+            if (ph.path == QStringLiteral("C:/la/p6_conservative.jpg")) p6person = ph.person;
+        note(p6person == seededPerson,
+             QStringLiteral("G9 p6 (already labeled) overwritten=%1 want=%2").arg(p6person, seededPerson));
+        note(lib.photos().size() == kRows,
+             QStringLiteral("G9 conserve rows=%1 want=%2").arg(lib.photos().size()).arg(kRows));
+        // 落盘面（独立连接读磁盘）：内存对了不算落地，setPersons 的 UPDATE person 必须由磁盘复核。
+        {
+            QString dbP0 = QStringLiteral("__unreadable__");
+            QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"),
+                                                       QStringLiteral("la_faceai_g9_read"));
+            db.setDatabaseName(dbPath);
+            if (db.open()) {
+                if (pendingPaths.size() == kPending) {
+                    QSqlQuery q(db);
+                    q.prepare(QStringLiteral("SELECT person FROM photos WHERE path=?"));
+                    q.addBindValue(pendingPaths[0]);
+                    if (q.exec() && q.next()) dbP0 = q.value(0).toString();
+                }
+                db.close();
+            }
+            QSqlDatabase::removeDatabase(QStringLiteral("la_faceai_g9_read"));
+            note(dbP0 == expG9Person,
+                 QStringLiteral("G9 db p0 person=%1 want=%2").arg(dbP0, expG9Person));
+        }
+        const bool g9Ok = detectRet == expG9Ret && wroteExpected == kPending
+                          && p5person == expG9Person && p6person == seededPerson
+                          && lib.photos().size() == kRows;
+        std::fprintf(stderr, "LA_FACEAI_G G9 ok=%d ret=%d wrote=%d\n",
+                     int(g9Ok), int(detectRet), wroteExpected);
+        // R-06 卫生：门后必删临时目录。⚠ 必须先摘掉 Library 留下的两条全局命名连接
+        // （la_rw + la_lib）——连接句柄活在全局池里，不受本腿 lib 作用域/析构影响；Windows
+        // 上被打开的 sqlite 文件删不掉，于是 removeRecursively 只删得掉 png、独独留下 g9.db。
+        for (const QString& conn : {QStringLiteral("la_rw"), QStringLiteral("la_lib")}) {
+            if (QSqlDatabase::contains(conn)) {
+                {
+                    QSqlDatabase db = QSqlDatabase::database(conn);
+                    db.close();
+                }
+                QSqlDatabase::removeDatabase(conn);
+            }
+        }
+        QDir(dir).removeRecursively();
+    }
+
     if (fails.isEmpty())
-        std::fprintf(stderr, "LA_FACE_AI_QA PASS tamper=%d g1=1 g2=1 g3=1 g4=1 g5=1 g5p=1 g6=1 g7=1 g8=1\n", int(tamper));
+        std::fprintf(stderr, "LA_FACE_AI_QA PASS tamper=%d g1=1 g2=1 g3=1 g4=1 g5=1 g5p=1 g6=1 g7=1 g8=1 g9=1\n", int(tamper));
     else
         std::fprintf(stderr, "LA_FACE_AI_QA FAIL tamper=%d reason=%s\n",
                      int(tamper), qPrintable(fails.join(QChar(';'))));

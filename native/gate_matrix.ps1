@@ -628,7 +628,7 @@ $GateTable = @(
   # All three exceed the 2026-10-14 bound (and even the 7000 cold sample), so the
   # bound is RAISED to the new max rather than left stale; timeoutSec=30 still covers
   # it with ~4x margin.
-  @{n="LA_FACE_AI_QA"; png=$false; timeoutSec=30; measuredMs=7031},
+  @{n="LA_FACE_AI_QA"; png=$false; timeoutSec=30; measuredMs=7146},
   # 2.40.0 round4 T3: real face-model end-to-end quality gate (gate #78, LA_FACE_MODEL_QA).
   # Opt-in: need=@("LA_FACE_MODEL","LA_FACE_IMG") -- absent -> qa_runner [SKIP] (privacy
   # red line R-06: real face images and gold JSONs never enter the repo; the gate only
