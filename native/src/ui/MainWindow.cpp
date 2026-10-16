@@ -804,7 +804,7 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
             });
     // 方向 C·智能分类：AI 分类按钮 → 异步跑分类（探测与逐张推理都在 worker 线程；视图不持写能力，只发信号）
     connect(gallery_, &GalleryPage::classifyRequested, this, [this] { runClassify(); });
-    // 方向 C·人脸识别（方案A）：识别人物按钮 → 探测 face_server → 异步跑检测（视图不持写能力）
+    // 方向 C·人脸识别（方案A）：识别人物按钮 → 探测 faceinfer.exe → 异步跑检测（视图不持写能力）
     connect(gallery_, &GalleryPage::personDetectRequested, this, [this] { runPersonDetect(); });
     connect(gallery_, &GalleryPage::faceClusterRequested, this, [this] { runFaceCluster(); });
     // 人物 chips 右键重命名 → 落库重命名 + 重建 chips（视图不持写能力，写回在 MainWindow）
