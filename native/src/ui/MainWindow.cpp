@@ -1500,8 +1500,13 @@ void MainWindow::runClassify()
                 const bool ok = watcher->result();
                 QString msg;
                 if (engineMissing->load()) {
+                    // 文案纪律（T12 修复波）：三条「AI 引擎未就绪」串一律不点名
+                    // native/fetch_ai.ps1 / faceinfer / clipinfer —— 脚本与构建产物不在
+                    // 发行包里（release.ps1 的 Copy-Set 目标无 .ps1，staging 树内 *.ps1=0），
+                    // 对拿到 zip 的终端用户那是不可执行的指令。诚实版只说缺什么、
+                    // 数据不出机，并把用户指向他真能点的按钮（各自尾部的「再点「…」」）。
                     msg = QCoreApplication::translate("LightAlbum",
-                        "AI 引擎未就绪（缺模型或引擎文件，先运行 native/fetch_ai.ps1 并构建 clipinfer），再点「AI 分类」。照片仅在本机处理，绝不外传。");
+                        "AI 引擎未就绪（引擎或模型缺失，或引擎启动失败），再点「AI 分类」。照片仅在本机处理，绝不外传。");
                 } else {
                     msg = ok ? QCoreApplication::translate("LightAlbum", "已为 %1 张照片写入场景分类。").arg(pending)
                              : QCoreApplication::translate("LightAlbum", "分类过程中断（可能已部分写入）。");
@@ -1567,8 +1572,7 @@ void MainWindow::runPersonDetect()
                     QCoreApplication::translate("LightAlbum", "识别人物"),
                     ok ? QCoreApplication::translate("LightAlbum", "已为 %1 张照片标注人物。").arg(pending)
                        : QCoreApplication::translate("LightAlbum",
-                           "AI 引擎未就绪（缺模型或引擎文件，先运行 native/fetch_ai.ps1 "
-                           "并构建 faceinfer），再点「识别人物」。照片仅在本机处理，绝不外传。"));
+                           "AI 引擎未就绪（引擎或模型缺失，或引擎启动失败），再点「识别人物」。照片仅在本机处理，绝不外传。"));
                 watcher->deleteLater();
                 delete cancelled;
                 dlg->deleteLater();
@@ -1662,8 +1666,7 @@ void MainWindow::runFaceCluster()
                     QCoreApplication::translate("LightAlbum", "智能聚类"),
                     extracted ? QCoreApplication::translate("LightAlbum", "已聚类 %1 张照片为不同人物。").arg(pending)
                        : QCoreApplication::translate("LightAlbum",
-                           "AI 引擎未就绪（缺模型或引擎文件，先运行 native/fetch_ai.ps1 "
-                           "并构建 faceinfer），再点「智能聚类」。照片仅在本机处理，绝不外传。"));
+                           "AI 引擎未就绪（引擎或模型缺失，或引擎启动失败），再点「智能聚类」。照片仅在本机处理，绝不外传。"));
                 watcher->deleteLater();
                 delete cancelled;
                 dlg->deleteLater();

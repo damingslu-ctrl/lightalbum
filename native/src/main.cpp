@@ -7875,15 +7875,19 @@ int main(int argc, char *argv[])
         i18nCheck("重命名人物", QStringLiteral("Rename Person"));
         // 2.40.0 T4b：人脸 HTTP 桥净替换后旧串「人脸服务未就绪」退役，
         //   换代为新「AI 引擎未就绪」长文案代表断言（缺译→回落源码→变红）。
-        i18nCheck("AI 引擎未就绪（缺模型或引擎文件，先运行 native/fetch_ai.ps1 并构建 faceinfer），再点「识别人物」。照片仅在本机处理，绝不外传。",
-                  QStringLiteral("AI engine not ready (missing model or engine file — run native/fetch_ai.ps1 and build faceinfer first), then click \u201cDetect People\u201d. Photos are processed only on this machine and never sent out."));
+        i18nCheck("AI 引擎未就绪（引擎或模型缺失，或引擎启动失败），再点「识别人物」。照片仅在本机处理，绝不外传。",
+                  QStringLiteral("AI engine not ready (engine or model missing, or the engine failed to start), then click \u201cDetect People\u201d. Photos are processed only on this machine and never sent out."));
         // 2.40.0 T8：分类外部服务桥净替换后旧标题串（陈述「服务未就绪」）与旧正文串
         //   （引导用户去启动外部分类服务，含 .bat 路径）双双退役，换代为第三条
         //   「AI 引擎未就绪」双胞胎（clipinfer 侧）代表断言（缺译→回落源码→变红；
         //   标题改指已译功能名「AI 分类」）。
-        i18nCheck("AI 引擎未就绪（缺模型或引擎文件，先运行 native/fetch_ai.ps1 并构建 clipinfer），再点「AI 分类」。照片仅在本机处理，绝不外传。",
-                  QStringLiteral("AI engine not ready (missing model or engine file — run native/fetch_ai.ps1 and build clipinfer first), then click \u201cAI Classify\u201d. Photos are processed only on this machine and never sent out."));
-
+        i18nCheck("AI 引擎未就绪（引擎或模型缺失，或引擎启动失败），再点「AI 分类」。照片仅在本机处理，绝不外传。",
+                  QStringLiteral("AI engine not ready (engine or model missing, or the engine failed to start), then click \u201cAI Classify\u201d. Photos are processed only on this machine and never sent out."));
+        // 2.40.0 T12 修复波 FIX-7：「智能聚类」版引擎串此前无孪生断言，补第 14 条，
+        //   与 MainWindow.cpp / LightAlbum_en.ts 的三条「AI 引擎未就绪」逐字对齐（
+        //   缺译→回落源码→变红）。
+        i18nCheck("AI 引擎未就绪（引擎或模型缺失，或引擎启动失败），再点「智能聚类」。照片仅在本机处理，绝不外传。",
+                  QStringLiteral("AI engine not ready (engine or model missing, or the engine failed to start), then click \u201cSmart Clustering\u201d. Photos are processed only on this machine and never sent out."));
         // 默认路径语言决策断言（2.11.1）：构造 locale 跨机确定性——
         // zh 系显示语言必须不加载 en（本事故根因）；en 系必须加载；forced 覆盖优先。
         struct I18nDecisionCase { const char* forced; const char* locName; bool expectLoad; };

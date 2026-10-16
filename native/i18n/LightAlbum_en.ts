@@ -1540,16 +1540,16 @@ Errors: %1 — %2</translation>
         <translation>Detection interrupted (partial results may have been written).</translation>
     </message>
     <message>
-        <source>AI 引擎未就绪（缺模型或引擎文件，先运行 native/fetch_ai.ps1 并构建 clipinfer），再点「AI 分类」。照片仅在本机处理，绝不外传。</source>
-        <translation>AI engine not ready (missing model or engine file — run native/fetch_ai.ps1 and build clipinfer first), then click “AI Classify”. Photos are processed only on this machine and never sent out.</translation>
+        <source>AI 引擎未就绪（引擎或模型缺失，或引擎启动失败），再点「AI 分类」。照片仅在本机处理，绝不外传。</source>
+        <translation>AI engine not ready (engine or model missing, or the engine failed to start), then click “AI Classify”. Photos are processed only on this machine and never sent out.</translation>
     </message>
     <message>
-        <source>AI 引擎未就绪（缺模型或引擎文件，先运行 native/fetch_ai.ps1 并构建 faceinfer），再点「智能聚类」。照片仅在本机处理，绝不外传。</source>
-        <translation>AI engine not ready (missing model or engine file — run native/fetch_ai.ps1 and build faceinfer first), then click “Smart Clustering”. Photos are processed only on this machine and never sent out.</translation>
+        <source>AI 引擎未就绪（引擎或模型缺失，或引擎启动失败），再点「智能聚类」。照片仅在本机处理，绝不外传。</source>
+        <translation>AI engine not ready (engine or model missing, or the engine failed to start), then click “Smart Clustering”. Photos are processed only on this machine and never sent out.</translation>
     </message>
     <message>
-        <source>AI 引擎未就绪（缺模型或引擎文件，先运行 native/fetch_ai.ps1 并构建 faceinfer），再点「识别人物」。照片仅在本机处理，绝不外传。</source>
-        <translation>AI engine not ready (missing model or engine file — run native/fetch_ai.ps1 and build faceinfer first), then click “Detect People”. Photos are processed only on this machine and never sent out.</translation>
+        <source>AI 引擎未就绪（引擎或模型缺失，或引擎启动失败），再点「识别人物」。照片仅在本机处理，绝不外传。</source>
+        <translation>AI engine not ready (engine or model missing, or the engine failed to start), then click “Detect People”. Photos are processed only on this machine and never sent out.</translation>
     </message>
     <message>
         <source>重命名人物</source>
