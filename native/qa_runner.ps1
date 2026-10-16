@@ -132,11 +132,30 @@ foreach ($g in $gates) {
   if ($g.ContainsKey("timeoutSec") -and $g["timeoutSec"] -gt 0) {
       $gateTimeout = [int]$g["timeoutSec"]
   }
+  # PIPE-DEADLOCK FIX (T11): both streams are redirected, and an anonymous
+  # Windows pipe holds ~4KB. Reading only AFTER WaitForExit therefore makes any
+  # gate that emits more than that block on its own write, never exit, and get
+  # KILLed -- a harness artifact reported as a contract result. Proof on this
+  # machine: release.ps1 -SelfTest emits 5,115 bytes; the sequential pattern
+  # stalled at 4,060 bytes and was killed at 40s, while draining concurrently
+  # finished in 7.4s with exit 0. So the readers must start BEFORE the wait.
+  $tOut = $proc.StandardOutput.ReadToEndAsync()
+  $tErr = $proc.StandardError.ReadToEndAsync()
   $done = $proc.WaitForExit($gateTimeout*1000)
   $killed = -not $done
   if ($killed) { try { $proc.Kill() } catch {} }
   $raw = ""
-  try { $raw = $proc.StandardOutput.ReadToEnd() + $proc.StandardError.ReadToEnd() } catch {}
+  # After a Kill the direct child is gone but a GRANDCHILD can still hold the
+  # write half of the pipe, which would make .Result block forever -- bound the
+  # drain so a red verdict can never turn into a runner that never returns.
+  if ($done) {
+    try { $raw = $tOut.Result + $tErr.Result } catch {}
+  } else {
+    $null = $tOut.Wait(3000)
+    $null = $tErr.Wait(3000)
+    try { if ($tOut.IsCompleted) { $raw = $tOut.Result } } catch {}
+    try { if ($tErr.IsCompleted) { $raw = $raw + $tErr.Result } } catch {}
+  }
   $lines = @($raw -split "`r?`n" | Where-Object { $_ -match 'LA_|^GEO' } | Where-Object { $_.Trim() -ne "" })
   $verdict = Eval $lines $proc.ExitCode $killed
   $mark = switch ($verdict) { "GREEN"{"[OK]"} "RED"{"[FAIL]"} "KILLED"{"[KILL]"} "NO-OUTPUT"{"[NOOUT]"} default{"[??]"} }

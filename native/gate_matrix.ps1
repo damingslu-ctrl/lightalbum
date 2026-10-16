@@ -374,7 +374,20 @@ $GateTable = @(
   @{n="LA_SCALE_SMOKE";     png=$false; measuredMs=3351},
   @{n="LA_SCALE_PERF";      png=$false; measuredMs=338},
   @{n="LA_BATCH_TX_QA";     png=$false; measuredMs=7004},
-  @{n="LA_RELEASE_QA";      png=$false; kind="ps1"; script="release.ps1"; scriptArgs="-SelfTest"; measuredMs=3135},
+  # T11 budget. This gate copies 33,489,464 B (~33 MB, byte-summed from the real
+  # files listed in release.ps1 New-Sandbox: faceinfer.exe + onnxruntime.dll +
+  # Qt6Core/Qt6Gui + the three minGW runtime DLLs + imageformats/qjpeg.dll) into a
+  # sandbox once per C10 injection (6 of them); the .onnx models land as fake
+  # stand-ins, so its cost is IO-bound and cold-disk readings vary: 8.0-8.9s warm
+  # here, 18.2s cold in the T10 seat's archive. Two earlier KILLs on this line were
+  # NOT slowness -- they were the runner's pipe deadlock (see qa_runner.ps1), which
+  # is now fixed; the explicit timeoutSec stays as a truthful budget over the 25s
+  # default for the cold case (T10-F3).
+  # T11 measuredMs re-taken AFTER the drain fix, -Timing x3 warm (archive
+  #   t11-timing-x3.txt): 8904 / 8403 / 8032 ms; conservative max recorded. The old
+  # 3135 predates C10 entirely (9 contracts, no AI sandbox seeding) -- it was not a
+  # slower machine, it was a different gate.
+  @{n="LA_RELEASE_QA";      png=$false; kind="ps1"; script="release.ps1"; scriptArgs="-SelfTest"; timeoutSec=90; measuredMs=8904},
   # F high-DPR render (direction F step 1): HiDpi bake correctness. Builds a
   # MapView, enters the china region, renders the static layer offscreen, and
   # asserts viewPix_ device-pixel width == logical width * 2. Internally sets
@@ -611,7 +624,11 @@ $GateTable = @(
   # kept (worst observed arm ~7s, plus cold-disk margin; self-exit timeout still INFRA-RED).
   # measuredMs=6992 from real qa_runner -Timing x5 (rule 31): 7000 (cold, right after
   # linking) / 6992 / 6923 / 6906 / 6911 ms; conservative max-of-warm recorded.
-  @{n="LA_FACE_AI_QA"; png=$false; timeoutSec=30; measuredMs=6992},
+  # T11 re-take, -Timing x3 warm (archive t11-timing-x3.txt): 7008 / 7007 / 7031 ms.
+  # All three exceed the 2026-10-14 bound (and even the 7000 cold sample), so the
+  # bound is RAISED to the new max rather than left stale; timeoutSec=30 still covers
+  # it with ~4x margin.
+  @{n="LA_FACE_AI_QA"; png=$false; timeoutSec=30; measuredMs=7031},
   # 2.40.0 round4 T3: real face-model end-to-end quality gate (gate #78, LA_FACE_MODEL_QA).
   # Opt-in: need=@("LA_FACE_MODEL","LA_FACE_IMG") -- absent -> qa_runner [SKIP] (privacy
   # red line R-06: real face images and gold JSONs never enter the repo; the gate only
@@ -636,7 +653,21 @@ $GateTable = @(
   # only). Fixture screening note (T5 R-11): faces whose cross-runtime det-kps noise
   # reaches ~0.15px push embedding cosine below 0.999 - kept-out-of-set boundary fixtures
   # are documented in faceinfer.cpp, not gate regressions.
-  @{n="LA_FACE_MODEL_QA"; png=$false; need=@("LA_FACE_MODEL","LA_FACE_IMG"); measuredMs=22464; timeoutSec=120},
+  # T11 re-take, -Timing x3 warm (archive t11-timing-x3.txt): 14229 / 13894 / 14009 ms,
+  # bound set to 14229. This is a BOUND DROP and the reason is workload, not speed: the
+  # mounted fixture set changed when the R-99 face track was rebuilt -- this run's own
+  # line says "imgs=6 faces=30", while 22464 was recorded on the T5 5-fixture / 51-face
+  # set. The two numbers do not describe the same job, so the older one cannot be
+  # carried forward as if it were a machine bound. Anyone who re-adds high-face-count
+  # fixtures must re-measure before trusting 120s again (gate intrinsic total_ms was
+  # 13619 with ready_ms=511 on the same run).
+  # T11 FINAL bound = 15932, taken from the post-doc full-suite -Timing run (archive
+  # t11-suite-post-docs.txt, same run as SUMMARY PASS=66 FAIL=0 SKIP=12 KILL=0, gate
+  # line total_ms=15850). The three isolated warm samples above are all cheaper than
+  # the in-suite number because suite neighbours contend for ORT page cache and disk;
+  # both are runner wall clock, so the larger one is the honest bound. timeoutSec=120
+  # still covers it with ~7x margin.
+  @{n="LA_FACE_MODEL_QA"; png=$false; need=@("LA_FACE_MODEL","LA_FACE_IMG"); measuredMs=15932; timeoutSec=120},
   # 2.40.0 round4 T7: CLIP-track AiProto contract gate (gate #76, LA_CLIP_AI_QA).
   # Extended by round4 T8 with the G11 production-path leg (see the T8 block below).
   # Hermetic: clipinfer_stub.exe drives the frame spectrum with kind="jpg" (the only
@@ -706,6 +737,9 @@ $GateTable = @(
   # "[FAIL] ... G11 ok=0 written=7 prog=0,7" and reason "G11 progress seq=0,7 want=0,5,7;
   # G11 chunk delta exceeds maxBatch cap" -- both clamp assertions bite, then the temp
   # edit was reverted and the binary rebuilt.
+  # T11 re-take, -Timing x3 warm (archive t11-timing-x3.txt): 7175 / 7145 / 7201 ms --
+  # all under 8019, so the bound is NOT lowered (rules 25/31); the cold 8380 first
+  # spawn remains the reason.
   @{n="LA_CLIP_AI_QA"; png=$false; timeoutSec=30; measuredMs=8019},
   # 2.40.0 round4 T7: real CLIP model end-to-end quality gate (gate #77, LA_CLIP_MODEL_QA).
   # Opt-in: need=@("LA_CLIP_MODEL","LA_CLIP_GOLD_DIR") -- absent -> qa_runner [SKIP]
@@ -767,7 +801,15 @@ $GateTable = @(
   # The 24990 is the cold first spawn after a relink (351MB tower page-in); the two warm
   # runs sit under the recorded 18067, so the bound stays (rules 25/31) and the cold
   # outlier is recorded here. imgs=13 golds=13 ok=13 in all three archives.
-  @{n="LA_CLIP_MODEL_QA"; png=$false; need=@("LA_CLIP_MODEL","LA_CLIP_GOLD_DIR"); measuredMs=18067; timeoutSec=120}
+  # T11: LA_CLIP_IMGS is a THIRD input this gate cannot run without (main.cpp
+  # reports reason=no_images (LA_CLIP_IMGS)), yet need= listed only two, so an
+  # unmounted machine got a FAIL instead of an honest SKIP. #78 lists both of
+  # its envs and never had this asymmetry.
+  # T11 re-take, -Timing x3 warm (archive t11-timing-x3.txt): 11550 / 11418 / 11303 ms
+  # on the same 13-image workload the bound was set on (gate line "imgs=13 golds=13
+  # ok=13" in every archive), all under 18067, so the bound is NOT lowered (rules
+  # 25/31) -- the 24990 cold first-spawn-after-relink page-in is what it protects.
+  @{n="LA_CLIP_MODEL_QA"; png=$false; need=@("LA_CLIP_MODEL","LA_CLIP_GOLD_DIR","LA_CLIP_IMGS"); measuredMs=18067; timeoutSec=120}
 )
 # Resolve a gate's tier. Absent key means "full" - the fail-safe default.
 function Get-GateTier {

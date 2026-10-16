@@ -48,7 +48,7 @@ $BUILDINFO_NAME = "BUILDINFO.txt"
 $DERIVED_SOURCES = @("src/core/CullEngine.cpp", "src/core/CullEngine.h")
 
 # =====================================================================
-# Release contracts (C1..C9)
+# Release contracts (C1..C10)
 #
 # These are deliberately factored out as standalone functions that take
 # explicit paths, so that -SelfTest can drive them against a throwaway
@@ -386,7 +386,17 @@ function Assert-LamaLicense($staging) {
 #                    reads library photos without any suffix filter, and the
 #                    packaged plugin dir is the staged bin's own imageformats/
 #                    -- so a missing qjpeg means "exe starts, every JPEG fails".
-#                    Only a file check catches it: --version decodes nothing (R-120a).
+#                    PREMISE, and it is load-bearing: <exe dir>/imageformats only
+#                    reaches QLibraryInfo/libraryPaths() if the executor
+#                    constructs a QCoreApplication instance. Without one the
+#                    existence leg is TRUE and every JPEG still fails to decode
+#                    (verified: pre-fix faceinfer.exe rc=2 "image load failed"
+#                    with imageformats/ in place, on a machine that has Qt
+#                    installed). So (a) proves the file TRAVELS, never that it
+#                    LOADS -- and leg (c) cannot close that gap either, because
+#                    --version decodes nothing (R-120a). A decode leg would have
+#                    to run --det-selftest on a synthetic JPEG; it does not exist
+#                    yet (registered as T10-F1 residual 3, T12 scope).
 #   (b) attribution: LICENSE non-empty, THIRD_PARTY-NOTICE.md non-empty AND the
 #                    staged clip notice still CONTAINS the stb_image credit --
 #                    non-emptiness would pass a notice with the credit line
@@ -409,7 +419,7 @@ function Assert-FaceClipLicense($staging) {
   $faceBin = Join-Path $staging "3rdparty/face/bin"
   $clipBin = Join-Path $staging "3rdparty/clip/bin"
   if (-not (Test-Path $faceBin) -and -not (Test-Path $clipBin)) {
-    Write-Host "WARN: face/clip executors not staged -- AI face clustering and semantic search degrade to blocked_no_model in this build"
+    Write-Host "C10 SKIP: 3rdparty/face/bin and 3rdparty/clip/bin both absent -- NO C10 leg ran; AI face clustering and semantic search degrade to blocked_no_model in this build"
     return
   }
   if (Test-Path $faceBin) {
@@ -453,8 +463,16 @@ function Assert-FaceClipLicense($staging) {
       throw ("C10 faceinfer --version load check failed (rc=0x" + ('{0:X8}' -f $rc) + "): staged faceinfer.exe does not load with CWD=3rdparty/face/bin and PATH=system-only -- its import closure (Qt6Core/Qt6Gui + the MinGW runtime peers Qt6Core pulls, + onnxruntime) must be staged INSIDE 3rdparty/face/bin. stdout/stderr: [" + $out.Trim() + "]")
     }
     if ($out -notmatch "faceinfer") { throw ("C10 faceinfer --version answered but did not identify itself: [" + $out.Trim() + "]") }
+    Write-Host "C10 face ok: staged set complete (exe + models + ORT + imageformats/qjpeg.dll), LICENSE and THIRD_PARTY-NOTICE.md shipped, faceinfer.exe LOADS and answers --version with CWD=3rdparty/face/bin and system-only PATH"
   } else {
-    Write-Host "WARN: 3rdparty/face/bin not staged -- face clustering degrades to blocked_no_model in this build"
+    # R-32 only authorizes the graceful skip when BOTH packages are absent. A
+    # half-landed tree is a partial install -- and it is also the NORMAL state of
+    # a fresh clone (R-77: 3rdparty/clip/bin is tracked, 3rdparty/face/bin is
+    # gitignored until fetch_ai.ps1 runs), so throwing here would turn
+    # LA_RELEASE_QA red on every clean checkout. What it must not do is stay
+    # quiet: naming the legs that did not run is the only thing that keeps
+    # "not checked" from reading as "checked".
+    Write-Host "C10 face legs SKIPPED: 3rdparty/face/bin not staged -- face existence, attribution and loadability were NOT verified; face clustering degrades to blocked_no_model in this build"
   }
   if (Test-Path $clipBin) {
     foreach ($f in @("clipinfer.exe", "clip_vit_b32_img.onnx", "prompts.bin", "onnxruntime.dll")) {
@@ -473,8 +491,9 @@ function Assert-FaceClipLicense($staging) {
     # removed is still "non-empty".
     $cnTxt = Get-Content $cn -Raw -Encoding UTF8
     if ($cnTxt -notmatch "stb_image") { throw "C10 clip THIRD_PARTY-NOTICE.md lost its required stb_image attribution line (R-54)" }
+    Write-Host "C10 clip ok: staged set complete (exe + tower + prompts + ORT), LICENSE shipped and THIRD_PARTY-NOTICE.md still carries its stb_image credit"
   } else {
-    Write-Host "WARN: 3rdparty/clip/bin not staged -- semantic search degrades to blocked_no_model in this build"
+    Write-Host "C10 clip legs SKIPPED: 3rdparty/clip/bin not staged -- clip existence, attribution and the R-54 stb_image content check were NOT verified; semantic search degrades to blocked_no_model in this build"
   }
 }
 
@@ -1102,7 +1121,10 @@ if (Test-Path (Join-Path $faceSrcBin "faceinfer.exe")) {
   $qj = Join-Path $staging "imageformats/qjpeg.dll"
   if (Test-Path $qj) { Copy-Item $qj (Join-Path $dst "imageformats") -Force }
   else { Write-Host "WARN: staging-root imageformats/qjpeg.dll missing for face/bin" }
-  Write-Host "3rdparty/face staged (executor + models + ORT + Qt/minGW load closure + qjpeg + licenses)"
+  # No "qjpeg" claim here: the copy above is conditional and the missing case
+  # only WARNs, so the qjpeg assertion belongs to C10's existence leg, which
+  # runs after the whole staging pass and can throw (T10-F2, claim-after-verify).
+  Write-Host "3rdparty/face staged (executor + models + ORT + Qt/minGW load closure + licenses)"
 } else {
   Write-Host "WARN: face not fetched -- face clustering degrades to blocked_no_model in this build"
 }
@@ -1129,9 +1151,13 @@ if (Test-Path (Join-Path $clipSrcBin "clipinfer.exe")) {
 # Second call site of C10 (the first is the $probes list, which ONLY -SelfTest
 # reaches -- a contract registered there alone can never fire in a real
 # release, same lesson that put Assert-LamaLicense at the lama block). Runs
-# unconditionally so a half-staged tree throws even when one package was skipped.
+# unconditionally so a half-staged tree still reports which of its legs did not
+# run. There is deliberately NO success line here: the function prints one
+# honest line per side, inside the branch that actually verified that side, so a
+# build where C10 checked nothing cannot print a sentence claiming it checked
+# something (T10-F2; the in-file precedent is C9's success line, which lives
+# inside its own Test-Path block).
 Assert-FaceClipLicense $staging
-Write-Host "C10 ok: face/clip staged sets complete, licenses shipped (clip notice holds its stb_image credit), faceinfer.exe LOADS and answers --version from the staged dir"
 
 # 3.7) contracts C2/C6 on the staged tree, before anything is zipped.
 # C3 is deliberately NOT here: it requires BUILDINFO.txt, which can only be

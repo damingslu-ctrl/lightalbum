@@ -3,6 +3,92 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.40.0] - 2026-10-16
+
+引擎升级第四轮（路线 4 AI-index 去外部化）：人脸/场景两条 AI 链路从「外部 Python HTTP 服务」净替换为
+随包 ONNX 子进程。用户界面能力不变，部署依赖归零。
+
+### R4-ai-subprocess（spec §2/§3）
+- 新增 `faceinfer.exe`（SCRFD-10GF 检测 + Umeyama 对齐 + ArcFace w600k_r50 嵌入）与
+  `clipinfer.exe`（CLIP ViT-B-32 / laion2b 图像塔 + `prompts.bin` `LAPROMPTv1` 文本预制）两个独立
+  子进程工程，经新底座 `core/AiSubprocessRunner`（常驻 QProcess + `READY/REQ/RES/ERR` 帧协议，
+  由 `core/AiProto.h` 单一真源）通信；`FaceRunner`/`ClipRunner` 门面分别净替换
+  `PersonDetector`、`Classifier` 的 QNetworkAccessManager HTTP 桥。
+- **外部服务净退役（实测）**：`git grep -n "8766\|8767" -- native/src native/ui native/main.cpp native/CMakeLists.txt`
+  命中 **0**（此前为 CLIP `:8766` / face_server `:8767` 两条硬编码回环端口）。协议帧
+  `READY 1`/`READY 0` 语义与 `ERR <id> <原因>` 全词比对（`AiProto` 收紧，绝不子串匹配）。
+- 缺席即诚实降级：未 `fetch_ai.ps1` 时 `modelReady()` 纯文件探针返 false，任务落
+  `blocked_no_model`，**绝不静默假成功、绝不起进程**。
+
+### 平价容差契约（spec §3 五列 / §4 分数列，实测最差 vs 承诺）
+- face（#78 `LA_FACE_MODEL_QA`，本轮实跑 6 图 30 脸 vs Python oracle 黄金夹具）：脸数 **全等**、
+  min IoU **0.9980**（承诺 ≥0.98）、max kps 漂移 **0.2938 px**（承诺 ≤2.0）、
+  min cos **0.999202**（承诺 ≥0.999）、max |scoreΔ| **0.00100**（承诺 ≤0.02）。
+  五列取**全套 30 脸的集合级最差**（`D:/Temp/face_cols_all.csv` 逐脸转储聚合），非单图最优；
+  其中 min cos 出现在 `IMG_5579.JPG`（1 脸图），而 R-124 §3 曾引用的 0.999232 是 `IMG_0465`
+  **单图**值——本节改取集合级数字，避免以单图冒充整体。
+- clip（#77 `LA_CLIP_MODEL_QA`，13 图 13 金样）：top-1 类 **13/13 全等**、
+  最差 sat 差 **0.0026**（承诺 ≤0.1，`GAP_MIN=0.10` 内）。
+- 反例臂实测咬红（非空心）：#77 `other-off`/篡改臂、#78 `LA_FACE_MODEL_QA_FORCE_BROKEN=1`
+  （30/30 脸 IoU≈0.769 + cos≈0.004–0.13 双红）。
+
+### 门禁与名册
+- 名册 **74 → 78 门 = fast 19 + full 59**（新增 #75 `LA_FACE_AI_QA`、#76 `LA_CLIP_AI_QA`、
+  #77 `LA_CLIP_MODEL_QA`、#78 `LA_FACE_MODEL_QA`，四门全落 full 层：**fast 层 +0**，
+  实测最慢新门 7.2 s 远超 fast 层的快门预算）。#77/#78 为 opt-in（`need=` 三/双 env 齐全才跑，
+  缺席 `[SKIP]` 而非假绿）。门数真源是 `gate_matrix.ps1 -SelfTest`：
+  `E1 gates=78 fast=19 full=59 errs=0 … E11 nonAsciiBytes=0 … E12 textual=78 parsed=78 … fails=0`。
+- 全量套件（四路 env 全挂）：`SUMMARY: PASS=66 FAIL=0 CHECK=0 SKIP=12 KILL=0`，
+  两次绿跑墙钟 115252 ms / 122907 ms（78 门；后一次为文档收口后的复验，也是 `measuredMs`
+  上界所取的终态那一跑）。SKIP 12 全是既有外部素材门（RAW/视频/音频/扫描/真库缩放/LaMa 模型），
+  本轮新增 0 个 SKIP。
+- 发布契约 **C9 → C10**：新增 `Assert-AiBundleClosure`（face/clip 随包三件套 + Qt/minGW 装载闭包
+  + 许可文本 + `faceinfer.exe --version` 真装载腿 + `prompts.bin` 的 stb_image 归属内容腿），
+  `LA_RELEASE_QA PASS contracts=10 injected=21 caught=21 baseline=10 zip=9`。
+
+### 随包体积增量（实测字节，非估算）
+- **落盘源件**（`native/3rdparty/*/bin`，由 `fetch_ai.ps1` 拉取、gitignored）：
+  face 203,719,631 B / 4 文件（`recognition.onnx` 174,383,860、`detection.onnx` 16,923,827、
+  `onnxruntime.dll` 11,234,848、`faceinfer.exe` 1,177,096）；
+  clip 363,977,280 B / 4 文件（`clip_vit_b32_img.onnx` 351,614,324、`onnxruntime.dll` 11,234,848、
+  `clipinfer.exe` 1,111,672、`prompts.bin` 16,436）。
+- **打包后实测**（2.40.0 staging 树，含 C10 校验的装载闭包）：
+  `3rdparty/face/bin` **224,797,151 B / 10 文件** = 源件 4 + `Qt6Core.dll` 6,986,928 +
+  `Qt6Gui.dll` 11,041,960 + `libstdc++-6.dll` 2,243,072 + `libgcc_s_seh-1.dll` 109,056 +
+  `libwinpthread-1.dll` 53,248 + `imageformats/qjpeg.dll` 643,256；
+  `3rdparty/clip/bin` **363,977,280 B / 4 文件**（Qt-free，无需闭包）。
+- 两目录合计 **+588,774,431 B ≈ 561.5 MiB**（未压缩）。`onnxruntime.dll` 两目录各带一份（各自 exe 的
+  同目录邻接装载），**未做去重共享**——这是刻意决定：单目录自足，坏一个目录不影响另一条链路。
+
+### 许可与隐私（红线不动）
+- face 权重按 insightface 上游属 **NON-COMMERCIAL RESEARCH ONLY**（库 MIT、CLIP MIT + LAION CC-BY-4.0），
+  归属与限制见 `native/3rdparty/face/THIRD_PARTY-NOTICE.md`，随包 LEGAL 目录逐字节同源（C10 内容腿硬校验）。
+- 模型只在构建期由用户主动 `fetch_ai.ps1` 拉取（SHA 哨兵 `PIN-ON-FIRST-FETCH` 未钉死即拒绝下载，
+  fail-closed），运行期零联网、零云端。
+- 黄金夹具是**用户真实照片**，产物一律不入库（R-06）；#77/#78 复跑靠重跑生成脚本。
+
+### 运行前置（两面写法，不回改历史条目）
+- `onnxruntime.dll` 依赖系统的 `MSVCP140.dll` / `VCRUNTIME140.dll`（VC++ 2015–2022 可再分发），**本包未随附**。
+  ① 该前置**自 2.35.0（lama / `inpaint.exe`）起即存在**，本轮未改变其性质；
+  ② **但本轮分发形态是便携 zip、无安装器**，前置条件不再由安装环境兜住——
+  未装过的机器上两个子进程在装载期即失败、三条 AI 链路不可用，其余功能正常；
+  「装载期失败 → 统一归为 `blocked_no_model`」的分类改进已登记结转下一轮，此处不掩埋（手册 §16/§17 同源措辞）。
+
+### FINDING（如实登记，不掩埋）
+- 本轮修出一个**门禁基建级缺陷**：`qa_runner.ps1` 原在 `WaitForExit(timeout)` **之后**才
+  `ReadToEnd()`，Windows 匿名管道 ~4 KB 缓冲下，任何输出超过缓冲的子进程都会被自己的满管道
+  卡死、进而被误判 `[KILL]`。A/B 实测：串行臂 `done=False wall=40051ms outbytes=4060`，
+  异步抽取臂 `done=True wall=7368ms outbytes=5115`。改为 `ReadToEndAsync()` 先挂载再等待，
+  并对被杀门做 3 s 有界抽取（孙进程可继续持写半）。**受影响门不止本轮新门**——
+  `LA_RELEASE_QA` 连续两次 `[KILL]` 即此缺陷，而非早前注释所写的「~200 MB IO 慢」。
+- `faceinfer.exe` 初版在真机双 Critical（R-99 夹具轨挖出）：① `imageformats/qjpeg.dll` 需要
+  executor 构造 `QCoreApplication` 才进 `libraryPaths()`（PNG 内建 Qt，故症状是「只有 JPEG 全挂」）；
+  ② 人脸轨读的是**原图**绝对路径，必须 `QImageReader::setAutoTransform(true)` 摆正 EXIF 方向。
+- C10 的「存在性腿」只证明文件**随包旅行**，不证明**能装载**；真正的解码冒烟腿（`--det-selftest`
+  跑合成 JPEG）尚不存在，已登记为下一轮补强项。
+- `fetch_ai.ps1` 未随包分发，而 UI 三处文案让打包态用户去跑它；`face_server` 历史注释仍有残留。
+  两条均已登记结转下一轮（终审修复波）。
+
 ## [2.39.0] - 2026-10-13
 
 引擎升级第三轮（路线 6 性能子集）：LumenEngine 算子内并行 + 量化安全 float。像素输出语义零变化（金样 MAD 容差内）、
