@@ -25,6 +25,7 @@
 
 #include <QImage>
 #include <QImageReader>
+#include <QCoreApplication>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -33,7 +34,7 @@
 #include <QFile>
 #include <QString>
 
-#include <windows.h>   // GetModuleFileNameA（exe 同目录 sibling 解析，免 QCoreApplication 实例）
+#include <windows.h>   // GetModuleFileNameA（exe 同目录 sibling 解析：模型路径独立于 libraryPaths）
 
 #include <onnxruntime_cxx_api.h>   // T3 rec 会话（ArcFace recognition.onnx，ORT C API，同 scrfd.cpp 口径）
 
@@ -115,7 +116,12 @@ QString resolveRecPath()
 bool loadRgbHwc(const QString& path, std::vector<uint8_t>& rgb, int& w, int& h)
 {
     QImageReader reader(path);
-    reader.setAutoTransform(false);            // cv2.imread 不应用 EXIF 方向，平价同构
+    // EXIF 方向必须摆正：oracle 侧 `cv2.imread(IMREAD_COLOR)` 默认按 EXIF 旋转（除非显式
+    // IMREAD_IGNORE_ORIENTATION），而 face 轨生产里读的是**原图绝对路径**
+    // （PersonDetector.cpp:66-70），手机原图普遍带 orient=3/6/8 的存储旋转。摆不平则倒置
+    // 像素进 SCRFD：实测 10 脸群拍只检出 3 脸、IoU/配对全崩。仓内同族约定 =
+    // ImageLoad.cpp:16/49、Scanner.cpp:147（注释明写「= ImageOps.exif_transpose」）。
+    reader.setAutoTransform(true);
     QImage img = reader.read();
     if (img.isNull()) return false;
     img = img.convertToFormat(QImage::Format_RGB888);
@@ -576,6 +582,12 @@ int runServer()
 
 int main(int argc, char** argv)
 {
+    // QImageReader 的 JPEG/GIF/WebP 解码器是 imageformats **插件**，而「exe 同目录」只在
+    // 存在 QCoreApplication 实例时才会进 libraryPaths()。没有实例 → 只有 QtGui 内建的 PNG
+    // 解得动，REQ 体里的用户照片（绝大多数是 JPEG）一律 loadfail。
+    // 解码器保持 Qt 不换 stb：qjpeg = libjpeg-turbo，与 oracle cv2 同族，换解码器会让
+    // 像素漂移直接击穿 spec §3 的 IoU/kps/cos 容差。
+    QCoreApplication app(argc, argv);
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--version") == 0) {   // 装配自检钩（release C10 腿复用）
             std::printf("faceinfer 0.0.0 round4-t3\n");
