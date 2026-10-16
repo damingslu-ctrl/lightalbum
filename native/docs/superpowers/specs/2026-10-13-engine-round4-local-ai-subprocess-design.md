@@ -95,7 +95,7 @@ GUI）；门面是静态同步函数，调用点全部在 `QtConcurrent::run` �
   `bbox*kp = distance2bbox/kps`、`/scale` 回原图坐标；NMS 含 `+1` 像素约定与
   `1e-9` 分母 epsilon——全部按 face_server.py `detect()`/`_nms()`/`_anchors()` 逐行移植。
 - 对齐：5 点 kps → `REF` 模板（insightface 常量 verbatim）→ 4 自由度最小二乘相似变换
-  （= cv2.estimateAffinePartial2D method=0 闭式解，Umeyama）→ 112×112 仿射 warp
+  （= cv2.estimateAffinePartial2D 默认 RANSAC + 内点集 LM 精修；LS 闭式精化为容差吸收判例 R-09）→ 112×112 仿射 warp
   （逆向映射双线性，越界取 0）；`(x-127.5)/128.0`，RGB NCHW → ArcFace → L2 归一
   （`+1e-12`）→ 512 维，JSON 出 5 位小数。
 - **平价门禁（第 78 门，opt-in）容差**：同一 fixture 图 C++ 输出 vs oracle 黄金 JSON：
@@ -114,7 +114,8 @@ GUI）；门面是静态同步函数，调用点全部在 `QtConcurrent::run` �
   权重源 = 本机 hf_cache 完整 blob（605,143,316B），不依赖网络。
 - 预处理：PIL/open_clip 等效 resize(shorter=224, bicubic Catmull-Rom a=-0.5?
   **以实现期对拍实测定 kernel 变体**) + center-crop 224 +
-  mean(0.48145466,0.4578275,0.40821078)/std(0.26862954,0.26130258,0.27577711)。
+  mean(0.48145466,0.4578275,0.40821073)/std(0.26862954,0.26130258,0.27577711)。
+  （真源 venv_cake `open_clip/constants.py:1`；代码侧 `clipinfer/preproc.cpp:234` 逐字同值）
 - 推理：image encoder → 特征 L2 归一 → `logits = 100.0 * feat @ text_feats^T` →
   softmax(8)。
 - 判定规则 verbatim（顺序即优先级）：
@@ -138,7 +139,7 @@ GUI）；门面是静态同步函数，调用点全部在 `QtConcurrent::run` �
     产出（生成代码入库；PNG 与 `.gold.json` 按 R-06 绝不入库），族内自带下限
     `GAP_MIN_FAMILY=0.055`（= 2×top3 容差 0.02 + 安全垫 0.015）并在生产侧响亮校验。
     **例外的边界（不许退化成「两次都判错也算绿」）**：`#77` 对每一份 `low_confidence` 金
-    断言 `screen.gap_top1_top2 > 0.04`（`native/src/main.cpp:6254-6262`，字段由
+    断言 `screen.gap_top1_top2 > 0.04`（`native/src/main.cpp:6447-6451`，字段由
     `gen_clip_fixtures.py:160` 写入金内 `screen`）；**缺该字段或不满足即 FAIL**，不许静默跳过。
     注：本条例外破的是仓内更严常量，§4 自身的 |Δp|<0.05 地板未被破（在册合成金 gap=0.0589 > 0.05）。
 

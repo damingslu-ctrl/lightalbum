@@ -9,7 +9,7 @@
 随包 ONNX 子进程。用户界面能力不变，部署依赖归零。
 
 ### R4-ai-subprocess（spec §2/§3）
-- 新增 `faceinfer.exe`（SCRFD-10GF 检测 + Umeyama 对齐 + ArcFace w600k_r50 嵌入）与
+- 新增 `faceinfer.exe`（SCRFD-10GF 检测 + RANSAC 相似对齐 + ArcFace w600k_r50 嵌入）与
   `clipinfer.exe`（CLIP ViT-B-32 / laion2b 图像塔 + `prompts.bin` `LAPROMPTv1` 文本预制）两个独立
   子进程工程，经新底座 `core/AiSubprocessRunner`（常驻 QProcess + `READY/REQ/RES/ERR` 帧协议，
   由 `core/AiProto.h` 单一真源）通信；`FaceRunner`/`ClipRunner` 门面分别净替换
@@ -28,14 +28,18 @@
   其中 min cos 出现在 `IMG_5579.JPG`（1 脸图），而 R-124 §3 曾引用的 0.999232 是 `IMG_0465`
   **单图**值——本节改取集合级数字，避免以单图冒充整体。
 - clip（#77 `LA_CLIP_MODEL_QA`，13 图 13 金样）：top-1 类 **13/13 全等**、
-  最差 sat 差 **0.0026**（承诺 ≤0.1，`GAP_MIN=0.10` 内）。
+  最差 sat Δ **0.1**（承诺 ≤1.0）、score Δ **0.0026**（承诺 ≤0.005）。两列判据真源是
+  `src/main.cpp` 的 `cqCompareVerdict`（`SAT_D` 闸 `>1.0`、`SCORE_D` 闸 `>0.005`）；sat 最差落在
+  `IMG_2288`（37.5/37.6）与 `IMG_8530`（66.5/66.4），score 最差落在 `IMG_9387`（0.8588/0.8614）。
+  `GAP_MIN=0.10` 只是夹具预筛常量（`low_confidence` 族记档例外，见 §R-87），**不充当 sat 承诺**。
 - 反例臂实测咬红（非空心）：#77 `other-off`/篡改臂、#78 `LA_FACE_MODEL_QA_FORCE_BROKEN=1`
   （30/30 脸 IoU≈0.769 + cos≈0.004–0.13 双红）。
 
 ### 门禁与名册
 - 名册 **74 → 78 门 = fast 19 + full 59**（新增 #75 `LA_FACE_AI_QA`、#76 `LA_CLIP_AI_QA`、
-  #77 `LA_CLIP_MODEL_QA`、#78 `LA_FACE_MODEL_QA`，四门全落 full 层：**fast 层 +0**，
-  实测最慢新门 7.2 s 远超 fast 层的快门预算）。#77/#78 为 opt-in（`need=` 三/双 env 齐全才跑，
+  #77 `LA_CLIP_MODEL_QA`、#78 `LA_FACE_MODEL_QA`，四门全落 full 层 ⇒ **fast 层 +0**，未破快门预算：
+  常驻新门最慢 8.0 s（#75 measuredMs 7031 ms / #76 8019 ms）、opt-in 模型门 14–18 s
+  （#77 18067 ms / #78 15932 ms））。#77/#78 为 opt-in（`need=` 三/双 env 齐全才跑，
   缺席 `[SKIP]` 而非假绿）。门数真源是 `gate_matrix.ps1 -SelfTest`：
   `E1 gates=78 fast=19 full=59 errs=0 … E11 nonAsciiBytes=0 … E12 textual=78 parsed=78 … fails=0`。
 - 全量套件（四路 env 全挂）：`SUMMARY: PASS=66 FAIL=0 CHECK=0 SKIP=12 KILL=0`，
@@ -43,8 +47,9 @@
   上界所取的终态那一跑）。SKIP 12 全是既有外部素材门（RAW/视频/音频/扫描/真库缩放/LaMa 模型），
   本轮新增 0 个 SKIP。
 - 发布契约 **C9 → C10**：新增 `Assert-AiBundleClosure`（face/clip 随包三件套 + Qt/minGW 装载闭包
-  + 许可文本 + `faceinfer.exe --version` 真装载腿 + `prompts.bin` 的 stb_image 归属内容腿），
-  `LA_RELEASE_QA PASS contracts=10 injected=21 caught=21 baseline=10 zip=9`。
+  + 许可文本 + `faceinfer.exe --version` 真装载腿 + 两条 NOTICE **内容腿**硬校验：clip 的
+  `stb_image` 归属行、face 的 `non-commercial research` 限制行），
+  `LA_RELEASE_QA PASS contracts=10 injected=22 caught=22 baseline=10 zip=9`。
 
 ### 随包体积增量（实测字节，非估算）
 - **落盘源件**（`native/3rdparty/*/bin`，由 `fetch_ai.ps1` 拉取、gitignored）：
@@ -62,9 +67,12 @@
 
 ### 许可与隐私（红线不动）
 - face 权重按 insightface 上游属 **NON-COMMERCIAL RESEARCH ONLY**（库 MIT、CLIP MIT + LAION CC-BY-4.0），
-  归属与限制见 `native/3rdparty/face/THIRD_PARTY-NOTICE.md`，随包 LEGAL 目录逐字节同源（C10 内容腿硬校验）。
-- 模型只在构建期由用户主动 `fetch_ai.ps1` 拉取（SHA 哨兵 `PIN-ON-FIRST-FETCH` 未钉死即拒绝下载，
-  fail-closed），运行期零联网、零云端。
+  归属与限制见 `native/3rdparty/face/THIRD_PARTY-NOTICE.md`。随包形态是实情而非口号：
+  `3rdparty/{face,clip}/` 各自的 `LICENSE` + `THIRD_PARTY-NOTICE.md` 由 `release.ps1` 逐字节
+  `Copy-Item` 进包（**不存在**独立的 `LEGAL/` 目录），C10 内容腿现硬校验 clip 的 `stb_image`
+  归属行与 face 的 `non-commercial research` 限制行两行——缺一即打包中止。
+- 模型只在构建期由用户主动 `fetch_ai.ps1` 拉取：五枚 SHA 全部预钉 + 默认零网
+  （`-AllowNetwork` 显式开启才走网络，且先验后落地），运行期零联网、零云端。
 - 黄金夹具是**用户真实照片**，产物一律不入库（R-06）；#77/#78 复跑靠重跑生成脚本。
 
 ### 运行前置（两面写法，不回改历史条目）

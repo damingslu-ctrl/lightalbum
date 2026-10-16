@@ -66,7 +66,8 @@ ONNX 只导 `encode_image` 子图（≈88M 参数），实测 351,614,324 B ≈ 
 spec §2.1 的 60s 上限走 T7 实测回填。
 
 ONNX 契约：input `image` = `tensor(float)` `1×3×224×224`（已归一 RGB NCHW，
-mean/std = CLIP 常量 0.48145466/0.4578275/0.40821078、0.26862954/0.26130258/0.27577711）、
+mean/std = CLIP 常量 0.48145466/0.4578275/0.40821073、0.26862954/0.26130258/0.27577711）
+（真源 venv_cake `open_clip/constants.py:1`；代码侧 `clipinfer/preproc.cpp:234` 逐字同值）、
 output `feat` = `tensor(float)` `1×512`、opset 17、fp32、**定长无动态轴**。
 导出可信度实测（onnxruntime 1.30 `CPUExecutionProvider` 复算同一输入）：
 `max|Δ|=8.106e-06`、`mean|Δ|=6.655e-07`、`cos=1.000000000` —— 远小于 #77 概率容差 0.02。
@@ -89,7 +90,10 @@ cake 自有 numpy/protobuf/torch 永远优先命中，不劫持数值路径；�
 合计 `20 + 16384 + 32 = 16,436 B`。行序 = `classifier_server.py:31-56` LABELS 表序：
 `0=人像 1=风光 2=夜景·星空 3=城市·建筑 4=微距·花卉 5=动物 6=美食 7=黑白`；
 本产物内嵌矩阵 SHA = `d06822a29f77911c5559d1f770793123da9f4f8e438a78bb4a82ec9dee9fc481`
-（T7 启动校验即：重算 magic..matrix 的 SHA-256 与尾部 32B 比对，不等 → `READY 0`/`badframe`）。
+（T7 启动校验即：重算 magic..matrix 的 SHA-256 与内嵌常量 pin 比对，不等 → `READY 0` + 每 REQ
+`ERR badprompts`；文件末 32 B 摘要从不参与比较，它由 `fetch_ai.ps1` 的全件 SHA
+`d7f65e31…` 覆盖（矩阵摘要 `d06822a2…` 是启动校验常量，两者不可混用）——见 spec §5 R-76。
+`badframe` 只属帧解析，与 prompts 校验无关）。
 
 算法 verbatim（`classifier_server.py:137-141`）：逐 prompt `encode_text` → 行 L2 归一 →
 **类内均值**（`feat.mean(dim=0)`）→ 再行 L2 归一。LABELS 表逐字复制入脚本，且运行时
@@ -171,7 +175,7 @@ label/note 逐字符等、top-probs 逐类 Δ≤0.02、sat Δ≤1.0。
   断言 人脸数精确相等 / 每脸 IoU ≥ 0.98 / kps 五点欧距均值 ≤ 2.0 px，exit 0=PASS。
 - #78 `LA_FACE_MODEL_QA`（T3 注册，opt-in）：真 faceinfer.exe 起子进程 REQ/RES 全链路
   跑五列容差（追加 embedding 余弦 ≥ 0.999、score 差 ≤ 0.02）。
-- `clipinfer.exe`（T7）：启动校验 `prompts.bin`（magic + 内嵌 SHA 尾），运行时只跑
+- `clipinfer.exe`（T7）：启动校验 `prompts.bin`（magic + 内嵌矩阵 SHA pin），运行时只跑
   `clip_vit_b32_img.onnx` + prompts 矩阵，不再 tokenize。
 - #77 `LA_CLIP_MODEL_QA`（T7 注册，opt-in）：经 `LA_CLIP_IMGS` + `LA_CLIP_GOLD_DIR`
   消费上面的本地夹具（**夹具与 gold 永不入库**），逐张比 label/note 逐字符、top3 逐类

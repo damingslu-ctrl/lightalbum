@@ -120,9 +120,11 @@ $clipArtifacts = @(
 $ortDllSha = '14119125df2dcf9ff3e083afdba5fcc4b09b4186d8762404eb7b1fbccde3fcf2'   # 11,234,848 B
 $clipExportHint = '& D:\lightalbum_ai\venv_cake\Scripts\python.exe ai_export\export_clip_onnx.py'
 
-# Required NOTICE entries (R-54). T10's C10 only asserts the NOTICE is NON-EMPTY,
-# which cannot catch a missing stb credit or a soft-faced license, so the
-# existence assertions live here and are exercised by -SelfTest.
+# Required NOTICE entries (R-54). release.ps1's C10 asserts the NOTICE is
+# NON-EMPTY and greps one substantive line per side (clip: stb_image, face:
+# non-commercial research), which cannot catch any of the OTHER required entries
+# or prove the pin on the source tree, so the full existence assertions live
+# here and are exercised by -SelfTest.
 $faceNoticePatterns = @('non-commercial research', 'MIT', 'onnxruntime')
 $clipNoticePatterns = @('stb_image', 'MIT', 'CC-BY-4.0', 'onnxruntime')
 
@@ -183,7 +185,7 @@ function Invoke-ProvenanceChecks {
     foreach ($pat in $NoticePatterns) {
         $hits = @(Select-String -LiteralPath $NoticePath -Pattern ([regex]::Escape($pat))).Count
         if ($hits -lt 1) {
-            throw "$PackageName notice missing required entry '$pat' in $NoticePath -- C10 only checks the NOTICE is non-empty, so this is the assertion that catches a dropped credit (R-54)."
+            throw "$PackageName notice missing required entry '$pat' in $NoticePath -- C10's content leg greps exactly one substantive line per notice (clip stb_image / face non-commercial research), so this is the assertion that catches any OTHER dropped entry too (R-54)."
         }
     }
     # SHA-256 pins over the model/dll bytes. Exes are intentionally absent here
@@ -414,6 +416,12 @@ if ($SelfTest) {
 
         $caught = 0
         $msgs = @()
+        # Number of counterexample arms below. ONE source of truth: the hard gate
+        # at the end and the "contracts=" claim it prints both read this, so the
+        # claim cannot drift from the arms that actually ran (they were two
+        # hand-typed copies of the same literal once). If you add an arm, change
+        # THIS and nothing else -- and the gate then fails until the arm fires.
+        $script:arms = 9
 
         function Wait-Throw {
             # Runs one injection: the throw MUST fire AND carry the expected keyword,
@@ -543,6 +551,26 @@ if ($SelfTest) {
         }
         Set-Content -LiteralPath (Join-Path $sClip 'THIRD_PARTY-NOTICE.md') -Value $clipNoticeTxt
 
+        # (4b) Drop the NON-COMMERCIAL RESEARCH line from the face NOTICE -> must go
+        #      red on the face leg. Same shape as (4), but this is the commercial
+        #      red line: insightface's buffer.redist terms make the weights
+        #      research-only, so a notice that quietly loses that sentence is the
+        #      worst attribution regression this track can have. It is the fetch-time
+        #      twin of release.ps1 C10's face content leg -- the same red line needs a
+        #      counterexample in BOTH periods, or one of the two gates is soft.
+        #      Guard mirrors release.ps1: the stripped notice must stay non-empty,
+        #      otherwise the injection would be caught by the emptiness leg and
+        #      prove nothing about the entry leg.
+        Wait-Throw -Label 'notice-entry-face-noncommercial-dropped' -Keyword "required entry 'non-commercial research'" -Body {
+            $keptFace = @(Get-Content -LiteralPath (Join-Path $sFace 'THIRD_PARTY-NOTICE.md') -Encoding UTF8 |
+                Where-Object { $_ -notmatch 'non-commercial research' })
+            if ($keptFace.Count -le 0) { throw "fetch_ai sandbox: stripping non-commercial emptied the face notice (injection broken)" }
+            Set-Content -LiteralPath (Join-Path $sFace 'THIRD_PARTY-NOTICE.md') -Value $keptFace -Encoding UTF8
+            Invoke-ProvenanceChecks -PackageName 'face' -LicensePath (Join-Path $sFace 'LICENSE') `
+                -NoticePath (Join-Path $sFace 'THIRD_PARTY-NOTICE.md') -NoticePatterns $faceNoticePatterns -ShaPairs $facePairs
+        }
+        Set-Content -LiteralPath (Join-Path $sFace 'THIRD_PARTY-NOTICE.md') -Value $faceNoticeTxt
+
         # (5) Exe missing in BOTH dest and build dirs -> fail-closed throw with the
         #     build command (fetch_lama.ps1:231 precedent, never a silent skip).
         Wait-Throw -Label 'exe-missing' -Keyword 'NEVER downloaded' -Body {
@@ -551,8 +579,13 @@ if ($SelfTest) {
                 -CMakeExtra '-DONNXRUNTIME_ROOT=...' -ParamHint '-FaceInferDir'
         }
 
-        if ($caught -ne 8) { Write-Host "fetch_ai FAIL caught=$caught expected=8"; exit 1 }
-        Write-Host "fetch_ai OK contracts=8 caught=$caught"
+        # One source of truth for the arm count: the hard gate below and the
+        # reported "contracts=" claim are both derived from $script:arms, so the
+        # claim can never disagree with what was actually injected (the pair was
+        # two hand-typed copies of the same number once and went stale the moment
+        # an arm landed; release.ps1 derives the same way from $injections.Count).
+        if ($caught -ne $script:arms) { Write-Host "fetch_ai FAIL caught=$caught expected=$script:arms"; exit 1 }
+        Write-Host "fetch_ai OK contracts=$script:arms caught=$caught"
         exit 0
     } finally {
         Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue

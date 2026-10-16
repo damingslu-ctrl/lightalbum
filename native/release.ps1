@@ -397,11 +397,15 @@ function Assert-LamaLicense($staging) {
 #                    --version decodes nothing (R-120a). A decode leg would have
 #                    to run --det-selftest on a synthetic JPEG; it does not exist
 #                    yet (registered as T10-F1 residual 3, T12 scope).
-#   (b) attribution: LICENSE non-empty, THIRD_PARTY-NOTICE.md non-empty AND the
-#                    staged clip notice still CONTAINS the stb_image credit --
-#                    non-emptiness would pass a notice with the credit line
-#                    silently deleted; the substantive R-54 requirement is the
-#                    content, and fetch_ai.ps1 only proves it on the source tree.
+#   (b) attribution: LICENSE non-empty, THIRD_PARTY-NOTICE.md non-empty AND each
+#                    staged notice still CONTAINS its substantive term -- the
+#                    clip notice the stb_image credit (R-54), the face notice the
+#                    "non-commercial research" restriction (insightface
+#                    buffer.redist terms: library MIT, weights research-only, so
+#                    this is a commercial red line, not a courtesy).
+#                    Non-emptiness would pass a notice with either line
+#                    silently deleted, and fetch_ai.ps1 only proves it on the
+#                    source tree.
 #   (c) loadability: EXECUTE the staged faceinfer.exe with --version, CWD = the
 #                    staged bin dir and PATH reduced to the system dirs. That
 #                    mirrors the packaged child exactly (AiSubprocessRunner sets
@@ -434,6 +438,13 @@ function Assert-FaceClipLicense($staging) {
     $fn = Join-Path $staging "3rdparty/face/THIRD_PARTY-NOTICE.md"
     if (-not (Test-Path $fn)) { throw "C10 face THIRD_PARTY-NOTICE.md missing from 3rdparty/face" }
     if ((Get-Item $fn).Length -le 0) { throw "C10 face THIRD_PARTY-NOTICE.md is empty" }
+    # Content grep, not non-emptiness -- same shape as the clip leg below, and
+    # the face side is the one that needs it MORE: the insightface buffer.redist
+    # terms make these weights NON-COMMERCIAL RESEARCH ONLY, so the restriction
+    # line is the substantive term, and a notice with just that line surgically
+    # removed is still "non-empty" (non-emptiness would pass it silently).
+    $fnTxt = Get-Content $fn -Raw -Encoding UTF8
+    if ($fnTxt -notmatch "non-commercial research") { throw "C10 face THIRD_PARTY-NOTICE.md lost its NON-COMMERCIAL RESEARCH restriction line (insightface buffer.redist terms)" }
     # leg (c): run the executor, packaged-child search order, no PATH rescue.
     $exe = Join-Path $faceBin "faceinfer.exe"
     $oldPath = $env:PATH
@@ -463,7 +474,7 @@ function Assert-FaceClipLicense($staging) {
       throw ("C10 faceinfer --version load check failed (rc=0x" + ('{0:X8}' -f $rc) + "): staged faceinfer.exe does not load with CWD=3rdparty/face/bin and PATH=system-only -- its import closure (Qt6Core/Qt6Gui + the MinGW runtime peers Qt6Core pulls, + onnxruntime) must be staged INSIDE 3rdparty/face/bin. stdout/stderr: [" + $out.Trim() + "]")
     }
     if ($out -notmatch "faceinfer") { throw ("C10 faceinfer --version answered but did not identify itself: [" + $out.Trim() + "]") }
-    Write-Host "C10 face ok: staged set complete (exe + models + ORT + imageformats/qjpeg.dll), LICENSE and THIRD_PARTY-NOTICE.md shipped, faceinfer.exe LOADS and answers --version with CWD=3rdparty/face/bin and system-only PATH"
+    Write-Host "C10 face ok: staged set complete (exe + models + ORT + imageformats/qjpeg.dll), LICENSE and THIRD_PARTY-NOTICE.md shipped, faceinfer.exe LOADS and answers --version with CWD=3rdparty/face/bin and system-only PATH, and the notice still carries its non-commercial research restriction"
   } else {
     # R-32 only authorizes the graceful skip when BOTH packages are absent. A
     # half-landed tree is a partial install -- and it is also the NORMAL state of
@@ -733,13 +744,15 @@ function Invoke-ReleaseSelfTest($noInject) {
           Set-Content -Path (Join-Path $lb "inpaint.exe") -Encoding ASCII -Value "fake-inpaint-payload"
           Set-Content -Path (Join-Path $lr "LICENSE") -Encoding ASCII -Value "fake lama license (sandbox)"
         } },
-      # C10: six injections, one per falsifiable leg family (R-33 three +
-      # R-120c exec leg + R-52 clip dll + the R-54 content grep that is the
-      # only check able to notice a surgically deleted credit line). The staged
-      # tree is the real load-closure tree, so "present but unloadable" is a
-      # reachable state here. Expect-pins below are the teeth of R-120c: the
+      # C10: seven injections, one per falsifiable leg family (R-33 three +
+      # R-120c exec leg + R-52 clip dll + the R-54 clip content grep + the
+      # face-side content grep on the NON-COMMERCIAL RESEARCH restriction -- the
+      # only check able to notice a surgically deleted restriction line). The
+      # staged tree is the real load-closure tree, so "present but unloadable" is
+      # a reachable state here. Expect-pins below are the teeth of R-120c: the
       # Qt6Core deletion must be caught BY the exec leg (existence legs stay
-      # green for it BY DESIGN), and the credit deletion by the CONTENT leg.
+      # green for it BY DESIGN), and each credit/restriction deletion by the
+      # CONTENT leg of its own side.
       @{ id = "C10"; apply = {
           New-FaceClipSandboxStaging $dist
           Remove-Item (Join-Path $dist "3rdparty/face/LICENSE") -Force
@@ -766,6 +779,16 @@ function Invoke-ReleaseSelfTest($noInject) {
           # notice stays present and NON-EMPTY; only the credited line is gone
           $kept = @(Get-Content $np -Encoding UTF8 | Where-Object { $_ -notmatch 'stb_image' })
           if ($kept.Count -le 0) { throw "C10 sandbox: stripping stb_image emptied the notice (injection broken)" }
+          Set-Content -Path $np -Value $kept -Encoding UTF8
+        } },
+      @{ id = "C10"; expect = 'non-commercial'; apply = {
+          New-FaceClipSandboxStaging $dist
+          $np = Join-Path $dist "3rdparty/face/THIRD_PARTY-NOTICE.md"
+          # Same discipline as the clip injection above: the notice must stay
+          # present and NON-EMPTY after the strip, or this injection would be
+          # caught by the emptiness leg and prove nothing about the content leg.
+          $kept = @(Get-Content $np -Encoding UTF8 | Where-Object { $_ -notmatch 'non-commercial' })
+          if ($kept.Count -le 0) { throw "C10 sandbox: stripping non-commercial emptied the notice (injection broken)" }
           Set-Content -Path $np -Value $kept -Encoding UTF8
         } }
     )
