@@ -102,7 +102,7 @@
   「用户按了取消」也报成功（且同一轮里 `runFaceCluster` 已按 `cancelled` 跳过聚类，前后自相矛盾）。
   CLIP 双胞胎早在 T8 用 F-1 契约修过同型缺陷，face 轨漏了。已修（FIX-14/15/16/17，见下节）。
 
-### 终审修复波（T12，FIX-1..18）
+### 终审修复波（T12，FIX-1..21）
 - **原则**：判据一个都不放宽，只让文档/脚本/UI 的宣称与代码真源一致。
 - 波 1（`d6e4a51` + `cfee1da` + `be7b8fd` + `7cc5f7e`）：CLIP 平价两列互换订正、常驻新门实测耗时订正、
   face NOTICE 的 `non-commercial research` **内容腿**补进 `release.ps1` C10（并把 `fetch_ai.ps1`
@@ -133,6 +133,39 @@
     需要 TEMP 里的真人照片/金样夹具，本次宿主 TEMP 已无 face 图像夹具 ⇒ 诚实 `[SKIP]`（不是假绿，
     也不是回归）；其余 12 条 SKIP 与发布态同集。`gate_matrix -SelfTest` 仍 `gates=78 nonAsciiBytes=0 fails=0`、
     `LA_RELEASE_QA PASS contracts=10 injected=22 caught=22`。
+- **复审波（第 3 波，`3daec6c` + `9b49389`）**：波 2 交独立复审席复核（2 Important + 4 Minor），
+  逐条以**变异探针**收口，不接受「读代码认为它对」这种交付：
+  - **FIX-19（Important 1：`stopped` 那半无人测）**：G9 补 ①b 取消子轮（`cancel` 谓词恒真 ⇒
+    `i==0` 即 `break`，零请求、零写回、收尾必回 `false`）。位置是硬约束：必须在干净轮之前
+    （干净轮一写回 `person`，「零写回」断言即退化成恒真）。探针证据 A：删掉返回值里的
+    `&& !stopped` ⇒ 恰一条红（`G9 cancel-round detect ret=1 want=0`）；探针证据 B：把取消检查
+    从循环首挪到请求之后 ⇒ 也恰一条红（`G9 cancel-round progress done=6 want=0`），且这是
+    **唯一**变红的腿（`ret`/写回两腿因复用 ERR 子进程照旧为假）——据此把正向不变量腿
+    （`errTotal`/`errDoneMax`/`cancelDoneMax` 等 progress 轨迹）一并并入 `g9Ok` 汇总旗标。
+  - **FIX-20（Important 2：成功分支仍超报）**：`runClassify`/`runPersonDetect`/`runFaceCluster`
+    的「已为 %1 张…」文案改报**实际写回数**（跑前/跑后各数一次已标注张数取差，经
+    `countLabeled()` 小助手），不再拿本轮尝试数冒充结果；一张没中也报 0。零新增文案 ⇒
+    无 `.ts`/`.qm` 触碰。**如实登记**：没有任何门禁覆盖 `QMessageBox` 正文，这条只有代码判据。
+  - **FIX-21（四条 Minor）**：① ERR 臂归因补 progress 轨迹正向不变量（与「probe 假早退」可分）；
+    ② 取消=零请求钉死（见 FIX-19 探针 B）；③ `detectEmbeddings` 对「`ok:true` + 有脸但
+    `embedding` 为空」的残缺载荷**计该张失败**而非静默丢弃——顺手挖出更大的一条：聚类轨的
+    `false` 语义此前**零门禁覆盖**（`setSyntheticEmbForQa` 在函数首行早退恒 `true`，真路径
+    一次都没被压过），本波补 ①c/①d（复用 ERR 子进程）+ 桩新臂 `LA_FACE_FORCE_NOEMB` 的 ①e，
+    探针证据 C：回退该修复 ⇒ 恰一条红（`G9 emb NOEMB-round detectEmbeddings ret=1 want=0`）；
+    ④ 两处合成钩子下的恒真 `note(ok, …)` 改为诚实标注「钩子支契约腿，只作归因用」。
+  - **日志诚实化**：`Classifier` / `PersonDetector` 两条失败汇总去掉「未写回」对成功张的误述
+    （成功张其实照常写回）⇒「失败张按『失败即放行』跳过未写回，成功张照常写回」。
+    桩默认臂的 2162 字节体一字节未动，G3/G4 逐字节期望表不受影响。
+  - **实测耗时（铁律31）**：G9 现为六子轮（ERR / 取消 / 嵌入-ERR / 嵌入-取消 / 嵌入-NOEMB / 干净），
+    `-Timing x3` warm = 7268 / 7295 / 7824 ms，三条全在已记 8811 之下 ⇒ 上界**不下调**
+    （为一个更好看的数字去削真实余量不划算），`timeoutSec=30` 不变；溯源与三枚探针证据写入
+    `gate_matrix.ps1` 注释（仍纯 ASCII，E11=0）。
+  - **本波终态**：`LA_FACE_AI_QA` 正臂 `tamper=0` 全绿（`G9 ok=1 … noEmbRet=0 embRowsNoEmb=0`）、
+    反例臂 `tamper=1` 全红；`LA_FACE_CLUSTER_QA` / `LA_PERSON_QA` / `LA_CLIP_AI_QA` / `LA_I18N_QA`
+    （`entries=16`）绿；`gate_matrix -SelfTest gates=78 fast=19 full=59 nonAsciiBytes=0 fails=0`；
+    `LA_RELEASE_QA PASS contracts=10 injected=22 caught=22 baseline=10 zip=9`；pre-commit fast 19/19；
+    全量 78 门 `SUMMARY: PASS=64 FAIL=0 CHECK=0 SKIP=14 KILL=0`，墙钟 104448 ms（与上一跑 90638 ms
+    的差是机器抖动，无与本轮相关的单门回归——本轮唯一被改的常驻门 `#75` 单跑实测 ≤7824 ms）。
 - **结转下一轮（本波未做，如实登记）**：① opt-in 夹具（真人照片/金样在 TEMP）易失，导致同一棵树
   在不同日子给出 `66/12` 与 `64/14` 两种套件读数——需要一个可复跑的夹具重建脚本；
   ② `faceinfer.exe --det-selftest` 的真解码冒烟腿（见上节 FINDING）仍未落地。
