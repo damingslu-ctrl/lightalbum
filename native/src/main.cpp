@@ -5429,9 +5429,16 @@ int runFaceAiQa()
         const bool expG9ErrRet   = tamper;                          // 正臂 false / 反例臂翻成 true
         const int  expG9ErrWrote = tamper ? kPending : 0;           // 正臂 0 / 反例臂翻成 kPending
         const QString expG9ErrP5 = tamper ? expG9Person : QString();// 正臂：p5 仍空
+        // 取消子轮（FIX-19 反例臂）期望：诚实实现必回 false（stopped 置位）且**零写回**。
+        // 断的是 `stopped` 那半——只测 `failed` 的话，删掉 `stopped = true` 仍全绿，
+        // 而「用户按了取消也报成功」这条谎就重新溜回来（CHANGELOG/指导书均已宣称被杀）。
+        const bool expG9CancelRet   = tamper;                        // 正臂 false / 反例臂 true
+        const int  expG9CancelWrote = tamper ? kPending : 0;         // 正臂 0 / 反例臂 kPending
         bool detectRet = false;
         bool errRet = false;
+        bool cancelRet = true;
         int  wroteExpectedErr = 0;
+        int  wroteExpectedCancel = 0;
         QString p5personErr;
         if (opened && pngsOk) {
             QObject qaCtx;                       // 写回投递目标在主线程（AiWriter QueuedConnection 落点）
@@ -5462,6 +5469,21 @@ int runFaceAiQa()
             if (pendingPaths.size() == kPending)
                 for (const Photo& ph : lib.photos())
                     if (ph.path == pendingPaths[5]) p5personErr = ph.person;
+            // ---- ①b 取消子轮（FIX-19）：cancel 谓词恒真 ⇒ 循环在 i==0 即 break，
+            //      一张都不发请求、一张都不写回，收尾必回 false（stopped 那半被咬住）。
+            //      位置是硬约束：必须在干净轮之前（干净轮一写回 person，这里的
+            //      「零写回」断言就退化成恒真）；也必须在 FORCE_ERR 解除之后
+            //      （布防时 probe 仍真、但语义会被 ERR 臂混叠，独立成一臂更干净）。
+            runOffMainQa([&] {
+                cancelRet = PersonDetector::detect(snap, writer, -1,
+                    [](int, int, const QString&) {}, [] { return true; });
+            });
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 500);
+            for (int i = 0; i < kPending; ++i) {
+                const QString& want = pendingPaths.value(i);
+                for (const Photo& ph : lib.photos())
+                    if (ph.path == want && ph.person == expG9Person) ++wroteExpectedCancel;
+            }
             // 换血（夹具层进程寿命修正，非被测语义）：桩的 LA_FACE_FORCE_* 只在子进程
             // 启动时读一次，底座又复用热子进程（且 ERR 帧按 spec §5 保活不杀），不拆掉
             // 这具 ERR 子进程，干净轮会继承 FORCE_ERR 而永远拿不到 faces（见
@@ -5492,6 +5514,14 @@ int runFaceAiQa()
             if (ph.path == QStringLiteral("C:/la/p6_conservative.jpg")) p6personErr = ph.person;
         note(p6personErr == seededPerson,
              QStringLiteral("G9 ERR-round p6 overwritten=%1 want=%2").arg(p6personErr, seededPerson));
+
+        // ---- ①b 取消子轮断言（`stopped` 那半的判别腿）----
+        note(cancelRet == expG9CancelRet,
+             QStringLiteral("G9 cancel-round detect ret=%1 want=%2 (cancelled round must report false)")
+                 .arg(int(cancelRet)).arg(int(expG9CancelRet)));
+        note(wroteExpectedCancel == expG9CancelWrote,
+             QStringLiteral("G9 cancel-round writeback=%1 want=%2 (cancelled round must write nothing, label=%3)")
+                 .arg(wroteExpectedCancel).arg(expG9CancelWrote).arg(expG9Person));
 
         // ---- ② 干净子轮断言 ----
         note(detectRet == expG9Ret,

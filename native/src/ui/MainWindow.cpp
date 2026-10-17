@@ -68,6 +68,16 @@
 #endif
 
 namespace {
+// T12 修复波第 2 轮 FIX-20：AI 成功文案的「%1 张」必须来自实际写回，而不是本轮尝试数。
+// 跑前/跑后各数一次已标注张数做差，即本轮真正被写上的张数（一张没中也就不谎报 N 张）。
+int countLabeled(const QVector<Photo>& photos, const QString Photo::*field)
+{
+    int n = 0;
+    for (const Photo& p : photos)
+        if (!(p.*field).isEmpty()) ++n;
+    return n;
+}
+
 // 2.33 浮岛分组分割线 delegate：在分组首项（row 3=选片, row 5=日志）顶部画细线。
 // 不加假 item，保持 QListWidget row 索引与 stack_ 索引一一对应。
 class NavGroupDelegate : public QStyledItemDelegate {
@@ -1483,6 +1493,8 @@ void MainWindow::runClassify()
             QCoreApplication::translate("LightAlbum", "库内照片均已分类，无需再跑。"));
         return;
     }
+    // FIX-20：跑前基线（已分类张数），finished 里做差得到本轮实际写回数。
+    const int labeledBefore = countLabeled(lib_->photos(), &Photo::category);
     // 2) 进度对话框 + 后台跑（探测与分类全在 worker 线程）
     auto* dlg = new QProgressDialog(
         QCoreApplication::translate("LightAlbum", "AI 正在分类…"),
@@ -1494,7 +1506,7 @@ void MainWindow::runClassify()
     auto* engineMissing = new std::atomic<bool>(false);   // R-20 三态旗标（worker 写、GUI 线程读）
     connect(dlg, &QProgressDialog::canceled, this, [cancelled] { cancelled->store(true); });
     connect(watcher, &QFutureWatcher<bool>::finished, this,
-            [this, dlg, watcher, cancelled, engineMissing, pending] {
+            [this, dlg, watcher, cancelled, engineMissing, labeledBefore] {
                 dlg->close();
                 gallery_->refresh();   // 重建分类 chips + 计数（新分类生效）
                 const bool ok = watcher->result();
@@ -1508,7 +1520,10 @@ void MainWindow::runClassify()
                     msg = QCoreApplication::translate("LightAlbum",
                         "AI 引擎未就绪（引擎或模型缺失，或引擎启动失败），再点「AI 分类」。照片仅在本机处理，绝不外传。");
                 } else {
-                    msg = ok ? QCoreApplication::translate("LightAlbum", "已为 %1 张照片写入场景分类。").arg(pending)
+                    // FIX-20：干净轮次报「本轮实际写回数」（跑前后已分类数做差），
+                    // 不再把本轮尝试数 pending 当作写回数。
+                    msg = ok ? QCoreApplication::translate("LightAlbum", "已为 %1 张照片写入场景分类。")
+                                .arg(qMax(0, countLabeled(lib_->photos(), &Photo::category) - labeledBefore))
                              : QCoreApplication::translate("LightAlbum", "分类过程中断（可能已部分写入）。");
                 }
                 QMessageBox::information(this,
@@ -1554,6 +1569,8 @@ void MainWindow::runPersonDetect()
             QCoreApplication::translate("LightAlbum", "库内照片均已标注人物，无需再跑。"));
         return;
     }
+    // FIX-20：跑前基线（已标注人物张数），finished 里做差得到本轮实际写回数。
+    const int labeledBefore = countLabeled(lib_->photos(), &Photo::person);
     // 2) 进度对话框 + 后台跑（探测与检测全在 worker 线程）
     auto* dlg = new QProgressDialog(
         QCoreApplication::translate("LightAlbum", "正在识别人物…"),
@@ -1565,7 +1582,7 @@ void MainWindow::runPersonDetect()
     auto* engineMissing = new std::atomic<bool>(false);   // R-20 三态旗标（worker 写、GUI 线程读）
     connect(dlg, &QProgressDialog::canceled, this, [cancelled] { cancelled->store(true); });
     connect(watcher, &QFutureWatcher<bool>::finished, this,
-            [this, dlg, watcher, cancelled, engineMissing, pending] {
+            [this, dlg, watcher, cancelled, engineMissing, labeledBefore] {
                 dlg->close();
                 const bool ok = watcher->result();
                 gallery_->refresh();   // 重建人物 chips + 计数（与 runClassify 同款：
@@ -1577,7 +1594,10 @@ void MainWindow::runPersonDetect()
                     msg = QCoreApplication::translate("LightAlbum",
                         "AI 引擎未就绪（引擎或模型缺失，或引擎启动失败），再点「识别人物」。照片仅在本机处理，绝不外传。");
                 } else {
-                    msg = ok ? QCoreApplication::translate("LightAlbum", "已为 %1 张照片标注人物。").arg(pending)
+                    // FIX-20：干净轮次报「本轮实际写回数」——一张脸都没检出时这里是 0，
+                    // 不再报 pending 冒充「已标注 N 张」。
+                    msg = ok ? QCoreApplication::translate("LightAlbum", "已为 %1 张照片标注人物。")
+                                .arg(qMax(0, countLabeled(lib_->photos(), &Photo::person) - labeledBefore))
                              : QCoreApplication::translate("LightAlbum", "识别过程中断（可能已部分写入）。");
                 }
                 QMessageBox::information(this,
@@ -1629,6 +1649,8 @@ void MainWindow::runFaceCluster()
                 "库内照片均已标注人物，无需再聚类。要重新聚类请先清空人物标注。"));
         return;
     }
+    // FIX-20：跑前基线（已标注人物张数），finished 里做差得到本轮实际聚类写回数。
+    const int labeledBefore = countLabeled(lib_->photos(), &Photo::person);
     // 2) 起始编号：既有「人物N」的最大 N + 1
     int maxN = 0;
     for (const Photo& p : lib_->photos()) {
@@ -1653,7 +1675,7 @@ void MainWindow::runFaceCluster()
     auto* engineMissing = new std::atomic<bool>(false);   // R-20 三态旗标（worker 写、GUI 线程读）
     connect(dlg, &QProgressDialog::canceled, this, [cancelled] { cancelled->store(true); });
     connect(watcher, &QFutureWatcher<bool>::finished, this,
-            [this, dlg, watcher, cancelled, engineMissing, pending, startIndex] {
+            [this, dlg, watcher, cancelled, engineMissing, labeledBefore, startIndex] {
                 dlg->close();
                 const bool extracted = watcher->result();
                 // ② 读回 embedding → 阈值余弦聚类 → ③ 簇标签写回 person，全部在 GUI 线程。
@@ -1684,7 +1706,8 @@ void MainWindow::runFaceCluster()
                         "AI 引擎未就绪（引擎或模型缺失，或引擎启动失败），再点「智能聚类」。照片仅在本机处理，绝不外传。");
                 } else {
                     msg = extracted
-                        ? QCoreApplication::translate("LightAlbum", "已聚类 %1 张照片为不同人物。").arg(pending)
+                        ? QCoreApplication::translate("LightAlbum", "已聚类 %1 张照片为不同人物。")
+                             .arg(qMax(0, countLabeled(lib_->photos(), &Photo::person) - labeledBefore))
                         : QCoreApplication::translate("LightAlbum", "聚类过程中断（可能已部分写入）。");
                 }
                 QMessageBox::information(this,

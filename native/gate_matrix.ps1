@@ -632,7 +632,15 @@ $GateTable = @(
   # qa_runner -Only LA_FACE_AI_QA -Timing x3 warm: 7069 / 7079 / 7123 ms. All three
   # stay under the recorded 7146, so the bound is NOT raised (no churn) - recorded
   # here so the next reader knows the two-round arm was measured, not assumed.
-  @{n="LA_FACE_AI_QA"; png=$false; timeoutSec=30; measuredMs=7146},
+  # T12 wave2 re-take #2 AFTER the cancel sub-round (arm 1b) landed, so G9 now runs
+  # three rounds (ERR + cancel + clean). -Timing x3 warm: 7175 / 7573 / 8811 ms.
+  # Max exceeds the old 7146 bound, so it is RAISED to 8811 (rule 31 conservative
+  # max-of-warm; the spread is stub-spawn jitter, not a new slow arm). timeoutSec=30
+  # unchanged - still ~3.4x margin. Mutation evidence for the new leg: deleting only
+  # the "&& !stopped" half of PersonDetector::detect's return turns the positive arm
+  # RED with exactly one failure ("G9 cancel-round detect ret=1 want=0") and nothing
+  # else moves - the stopped half is load-bearing, not decoration.
+  @{n="LA_FACE_AI_QA"; png=$false; timeoutSec=30; measuredMs=8811},
   # 2.40.0 round4 T3: real face-model end-to-end quality gate (gate #78, LA_FACE_MODEL_QA).
   # Opt-in: need=@("LA_FACE_MODEL","LA_FACE_IMG") -- absent -> qa_runner [SKIP] (privacy
   # red line R-06: real face images and gold JSONs never enter the repo; the gate only
