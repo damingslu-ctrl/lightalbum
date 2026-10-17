@@ -111,6 +111,17 @@ bool AiSubprocessRunner::ensureReady(Rst* out)
     return ok;
 }
 
+void AiSubprocessRunner::qaRetireChildForQa()
+{
+    // 与析构同式：持单飞闸后把 slotShutdown 阻塞投递到 owner 线程（owner 线程空闲即
+    // 执行；在飞请求持闸，故本调用必然排在它之后，绝不在请求中途拆进程）。
+    // slotShutdown 内部 stopChild() 复位 proc_/inLoop_/ready1_/crashSeen_/rxbuf_，
+    // 下一次 startIfNeeded 便按调用方**当时**的 systemEnvironment() 冷启动全新子进程
+    // ——#75 G9「全失败轮 → 干净轮」两轮同进程所缺的那次换血。
+    QMutexLocker lk(&gate_);
+    QMetaObject::invokeMethod(this, "slotShutdown", Qt::BlockingQueuedConnection);
+}
+
 // ============================ owner 线程内部件 ============================
 
 void AiSubprocessRunner::slotCall(const QString& kind, quint64 id,

@@ -63,6 +63,16 @@ public:
     // GUI 线程判定：当前线程 == QCoreApplication::instance()->thread()。
     static bool sIsMainThread();
 
+    // ---- QA 专用（生产链路零调用）：拆除当前热子进程，使下一次 ensureReady/call
+    // 按调用方**彼时**的进程 env 冷启动新子进程。
+    // WHY：桩/执行器的 LA_FACE_FORCE_* 一类模式钩子只在**启动时**读一次（faceinfer_stub.cpp
+    // 主循环前 envOn 五连），而底座按设计复用热子进程（startIfNeeded 的 Sp::Up 复用臂）。
+    // 于是同一进程内要先后跑两种桩臂（#75 G9 的「全失败轮 → 干净轮」），第二轮必然继承
+    // 第一轮的桩模式——不是被测实现的缺陷，是夹具层的进程寿命错配，故在此提供一次性、
+    // 零语义的拆除口。线程：任意线程可调（owner 线程 slotShutdown 的 BlockingQueued 投递，
+    // 与析构同式）；持 gate_ 与在飞请求互斥，绝不在请求中途被拆。----
+    void qaRetireChildForQa();
+
 private:
     // 内部状态分类（owner 线程私有）：startIfNeeded 三态返回值。
     enum class Sp { Up, Ready0, NoExe, Timeout, Crashed };

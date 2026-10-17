@@ -22,6 +22,13 @@ public:
     // 「失败→整张放过」分支按 Rst≠Ok 视同 !ok（spec §2.3 逐字保留该容错）。
     static bool detect(const QString& absPath, QJsonDocument& out);
 
+    // ---- QA 专用（生产零调用）：拆掉单例底座的热子进程，使下一次 probe/detect 按
+    // 调用方**当时**的进程 env 冷启动新子进程。桩的 LA_FACE_FORCE_* 模式只在子进程
+    // 启动时读一次，而底座复用热子进程——同一门内要先后跑「全失败轮」与「干净轮」
+    // 时必须换血，否则第二轮继承第一轮的桩模式（#75 G9 FIX-16 双臂）。零语义改动，
+    // 机械见 AiSubprocessRunner::qaRetireChildForQa。----
+    static void qaRetireChildForQa();
+
 private:
     // 进程级单例底座（static-duration 故意不析构：子进程随父进程句柄关闭见 stdin
     // EOF 自然退出——faceinfer/stub 主循环同型，无孤儿驻留）。

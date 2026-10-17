@@ -52,6 +52,7 @@
 #include "core/EraseRunner.h"   // 2.35.0 执行器 QA 钩子（qaInjectBadSize）
 #include "core/AiProto.h"      // 2.40.0 第四轮 T4a：#75 G5p 全词比对回归腿直调 parseReq
 #include "core/AiSubprocessRunner.h"  // 2.40.0 第四轮 T4a：#75 G3/G6/G7/G8 经真底座断言
+#include "core/FaceRunner.h"          // 2.40.0 T12 修复波第 2 轮：#75 G9 两轮同进程的换血钩子（qaRetireChildForQa，EraseRunner QA 钩子先例）
 #include "core/ExifReader.h"    // 2.38.0 R2 EXIF 容器门（LA_EXIF_CONTAINER_QA 直调）
 #include <QTemporaryDir>
 #include <QPainter>
@@ -5054,6 +5055,20 @@ static bool faceAiProbe(AiSubprocessRunner& r, AiSubprocessRunner::Rst* st)
     return ok;
 }
 
+// ---- #75 G9 前置条件件：把一整轮 detect 跑在非主线程上并等它结束。----
+// 为什么必须是夹具自带（std::thread+join，与 faceAiCall/faceAiProbe 同款），而不是
+// 本门其它腿那样用 QtConcurrent::run：QtConcurrent 走全局 QThreadPool，而该池在拿不到
+// 可分配线程时**退回「在调用线程就地执行」**（Qt 6 QThreadPool::start 的 reserveThread
+// 返回 -1 分支）。实测证据（本门 TMPPOOL 诊断跑，诊断已撤）：ERR 轮经 QtConcurrent 拿到
+// 了真 worker（tid=1a64 ≠ 主线程 457c），其后的干净轮与 4 次预探测**全部**拿回主线程 tid，
+// 于是底座按 spec §2.2 正确拒 Busy → probe 假 → detect 假 → 该轮红。
+// 红的是线程分配，不是被测语义——夹具不能把「跑在 worker 上」交给运气，故在此固化前置条件。
+static void runOffMainQa(const std::function<void()>& fn)
+{
+    std::thread th(fn);
+    th.join();
+}
+
 int runFaceAiQa()
 {
     const bool tamper = !qEnvironmentVariableIsEmpty("LA_FACE_AI_QA_FORCE_BROKEN");
@@ -5304,7 +5319,8 @@ int runFaceAiQa()
         std::fprintf(stderr, "LA_FACEAI_G G8 ok=%d\n", int(readyNoExe && callNoExe));
     }
 
-    // ---- G9 [T12 修复波 FIX-8] face 轨「子进程驱动的生产路径腿」（照抄 G11 结构，**不吃合成钩子**）：
+    // ---- G9 [T12 修复波 FIX-8 建立 / FIX-16 加反例子轮] face 轨「子进程驱动的生产路径腿」
+    //      （照抄 G11 结构，**不吃合成钩子**；同进程内先跑「全失败轮」再跑「干净轮」）：
     //      PersonDetector::detect → FaceRunner::probe/detect 门面 → AiSubprocessRunner 底座 →
     //      faceinfer 子进程（qputenv LA_FACE_STUB=1 走门面候选链第 1 跳桩，与 G11 的 LA_CLIP_STUB
     //      同构；桩文件头 E1 组「runner 侧强制选桩标记，T4 接线消费」，本腿即该消费点）。
@@ -5317,15 +5333,27 @@ int runFaceAiQa()
     //            每张未标注照片（含 p5 无缩略图）都发 REQ、桩都答 count=1 → 都写回。G11 的
     //            「无缩略图不发请求也不写回」在 face 轨**不成立**，故 p5 仍被写回，本腿据此**正向**
     //            断言（证明 face 轨逐张真驱动子进程、无 thumb 捷径）——这是有意据实断言，非放宽。
-    //        (2) detect 返回值诚实性**只由 probe 决定**：probe 失败即 false（PersonDetector.cpp:49，
-    //            返回发生在循环之前）；每 REQ「失败→整张放过」分支（:71）即使全失败仍 return true
-    //            （:87，净替换保留的坏图不中断语义，非 Classifier 的 F-1 全失败 false）。故「全失败轮
-    //            false」只能靠 LA_FACE_FORCE_NOMODEL（READY 0 → probe false → detect false）真实达成，
-    //            不能像 G11 用 FORCE_ERR（force_err 臂 READY 1、probe 仍成功 → detect 仍 true，
-    //            若断 expRet=!tamper 会失真）。这是 face 与 CLIP 返回值契约的真实差异，据实反映。
-    //      两臂互锁（铁律22）：正臂（仅 LA_FACE_STUB）detect true + kPending 张写回 defaultPerson；
-    //      tamper 臂物理注入 LA_FACE_FORCE_NOMODEL 且把期望标签翻成「错误标注」——写回数与盘面独立
-    //      复核两路各自咬红，返回值真值表两臂恒绿（诚实互锁：恒真实现被 tamper 臂咬红、恒假被正臂咬红）。----
+    //        (2) detect 返回值诚实化后与 CLIP 轨 Classifier::classify 的 F-1 契约**同型**
+    //            （T12 修复波第 2 轮 FIX-14：补 spec §8「收尾汇总计数」那一列在 face 轨的落地）：
+    //            逐张传输失败计 failed、载荷 ok!=true 计 failed、取消置 stopped，收尾
+    //            return failed == 0 && !stopped。于是「全失败轮 false」由 LA_FACE_FORCE_ERR 直接
+    //            物理注入（READY 1 ⇒ probe 仍成功 ⇒ 每 REQ ERR loadfail ⇒ 只有**汇总计数**能把这轮
+    //            判成 false），不再借道 LA_FACE_FORCE_NOMODEL：NOMODEL 的归因只在 probe 层（G2/G8），
+    //            拿它咬返回值会把「probe 假」误当「全失败诚实」，两条契约混成一条。本臂对未修
+    //            实现（每 REQ 失败只 continue、收尾恒 return true）实测为红——那红就是缺陷本体。
+    //      流程恒在、期望随臂翻转（铁律22 零分支）：ERR 子轮与干净子轮**都无条件跑**（布防的是
+    //      夹具层的桩模式，不是分支），tamper 只把期望常量翻错（errRet/写回数/p5 标签/干净轮
+    //      ret+标签），两臂的退出路径完全一致。
+    //      两轮同进程 ⇒ 必须换血：桩的 LA_FACE_FORCE_* 只在**子进程启动时**读一次
+    //      （faceinfer_stub.cpp 主循环前 envOn 五连），而底座按设计复用热子进程
+    //      （AiSubprocessRunner::startIfNeeded 的 Sp::Up 复用臂）——故 ERR 轮跑完要用
+    //      FaceRunner::qaRetireChildForQa() 拆掉那具带着 FORCE_ERR env 的子进程，干净轮才会
+    //      冷启动一具无钩子的新子进程。这是夹具层进程寿命问题，不是被测实现的缺陷。
+    //      顺序是硬约束：ERR 轮先跑、且两轮写回断言各自独立——干净轮一旦把 person 写回，
+    //      「全失败轮零写回」这条判据就失去可分辨性。
+    //      两臂互锁：正臂 = 全失败轮 ret false + 零写回 + p5 仍空，干净轮 ret true + kPending 张
+    //      写回 defaultPerson；tamper 臂逐一翻错期望。恒真实现被 ERR 子轮咬红、恒假实现被干净轮
+    //      咬红，返回值真值表与写回/盘面两路各自独立成立。----
     {
         const QString dir = QDir::tempPath() + QStringLiteral("/la_faceai_g9_%1")
                                 .arg(QCoreApplication::applicationPid());
@@ -5394,32 +5422,80 @@ int runFaceAiQa()
 
         // 生产侧桩标记：布防 + 用毕显式解除（与 G3/G6/G7/G11 同式）。
         qputenv("LA_FACE_STUB", "1");
-        // 期望表（固定常量；tamper 只翻标签期望 + 物理注入 NOMODEL，流程零分支，铁律22）。
+        // 期望表（固定常量；两轮物理流程恒在，tamper 只翻期望常量，流程零分支，铁律22）。
         const QString expG9Person = tamper ? QStringLiteral("错误标注") : dp;
-        const bool    expG9Ret    = !tamper;   // 干净轮 true / NOMODEL 轮 false（detect 只在 probe 失败时 false）
+        const bool    expG9Ret    = !tamper;   // 干净轮恒 true；反例臂把它翻成 false 即咬红
+        // ERR 子轮（全失败轮）期望：诚实实现必回 false 且**零写回**（person 保持空）。
+        const bool expG9ErrRet   = tamper;                          // 正臂 false / 反例臂翻成 true
+        const int  expG9ErrWrote = tamper ? kPending : 0;           // 正臂 0 / 反例臂翻成 kPending
+        const QString expG9ErrP5 = tamper ? expG9Person : QString();// 正臂：p5 仍空
         bool detectRet = false;
+        bool errRet = false;
+        int  wroteExpectedErr = 0;
+        QString p5personErr;
         if (opened && pngsOk) {
             QObject qaCtx;                       // 写回投递目标在主线程（AiWriter QueuedConnection 落点）
             AiWriter writer(&lib, &qaCtx);
             // 快照取在 QA 主线程：Library 非线程安全，生产侧 MainWindow::runPersonDetect 同款
             // （worker 只吃快照，绝不回头碰 lib）。
             const QVector<Photo> snap = lib.photos();
-            // 底座禁 GUI 线程调用（此处 = QA 主线程）：生产接线要求 worker 线程
-            // （PersonDetector.h §线程：probe/detect 均须非 GUI 线程），主线程直调拿 Busy→
-            // probe false→detect 返回 false→本腿转红（同 G11 的 R-20 同型断言）。
-            if (tamper) qputenv("LA_FACE_FORCE_NOMODEL", "1");   // 全失败轮布防（用毕下句解除）
-            QtConcurrent::run([&] {
+            // 前置条件：两轮都必须跑在非主线程（PersonDetector.h §线程 + spec §2.2：底座
+            // 对主线程调用响亮拒 Busy）。用 runOffMainQa（std::thread+join，与本门 faceAiCall/
+            // faceAiProbe 同款）而**不用** QtConcurrent::run——见其声明注里的实测证据。
+            // ---- ① ERR 子轮（FIX-16 反例臂）：物理注入 READY 1 + 每 REQ ERR loadfail
+            //      ⇒ 本轮 kPending 张**全失败、零写回**。诚实实现收尾必回 false；
+            //      「每 REQ 失败只 continue、收尾恒 return true」的现实现即在此咬红。
+            qputenv("LA_FACE_FORCE_ERR", "1");   // 全失败轮布防（用毕下句解除）
+            runOffMainQa([&] {
+                errRet = PersonDetector::detect(snap, writer, -1,
+                    [](int, int, const QString&) {}, [] { return false; });
+            });
+            qputenv("LA_FACE_FORCE_ERR", QByteArray());
+            // 写回经 AiWriter 的 QueuedConnection 投递回本线程落地（#70/G11 同式）。
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 500);
+            // ERR 子轮读回**必须在干净轮之前**：写回断言两轮各自独立。
+            for (int i = 0; i < kPending; ++i) {
+                const QString& want = pendingPaths.value(i);
+                for (const Photo& ph : lib.photos())
+                    if (ph.path == want && ph.person == expG9Person) ++wroteExpectedErr;
+            }
+            if (pendingPaths.size() == kPending)
+                for (const Photo& ph : lib.photos())
+                    if (ph.path == pendingPaths[5]) p5personErr = ph.person;
+            // 换血（夹具层进程寿命修正，非被测语义）：桩的 LA_FACE_FORCE_* 只在子进程
+            // 启动时读一次，底座又复用热子进程（且 ERR 帧按 spec §5 保活不杀），不拆掉
+            // 这具 ERR 子进程，干净轮会继承 FORCE_ERR 而永远拿不到 faces（见
+            // FaceRunner::qaRetireChildForQa 声明注）。
+            FaceRunner::qaRetireChildForQa();
+            // ---- ② 干净子轮：无钩子冷启动的新子进程每 REQ 恒答 faces count=1 ----
+            runOffMainQa([&] {
                 detectRet = PersonDetector::detect(snap, writer, -1,
                     [](int, int, const QString&) {}, [] { return false; });
-            }).waitForFinished();
-            if (tamper) qputenv("LA_FACE_FORCE_NOMODEL", QByteArray());
-            // 写回经 AiWriter 的 QueuedConnection 投递回本线程落地（#70/G11 同式）。
+            });
             QCoreApplication::processEvents(QEventLoop::AllEvents, 500);
         }
         qputenv("LA_FACE_STUB", QByteArray());
 
+        // ---- ① ERR 子轮断言（返回值诚实 + 零写回 + 守恒）----
+        note(errRet == expG9ErrRet,
+             QStringLiteral("G9 ERR-round detect ret=%1 want=%2 (all-failed round must report false)")
+                 .arg(int(errRet)).arg(int(expG9ErrRet)));
+        note(wroteExpectedErr == expG9ErrWrote,
+             QStringLiteral("G9 ERR-round writeback=%1 want=%2 (all-failed round must write nothing, label=%3)")
+                 .arg(wroteExpectedErr).arg(expG9ErrWrote).arg(expG9Person));
+        note(p5personErr == expG9ErrP5,
+             QStringLiteral("G9 ERR-round p5 person=%1 want=%2 (no writeback under FORCE_ERR)")
+                 .arg(p5personErr, expG9ErrP5));
+        // 已标注张 p6 在全失败轮也不得被动（守恒）。
+        QString p6personErr;
+        for (const Photo& ph : lib.photos())
+            if (ph.path == QStringLiteral("C:/la/p6_conservative.jpg")) p6personErr = ph.person;
+        note(p6personErr == seededPerson,
+             QStringLiteral("G9 ERR-round p6 overwritten=%1 want=%2").arg(p6personErr, seededPerson));
+
+        // ---- ② 干净子轮断言 ----
         note(detectRet == expG9Ret,
-             QStringLiteral("G9 detect ret=%1 want=%2 (clean round true / NOMODEL round false)")
+             QStringLiteral("G9 clean-round ret=%1 want=%2 (clean round true / tamper flips)")
                  .arg(int(detectRet)).arg(int(expG9Ret)));
         // person 列写回落点（内存）：kPending 张 = 期望标签（干净=defaultPerson）。
         int wroteExpected = 0;
@@ -5466,11 +5542,13 @@ int runFaceAiQa()
             note(dbP0 == expG9Person,
                  QStringLiteral("G9 db p0 person=%1 want=%2").arg(dbP0, expG9Person));
         }
-        const bool g9Ok = detectRet == expG9Ret && wroteExpected == kPending
+        const bool g9Ok = errRet == expG9ErrRet && wroteExpectedErr == expG9ErrWrote
+                          && p5personErr == expG9ErrP5 && p6personErr == seededPerson
+                          && detectRet == expG9Ret && wroteExpected == kPending
                           && p5person == expG9Person && p6person == seededPerson
                           && lib.photos().size() == kRows;
-        std::fprintf(stderr, "LA_FACEAI_G G9 ok=%d ret=%d wrote=%d\n",
-                     int(g9Ok), int(detectRet), wroteExpected);
+        std::fprintf(stderr, "LA_FACEAI_G G9 ok=%d ret=%d wrote=%d errRet=%d wroteErr=%d\n",
+                     int(g9Ok), int(detectRet), wroteExpected, int(errRet), wroteExpectedErr);
         // R-06 卫生：门后必删临时目录。⚠ 必须先摘掉 Library 留下的两条全局命名连接
         // （la_rw + la_lib）——连接句柄活在全局池里，不受本腿 lib 作用域/析构影响；Windows
         // 上被打开的 sqlite 文件删不掉，于是 removeRecursively 只删得掉 png、独独留下 g9.db。

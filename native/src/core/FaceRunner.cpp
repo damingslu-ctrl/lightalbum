@@ -93,3 +93,11 @@ bool FaceRunner::detect(const QString& absPath, QJsonDocument& out)
     out = d;                                                      // 解析后即弃：rp.json 出栈释放，无缓存（§8）
     return true;
 }
+
+void FaceRunner::qaRetireChildForQa()
+{
+    // 只转发：拆除语义与线程约束全在底座（AiSubprocessRunner::qaRetireChildForQa）。
+    // 单例本体**不**销毁——销毁它等于销毁 owner 线程，重建的 env 快照语义并不因此改变；
+    // 需要换的只是它手里那个已经带着旧桩模式 env 起的子进程。
+    runner().qaRetireChildForQa();
+}
