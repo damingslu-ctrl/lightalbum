@@ -29,6 +29,13 @@ public:
     // 机械见 AiSubprocessRunner::qaRetireChildForQa。----
     static void qaRetireChildForQa();
 
+    // ---- QA 专用（生产零调用）：读出 REQ id 计数器的当前值。id 只在**真发出一条 REQ**
+    // 时自增（detect() 里 fetch_add），所以「这一轮前后两次快照相等」是「一个请求都没发」
+    // 的直接哨兵。存在理由（T12 复审席 3 SC-1）：progress 的 done 轨迹只看得到「被处置过的
+    // 张」，把循环顶的取消检查挪到请求**之后**照样发一条 REQ 却零处置、零写回——所有
+    // tally/写回腿全绿。要钉「取消=零请求」这句话，只能观测请求本身。----
+    static quint64 qaReqSeq();
+
 private:
     // 进程级单例底座（static-duration 故意不析构：子进程随父进程句柄关闭见 stdin
     // EOF 自然退出——faceinfer/stub 主循环同型，无孤儿驻留）。

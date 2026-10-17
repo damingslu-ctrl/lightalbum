@@ -645,13 +645,43 @@ $GateTable = @(
   # -Timing x3 warm: 7268 / 7295 / 7824 ms - all three under the recorded 8811, so the
   # bound is NOT lowered (8811 stays as the conservative measured ceiling; lowering it
   # would trade a real safety margin for a prettier number). timeoutSec=30 unchanged.
-  # Two more mutation probes pin the new legs: (a) moving the cancel check from the top
-  # of the loop to after the request turns exactly ONE leg RED ("G9 cancel-round progress
-  # done=6 want=0") while ret/writeback stay green - the ERR child is reused, so only the
-  # progress trajectory can see that no request was sent; (b) reverting PersonDetector's
-  # "face without embedding counts as failed" fix turns ONE leg RED ("G9 emb NOEMB-round
-  # detectEmbeddings ret=1 want=0"). Both mutants also flip the G9 aggregate flag to
-  # ok=0 now that it ORs in the positive-invariant legs.
+  # G9 now spans seven round invocations over six stub-env arms (ERR / cancel /
+  # emb-ERR / emb-cancel / emb-NOEMB / clean; arm 1e reuses its own NOEMB child for a
+  # second, PERSON-track round). Five mutation probes pin the legs - each was run
+  # against the post-wave-3 build, so exactly one variable moves per run:
+  #   P1  cancel check moved from the loop TOP to immediately AFTER the request ->
+  #       exactly ONE leg RED: "G9 cancel-round REQ seq 7->8 want unchanged" (archive
+  #       t12f22-probe1-cancel-after-req-RED.txt). Every pre-existing leg stayed GREEN
+  #       (ret=0, writeback=0, done=0) because a photo is only tallied once disposed -
+  #       the request itself was invisible. That blindness is the whole reason
+  #       FaceRunner::qaReqSeq() exists (finding SC-1).
+  #   P1' same check moved to the loop TAIL (after done += 1) -> the OTHER leg RED:
+  #       "G9 cancel-round progress done=6 want=0". Different placement, different
+  #       witness; recorded in re-take #3 above (wave-2 run, receipt transcribed,
+  #       no archive file).
+  #   P2  qaRetireChildForQa() removed before the NOEMB arm -> exactly TWO legs RED,
+  #       both the new person-track canary: "NOEMB child detect() ret=0 want=1" and
+  #       "writeback=0 want=6" (archive t12f23-probe2-no-child-swap-RED.txt), while
+  #       the four pre-existing NOEMB legs (ret / rows / total / done) stay GREEN -
+  #       proof they cannot tell a NOEMB child from an ERR one, i.e. that arm could
+  #       have been asserting the ERR frame all along (finding SC-2). The canary
+  #       passes the same child through the PERSON track, where an empty embedding is
+  #       a full hit, so it can only go green on a real NOEMB payload.
+  #   P3  revert "face without embedding counts as failed" -> exactly ONE leg RED:
+  #       "G9 emb NOEMB-round detectEmbeddings ret=1 want=0" (archive
+  #       t12f21-probe3-revert-failed-RED.txt).
+  #   P4  drop the "&& !stopped" half of PersonDetector::detect's return -> exactly
+  #       ONE leg RED: "G9 cancel-round detect ret=1 want=0" (archive
+  #       t12f19-probe4-drop-stopped-RED.txt) with cancelReq=7->7 unchanged - the
+  #       three cancel legs (ret / writeback / REQ) are orthogonal, not redundant.
+  # Each mutant also flips the G9 aggregate flag to ok=0: since re-take #4 that flag
+  # ORs in the setup legs (opened / pngsOk / seeded), the disk readback (dbP0) and
+  # every positive-invariant leg, so no leg can hide behind the receipt line.
+  # T12 wave3 re-take #4 AFTER the two new canaries landed (see the probe block
+  # above). -Timing x3 warm: 7180 / 7179 / 7162 ms - all three under the recorded
+  # 8811, so the bound is neither raised nor lowered (rule 31 keeps the conservative
+  # measured ceiling; lowering it would trade real safety margin for a prettier
+  # number). timeoutSec=30 unchanged.
   @{n="LA_FACE_AI_QA"; png=$false; timeoutSec=30; measuredMs=8811},
   # 2.40.0 round4 T3: real face-model end-to-end quality gate (gate #78, LA_FACE_MODEL_QA).
   # Opt-in: need=@("LA_FACE_MODEL","LA_FACE_IMG") -- absent -> qa_runner [SKIP] (privacy

@@ -102,7 +102,7 @@
   「用户按了取消」也报成功（且同一轮里 `runFaceCluster` 已按 `cancelled` 跳过聚类，前后自相矛盾）。
   CLIP 双胞胎早在 T8 用 F-1 契约修过同型缺陷，face 轨漏了。已修（FIX-14/15/16/17，见下节）。
 
-### 终审修复波（T12，FIX-1..21）
+### 终审修复波（T12，FIX-1..29）
 - **原则**：判据一个都不放宽，只让文档/脚本/UI 的宣称与代码真源一致。
 - 波 1（`d6e4a51` + `cfee1da` + `be7b8fd` + `7cc5f7e`）：CLIP 平价两列互换订正、常驻新门实测耗时订正、
   face NOTICE 的 `non-commercial research` **内容腿**补进 `release.ps1` C10（并把 `fetch_ai.ps1`
@@ -166,9 +166,65 @@
     `LA_RELEASE_QA PASS contracts=10 injected=22 caught=22 baseline=10 zip=9`；pre-commit fast 19/19；
     全量 78 门 `SUMMARY: PASS=64 FAIL=0 CHECK=0 SKIP=14 KILL=0`，墙钟 104448 ms（与上一跑 90638 ms
     的差是机器抖动，无与本轮相关的单门回归——本轮唯一被改的常驻门 `#75` 单跑实测 ≤7824 ms）。
+- **第 4 波（`rereview-seat-3` 复审，FIX-22..29）**：上一波（第 3 波）交独立复审席 3 复核，判
+  **2 Important + 7 Minor + 1 nit**（报告 `rereview-3-report.md`）。这一波挖的不是实现，而是
+  **门禁自己的空心**——两条 Important 都是「断言写了、但没有任何变异能把它咬红」：
+  - **FIX-22（SC-1，Important：「取消 = 零请求」这句话比它的腿更响）**：G9 的取消子轮原先只测
+    `ret=false` / 零写回 / `done=0` 三样，而这三样对「先把 REQ 发出去、再在请求**之后**判取消」
+    这一整类实现**全部为真**（该张发了请求却没被处置，既不进 tally 也不写回）。探针实测把取消
+    检查挪到请求之后 ⇒ **零条腿变红**。补牙齿：`FaceRunner::qaReqSeq()`（QA 专用、生产零调用，
+    读 `detect()` 里 `fetch_add` 的那个计数器）+ 取消轮前后两次快照相等断言，
+    「一个请求都没发」第一次有了直接哨兵。探针复跑：同一变异**恰一条红**
+    （`G9 cancel-round REQ seq 7->8 want unchanged`，`t12f22-probe1-cancel-after-req-RED.txt`）。
+  - **FIX-23（CQ-1，Important：①e 分不清 NOEMB 子进程与 ERR 子进程）**：`faceinfer_stub` 先判
+    `forceErr` 再选载荷，ERR 子进程永远答不出 `ok:true + 空 embedding`；而 ①e 的四条腿
+    （`ret=false` / 零 `face_emb` / `total` / `done`）在「其实还在吃 ERR」时也全绿——等于 FIX-21
+    新覆盖的那条支路**可能从未跑到**。补自检哨兵：①e 用完同一具 NOEMB 子进程再跑一轮 **person 轨**
+    `detect()`——空 embedding 在 person 轨是**完整命中**（`ok:true` + 有脸 ⇒ 该张写回 `person`），
+    只有真 NOEMB 载荷才可能让这轮回 `true` 且写满 `kPending`。探针实测（拆掉 ①e 前的换血 ⇒ 该臂
+    继承 ERR 子进程）：**恰两条红，且都是新哨兵**（`NOEMB child detect() ret=0 want=1` +
+    `writeback=0 want=6`），四条旧腿全绿 ⇒ 旧腿确实无法分辨（`t12f23-probe2-no-child-swap-RED.txt`）。
+  - **FIX-24（SC-2，Minor：名册注释把两个变异写成了一个）**：原注释称「把取消检查从循环首挪到请求
+    之后 ⇒ 恰一条红 `done=6 want=0`」，但 `done=6` 只能由**循环尾**（`done += 1` 之后）的放置产生，
+    请求之后那一档实测零条红（正是 SC-1）。拆成 P1 / P1′ 两条、各记各自变红的腿。
+  - **FIX-25（SC-3，Minor：探针证据只有散文）**：四份运行日志按 `t12f19/21/22/23-*-RED.txt`
+    归档进 SDD 工作区，`gate_matrix.ps1` 注释逐条点名文件名。
+  - **FIX-26（SC-4，Minor：过时层级宣称活过了一轮文档对齐）**：`main.cpp` 门 #75 的头注释仍写
+    「（fast 层，hermetic 桩）」，而名册那一行**没有** `tier="fast"` ⇒ 默认 FULL（名册文件头
+    「Tier defaults to FULL」）。改为「（full 层，hermetic 桩）」。
+  - **FIX-27（SC-5，Minor：新 §8 教条在 CLIP 双胞胎上没实现）**：`Classifier::classify` 的
+    `i` 越界守卫原先静默 `continue`（不计失败）——与「载荷残缺 = 该张可见失败」的保守口径相悖，
+    改为 `++failed`。**同时如实登记**：该支今日**不可达**（单张协议 `paths` 恒 1 元素、`idx` 缺省 0），
+    因此**没有门禁腿**能咬它；要覆盖需 ClipRunner 补 `qaRetireChildForQa` + 桩补 `LA_CLIP_FORCE_BADIDX`
+    臂 ⇒ 结转第五轮（见下 ③）。复审席另一半主张（空 `label` 应计失败）**经核为误**：
+    `normalizeLabel`（`Classifier.cpp:42-45`）把空/未知标签映射为「其他」是 spec §5 的设计兜底，
+    不是残缺载荷 ⇒ 未改。
+  - **FIX-28（CQ-2/CQ-3，Minor：汇总旗标与哨兵默认值）**：`g9Ok` 补入 `opened`/`pngsOk`/`seeded`
+    与磁盘读回 `dbP0`（`dbP0` 由块内提到块外）；`errRet` 的初值从 `false` 改为 `true`——
+    所有「轮没跑」的哨兵默认值一律取**变红那一侧**（此前 `errRet=false` 恰好与 ERR 臂的期望值
+    相同，腿若被跳过会静默为真）。
+  - **FIX-29（CQ-5，nit）**：G9 的 `int` tally 变量由工作线程写、主线程读，安全性完全来自
+    `runOffMainQa` 末尾的 `join`——该依赖此前只存在于口头，补注释钉死（含「不得改成不 join 的
+    异步派发」）。
+  - **CQ-4（裁：不做）**：复审席建议把 G9 六个子轮抽成 `runG9Round(...)` 助手消重复。控制端裁定
+    拒绝：两臂的 `qunsetenv`/`processEvents` **相对位置**是换血语义的一部分（①e 的哨兵必须夹在
+    两次 retire 之间），抽函数会为了观感重排 env 清理次序——真实风险换零收益。重复的两处 tally
+    循环已由 `labeledTally` 助手消掉（FIX-28 一并做）。
+  - **实测耗时（铁律31，re-take #4）**：新哨兵落地后 `-Timing x3` warm = **7180 / 7179 / 7162 ms**，
+    三条仍全在已记 8811 之下 ⇒ 上界不挪、`timeoutSec=30` 不变；探针档案与五档变异逐条写入
+    `gate_matrix.ps1` 注释（纯 ASCII，E11=0，`-SelfTest gates=78 fast=19 full=59 fails=0`）。
+  - **本波终态**：`LA_FACE_AI_QA` 正臂 `tamper=0` 全绿（`G9 ok=1 … cancelReq=7->7
+    embCancelReq=13->13 noEmbDetRet=1 noEmbDetWrote=6 dbOk=1`）、反例臂 `tamper=1` **九组同红**
+    （G1..G9 全 `ok=0`）；`LA_CLASSIFY_QA`（`rows=6 norm=1`）/ `LA_CLIP_AI_QA`（`g1..g11=1`，
+    FIX-27 触碰 `Classifier`）绿；`gate_matrix -SelfTest gates=78 fast=19 full=59
+    nonAsciiBytes=0 textual=78==parsed fails=0`；`LA_RELEASE_QA PASS contracts=10 injected=22
+    caught=22 baseline=10 zip=9`；全量 78 门 `SUMMARY: PASS=64 FAIL=0 CHECK=0 SKIP=14 KILL=0`，
+    墙钟 92721 ms，`[SKIP]` 集与第 3 波那一跑（104448 ms）**逐条相同** ⇒ 无新增假绿、无回归。
 - **结转下一轮（本波未做，如实登记）**：① opt-in 夹具（真人照片/金样在 TEMP）易失，导致同一棵树
   在不同日子给出 `66/12` 与 `64/14` 两种套件读数——需要一个可复跑的夹具重建脚本；
-  ② `faceinfer.exe --det-selftest` 的真解码冒烟腿（见上节 FINDING）仍未落地。
+  ② `faceinfer.exe --det-selftest` 的真解码冒烟腿（见上节 FINDING）仍未落地；
+  ③ CLIP 轨的「`i` 越界 = 载荷残缺计失败」（FIX-27）今日不可达、**无门禁覆盖**，需要
+  ClipRunner 侧 `qaRetireChildForQa` + 桩侧 `LA_CLIP_FORCE_BADIDX` 臂才能补出牙齿。
 
 ## [2.39.0] - 2026-10-13
 

@@ -4921,7 +4921,7 @@ int runEraseQa()
     return fails.isEmpty() ? 0 : 1;
 }
 
-// ---------------- 第四轮 T1 第 75 门 LA_FACE_AI_QA：AiProto 帧协议契约门（fast 层，hermetic 桩） ----------------
+// ---------------- 第四轮 T1 第 75 门 LA_FACE_AI_QA：AiProto 帧协议契约门（full 层，hermetic 桩） ----------------
 // T1 直spawn臂（G1/G2/G4/G5）：门以 QProcess 直起 faceinfer_stub.exe 做协议级断言。
 // T4a 真底座臂（G3/G5p线腿/G6/G7/G8）：经 AiSubprocessRunner 全线程机械（owner 线程
 // + BlockingQueuedConnection + 单飞闸 + 重启一次 + NoExe 判定），桩同一只，env 钩子经
@@ -4930,7 +4930,7 @@ int runEraseQa()
 // 执行器发现沿用 EraseRunner::findExe 的 dev-fallback 口径：候选 1 = native/build/ 扁平产物
 // （faceinfer/CMakeLists POST_BUILD 拷机注入），候选 2 = 仓根 faceinfer/build/。桩缺席 =
 // 开发构建坏了 -> 诚实 FAIL（return 1 即 RED，不许静默放行）。
-// 断言组全谱（八组齐，spec §7#75）：
+// 断言组全谱（九组齐，spec §7#75；G9 由 T8 起补、T12 四波扩到七轮）：
 //   G1 默认桩 `READY 1` 握手；
 //   G2 LA_FACE_FORCE_NOMODEL -> `READY 0` 后每 REQ 收 `ERR <id> nomodel`（spec §5 保活语义）；
 //   G3 [T4a] 真底座全量 roundtrip：REQ(det)->RES JSON 逐字节 + 解析后 deep-equal，
@@ -4945,8 +4945,13 @@ int runEraseQa()
 //      （崩溃感知读逃逸，T1 评审遗留#2）-> 自动重启一次的干净子进程第二 call 复绿；
 //   G7 [T4a] 并发单飞：LA_FACE_FORCE_SLOW 帧间 3s 睡眠窗口内第二调用者即收 Busy（不排队不死锁）；
 //   G8 [T4a] exe 候选全缺 -> ensureReady 与 call 一致 NoExe（spec §2.2 exe_missing）。
+//   G9 [T8 起，T12 四波扩到七轮] PersonDetector 生产路径腿（真底座 + 桩，不经合成钩子）：
+//      person 轨与 embedding 轨各自的「全失败 / 取消 / 干净」子轮 + NOEMB 载荷臂及其
+//      person 轨自检哨兵。铁律22：七轮恒跑，tamper 只翻期望常量；「零处置/零请求/载荷
+//      注入真实」三类正向不变量腿两臂同值，其牙齿由变异探针证明（见 gate_matrix.ps1 溯源）。
 // 桩按 LA_FACE_FORCE_* env 分支；门期望表是固定常量、永不随桩分支（铁律22）。
-// 反例 LA_FACE_AI_QA_FORCE_BROKEN=1 只篡改期望常量 -> 八组同红，
+// 反例 LA_FACE_AI_QA_FORCE_BROKEN=1 只篡改期望常量 -> 九组同红（G9 内正向不变量腿不随
+// tamper 翻，由 g9Ok 汇总旗标 + 探针档案保证它们不是免检通行证），
 // 退出路径与正跑完全一致（return fails.isEmpty()?0:1 不按 broken 分支，铁律22/34）。
 struct FaceAiSession
 {
@@ -5345,10 +5350,14 @@ int runFaceAiQa()
     //            判成 false），不再借道 LA_FACE_FORCE_NOMODEL：NOMODEL 的归因只在 probe 层（G2/G8），
     //            拿它咬返回值会把「probe 假」误当「全失败诚实」，两条契约混成一条。本臂对未修
     //            实现（每 REQ 失败只 continue、收尾恒 return true）实测为红——那红就是缺陷本体。
-    //      流程恒在、期望随臂翻转（铁律22 零分支）：ERR 子轮与干净子轮**都无条件跑**（布防的是
-    //      夹具层的桩模式，不是分支），tamper 只把期望常量翻错（errRet/写回数/p5 标签/干净轮
-    //      ret+标签），两臂的退出路径完全一致。
-    //      两轮同进程 ⇒ 必须换血：桩的 LA_FACE_FORCE_* 只在**子进程启动时**读一次
+    //      流程恒在、期望随臂翻转（铁律22 零分支）：G9 恒跑**七轮**——① ERR / ①b 取消 /
+    //      ①c 嵌入-ERR / ①d 嵌入-取消 / ①e 嵌入-NOEMB / ①e′ 同一具 NOEMB 子进程的 person 轨
+    //      自检 / ② 干净（布防的是夹具层的桩模式 env，不是分支），tamper 只把期望常量翻错
+    //      （errRet/写回数/p5 标签/干净轮 ret+标签），两臂的退出路径完全一致。
+    //      ⚠ 另有一族**正向不变量腿**故意不随 tamper 翻（两臂同值）：progress 的 done/total
+    //      轨迹、①b/①d 的 REQ 序列号相等腿、①e′ 的 ret=true + 写满 kPending。它们的牙齿不在
+    //      反例臂，而在变异探针（`gate_matrix.ps1` 的 P1/P1′/P2/P3/P4 溯源 + 四份 *-RED.txt 归档）。
+    //      多轮同进程 ⇒ 必须换血**两次**：桩的 LA_FACE_FORCE_* 只在**子进程启动时**读一次
     //      （faceinfer_stub.cpp 主循环前 envOn 五连），而底座按设计复用热子进程
     //      （AiSubprocessRunner::startIfNeeded 的 Sp::Up 复用臂）——故 ERR 轮跑完要用
     //      FaceRunner::qaRetireChildForQa() 拆掉那具带着 FORCE_ERR env 的子进程，干净轮才会
@@ -5445,16 +5454,25 @@ int runFaceAiQa()
         const bool expG9EmbCancelRet = tamper;                       // 正臂 false / 反例臂 true
         const int  expG9EmbWrote     = tamper ? kPending : 0;        // 正臂 0 行 face_emb
         bool detectRet = false;
-        bool errRet = false;
+        bool errRet = true;              // 哨兵默认值一律取「轮没跑就红」那侧（复审 CQ-3）
         bool cancelRet = true;
         int  wroteExpectedErr = 0;
         int  wroteExpectedCancel = 0;
         // 归因腿（复审 Minor「ERR 臂只靠同轮干净臂间接钉住」）：progress 的 done/total
         // 轨迹能把「逐张失败计入」与「probe 假 → 早早返回 false」区分开——后者只发
         // progress(0,total) 一次，done 永远停在 0。
+        // ⚠ 这些 done/total 是**主线程帧上的普通 int**，progress 回调却在 worker 线程里写
+        // 它们；可见性全部由 runOffMainQa 的 std::thread::join 提供（先 join 后读）。
+        // 把 runOffMainQa 换成不 join 的执行器（QtConcurrent / detach）＝这些读全是竞争。
         int  errDoneMax = -1;     // ERR 轮 progress 见过的最大 done
         int  errTotal = -1;       // ERR 轮 progress 报出的 total
         int  cancelDoneMax = -1;  // 取消轮 progress 见过的最大 done（应为 0：i==0 即 break）
+        // 零请求哨兵（复审席 3 SC-1）：done 轨迹只看得到「被处置过的张」，把取消检查从循环顶
+        // 挪到请求**之后**——发一条 REQ、零处置、零写回——ret/writeback/done 三条腿全绿。
+        // REQ id 只在真发 REQ 时自增，所以前后两次相等才是「一个请求都没发」的判别。
+        // 默认值故意不等（-1/-2）⇒ 轮没跑也红。
+        qint64 cancelReqBefore = -1, cancelReqAfter = -2;
+        qint64 embCancelReqBefore = -1, embCancelReqAfter = -2;
         // embedding 轨（①c/①d）同名量
         bool embErrRet = true;
         bool embCancelRet = true;
@@ -5469,7 +5487,28 @@ int runFaceAiQa()
         int  embNoEmbDoneMax = -1;
         int  embNoEmbTotal = -1;
         int  embRowsAfterNoEmb = -1;
+        // ①e 自检哨兵（复审席 3 CQ-1）：同一具 NOEMB 子进程上再跑 person 轨 detect()。
+        // 「有脸无向量」对 embedding 轨是失败，对 person 轨却是一张正常脸（bbox/score 齐全）
+        // ⇒ NOEMB 子进程下必回 true 且写回 kPending；若换血钩子被删，这具子进程仍是 ERR 的，
+        // 上面四条 ①e 腿与 ERR 臂**完全同形**看不出来，这条却必红——载荷分支的覆盖自此自检。
+        bool noEmbDetectRet = false;
+        int  noEmbDetectWrote = 0;
         QString p5personErr;
+        // 写回 tally 唯一真源（复审席 3 CQ-4：同式 5 行抄了四处，改一处判据就得改四处）。
+        // pred 决定「算已写」口径：ERR/取消/干净三臂按期望标签计（随 tamper 走），
+        // ①e detect 哨兵臂按「person 非空」计（两臂同值的正向不变量）。
+        const auto tallyPersons = [&](auto&& pred) {
+            int n = 0;
+            for (int i = 0; i < kPending; ++i) {
+                const QString& want = pendingPaths.value(i);
+                for (const Photo& ph : lib.photos())
+                    if (ph.path == want && pred(ph.person)) ++n;
+            }
+            return n;
+        };
+        const auto labeledTally = [&] {
+            return tallyPersons([&](const QString& p) { return p == expG9Person; });
+        };
         if (opened && pngsOk) {
             QObject qaCtx;                       // 写回投递目标在主线程（AiWriter QueuedConnection 落点）
             AiWriter writer(&lib, &qaCtx);
@@ -5494,11 +5533,7 @@ int runFaceAiQa()
             // 写回经 AiWriter 的 QueuedConnection 投递回本线程落地（#70/G11 同式）。
             QCoreApplication::processEvents(QEventLoop::AllEvents, 500);
             // ERR 子轮读回**必须在干净轮之前**：写回断言两轮各自独立。
-            for (int i = 0; i < kPending; ++i) {
-                const QString& want = pendingPaths.value(i);
-                for (const Photo& ph : lib.photos())
-                    if (ph.path == want && ph.person == expG9Person) ++wroteExpectedErr;
-            }
+            wroteExpectedErr = labeledTally();
             if (pendingPaths.size() == kPending)
                 for (const Photo& ph : lib.photos())
                     if (ph.path == pendingPaths[5]) p5personErr = ph.person;
@@ -5507,18 +5542,19 @@ int runFaceAiQa()
             //      位置是硬约束：必须在干净轮之前（干净轮一写回 person，这里的
             //      「零写回」断言就退化成恒真）；也必须在 FORCE_ERR 解除之后
             //      （布防时 probe 仍真、但语义会被 ERR 臂混叠，独立成一臂更干净）。
+            //      REQ 序列号前后快照（FIX-22）才是「一张都不发请求」这句话的判别腿——
+            //      done/写回两腿只看得到处置过的张，看不见「检查挪到请求之后」这条变异
+            //      发出去的那一条 REQ（复审席 3 SC-1 实测：那条变异原先零腿变红）。
+            cancelReqBefore = static_cast<qint64>(FaceRunner::qaReqSeq());
             runOffMainQa([&] {
                 cancelRet = PersonDetector::detect(snap, writer, -1,
                     [&](int done, int, const QString&) {
                         cancelDoneMax = qMax(cancelDoneMax, done);
                     }, [] { return true; });
             });
+            cancelReqAfter = static_cast<qint64>(FaceRunner::qaReqSeq());
             QCoreApplication::processEvents(QEventLoop::AllEvents, 500);
-            for (int i = 0; i < kPending; ++i) {
-                const QString& want = pendingPaths.value(i);
-                for (const Photo& ph : lib.photos())
-                    if (ph.path == want && ph.person == expG9Person) ++wroteExpectedCancel;
-            }
+            wroteExpectedCancel = labeledTally();
             // ---- ①c/①d embedding 轨（detectEmbeddings）同构两臂 ----
             //   复审裁决定位：合成钩子支（setSyntheticEmbForQa）在函数首行早退，恒回 true，
             //   所以聚类轨的 false 语义此前**没有任何门禁腿**——#75 G9 只咬 detect()。
@@ -5533,12 +5569,14 @@ int runFaceAiQa()
                     }, [] { return false; });
             });
             QCoreApplication::processEvents(QEventLoop::AllEvents, 500);
+            embCancelReqBefore = static_cast<qint64>(FaceRunner::qaReqSeq());
             runOffMainQa([&] {
                 embCancelRet = PersonDetector::detectEmbeddings(snap, writer, -1,
                     [&](int done, int, const QString&) {
                         embCancelDoneMax = qMax(embCancelDoneMax, done);
                     }, [] { return true; });
             });
+            embCancelReqAfter = static_cast<qint64>(FaceRunner::qaReqSeq());
             QCoreApplication::processEvents(QEventLoop::AllEvents, 500);
             embRowsAfterBadRounds = lib.getFaceEmbeddings().size();
             // 换血（夹具层进程寿命修正，非被测语义）：桩的 LA_FACE_FORCE_* 只在子进程
@@ -5562,6 +5600,18 @@ int runFaceAiQa()
             qputenv("LA_FACE_FORCE_NOEMB", QByteArray());
             QCoreApplication::processEvents(QEventLoop::AllEvents, 500);
             embRowsAfterNoEmb = lib.getFaceEmbeddings().size();
+            // ---- ①e 自检哨兵（FIX-23，复审席 3 CQ-1）：仍用这具 NOEMB 子进程跑 person 轨。
+            //      同一条载荷在两条轨上语义**相反**——embedding 轨算失败，person 轨只看
+            //      bbox/score（都齐），是一张正常的脸 ⇒ 必回 true 且写回 kPending。
+            //      若 ①e 之前的那次换血被删（同形后果：FORCE_ERR 的解除被挪到那次换血之后），
+            //      ①e 的四条腿与 ERR 臂的读数完全同形（failed=6 / 零写回 / done=6 / ret=false）
+            //      ＝静默空心；这条哨兵在 ERR 子进程下必回 false，于是「换血没做」当场咬红。----
+            runOffMainQa([&] {
+                noEmbDetectRet = PersonDetector::detect(snap, writer, -1,
+                    [](int, int, const QString&) {}, [] { return false; });
+            });
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 500);
+            noEmbDetectWrote = tallyPersons([](const QString& p) { return !p.isEmpty(); });
             FaceRunner::qaRetireChildForQa();
             // ---- ② 干净子轮：无钩子冷启动的新子进程每 REQ 恒答 faces count=1 ----
             runOffMainQa([&] {
@@ -5604,11 +5654,16 @@ int runFaceAiQa()
         note(wroteExpectedCancel == expG9CancelWrote,
              QStringLiteral("G9 cancel-round writeback=%1 want=%2 (cancelled round must write nothing, label=%3)")
                  .arg(wroteExpectedCancel).arg(expG9CancelWrote).arg(expG9Person));
-        // 取消轮的归因腿：progress 只能见过开场那次 done=0（i==0 即 break，一张请求都没发）。
-        // 若 break 支被挪到请求之后，done 会爬到 ≥1，这条即红——把「取消=零请求」钉住。
+        // 取消轮的归因腿：progress 只能见过开场那次 done=0（i==0 即 break，一张都没处置）。
+        // ⚠ 这条钉的是「零处置/零写回」，**不是**「零请求」——把循环顶的取消检查挪到请求
+        // 之后，done 仍是 0（复审席 3 SC-1 实测：那条变异零腿变红）。真正钉「取消=零请求」
+        // 的是下面那条 REQ 序列号腿（FIX-22）。
         note(cancelDoneMax == 0,
-             QStringLiteral("G9 cancel-round progress done=%1 want=0 (cancel must stop before the first request)")
+             QStringLiteral("G9 cancel-round progress done=%1 want=0 (cancel must leave every photo untreated)")
                  .arg(cancelDoneMax));
+        note(cancelReqBefore == cancelReqAfter,
+             QStringLiteral("G9 cancel-round REQ seq %1->%2 want unchanged (cancel must issue ZERO requests)")
+                 .arg(cancelReqBefore).arg(cancelReqAfter));
 
         // ---- ①c/①d embedding 轨断言（聚类轨真路径的首次覆盖）----
         note(embErrRet == expG9EmbErrRet,
@@ -5628,8 +5683,11 @@ int runFaceAiQa()
              QStringLiteral("G9 emb ERR-round progress done=%1 want=%2 (each failed photo must be counted toward the tally)")
                  .arg(embErrDoneMax).arg(kPending));
         note(embCancelDoneMax == 0,
-             QStringLiteral("G9 emb cancel-round progress done=%1 want=0 (cancel must stop before the first request)")
+             QStringLiteral("G9 emb cancel-round progress done=%1 want=0 (cancel must leave every photo untreated)")
                  .arg(embCancelDoneMax));
+        note(embCancelReqBefore == embCancelReqAfter,
+             QStringLiteral("G9 emb cancel-round REQ seq %1->%2 want unchanged (cancel must issue ZERO requests)")
+                 .arg(embCancelReqBefore).arg(embCancelReqAfter));
 
         // ---- ①e 有脸无 embedding 断言（载荷残缺=失败；正向不变量，两臂同值不随 tamper 翻）----
         note(embNoEmbRet == false,
@@ -5644,18 +5702,21 @@ int runFaceAiQa()
         note(embNoEmbDoneMax == kPending,
              QStringLiteral("G9 emb NOEMB-round progress done=%1 want=%2 (each broken-payload photo must be counted toward the tally)")
                  .arg(embNoEmbDoneMax).arg(kPending));
+        // ①e 自检哨兵（正向不变量，两臂同值）：person 轨在同一条「有脸无向量」载荷上必回
+        // true 并把 kPending 张标注齐——只有当前子进程真是 NOEMB 臂才可能成立。
+        note(noEmbDetectRet == true,
+             QStringLiteral("G9 NOEMB child detect() ret=%1 want=1 (person track must succeed on a face with empty embedding; false here means the NOEMB child was never spawned)")
+                 .arg(int(noEmbDetectRet)));
+        note(noEmbDetectWrote == kPending,
+             QStringLiteral("G9 NOEMB child detect() writeback=%1 want=%2 (a face with empty embedding is a full person hit for the person track)")
+                 .arg(noEmbDetectWrote).arg(kPending));
 
         // ---- ② 干净子轮断言 ----
         note(detectRet == expG9Ret,
              QStringLiteral("G9 clean-round ret=%1 want=%2 (clean round true / tamper flips)")
                  .arg(int(detectRet)).arg(int(expG9Ret)));
         // person 列写回落点（内存）：kPending 张 = 期望标签（干净=defaultPerson）。
-        int wroteExpected = 0;
-        for (int i = 0; i < kPending; ++i) {
-            const QString& want = pendingPaths.value(i);
-            for (const Photo& ph : lib.photos())
-                if (ph.path == want && ph.person == expG9Person) ++wroteExpected;
-        }
+        const int wroteExpected = labeledTally();
         note(wroteExpected == kPending,
              QStringLiteral("G9 person writeback=%1 want=%2 label=%3")
                  .arg(wroteExpected).arg(kPending).arg(expG9Person));
@@ -5676,8 +5737,8 @@ int runFaceAiQa()
         note(lib.photos().size() == kRows,
              QStringLiteral("G9 conserve rows=%1 want=%2").arg(lib.photos().size()).arg(kRows));
         // 落盘面（独立连接读磁盘）：内存对了不算落地，setPersons 的 UPDATE person 必须由磁盘复核。
+        QString dbP0 = QStringLiteral("__unreadable__");   // 提到块外：汇总旗标要读它（复审 CQ-2）
         {
-            QString dbP0 = QStringLiteral("__unreadable__");
             QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"),
                                                        QStringLiteral("la_faceai_g9_read"));
             db.setDatabaseName(dbPath);
@@ -5696,30 +5757,43 @@ int runFaceAiQa()
         }
         // 汇总旗标必须覆盖**全部**子臂（复审裁：只并 ERR+干净两臂的话，取消臂与
         // embedding 臂咬红时这行仍打 ok=1，等于给新腿发了个不会变红的通行证）。
-        // 正向不变量腿（progress 轨迹）一并入旗：探针实测证明「取消检查挪到请求之后」
-        // 这一变异**只**红 done=0 那条（ret/写回两腿因 ERR 子进程复用而照旧为假），
-        // 旗标若不含它，就恰好漏掉唯一有牙齿的那条腿。
-        const bool g9Ok = errRet == expG9ErrRet && wroteExpectedErr == expG9ErrWrote
+        // 复审席 3 CQ-2 补的三类漏项：磁盘复核腿 dbP0、三条夹具前置件（pngsOk/seeded/opened，
+        // 任一假则整块物理没跑，旗标必须跟着假）、以及本轮新加的两条 REQ 序列号腿与
+        // ①e detect 自检哨兵。progress 轨迹腿照旧并入——它钉的是「零处置」，
+        // REQ 序列号腿钉的才是「零请求」（SC-1 实测：前者对「检查挪到请求之后」这条变异
+        // 零反应，后者当场咬红），两条各钉各的，旗标两条都要含。
+        const bool g9Ok = opened && pngsOk && seeded
+                          && errRet == expG9ErrRet && wroteExpectedErr == expG9ErrWrote
                           && p5personErr == expG9ErrP5 && p6personErr == seededPerson
                           && errTotal == kPending && errDoneMax == kPending
                           && cancelRet == expG9CancelRet && wroteExpectedCancel == expG9CancelWrote
-                          && cancelDoneMax == 0
+                          && cancelDoneMax == 0 && cancelReqBefore == cancelReqAfter
                           && embErrRet == expG9EmbErrRet && embCancelRet == expG9EmbCancelRet
                           && embRowsAfterBadRounds == expG9EmbWrote
                           && embErrTotal == kPending && embErrDoneMax == kPending
-                          && embCancelDoneMax == 0
+                          && embCancelDoneMax == 0 && embCancelReqBefore == embCancelReqAfter
                           && embNoEmbRet == false && embRowsAfterNoEmb == 0
                           && embNoEmbTotal == kPending && embNoEmbDoneMax == kPending
+                          && noEmbDetectRet == true && noEmbDetectWrote == kPending
                           && detectRet == expG9Ret && wroteExpected == kPending
                           && p5person == expG9Person && p6person == seededPerson
+                          && dbP0 == expG9Person
                           && lib.photos().size() == kRows;
         std::fprintf(stderr,
                      "LA_FACEAI_G G9 ok=%d ret=%d wrote=%d errRet=%d wroteErr=%d "
-                     "cancelRet=%d wroteCancel=%d embErrRet=%d embCancelRet=%d embRows=%d "
-                     "noEmbRet=%d embRowsNoEmb=%d\n",
+                     "cancelRet=%d wroteCancel=%d cancelReq=%lld->%lld embCancelReq=%lld->%lld "
+                     "embErrRet=%d embCancelRet=%d embRows=%d "
+                     "noEmbRet=%d embRowsNoEmb=%d noEmbDetRet=%d noEmbDetWrote=%d "
+                     "done=%d/%d/%d/%d/%d dbOk=%d\n",
                      int(g9Ok), int(detectRet), wroteExpected, int(errRet), wroteExpectedErr,
-                     int(cancelRet), wroteExpectedCancel, int(embErrRet), int(embCancelRet),
-                     embRowsAfterBadRounds, int(embNoEmbRet), embRowsAfterNoEmb);
+                     int(cancelRet), wroteExpectedCancel,
+                     static_cast<long long>(cancelReqBefore), static_cast<long long>(cancelReqAfter),
+                     static_cast<long long>(embCancelReqBefore), static_cast<long long>(embCancelReqAfter),
+                     int(embErrRet), int(embCancelRet),
+                     embRowsAfterBadRounds, int(embNoEmbRet), embRowsAfterNoEmb,
+                     int(noEmbDetectRet), noEmbDetectWrote,
+                     errDoneMax, cancelDoneMax, embErrDoneMax, embCancelDoneMax, embNoEmbDoneMax,
+                     int(dbP0 == expG9Person));
         // R-06 卫生：门后必删临时目录。⚠ 必须先摘掉 Library 留下的两条全局命名连接
         // （la_rw + la_lib）——连接句柄活在全局池里，不受本腿 lib 作用域/析构影响；Windows
         // 上被打开的 sqlite 文件删不掉，于是 removeRecursively 只删得掉 png、独独留下 g9.db。

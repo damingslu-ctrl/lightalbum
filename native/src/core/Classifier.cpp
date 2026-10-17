@@ -160,8 +160,14 @@ bool Classifier::classify(const QVector<Photo>& photos, AiWriter& writer,
             if (!r.value(QLatin1String("ok")).toBool(false)) { ++failed; continue; }
             // 单张应答没有批服务时代的 "i" 字段（clipinfer/rules.cpp renderJson 的
             // 逐字节形状里没有它）⇒ 索引恒 0；越界守卫同款保留（R-17）。
+            // 越界即载荷残缺：按 spec §8「载荷残缺=该张可见失败」的保守口径计入 failed，
+            // 不再静默 continue（T12 复审席 3 SC-5：face 轨 FIX-14/21 已把同型支路改成计数，
+            // CLIP 双胞胎这里曾是纯静默——两条轨的降级语义不能劈叉）。
+            // ⚠ 该支今日不可达（paths 恒 1 元素、idx 缺省 0），故**无门禁腿**：夹具层要咬住它
+            // 需 ClipRunner 补 qaRetireChildForQa + 桩补 LA_CLIP_FORCE_BADIDX 臂，已登记第五轮
+            // 结转（CHANGELOG「结转下一轮」③），此处不假装已被覆盖。
             const int idx = r.value(QLatin1String("i")).toInt(0);
-            if (idx < 0 || idx >= paths.size()) continue;
+            if (idx < 0 || idx >= paths.size()) { ++failed; continue; }
             const QString label = normalizeLabel(r.value(QLatin1String("label")).toString());
             const double score = r.value(QLatin1String("score")).toDouble();
             items.append({paths[idx], label, score});

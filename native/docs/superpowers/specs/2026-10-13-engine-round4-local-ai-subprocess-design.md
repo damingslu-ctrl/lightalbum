@@ -236,8 +236,9 @@ GUI）；门面是静态同步函数，调用点全部在 `QtConcurrent::run` �
 | exe 或模型缺失 | false | 弹「AI 引擎未就绪」引导跑 fetch_ai.ps1；库不脏（T12 FIX-6 订正：`fetch_ai.ps1` **不随包分发**，故发行文案不得点名该脚本，只说缺什么、数据不出机、并指向用户界面上真能再点的按钮——本行原措辞是设计期口径， shipped 文案以 `MainWindow.cpp` 三条「AI 引擎未就绪」为准） |
 | READY 超时/crash | true→运行中转 false | 当张放过，progress 继续，收尾汇总计数（T12 FIX-14：face 轨 `PersonDetector::detect`/`detectEmbeddings` 与 CLIP 轨同型补齐——`failed`/`stopped` 汇总，返回值 =「本轮是否全部干净跑完」，不再恒 true） |
 | 单张推理失败 | — | 当张放过（=原网络失败语义），计入收尾汇总计数 |
-| `ok:true` 但载荷残缺（有脸、`embedding` 为空） | — | 计该张失败，**不静默丢弃**（T12 FIX-21：静默少一张却报整轮干净＝新造的谎；`#75` G9 ①e 用桩臂 `LA_FACE_FORCE_NOEMB` 物理注入这条载荷，回退即恰一条红）。对照：「没脸」= `ok:true + faces:[]`，是往返成功，**不**计失败 |
-| 取消 | — | 批间检查生效，进程保活（无 in-flight kill：单张 ≤ 数百 ms，协议不设 kill 码）；UI 落「中断（可能已部分写入）」支，不落「已为 N 张…」的假成功（T12 FIX-15 恢复三态） |
+| `ok:true` 但载荷残缺（有脸、`embedding` 为空） | — | 计该张失败，**不静默丢弃**（T12 FIX-21：静默少一张却报整轮干净＝新造的谎；`#75` G9 ①e 用桩臂 `LA_FACE_FORCE_NOEMB` 物理注入这条载荷，回退即恰一条红）。**注入的真实性另有哨兵**（T12 FIX-23）：桩先判 `forceErr` 再选载荷，故热子进程若没换血，①e 吃的仍是 `ERR` 帧，而 `ret=false`/零 `face_emb`/`total`/`done` 四腿在两种帧下**同为真**——①e 用完同一具 NOEMB 子进程再跑一轮 person 轨 `detect()`（空 `embedding` 在 person 轨是完整命中 ⇒ 必须 `ret=true` 且写满 `kPending`），拆掉换血即恰两条红、四条旧腿照旧全绿。对照：「没脸」= `ok:true + faces:[]`，是往返成功，**不**计失败 |
+| `ok:true` 但 `i` 越界（CLIP 轨同族残缺载荷） | — | 一律计该张可见失败（`Classifier.cpp` 的越界守卫自 T12 FIX-27 起 `++failed` 而非静默 `continue`），与本节「要么该张有效、要么该张计入可见失败」的二值口径一致。**如实登记**：单张协议下 `paths` 恒 1 元素、`i` 缺省 0 ⇒ 这一支今日**不可达、无门禁腿**；要覆盖需 ClipRunner 侧 `qaRetireChildForQa` + 桩侧 `LA_CLIP_FORCE_BADIDX` 臂，已登记第五轮结转（`CHANGELOG`「结转下一轮」③），此处不假装已被验证 |
+| 取消 | — | 批间检查生效（检查点在**循环顶、请求之前**），进程保活（无 in-flight kill：单张 ≤ 数百 ms，协议不设 kill 码）；UI 落「中断（可能已部分写入）」支，不落「已为 N 张…」的假成功（T12 FIX-15 恢复三态）。「取消 ⇒ **零请求**」这句此前只有间接证据：tally 腿只统计被**处置**的张，把检查挪到请求之后照样一条不写、照样报中断——T12 FIX-22 补 `FaceRunner::qaReqSeq()`（读 `detect()` 内 `fetch_add` 的那个计数器，QA 专用、生产零调用）作直接哨兵，`#75` G9 取消子轮（person 轨 + embedding 轨）前后快照必须相等；该变异（挪到请求之后）在补哨兵前**零条腿变红**、补后恰一条红 |
 
 内存纪律（2.38 R3 教训前置）：runner 不缓存任何响应体（解析后即释放），REQ id 单调
 复用无表。
@@ -267,6 +268,10 @@ GUI）；门面是静态同步函数，调用点全部在 `QtConcurrent::run` �
 4. release.ps1 打包腿端到端：C10 三注入反例 throw；zip 含 2 exe×(模型+dll+LICENSE)；
    Qt6Concurrent.dll 在包（2.39 遗留项一并闭环）。
 5. 门面三函数签名除 `probe()` 去 url 参数外零变化；调用点仅 MainWindow 三处。
+   门面另挂**两个 QA 专用静态**（`FaceRunner::qaRetireChildForQa()` T12 波 2、
+   `FaceRunner::qaReqSeq()` T12 第 4 波）：生产零调用、不参与任何语义分支，只为让
+   `#75` G9 在同一进程内换桩模式与直接观测「发出了几条 REQ」。本条「签名零变化」
+   指的是三个业务函数，不含这两个钩子。
 6. CHANGELOG/指导书 §3 门数 78/§7 路线行诚实记录（含 zip 体积增量与 opt-in skip 基线漂移）。
 
 ### 附录 A（已钉死部分 + 实现期回填项）

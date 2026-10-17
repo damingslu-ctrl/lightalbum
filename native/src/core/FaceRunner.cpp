@@ -101,3 +101,10 @@ void FaceRunner::qaRetireChildForQa()
     // 需要换的只是它手里那个已经带着旧桩模式 env 起的子进程。
     runner().qaRetireChildForQa();
 }
+
+quint64 FaceRunner::qaReqSeq()
+{
+    // 只读计数器，不触子进程、不发 REQ（relaxed：本值只用于同一线程内的前后差，
+    // 跨线程可见性由调用侧 runOffMainQa 的 join 提供）。
+    return g_faceId.load(std::memory_order_relaxed);
+}
