@@ -628,6 +628,10 @@ $GateTable = @(
   # All three exceed the 2026-10-14 bound (and even the 7000 cold sample), so the
   # bound is RAISED to the new max rather than left stale; timeoutSec=30 still covers
   # it with ~4x margin.
+  # T12 wave2 re-take AFTER the G9 two-round arm landed (ERR round + clean round),
+  # qa_runner -Only LA_FACE_AI_QA -Timing x3 warm: 7069 / 7079 / 7123 ms. All three
+  # stay under the recorded 7146, so the bound is NOT raised (no churn) - recorded
+  # here so the next reader knows the two-round arm was measured, not assumed.
   @{n="LA_FACE_AI_QA"; png=$false; timeoutSec=30; measuredMs=7146},
   # 2.40.0 round4 T3: real face-model end-to-end quality gate (gate #78, LA_FACE_MODEL_QA).
   # Opt-in: need=@("LA_FACE_MODEL","LA_FACE_IMG") -- absent -> qa_runner [SKIP] (privacy

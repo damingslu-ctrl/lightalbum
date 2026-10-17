@@ -1562,19 +1562,29 @@ void MainWindow::runPersonDetect()
     dlg->setMinimumDuration(0);
     auto* watcher = new QFutureWatcher<bool>(this);
     auto* cancelled = new std::atomic<bool>(false);
+    auto* engineMissing = new std::atomic<bool>(false);   // R-20 三态旗标（worker 写、GUI 线程读）
     connect(dlg, &QProgressDialog::canceled, this, [cancelled] { cancelled->store(true); });
     connect(watcher, &QFutureWatcher<bool>::finished, this,
-            [this, dlg, watcher, cancelled, pending] {
+            [this, dlg, watcher, cancelled, engineMissing, pending] {
                 dlg->close();
                 const bool ok = watcher->result();
-                if (ok) gallery_->refresh();   // 重建人物 chips + 计数（新人物生效）
+                gallery_->refresh();   // 重建人物 chips + 计数（与 runClassify 同款：
+                                       // 「中断」也可能已部分写回，chips 必须与盘面一致）
+                QString msg;
+                if (engineMissing->load()) {
+                    // 三态与文案纪律同 runClassify（T12 修复波）：未就绪串不点名脚本/产物，
+                    // 只说缺什么、数据不出机，并把用户指向他真能点的按钮。
+                    msg = QCoreApplication::translate("LightAlbum",
+                        "AI 引擎未就绪（引擎或模型缺失，或引擎启动失败），再点「识别人物」。照片仅在本机处理，绝不外传。");
+                } else {
+                    msg = ok ? QCoreApplication::translate("LightAlbum", "已为 %1 张照片标注人物。").arg(pending)
+                             : QCoreApplication::translate("LightAlbum", "识别过程中断（可能已部分写入）。");
+                }
                 QMessageBox::information(this,
-                    QCoreApplication::translate("LightAlbum", "识别人物"),
-                    ok ? QCoreApplication::translate("LightAlbum", "已为 %1 张照片标注人物。").arg(pending)
-                       : QCoreApplication::translate("LightAlbum",
-                           "AI 引擎未就绪（引擎或模型缺失，或引擎启动失败），再点「识别人物」。照片仅在本机处理，绝不外传。"));
+                    QCoreApplication::translate("LightAlbum", "识别人物"), msg);
                 watcher->deleteLater();
                 delete cancelled;
+                delete engineMissing;
                 dlg->deleteLater();
             });
     const auto prog = [dlg](int done, int, const QString&) {
@@ -1582,10 +1592,12 @@ void MainWindow::runPersonDetect()
     };
     const auto cancelPred = [cancelled] { return cancelled->load(); };
     const QVector<Photo> snap = lib_->photos();   // GUI 线程快照，见 runClassify 同款约束
-    watcher->setFuture(QtConcurrent::run([this, snap, prog, cancelPred] {
-        // 探测在 worker 线程（子进程 runner 禁 GUI 线程调用）：未就绪 → false →
-        // finished 弹「AI 引擎未就绪」文案。detect 内部亦先 probe，语义一致。
-        if (!PersonDetector::probe()) return false;
+    watcher->setFuture(QtConcurrent::run([this, snap, prog, cancelPred, engineMissing] {
+        // 探测在 worker 线程（子进程 runner 禁 GUI 线程调用）：未就绪 → 置旗标 + 返回
+        // false → finished 弹「AI 引擎未就绪」文案。detect 内部亦先 probe，语义一致。
+        // 旗标而非「返回值 false」决定文案：detect 的 false 现在还有第二义（FIX-14：
+        // 逐张可见失败/取消中断），无旗标即如实落「中断」支，不再谎报「已标注 N 张」。
+        if (!PersonDetector::probe()) { engineMissing->store(true); return false; }
         AiWriter writer(lib_, this);
         return PersonDetector::detect(snap, writer, -1, prog, cancelPred);
     }));
@@ -1596,8 +1608,9 @@ void MainWindow::runPersonDetect()
 // 处理器（GUI 线程）读回 embedding → FaceCluster 阈值余弦聚类 → applyClusters 写回 person
 // → 刷新人物 chips。QtConcurrent 不阻塞 GUI，带进度对话框与取消。
 // 引擎就绪探测 + 抽取全在 worker 线程：AiSubprocessRunner 禁 GUI 线程调用（旧实现在
-// GUI 线程同步 QNAM probe，换子进程底座后即崩溃点——本次接线修正）。detectEmbeddings
-// 内部先 probe()，未就绪返回 false，finished 据此弹「AI 引擎未就绪」文案。
+// GUI 线程同步 QNAM probe，换子进程底座后即崩溃点——本次接线修正）。
+// 三态判别（R-20，T12 修复波第 2 轮补齐）：worker 返回码 + engineMissing 旗标 ⇒
+// 「引擎未就绪」/「跑完」/「中断」，返回码 false 不再单独等于未就绪。
 // 单写者（core/AiWriter.h）：worker 只碰快照与子进程；读回/聚类/写库恒在 GUI 线程，
 // 且 finished 晚于 detectEmbeddings 的投递入队，故能读到刚落库的 embedding。
 // 起始编号：扫描既有 person token 中的「人物N」取最大 N，startIndex=N+1，避免与用户
@@ -1637,9 +1650,10 @@ void MainWindow::runFaceCluster()
     dlg->setMinimumDuration(0);
     auto* watcher = new QFutureWatcher<bool>(this);
     auto* cancelled = new std::atomic<bool>(false);
+    auto* engineMissing = new std::atomic<bool>(false);   // R-20 三态旗标（worker 写、GUI 线程读）
     connect(dlg, &QProgressDialog::canceled, this, [cancelled] { cancelled->store(true); });
     connect(watcher, &QFutureWatcher<bool>::finished, this,
-            [this, dlg, watcher, cancelled, pending, startIndex] {
+            [this, dlg, watcher, cancelled, engineMissing, pending, startIndex] {
                 dlg->close();
                 const bool extracted = watcher->result();
                 // ② 读回 embedding → 阈值余弦聚类 → ③ 簇标签写回 person，全部在 GUI 线程。
@@ -1662,13 +1676,22 @@ void MainWindow::runFaceCluster()
                     }
                 }
                 gallery_->refresh();   // 重建人物 chips + 计数（聚类标签生效）
+                QString msg;
+                if (engineMissing->load()) {
+                    // 三态与文案纪律同 runClassify/runPersonDetect（T12 修复波第 2 轮）：
+                    // 未就绪串不点名脚本/产物；「中断」串复用 .ts 里的既有译文，零新增翻译。
+                    msg = QCoreApplication::translate("LightAlbum",
+                        "AI 引擎未就绪（引擎或模型缺失，或引擎启动失败），再点「智能聚类」。照片仅在本机处理，绝不外传。");
+                } else {
+                    msg = extracted
+                        ? QCoreApplication::translate("LightAlbum", "已聚类 %1 张照片为不同人物。").arg(pending)
+                        : QCoreApplication::translate("LightAlbum", "聚类过程中断（可能已部分写入）。");
+                }
                 QMessageBox::information(this,
-                    QCoreApplication::translate("LightAlbum", "智能聚类"),
-                    extracted ? QCoreApplication::translate("LightAlbum", "已聚类 %1 张照片为不同人物。").arg(pending)
-                       : QCoreApplication::translate("LightAlbum",
-                           "AI 引擎未就绪（引擎或模型缺失，或引擎启动失败），再点「智能聚类」。照片仅在本机处理，绝不外传。"));
+                    QCoreApplication::translate("LightAlbum", "智能聚类"), msg);
                 watcher->deleteLater();
                 delete cancelled;
+                delete engineMissing;
                 dlg->deleteLater();
             });
     const auto prog = [dlg](int done, int, const QString&) {
@@ -1676,9 +1699,12 @@ void MainWindow::runFaceCluster()
     };
     const auto cancelPred = [cancelled] { return cancelled->load(); };
     const QVector<Photo> snap = lib_->photos();   // GUI 线程快照，见 runClassify 同款约束
-    watcher->setFuture(QtConcurrent::run([this, snap, prog, cancelPred] {
+    watcher->setFuture(QtConcurrent::run([this, snap, prog, cancelPred, engineMissing] {
         // ① 抽代表脸 embedding 并经 AiWriter 投递 face_emb 写回（落库恒在 GUI 线程）
         //    探测/推理全在 worker 线程的子进程门面里（runner 禁 GUI 线程调用）。
+        //    旗标与 runPersonDetect 同式：detectEmbeddings 的 false 现在有两义
+        //    （FIX-14 逐张可见失败/取消中断 vs 未就绪），只有旗标能区分。
+        if (!PersonDetector::probe()) { engineMissing->store(true); return false; }
         AiWriter writer(lib_, this);
         return PersonDetector::detectEmbeddings(snap, writer, -1, prog, cancelPred);
     }));

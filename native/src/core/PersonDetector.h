@@ -37,8 +37,11 @@ public:
     //   limit    : 最大处理张数（<0=不限；QA 用小值）
     //   progress : (done,total,name) 进度回调
     //   cancel   : 返回 true 即尽快中止（在途请求跑完）
-    // 守恒：只写 person 列，不增删照片。失败即放行（坏图不中断整批）。
+    // 守恒：只写 person 列，不增删照片。单张失败即放行（坏图/坏引擎不中断整批）。
     // 已标注（person 非空）的照片跳过，避免覆盖用户重命名结果。
+    // 返回值：**「本轮是否全部干净跑完」**，不是「是否跑过」——probe 假、任一可见失败
+    // （传输失败或应答 ok!=true）、或取消中断 → false；由 #75 G9 的 ERR 子轮咬住。
+    // GUI 侧（MainWindow::runPersonDetect）据此在未就绪/中断/成功三支间如实分流。
     static bool detect(const QVector<Photo>& photos, AiWriter& writer,
                        int limit = -1,
                        std::function<void(int, int, const QString&)> progress = {},
@@ -50,7 +53,8 @@ public:
     // ---- 方向 C·人物自动聚类：抽取代表脸 embedding 并落库 ----
     // 遍历 person 为空照片，逐张经 FaceRunner::detect，取 faces[] 中 score 最大者 embedding
     // （512-d）→ float32 小端 BLOB，经 AiWriter 写回 face_emb 列。
-    // 已标注（person 非空）照片跳过；无脸/失败整张放过（不中断整批）。守恒：只写 face_emb 列。
+    // 已标注（person 非空）照片跳过；无脸不放行错误标签、单张失败放过（不中断整批）。
+    // 守恒：只写 face_emb 列。返回值语义同 detect（「本轮全部干净」，非「是否跑过」）。
     static bool detectEmbeddings(const QVector<Photo>& photos, AiWriter& writer,
                                  int limit = -1,
                                  std::function<void(int, int, const QString&)> progress = {},

@@ -8148,6 +8148,13 @@ int main(int argc, char *argv[])
         //   缺译→回落源码→变红）。
         i18nCheck("AI 引擎未就绪（引擎或模型缺失，或引擎启动失败），再点「智能聚类」。照片仅在本机处理，绝不外传。",
                   QStringLiteral("AI engine not ready (engine or model missing, or the engine failed to start), then click \u201cSmart Clustering\u201d. Photos are processed only on this machine and never sent out."));
+        // 2.40.0 T12 修复波第 2 轮 FIX-17：这两条「中断」串是 T4b 净替换时被删代码路
+        //   留下的化石（`.ts`/`.qm` 里有条目有译文、代码零消费者）——即「UI 少了一条支路」
+        //   的物证。三态恢复后重新接线，各补一条孪生断言钉住（第 15/16 条）。
+        i18nCheck("识别过程中断（可能已部分写入）。",
+                  QStringLiteral("Detection interrupted (partial results may have been written)."));
+        i18nCheck("聚类过程中断（可能已部分写入）。",
+                  QStringLiteral("Clustering interrupted (partial results may have been written)."));
         // 默认路径语言决策断言（2.11.1）：构造 locale 跨机确定性——
         // zh 系显示语言必须不加载 en（本事故根因）；en 系必须加载；forced 覆盖优先。
         struct I18nDecisionCase { const char* forced; const char* locName; bool expectLoad; };
