@@ -95,7 +95,47 @@
 - C10 的「存在性腿」只证明文件**随包旅行**，不证明**能装载**；真正的解码冒烟腿（`--det-selftest`
   跑合成 JPEG）尚不存在，已登记为下一轮补强项。
 - `fetch_ai.ps1` 未随包分发，而 UI 三处文案让打包态用户去跑它；`face_server` 历史注释仍有残留。
-  两条均已登记结转下一轮（终审修复波）。
+  两条均已在终审修复波落地（FIX-6 文案换代 / FIX-7 第 14 条孪生断言 / FIX-9 注释订正），不再结转。
+- **face 轨返回值谎报**（T12 三席之后由控制端复核实现席疑虑时挖出，属本轮第四项 FINDING）：
+  第四轮 T4b 净替换把 `PersonDetector::detect`/`detectEmbeddings` 的收尾写成**恒 `return true`**，
+  单张失败只 `continue`、取消只 `break`——于是「整轮全失败」也报「已为 N 张照片标注人物」，
+  「用户按了取消」也报成功（且同一轮里 `runFaceCluster` 已按 `cancelled` 跳过聚类，前后自相矛盾）。
+  CLIP 双胞胎早在 T8 用 F-1 契约修过同型缺陷，face 轨漏了。已修（FIX-14/15/16/17，见下节）。
+
+### 终审修复波（T12，FIX-1..18）
+- **原则**：判据一个都不放宽，只让文档/脚本/UI 的宣称与代码真源一致。
+- 波 1（`d6e4a51` + `cfee1da` + `be7b8fd` + `7cc5f7e`）：CLIP 平价两列互换订正、常驻新门实测耗时订正、
+  face NOTICE 的 `non-commercial research` **内容腿**补进 `release.ps1` C10（并把 `fetch_ai.ps1`
+  的 face-notice 校验补反例臂）、三条「AI 引擎未就绪」文案去掉包外产物点名、`i18nCheck` 补第 14 条、
+  `#75` 加 G9 face 轨子进程生产路径腿、`face_server` 注释残留守卫。
+- 波 2（本波，face 轨诚实化）：
+  - **FIX-16（先红）**：G9 加 `LA_FACE_FORCE_ERR` 全失败子轮（READY 1 ⇒ `probe` 仍成功 ⇒ 每 REQ `ERR`
+    ⇒ `kPending` 张全失败、零写回）——恒真实现当场咬红：`G9 errRet=1 want=0`（其余子断言同跑绿）。
+  - **FIX-14**：`detect`/`detectEmbeddings` 补 `failed`/`stopped` 汇总（与 `Classifier` 的 F-1 契约同型），
+    返回值语义改为**「本轮是否全部干净跑完」**；`ok!=true` 的应答按保守口径计失败、绝不采信其 `faces`
+    （faceinfer 收尾恒插 `ok:true`，「无脸」是 `ok:true + faces:[]`，不会被误计为失败）。签名不变。
+  - **FIX-15**：`runPersonDetect`/`runFaceCluster` 补回 **R-20 三态**（worker 返回码 + `engineMissing`
+    旗标 ⇒ 未就绪/跑完/中断），不再用「引擎未就绪」冒充「中断」。
+  - **FIX-17**：`识别过程中断（可能已部分写入）。`/`聚类过程中断（可能已部分写入）。` 两条串在
+    T4b 后**只剩 `.ts`/`.qm` 条目、代码零消费者**＝被删支路的化石；本波重新接线并各补一条孪生断言
+    （`i18nCheck` 14 → 16，`LA_I18N_QA PASS entries=16`，**零新增翻译**、`.qm` 现成命中、无需 `lrelease`）。
+  - **反例双臂**：`LA_FACE_AI_QA_FORCE_BROKEN=1` 实测把 G1..G9 全部翻红（含 `G9 ERR-round detect ret=0 want=1`
+    与 `G9 clean-round ret=1 want=0` 两个方向），正臂 `tamper=0` 全绿 ⇒ 门非空心。
+  - **实测耗时**：修复后 `-Timing x3` warm = 7069 / 7079 / 7123 ms，仍低于名册已记的 7146 ⇒ 上界不挪、
+    `timeoutSec=30` 不变（溯源已写入 `gate_matrix.ps1` 注释）。
+  - **文档 vs 代码的先后颠倒已订正**：`docs/LightAlbum-2.40.0-使用说明书.md` 早在发布准备时就写了
+    「中断轮次报『未完成』而非『成功』（2.40.0 收紧：全失败或被取消的轮次不再报成功）」——那句当时
+    **只对 CLIP 轨为真**，face 两条轨因恒 `return true` 而违约。本波是**让代码追上已发货的宣称**，
+    而不是把文档改回虚假口径；手册 §11（降级表「引擎启动超时/崩溃 → 该轮如实报中断」）、
+    §16（已知边界「中断轮次报未完成而非成功」）、§18（排障）三处经核与现实现一致，零改动。
+  - **全量套件复跑**（本波终态）：`SUMMARY: PASS=64 FAIL=0 CHECK=0 SKIP=14 KILL=0`，墙钟 90638 ms。
+    与上文发布态那一跑（`PASS=66 SKIP=12`，四路 opt-in env 全挂）的差**只有两条**：`#77/#78` 真模型门
+    需要 TEMP 里的真人照片/金样夹具，本次宿主 TEMP 已无 face 图像夹具 ⇒ 诚实 `[SKIP]`（不是假绿，
+    也不是回归）；其余 12 条 SKIP 与发布态同集。`gate_matrix -SelfTest` 仍 `gates=78 nonAsciiBytes=0 fails=0`、
+    `LA_RELEASE_QA PASS contracts=10 injected=22 caught=22`。
+- **结转下一轮（本波未做，如实登记）**：① opt-in 夹具（真人照片/金样在 TEMP）易失，导致同一棵树
+  在不同日子给出 `66/12` 与 `64/14` 两种套件读数——需要一个可复跑的夹具重建脚本；
+  ② `faceinfer.exe --det-selftest` 的真解码冒烟腿（见上节 FINDING）仍未落地。
 
 ## [2.39.0] - 2026-10-13
 

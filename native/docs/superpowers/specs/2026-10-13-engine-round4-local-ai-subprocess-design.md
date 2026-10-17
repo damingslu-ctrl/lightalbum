@@ -233,10 +233,10 @@ GUI）；门面是静态同步函数，调用点全部在 `QtConcurrent::run` �
 
 | 状态 | probe | 批跑行为 |
 |---|---|---|
-| exe 或模型缺失 | false | 弹「AI 引擎未就绪」引导跑 fetch_ai.ps1；库不脏 |
-| READY 超时/crash | true→运行中转 false | 当张放过，progress 继续，收尾汇总计数 |
-| 单张推理失败 | — | 当张放过（=原网络失败语义） |
-| 取消 | — | 批间检查生效，进程保活（无 in-flight kill：单张 ≤ 数百 ms，协议不设 kill 码） |
+| exe 或模型缺失 | false | 弹「AI 引擎未就绪」引导跑 fetch_ai.ps1；库不脏（T12 FIX-6 订正：`fetch_ai.ps1` **不随包分发**，故发行文案不得点名该脚本，只说缺什么、数据不出机、并指向用户界面上真能再点的按钮——本行原措辞是设计期口径， shipped 文案以 `MainWindow.cpp` 三条「AI 引擎未就绪」为准） |
+| READY 超时/crash | true→运行中转 false | 当张放过，progress 继续，收尾汇总计数（T12 FIX-14：face 轨 `PersonDetector::detect`/`detectEmbeddings` 与 CLIP 轨同型补齐——`failed`/`stopped` 汇总，返回值 =「本轮是否全部干净跑完」，不再恒 true） |
+| 单张推理失败 | — | 当张放过（=原网络失败语义），计入收尾汇总计数 |
+| 取消 | — | 批间检查生效，进程保活（无 in-flight kill：单张 ≤ 数百 ms，协议不设 kill 码）；UI 落「中断（可能已部分写入）」支，不落「已为 N 张…」的假成功（T12 FIX-15 恢复三态） |
 
 内存纪律（2.38 R3 教训前置）：runner 不缓存任何响应体（解析后即释放），REQ id 单调
 复用无表。
