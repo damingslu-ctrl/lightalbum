@@ -226,6 +226,48 @@
   ③ CLIP 轨的「`i` 越界 = 载荷残缺计失败」（FIX-27）今日不可达、**无门禁覆盖**，需要
   ClipRunner 侧 `qaRetireChildForQa` + 桩侧 `LA_CLIP_FORCE_BADIDX` 臂才能补出牙齿。
 
+### 发布态与推送（2026-10-17：打包 → 首推被拒 → LFS 迁移 → 重打包 → 快进推送）
+
+- **打包腿**（迁移后历史重跑 `release.ps1 -Version 2.40.0`）：`RELEASE OK`；
+  `C1 ok (2.40.0)` / `C2/C6 ok` / `C3 ok` / `C8 ok` / `C9 ok` / **`C10 face ok` + `C10 clip ok`**
+  （face 侧含暂存目录真跑 `faceinfer.exe --version`、notice 保留非商用研究条款；clip 侧含
+  exe + 图像塔 + prompts + ORT 与 stb_image 致谢）；`SBOM: BUILDINFO.txt (15 lines)`，
+  `git_commit = 2d7641e`（迁移后的末枚内容提交；标记提交 `f2c1101` 为空提交 ⇒ 树与它逐字节相同，
+  沿用 2.36.0/2.40.0 一贯的「BUILDINFO 记代码收口枚、不记自身」约定）；
+  `MANIFEST.txt 65 files self-verified reproducible=E2FF6E986FFD`；
+  `zip 774.1 MB / 66 entries`（file_count 64 / total_bytes 1,064,953,465）。
+- **如实记**：本次 `release.ps1` 的 pre-package 门禁腿是**自跳**（`-SkipGate`，控制端显式选择，
+  stdout 重定向下 qa_runner 需要控制台）——同树的全量证据来自控制端手工两跑，不写成「打包腿跑过门禁」。
+- **套件读数**：迁移后全量 78 门第 2 跑（零并发）`SUMMARY: PASS=66 FAIL=0 CHECK=0 SKIP=12 KILL=0`，
+  墙钟 115,904 ms，与迁移前发布态同形。第 1 跑 `PASS=65 FAIL=1`（唯一红 `LA_MAP_PERF`
+  `world=1.80ms > budget=1.60ms`）系控制端在同一计时窗口并发跑了 186 次 `git` 子进程所致，
+  两跑之间源码零变化、单跑 `world=0.75ms`；污染跑档案留档不删、判据不迁就。
+- **门禁/契约自检**：`gate_matrix.ps1 -SelfTest gates=78 fast=19 full=59 nonAsciiBytes=0
+  textual=78==parsed fails=0`；`release.ps1 -SelfTest contracts=10 injected=22 caught=22
+  baseline=10 zip=9`；`LA_RELEASE_QA PASS` 同值。
+- **首推被拒与换代**：`git push origin main` 被 GitHub 单对象 100 MiB 硬限拒绝（唯一超限对象 =
+  `native/3rdparty/clip/bin/clip_vit_b32_img.onnx` 351,614,324 B）。经用户四路裁定选定 Git LFS 迁移，
+  `git lfs migrate import` 走显式 `--include` 单文件 + `--include-ref=refs/heads/main` +
+  `--exclude-ref=refs/remotes/origin/main` ⇒ **只重写 `origin/main..main` 那 93 枚未推送提交**，
+  `2e81d61` 仍是新历史祖先 ⇒ 推送是快进，不是强推。改动面两条（`A .gitattributes`、`M` 那枚 ONNX）；
+  迁移后复扫被推范围 `blob > 104,857,600 B` = **0 枚**。全录与 93 行 old→new 映射见
+  `native/docs/2026-10-17-lfs-commit-map.md`。
+- **换代后果（不就地改写旧哈希引用）**：本文件、指导书、`gate_matrix.ps1` 里 57 处历史哈希引用
+  按用户裁定原文**保留原样并追加映射表**（关键映射：`576b7a2→ebaba975f`、`55b9cd5→9d4fab8cd`、
+  `5aad39c→3b92d834b`、`16bfc63→806d82f81`；旧 tip `55b9cd5` 由 `refs/preLfs/oldmain` 锚住，
+  另有 `D:/git-backups/lightalbum-preLfs-2026-10-17.bundle` 366,769,298 B 已验）。
+- **推送终态**：`git push origin main` ⇒ `2e81d61..f2c1101`（快进），
+  `Uploading LFS objects: 100% (1/1), 352 MB`；`git push origin refs/tags/v2.40.0` ⇒ `[new tag]`。
+  远端复核 `HEAD`/`refs/heads/main` = `f2c110167c99e147631a8b1a63d0e6b63243572e`，
+  `refs/tags/v2.40.0` = `4f3ec534a2c429a08ca6add418934d2780f63344` peel 到同一枚。
+  LFS 对象**服务端在位**由 batch API 实证（`operation:"download"` 应答只含 `actions.download`、
+  不含 `upload` ⇒ 已落 GitHub 存储，新克隆可取）。
+- **克隆方注意（本版本起新增前置）**：`native/3rdparty/clip/bin/clip_vit_b32_img.onnx` 现为 LFS 指针，
+  新克隆必须先 `git lfs install` 再 `git lfs pull`（或直接 `git clone` 且本机装有 git-lfs），
+  否则拿到 134 B 指针 ⇒ `#76/#77` 与 C10 clip 腿会红在「塔文件不合法」上。
+  配额敞口如实登记：GitHub 免费 LFS 为 1 GiB 存储 / 1 GiB 月下行，单枚 335.33 MiB ≈ 存储的 32.7%，
+  一次全量克隆吃掉月下行的约三分之一。
+
 ## [2.39.0] - 2026-10-13
 
 引擎升级第三轮（路线 6 性能子集）：LumenEngine 算子内并行 + 量化安全 float。像素输出语义零变化（金样 MAD 容差内）、
