@@ -9,6 +9,10 @@
 //   LA_FACE_FORCE_SLOW=1      —— 每帧前睡 3s（G7 单飞拒绝窗口，T4 断言）。
 //   LA_FACE_FORCE_FRAG=1      —— 正常确定性 RES 应答，但 JSON 体按 64B 分片写 + 片间 fflush
 //                                （G4：runner 侧体读循环必须读满，EraseProto 判例继承）。
+//   LA_FACE_FORCE_NOEMB=1     —— READY 1；每 REQ 回 ok:true 的单脸，但 embedding 为空数组
+//                                （#75 G9 ①e：「有脸却无向量」= 载荷残缺，embedding 轨必须
+//                                  计该张失败而非静默丢弃）。RES 形状与默认臂同源，只是
+//                                  embedding 段留空。
 #include "core/AiProto.h"   // include dir = native/src（CMakeLists 设定），与 app 侧同一真源
 
 #include <cstdio>
@@ -32,6 +36,15 @@ std::string faceJson()
     for (int i = 0; i < 512; ++i) { if (i) s += ','; s += "0.0"; }
     s += "]}]}";
     return s;
+}
+
+// NOEMB 臂（G9 ①e）：与 faceJson 同形状，只把 embedding 段留空 —— 模拟「检出脸但
+// 向量残缺」的载荷。默认臂的 2162 字节体一个字节都不动（G3/G4 逐字节期望表依赖它）。
+std::string faceNoEmbJson()
+{
+    return "{\"ok\":true,\"count\":1,\"faces\":[{\"bbox\":[0,0,8,8],"
+           "\"score\":0.9,\"kps\":[[1,1],[2,2],[3,3],[4,4],[5,5]],"
+           "\"embedding\":[]}]}";
 }
 
 // 剥除行尾 \r\n —— parseReq 的 %n 全耗严格比对要求 n 为规范化后的长度。
@@ -73,6 +86,7 @@ int main()
     const bool forceHang = envOn("LA_FACE_FORCE_HANG");
     const bool forceSlow = envOn("LA_FACE_FORCE_SLOW");
     const bool forceFrag = envOn("LA_FACE_FORCE_FRAG");
+    const bool forceNoEmb = envOn("LA_FACE_FORCE_NOEMB");
 
     std::fprintf(out, "READY %d\n", noModel ? 0 : 1);
     std::fflush(out);
@@ -106,7 +120,7 @@ int main()
             std::fflush(out);
             continue;
         }
-        const std::string res = faceJson();
+        const std::string res = forceNoEmb ? faceNoEmbJson() : faceJson();
         std::fprintf(out, "RES %llu %llu\n", h.id,
                      static_cast<unsigned long long>(res.size()));   // spec §5 verbatim：RES <id> <len>；%llu 非 %zu：MSVCRT/UCRT 通吃
         if (forceFrag) { // G4：体按 64B 分片 + 片间 fflush，把管道拆包变必现

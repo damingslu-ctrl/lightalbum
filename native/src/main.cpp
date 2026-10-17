@@ -3992,6 +3992,10 @@ int runFaceClusterQa()
     AiWriter writer(&lib, &qaCtx);
     const bool okEmb = PersonDetector::detectEmbeddings(lib.photos(), writer);
     QCoreApplication::processEvents(QEventLoop::AllEvents, 200);
+    // 钩子支契约腿（诚实定位，复审 Minor「这条在合成钩子下恒真」）：合成钩子早退路径按
+    // 设计 return true，故此腿**不**证明真路径的返回值语义——真路径的 false 由 #75 G9
+    // 的 ERR/取消/干净三臂物理咬住。留着它只为归因：钩子支哪天改成 false，③ 起的读回
+    // 断言会成片红，这条先把结论钉在「钩子本身坏了」上。
     note(okEmb, QStringLiteral("detectEmbeddings returned false"));
 
     // ③ (A) 聚类输入集读回 = 6
@@ -5433,12 +5437,38 @@ int runFaceAiQa()
         // 断的是 `stopped` 那半——只测 `failed` 的话，删掉 `stopped = true` 仍全绿，
         // 而「用户按了取消也报成功」这条谎就重新溜回来（CHANGELOG/指导书均已宣称被杀）。
         const bool expG9CancelRet   = tamper;                        // 正臂 false / 反例臂 true
-        const int  expG9CancelWrote = tamper ? kPending : 0;         // 正臂 0 / 反例臂 kPending
+        const int  expG9CancelWrote = tamper ? kPending : 0;         // 正臂 0 / 反例臂翻成 kPending
+        // embedding 轨（①c/①d）期望：detectEmbeddings 的 false 语义此前零门禁覆盖
+        //（聚类门 #70 走合成钩子，函数首行早退恒 true，真路径一次都没被压过）。
+        // 同口径：全失败轮必回 false 且零 face_emb 写回；取消轮必回 false。
+        const bool expG9EmbErrRet    = tamper;                       // 正臂 false / 反例臂 true
+        const bool expG9EmbCancelRet = tamper;                       // 正臂 false / 反例臂 true
+        const int  expG9EmbWrote     = tamper ? kPending : 0;        // 正臂 0 行 face_emb
         bool detectRet = false;
         bool errRet = false;
         bool cancelRet = true;
         int  wroteExpectedErr = 0;
         int  wroteExpectedCancel = 0;
+        // 归因腿（复审 Minor「ERR 臂只靠同轮干净臂间接钉住」）：progress 的 done/total
+        // 轨迹能把「逐张失败计入」与「probe 假 → 早早返回 false」区分开——后者只发
+        // progress(0,total) 一次，done 永远停在 0。
+        int  errDoneMax = -1;     // ERR 轮 progress 见过的最大 done
+        int  errTotal = -1;       // ERR 轮 progress 报出的 total
+        int  cancelDoneMax = -1;  // 取消轮 progress 见过的最大 done（应为 0：i==0 即 break）
+        // embedding 轨（①c/①d）同名量
+        bool embErrRet = true;
+        bool embCancelRet = true;
+        int  embErrDoneMax = -1;
+        int  embErrTotal = -1;
+        int  embCancelDoneMax = -1;
+        int  embRowsAfterBadRounds = -1;
+        // ①e「有脸无向量」腿（复审 Minor「PersonDetector 静默丢弃 embedding 为空的应答」）：
+        // 该支改 ++failed 后若无门咬住，就等于「修了但没人能证明它还是这样」。桩用
+        // LA_FACE_FORCE_NOEMB 回 ok:true + faces 非空 + embedding:[]，物理注入这条载荷。
+        bool embNoEmbRet = true;
+        int  embNoEmbDoneMax = -1;
+        int  embNoEmbTotal = -1;
+        int  embRowsAfterNoEmb = -1;
         QString p5personErr;
         if (opened && pngsOk) {
             QObject qaCtx;                       // 写回投递目标在主线程（AiWriter QueuedConnection 落点）
@@ -5455,7 +5485,10 @@ int runFaceAiQa()
             qputenv("LA_FACE_FORCE_ERR", "1");   // 全失败轮布防（用毕下句解除）
             runOffMainQa([&] {
                 errRet = PersonDetector::detect(snap, writer, -1,
-                    [](int, int, const QString&) {}, [] { return false; });
+                    [&](int done, int total, const QString&) {
+                        errDoneMax = qMax(errDoneMax, done);
+                        errTotal = total;
+                    }, [] { return false; });
             });
             qputenv("LA_FACE_FORCE_ERR", QByteArray());
             // 写回经 AiWriter 的 QueuedConnection 投递回本线程落地（#70/G11 同式）。
@@ -5476,7 +5509,9 @@ int runFaceAiQa()
             //      （布防时 probe 仍真、但语义会被 ERR 臂混叠，独立成一臂更干净）。
             runOffMainQa([&] {
                 cancelRet = PersonDetector::detect(snap, writer, -1,
-                    [](int, int, const QString&) {}, [] { return true; });
+                    [&](int done, int, const QString&) {
+                        cancelDoneMax = qMax(cancelDoneMax, done);
+                    }, [] { return true; });
             });
             QCoreApplication::processEvents(QEventLoop::AllEvents, 500);
             for (int i = 0; i < kPending; ++i) {
@@ -5484,10 +5519,49 @@ int runFaceAiQa()
                 for (const Photo& ph : lib.photos())
                     if (ph.path == want && ph.person == expG9Person) ++wroteExpectedCancel;
             }
+            // ---- ①c/①d embedding 轨（detectEmbeddings）同构两臂 ----
+            //   复审裁决定位：合成钩子支（setSyntheticEmbForQa）在函数首行早退，恒回 true，
+            //   所以聚类轨的 false 语义此前**没有任何门禁腿**——#75 G9 只咬 detect()。
+            //   这里用同一具 ERR 子进程（① 布防时冷启动那具，FORCE_ERR 只在进程启动读一次，
+            //   故必须在 retire 之前跑）把 embedding 轨的真路径也压过一遍：
+            //   ①c 全失败轮 ⇒ false 且零 face_emb 写回；①d 取消轮 ⇒ false 且零请求。
+            runOffMainQa([&] {
+                embErrRet = PersonDetector::detectEmbeddings(snap, writer, -1,
+                    [&](int done, int total, const QString&) {
+                        embErrDoneMax = qMax(embErrDoneMax, done);
+                        embErrTotal = total;
+                    }, [] { return false; });
+            });
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 500);
+            runOffMainQa([&] {
+                embCancelRet = PersonDetector::detectEmbeddings(snap, writer, -1,
+                    [&](int done, int, const QString&) {
+                        embCancelDoneMax = qMax(embCancelDoneMax, done);
+                    }, [] { return true; });
+            });
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 500);
+            embRowsAfterBadRounds = lib.getFaceEmbeddings().size();
             // 换血（夹具层进程寿命修正，非被测语义）：桩的 LA_FACE_FORCE_* 只在子进程
             // 启动时读一次，底座又复用热子进程（且 ERR 帧按 spec §5 保活不杀），不拆掉
             // 这具 ERR 子进程，干净轮会继承 FORCE_ERR 而永远拿不到 faces（见
             // FaceRunner::qaRetireChildForQa 声明注）。
+            FaceRunner::qaRetireChildForQa();
+            // ---- ①e 有脸无 embedding 子轮（FIX-21）：换一具 NOEMB 子进程，每 REQ 回
+            //      ok:true + 一张脸 + embedding:[]。这一支在 embedding 轨的语义是
+            //      「载荷残缺 = 该张失败」，不是「没脸」：诚实实现必回 false 且零 face_emb。
+            //      位置同样是硬约束：必须在 retire 之后（ERR 子进程会先答 ERR，NOEMB 到不了
+            //      载荷层）、干净轮之前（干净轮一写 face_emb，「零写回」就退化成恒真）。
+            qputenv("LA_FACE_FORCE_NOEMB", "1");
+            runOffMainQa([&] {
+                embNoEmbRet = PersonDetector::detectEmbeddings(snap, writer, -1,
+                    [&](int done, int total, const QString&) {
+                        embNoEmbDoneMax = qMax(embNoEmbDoneMax, done);
+                        embNoEmbTotal = total;
+                    }, [] { return false; });
+            });
+            qputenv("LA_FACE_FORCE_NOEMB", QByteArray());
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 500);
+            embRowsAfterNoEmb = lib.getFaceEmbeddings().size();
             FaceRunner::qaRetireChildForQa();
             // ---- ② 干净子轮：无钩子冷启动的新子进程每 REQ 恒答 faces count=1 ----
             runOffMainQa([&] {
@@ -5514,6 +5588,14 @@ int runFaceAiQa()
             if (ph.path == QStringLiteral("C:/la/p6_conservative.jpg")) p6personErr = ph.person;
         note(p6personErr == seededPerson,
              QStringLiteral("G9 ERR-round p6 overwritten=%1 want=%2").arg(p6personErr, seededPerson));
+        // 归因腿（正向不变量，两臂同值 ⇒ 不随 tamper 翻）：false 必须来自「逐张计入处置」，
+        // 不是 probe 假早退（那条路 progress 只发一次 done=0，这两条即咬红）。
+        note(errTotal == kPending,
+             QStringLiteral("G9 ERR-round progress total=%1 want=%2 (round must enumerate all pending photos)")
+                 .arg(errTotal).arg(kPending));
+        note(errDoneMax == kPending,
+             QStringLiteral("G9 ERR-round progress done=%1 want=%2 (each failed photo must be counted toward the tally)")
+                 .arg(errDoneMax).arg(kPending));
 
         // ---- ①b 取消子轮断言（`stopped` 那半的判别腿）----
         note(cancelRet == expG9CancelRet,
@@ -5522,6 +5604,46 @@ int runFaceAiQa()
         note(wroteExpectedCancel == expG9CancelWrote,
              QStringLiteral("G9 cancel-round writeback=%1 want=%2 (cancelled round must write nothing, label=%3)")
                  .arg(wroteExpectedCancel).arg(expG9CancelWrote).arg(expG9Person));
+        // 取消轮的归因腿：progress 只能见过开场那次 done=0（i==0 即 break，一张请求都没发）。
+        // 若 break 支被挪到请求之后，done 会爬到 ≥1，这条即红——把「取消=零请求」钉住。
+        note(cancelDoneMax == 0,
+             QStringLiteral("G9 cancel-round progress done=%1 want=0 (cancel must stop before the first request)")
+                 .arg(cancelDoneMax));
+
+        // ---- ①c/①d embedding 轨断言（聚类轨真路径的首次覆盖）----
+        note(embErrRet == expG9EmbErrRet,
+             QStringLiteral("G9 emb ERR-round detectEmbeddings ret=%1 want=%2 (all-failed round must report false)")
+                 .arg(int(embErrRet)).arg(int(expG9EmbErrRet)));
+        note(embCancelRet == expG9EmbCancelRet,
+             QStringLiteral("G9 emb cancel-round detectEmbeddings ret=%1 want=%2 (cancelled round must report false)")
+                 .arg(int(embCancelRet)).arg(int(expG9EmbCancelRet)));
+        note(embRowsAfterBadRounds == expG9EmbWrote,
+             QStringLiteral("G9 emb bad-rounds face_emb rows=%1 want=%2 (failed/cancelled rounds must write nothing)")
+                 .arg(embRowsAfterBadRounds).arg(expG9EmbWrote));
+        // embedding 轨归因腿（同 detect 口径的正向不变量）：false 来自逐张计入处置。
+        note(embErrTotal == kPending,
+             QStringLiteral("G9 emb ERR-round progress total=%1 want=%2 (round must enumerate all pending photos)")
+                 .arg(embErrTotal).arg(kPending));
+        note(embErrDoneMax == kPending,
+             QStringLiteral("G9 emb ERR-round progress done=%1 want=%2 (each failed photo must be counted toward the tally)")
+                 .arg(embErrDoneMax).arg(kPending));
+        note(embCancelDoneMax == 0,
+             QStringLiteral("G9 emb cancel-round progress done=%1 want=0 (cancel must stop before the first request)")
+                 .arg(embCancelDoneMax));
+
+        // ---- ①e 有脸无 embedding 断言（载荷残缺=失败；正向不变量，两臂同值不随 tamper 翻）----
+        note(embNoEmbRet == false,
+             QStringLiteral("G9 emb NOEMB-round detectEmbeddings ret=%1 want=0 (face without embedding is a broken payload, not a miss)")
+                 .arg(int(embNoEmbRet)));
+        note(embRowsAfterNoEmb == 0,
+             QStringLiteral("G9 emb NOEMB-round face_emb rows=%1 want=0 (broken payload must write nothing)")
+                 .arg(embRowsAfterNoEmb));
+        note(embNoEmbTotal == kPending,
+             QStringLiteral("G9 emb NOEMB-round progress total=%1 want=%2 (round must enumerate all pending photos)")
+                 .arg(embNoEmbTotal).arg(kPending));
+        note(embNoEmbDoneMax == kPending,
+             QStringLiteral("G9 emb NOEMB-round progress done=%1 want=%2 (each broken-payload photo must be counted toward the tally)")
+                 .arg(embNoEmbDoneMax).arg(kPending));
 
         // ---- ② 干净子轮断言 ----
         note(detectRet == expG9Ret,
@@ -5572,13 +5694,32 @@ int runFaceAiQa()
             note(dbP0 == expG9Person,
                  QStringLiteral("G9 db p0 person=%1 want=%2").arg(dbP0, expG9Person));
         }
+        // 汇总旗标必须覆盖**全部**子臂（复审裁：只并 ERR+干净两臂的话，取消臂与
+        // embedding 臂咬红时这行仍打 ok=1，等于给新腿发了个不会变红的通行证）。
+        // 正向不变量腿（progress 轨迹）一并入旗：探针实测证明「取消检查挪到请求之后」
+        // 这一变异**只**红 done=0 那条（ret/写回两腿因 ERR 子进程复用而照旧为假），
+        // 旗标若不含它，就恰好漏掉唯一有牙齿的那条腿。
         const bool g9Ok = errRet == expG9ErrRet && wroteExpectedErr == expG9ErrWrote
                           && p5personErr == expG9ErrP5 && p6personErr == seededPerson
+                          && errTotal == kPending && errDoneMax == kPending
+                          && cancelRet == expG9CancelRet && wroteExpectedCancel == expG9CancelWrote
+                          && cancelDoneMax == 0
+                          && embErrRet == expG9EmbErrRet && embCancelRet == expG9EmbCancelRet
+                          && embRowsAfterBadRounds == expG9EmbWrote
+                          && embErrTotal == kPending && embErrDoneMax == kPending
+                          && embCancelDoneMax == 0
+                          && embNoEmbRet == false && embRowsAfterNoEmb == 0
+                          && embNoEmbTotal == kPending && embNoEmbDoneMax == kPending
                           && detectRet == expG9Ret && wroteExpected == kPending
                           && p5person == expG9Person && p6person == seededPerson
                           && lib.photos().size() == kRows;
-        std::fprintf(stderr, "LA_FACEAI_G G9 ok=%d ret=%d wrote=%d errRet=%d wroteErr=%d\n",
-                     int(g9Ok), int(detectRet), wroteExpected, int(errRet), wroteExpectedErr);
+        std::fprintf(stderr,
+                     "LA_FACEAI_G G9 ok=%d ret=%d wrote=%d errRet=%d wroteErr=%d "
+                     "cancelRet=%d wroteCancel=%d embErrRet=%d embCancelRet=%d embRows=%d "
+                     "noEmbRet=%d embRowsNoEmb=%d\n",
+                     int(g9Ok), int(detectRet), wroteExpected, int(errRet), wroteExpectedErr,
+                     int(cancelRet), wroteExpectedCancel, int(embErrRet), int(embCancelRet),
+                     embRowsAfterBadRounds, int(embNoEmbRet), embRowsAfterNoEmb);
         // R-06 卫生：门后必删临时目录。⚠ 必须先摘掉 Library 留下的两条全局命名连接
         // （la_rw + la_lib）——连接句柄活在全局池里，不受本腿 lib 作用域/析构影响；Windows
         // 上被打开的 sqlite 文件删不掉，于是 removeRecursively 只删得掉 png、独独留下 g9.db。
@@ -7179,6 +7320,10 @@ int runPersonQa()
     AiWriter writer(&lib, &qaCtx);
     const bool ok = PersonDetector::detect(lib.photos(), writer);
     QCoreApplication::processEvents(QEventLoop::AllEvents, 200);
+    // 钩子支契约腿（诚实定位，复审 Minor「合成钩子下恒真」）：setSyntheticForQa 在函数
+    // 首行早退并 return true，这条**不**证明真路径的返回值语义——真路径的 false 由
+    // #75 G9 的 ERR/取消/干净三臂物理咬住。留着只为归因：钩子支哪天改成 false，
+    // 后续读回断言会成片红，这条先把结论钉在「钩子本身坏了」上。
     note(ok, QStringLiteral("detect returned false"));
 
     // DB / 内存读助手（独立连接读真实落盘值）

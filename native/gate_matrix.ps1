@@ -640,6 +640,18 @@ $GateTable = @(
   # the "&& !stopped" half of PersonDetector::detect's return turns the positive arm
   # RED with exactly one failure ("G9 cancel-round detect ret=1 want=0") and nothing
   # else moves - the stopped half is load-bearing, not decoration.
+  # T12 re-review Minors round re-take #3 AFTER the embedding-track arms landed, so G9
+  # now runs six sub-rounds (ERR / cancel / emb-ERR / emb-cancel / emb-NOEMB / clean).
+  # -Timing x3 warm: 7268 / 7295 / 7824 ms - all three under the recorded 8811, so the
+  # bound is NOT lowered (8811 stays as the conservative measured ceiling; lowering it
+  # would trade a real safety margin for a prettier number). timeoutSec=30 unchanged.
+  # Two more mutation probes pin the new legs: (a) moving the cancel check from the top
+  # of the loop to after the request turns exactly ONE leg RED ("G9 cancel-round progress
+  # done=6 want=0") while ret/writeback stay green - the ERR child is reused, so only the
+  # progress trajectory can see that no request was sent; (b) reverting PersonDetector's
+  # "face without embedding counts as failed" fix turns ONE leg RED ("G9 emb NOEMB-round
+  # detectEmbeddings ret=1 want=0"). Both mutants also flip the G9 aggregate flag to
+  # ok=0 now that it ORs in the positive-invariant legs.
   @{n="LA_FACE_AI_QA"; png=$false; timeoutSec=30; measuredMs=8811},
   # 2.40.0 round4 T3: real face-model end-to-end quality gate (gate #78, LA_FACE_MODEL_QA).
   # Opt-in: need=@("LA_FACE_MODEL","LA_FACE_IMG") -- absent -> qa_runner [SKIP] (privacy

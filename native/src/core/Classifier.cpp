@@ -173,7 +173,7 @@ bool Classifier::classify(const QVector<Photo>& photos, AiWriter& writer,
     }
     if (failed > 0)
         qWarning().noquote() << "Classifier: clipinfer 单张失败" << failed << "/" << total
-                             << "张——已按「失败即放行」跳过，未写回";
+                             << "张——失败张按「失败即放行」跳过未写回，成功张照常写回";
     // F-1（T8 修复波第 1 轮）：返回值语义 = 「本轮是否全部干净写回」——任一可见失败
     // （failed>0）或取消中断（stopped）→ false。**不是**「是否跑过」。GUI 侧
     // （MainWindow::runClassify 的 finished 支）据此从「已为 N 张写入场景分类」的

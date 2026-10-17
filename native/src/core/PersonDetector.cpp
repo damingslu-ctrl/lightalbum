@@ -99,7 +99,7 @@ bool PersonDetector::detect(const QVector<Photo>& photos, AiWriter& writer,
         writer.persons(batch);
     if (failed > 0)
         qWarning().noquote() << "PersonDetector: faceinfer 单张失败" << failed << "/" << total
-                             << "张——已按「失败即放行」跳过，未写回";
+                             << "张——失败张按「失败即放行」跳过未写回，成功张照常写回";
     // 返回值语义（T12 修复波第 2 轮 FIX-14，与 Classifier::classify 的 F-1 契约同型）：
     // 「本轮是否全部干净跑完」——任一可见失败（传输失败或 ok!=true 的应答）或取消中断
     // → false。**不是**「是否跑过」。此前 face 轨收尾恒 return true，于是全失败轮仍被
@@ -183,8 +183,13 @@ bool PersonDetector::detectEmbeddings(const QVector<Photo>& photos, AiWriter& wr
                 if (s > best) { best = s; bestFace = f; }
             }
             const QJsonArray emb = bestFace.value(QLatin1String("embedding")).toArray();
+            // 有脸却无 embedding = 载荷残缺（faceinfer 正常路径不会这样：stub 恒发 512 维、
+            // 真引擎 emit 前已算完）。保守口径下这**不是**「没脸」而是该张失败——静默丢弃
+            // 会让聚类悄悄少一张、整轮却报干净。
             if (!emb.isEmpty())
                 batch.append({p->path, toEmbBlob(emb)});
+            else
+                ++failed;
         }
         done += 1;
         if (progress) progress(done, total, p->path);
@@ -193,7 +198,7 @@ bool PersonDetector::detectEmbeddings(const QVector<Photo>& photos, AiWriter& wr
         writer.faceEmbeddings(batch);
     if (failed > 0)
         qWarning().noquote() << "PersonDetector: faceinfer 单张失败（embedding）" << failed
-                             << "/" << total << "张——已按「失败即放行」跳过，未写回";
+                             << "/" << total << "张——失败张按「失败即放行」跳过未写回，成功张照常写回";
     // 返回值语义同 detect（FIX-14）：任一可见失败或取消中断 → false。GUI 侧
     // MainWindow::runFaceCluster 据此把「抽取失败/被取消」如实落到未就绪与中断两支，
     // 不再出现「worker 报 true 但聚类其实没跑」的谎报。
