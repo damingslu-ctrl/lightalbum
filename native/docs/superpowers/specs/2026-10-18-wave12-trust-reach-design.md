@@ -26,7 +26,7 @@
 
 | 行 | 现在 | 本轮后 | 说明 |
 |---|---|---|---|
-| 0 | 首页·HomePage（P17 Quiet Frame） | **前厅·LobbyPage（新）** | 厅心=那年今天 · 玻璃指令栏 · 最近入藏条 |
+| 0 | 首页·HomePage（P17 Quiet Frame） | **前厅·LobbyPage（新）** | 厅心=那年今天 · 玻璃指令栏 · 最新到馆条 |
 | 1 | 足迹·MapPage | 不变 | 长廊地理切片=波4 |
 | 2 | 图库·GalleryPage | 标题微调「全部藏品」 | 网格降为全库视图，四条 chips 保留 |
 | 3 | 选片·CullPage | **人物馆·PeoplePage（新）** | kNav 表换名换图标，栈序不变 |
@@ -101,7 +101,7 @@ public:
 - onThisDay：候选 = `!priv && !missing && !thumbFile.isEmpty()` 且 date 月-日 ==
   today 月-日；排序 = |year−today.year| 升序优先、同级 rating 降序；<3 张回退同月、
   再回退去年/往年同季、全空 → 「今日无展 · 明日再会」静默态（绝不画假数据）。
-- recent：photos_ 向量序 = DB rowid 序 = 入库序，自尾部反向取；文案「最近入藏」。
+- recent： photos_ 已由 Library 载入后按 date ISO 串**倒序**排序（Library.cpp:130-132，拍摄日期新→旧；photos 表**没有**入库时间戳列），自**向量头**取 N 条即「最新拍摄的到馆展品」；文案「最新到馆」（措辞对齐数据真相，不虚称入库序）。
 - 动效：入场 kLightFirst 640ms + 展品 kChipPop quick 220ms 错峰（Motion::staggerStart）。
 
 ### 2.3 PeoplePage（人物馆）
@@ -245,7 +245,7 @@ people_ 双页重建（onThisDay 以当天实际日期重算）。
 FORCE_BROKEN 反例变红+measuredMs 回填；纯 ASCII 注册进 gate_matrix.ps1）：
 
 - LA_LOBBY_QA：onThisDay 边界（恰逢今日/闰 2-29/不足 3 张三级回退/全空静默态/
-  priv 排除）+ recent 尾取 + 任意「今天」重放（QDate 注入）；反例=priv 涌入候选 → 红。
+  priv 排除）+ recent 头取（date 倒序即最新拍摄优先）+ 任意「今天」重放（QDate 注入）；反例=priv 涌入候选 → 红。
 - LA_PEOPLE_QA：buildRooms（逗号多人入多房/私密剔除/年跨度聚合/空 name 防御）；
   反例=hidePrivate 失效 → 红。
 - LA_CMDK_QA：parse 金句集（「去年秋天和小雨在公园的黑白照片」→ year/season/
