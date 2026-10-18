@@ -167,6 +167,34 @@ static QVector<Preset> makeTable()
         };
         t.append(p);
     }
+    // LightFirst slow 640：光先行（glow 先到峰再退），画后进。
+    {
+        Preset p; p.name = kLightFirst; p.durationMs = 640;
+        p.keys = {
+            { kPropGlow,    0.0, 1.0, OutCubic, 0.0, 0.35, false, true, 0.0 },  // 光先行包络
+            { kPropOpacity, 0.0, 1.0, OutCubic, 0.15, 0.85, true, false, 0.0 },
+            { kPropOffsetY, 24.0, 0.0, Spring,  0.15, 1.0, false, false, 0.0 },
+        };
+        t.append(p);
+    }
+    // PushDoor standard 360：scale 1.02→1.00（推门）+ 快淡入。
+    {
+        Preset p; p.name = kPushDoor; p.durationMs = 360;
+        p.keys = {
+            { kPropScale,   1.02, 1.0, OutCubic, 0.0, 1.0, false, false, 0.0 },
+            { kPropOpacity, 0.0, 1.0, OutQuad,  0.0, 0.4, true, false, 0.0 },
+        };
+        t.append(p);
+    }
+    // LightsDown standard 360：淡出+微上移（预留键）。
+    {
+        Preset p; p.name = kLightsDown; p.durationMs = 360;
+        p.keys = {
+            { kPropOpacity, 1.0, 0.0, InQuad, 0.0, 0.5, true, false, 0.0 },
+            { kPropOffsetY, 0.0, -10.0, OutCubic, 0.2, 1.0, false, false, 0.0 },
+        };
+        t.append(p);
+    }
     return t;
 }
 

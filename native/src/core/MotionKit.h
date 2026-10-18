@@ -68,6 +68,9 @@ inline const QByteArray kLightbox   { "LightboxSlide" };// 灯箱横滑
 inline const QByteArray kChipPop    { "ChipPop" };      // 故事 chip 入场弹跳
 inline const QByteArray kStarBounce { "StarBounce" };   // 批量星级按钮弹跳
 inline const QByteArray kHeartBurst { "HeartBurst" };   // 喜欢标记心形粒子爆开
+inline const QByteArray kLightFirst { "LightFirst" };   // slow 640 进前厅/凝视入场（光先行）
+inline const QByteArray kPushDoor   { "PushDoor" };     // standard 360 进人物馆
+inline const QByteArray kLightsDown { "LightsDown" };   // standard 360 预留（凝视退场键，本轮不接 UI）
 
 // ---- 属性名（evaluate 回调与 UI 约定）----
 inline const QByteArray kPropOpacity { "opacity" };

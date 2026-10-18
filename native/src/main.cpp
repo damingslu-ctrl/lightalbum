@@ -4785,8 +4785,8 @@ int runMotionQa()
     // ---- C 预设表完整性 ----
     {
         const QVector<QByteArray> names = Motion::presetNames();
-        note(names.size() >= 5,
-             QStringLiteral("C preset count=%1 want>=5").arg(names.size()));
+        note(names.size() >= 8,
+             QStringLiteral("C preset count=%1 want>=8").arg(names.size()));
         for (const QByteArray& nm : names) {
             const Motion::Preset& p = Motion::preset(nm);
             const QString q = QString::fromLatin1(nm);
@@ -4797,6 +4797,16 @@ int runMotionQa()
             note(v0.size() == p.keys.size() && v1.size() == p.keys.size(),
                  QStringLiteral("C evaluate dim==keys %1").arg(q));
         }
+        note(Motion::presetNames().contains(Motion::kLightFirst),
+             QStringLiteral("C LightFirst registered"));
+        note(Motion::presetNames().contains(Motion::kPushDoor),
+             QStringLiteral("C PushDoor registered"));
+        note(Motion::presetNames().contains(Motion::kLightsDown),
+             QStringLiteral("C LightsDown registered"));
+        note(Motion::preset(Motion::kLightFirst).durationMs == 640,
+             QStringLiteral("C LightFirst slow 640"));
+        note(Motion::preset(Motion::kPushDoor).durationMs == 360,
+             QStringLiteral("C PushDoor standard 360"));
         const Motion::Preset& fb = Motion::preset("NoSuchPreset");
         note(fb.durationMs > 0 && !fb.keys.isEmpty(),
              QStringLiteral("C unknown name falls back to nonempty preset"));
