@@ -34,7 +34,7 @@ namespace Lumen {
 // 颜色仍以 hex() 烘进构造期 QSS，故「切灯 = 整帧重建」（MainWindow::rethemeAll），
 // 不存在热刷；表面角色一律走下方 11 个访问器（读活跃灯表）。
 enum class Lamp : int { Nocturne = 1, Jade = 2, Gekkan = 3, Dusk = 4 };   // L1..L4
-// 空间枚举取名 Hall：Space 已被 4px 间距命名空间占用（Lumen::Space::M 等 46 处引用）。
+// 空间枚举取名 Hall：Space 已被 4px 间距命名空间占用（Lumen::Space::M 等 139 处引用）。
 enum class Hall : int { Lobby, Gallery, People, Studio, Vault, Common };
 
 struct LampTokens { QColor bg, surface, inset, ink, muted, line, gold, emerald; };
