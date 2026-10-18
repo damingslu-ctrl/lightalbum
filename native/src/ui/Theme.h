@@ -22,6 +22,7 @@
 #include <QPoint>
 #include <QCoreApplication>
 #include <QGraphicsDropShadowEffect>
+#include <QSettings>
 #include <QWidget>
 #include <functional>
 
@@ -29,21 +30,126 @@
 
 namespace Lumen {
 
-// ---- 色彩 token（曜石阶） ---------------------------------------------------
-inline constexpr QColor BG      = QColor(0x06, 0x08, 0x06);   // 页面底（更深曜石）
-inline constexpr QColor PANEL   = QColor(0x0c, 0x10, 0x0d);   // 顶栏/工具栏
-inline constexpr QColor CARD    = QColor(0x13, 0x1a, 0x15);   // 卡片
-inline constexpr QColor CARD_HI = QColor(0x1a, 0x23, 0x1d);   // 卡片 hover/选中
-inline constexpr QColor INSET   = QColor(0x0e, 0x14, 0x10);   // 内嵌控件/输入框
-inline constexpr QColor LINE    = QColor(0x26, 0x31, 0x2a);   // 描边
-inline constexpr QColor INK     = QColor(0xf4, 0xf7, 0xf4);   // 主文字
-inline constexpr QColor MUTED   = QColor(0x8d, 0xa3, 0x96);   // 次文字
-inline constexpr QColor FAINT   = QColor(0x5a, 0x6b, 0x60);   // 弱文字/禁用
+// ---- 四灯系统（2.41.0 spec §2.1）：唯一运行时可变 token 源 -------------------
+// 颜色仍以 hex() 烘进构造期 QSS，故「切灯 = 整帧重建」（MainWindow::rethemeAll），
+// 不存在热刷；表面角色一律走下方 11 个访问器（读活跃灯表）。
+enum class Lamp : int { Nocturne = 1, Jade = 2, Gekkan = 3, Dusk = 4 };   // L1..L4
+// 空间枚举取名 Hall：Space 已被 4px 间距命名空间占用（Lumen::Space::M 等 46 处引用）。
+enum class Hall : int { Lobby, Gallery, People, Studio, Vault, Common };
 
-inline constexpr QColor EMERALD    = QColor(0x4f, 0xc0, 0x8a); // 翡翠主色（提亮）
+struct LampTokens { QColor bg, surface, inset, ink, muted, line, gold, emerald; };
+
+// 四组定值（V4 全文；LA_LAMP_QA A 组按此逐列断言，两两任列相异）。
+inline const LampTokens& lamp(Lamp l)   // 表只读；非法值回退 L1
+{
+    static const LampTokens nocturne {   // L1 夜展
+        QColor(0x14, 0x1B, 0x16), QColor(0x1D, 0x2A, 0x22),
+        QColor(0x0E, 0x14, 0x10), QColor(0xE8, 0xE4, 0xD8),
+        QColor(0x8D, 0xA3, 0x96), QColor(0x26, 0x31, 0x2A),
+        QColor(0xD8, 0xA6, 0x57), QColor(0x4F, 0xC0, 0x8A) };
+    static const LampTokens jade {       // L2 玉照
+        QColor(0xF2, 0xEF, 0xE6), QColor(0xFF, 0xFF, 0xFF),
+        QColor(0xE9, 0xE5, 0xD9), QColor(0x2B, 0x2B, 0x28),
+        QColor(0x6D, 0x67, 0x5C), QColor(0xE2, 0xDE, 0xD3),
+        QColor(0xB9, 0x8A, 0x2F), QColor(0x3F, 0x6B, 0x52) };
+    static const LampTokens gekkan {     // L3 素印（灰阶，唯一彩点 = gold==emerald）
+        QColor(0xFA, 0xFA, 0xFA), QColor(0xFF, 0xFF, 0xFF),
+        QColor(0xEF, 0xEF, 0xEC), QColor(0x11, 0x11, 0x11),
+        QColor(0x8A, 0x8A, 0x85), QColor(0xE4, 0xE4, 0xE0),
+        QColor(0xB9, 0x8A, 0x2F), QColor(0xB9, 0x8A, 0x2F) };
+    static const LampTokens dusk {       // L4 暮金
+        QColor(0x24, 0x1A, 0x10), QColor(0x33, 0x24, 0x1A),
+        QColor(0x2A, 0x1E, 0x14), QColor(0xF2, 0xE4, 0xCE),
+        QColor(0xA8, 0x89, 0x6B), QColor(0x4A, 0x33, 0x20),
+        QColor(0xE2, 0xA9, 0x5C), QColor(0xB9, 0x8A, 0x2F) };
+    switch (l) {
+    case Lamp::Jade:   return jade;
+    case Lamp::Gekkan: return gekkan;
+    case Lamp::Dusk:   return dusk;
+    default:           return nocturne;
+    }
+}
+
+// 跟随空间的默认灯：前厅走夜展，画廊/人物馆/修图/暗箱走玉照；
+// Common（日志/关于等未定义页）留在夜展基调，不跳亮底。
+inline Lamp lampFor(Hall h)
+{
+    static const Lamp follow[6] = { Lamp::Nocturne, Lamp::Jade, Lamp::Jade,
+                                    Lamp::Jade,     Lamp::Jade, Lamp::Nocturne };
+    const int i = int(h);
+    return (i >= 0 && i < 6) ? follow[i] : Lamp::Nocturne;
+}
+
+// QSettings 持久化：lamp/active（int 1..4）、lamp/mode（"follow"/"manual"）。
+inline Lamp activeLamp()
+{
+    switch (QSettings().value(QStringLiteral("lamp/active"), 1).toInt()) {
+    case 2:  return Lamp::Jade;
+    case 3:  return Lamp::Gekkan;
+    case 4:  return Lamp::Dusk;
+    default: return Lamp::Nocturne;
+    }
+}
+inline void setActiveLamp(Lamp l) { QSettings().setValue(QStringLiteral("lamp/active"), int(l)); }
+inline bool lampFollowSpace()
+{
+    return QSettings().value(QStringLiteral("lamp/mode"),
+                             QStringLiteral("follow")).toString()
+           == QLatin1String("follow");
+}
+inline void setLampFollowSpace(bool on)
+{
+    QSettings().setValue(QStringLiteral("lamp/mode"),
+                         on ? QStringLiteral("follow") : QStringLiteral("manual"));
+}
+// 锁 = 手动灯（封存 lampFor）；与 lamp/mode 同一存储，不引第二份状态。
+inline bool lampLocked()                { return !lampFollowSpace(); }
+inline void setLampLocked(bool locked)  { setLampFollowSpace(!locked); }
+
+// 装配处统一取灯：follow 下 lampFor(hall) 优先，manual（锁）下恒 activeLamp。
+inline Lamp resolveLamp(Hall h) { return lampFollowSpace() ? lampFor(h) : activeLamp(); }
+
+inline QString lampCssVars(Lamp l)   // 壳层 :root 变量段（前厅/⌘K 消费）
+{
+    const LampTokens& t = lamp(l);
+    return QStringLiteral("--la-bg:%1;--la-surface:%2;--la-inset:%3;--la-ink:%4;"
+                          "--la-muted:%5;--la-line:%6;--la-gold:%7;--la-emerald:%8;")
+        .arg(t.bg.name(), t.surface.name(), t.inset.name(), t.ink.name(),
+             t.muted.name(), t.line.name(), t.gold.name(), t.emerald.name());
+}
+
+// ---- 表面角色访问器（11 个；旧 constexpr BG/PANEL/… 的全部替代面） -----------
+// 派生规则（计划裁决 3）：PANEL→inset 列；CARD→surface 列；CARD_HI→surface 向 ink
+// 混 8%；FAINT→muted 向 bg 混 50%。
+inline QColor bg()      { return lamp(activeLamp()).bg; }
+inline QColor panel()   { return lamp(activeLamp()).inset; }
+inline QColor card()    { return lamp(activeLamp()).surface; }
+inline QColor cardHi()
+{
+    const LampTokens& t = lamp(activeLamp());
+    QColor c = t.surface;
+    c.setRed  (c.red()   + (t.ink.red()   - c.red())   * 8 / 100);
+    c.setGreen(c.green() + (t.ink.green() - c.green()) * 8 / 100);
+    c.setBlue (c.blue()  + (t.ink.blue()  - c.blue())  * 8 / 100);
+    return c;
+}
+inline QColor inset()   { return lamp(activeLamp()).inset; }
+inline QColor ink()     { return lamp(activeLamp()).ink; }
+inline QColor muted()   { return lamp(activeLamp()).muted; }
+inline QColor faint()
+{
+    const LampTokens& t = lamp(activeLamp());
+    return QColor((t.muted.red()   + t.bg.red())   / 2,
+                  (t.muted.green() + t.bg.green()) / 2,
+                  (t.muted.blue()  + t.bg.blue())  / 2);
+}
+inline QColor line()    { return lamp(activeLamp()).line; }
+inline QColor gold()    { return lamp(activeLamp()).gold; }
+inline QColor emerald() { return lamp(activeLamp()).emerald; }
+
+// ---- 品牌色（本轮冻结，不随灯） ---------------------------------------------
 inline constexpr QColor EMERALD_HI = QColor(0x6a, 0xdb, 0xa6); // 翡翠亮端
 inline constexpr QColor EMERALD_DK = QColor(0x2f, 0x7d, 0x57); // 翡翠暗端
-inline constexpr QColor GOLD       = QColor(0xd9, 0xa9, 0x4e); // 琥珀金
 inline constexpr QColor GOLD_HI    = QColor(0xf0, 0xd0, 0x8a); // 金亮端
 inline constexpr QColor GOLD_DK    = QColor(0xb0, 0x86, 0x3a); // 金暗端
 inline constexpr QColor VIOLET     = QColor(0xa8, 0x8b, 0xe5); // AI 智能体专属
@@ -64,7 +170,9 @@ inline constexpr QColor FAINT_IMG = QColor(0x6d, 0x7a, 0x6f); // 照片叠加层
 inline constexpr QColor SOFT_IMG  = QColor(0xb9, 0xb3, 0xa6); // 照片叠加层·暖灰中阶（Quiet Frame 导航文字/INDEX/caps 梯阶收编，INK_IMG↔MUTED_IMG 之间）
 inline constexpr QColor GOLD_WASH = QColor(0x26, 0x20, 0x12); // 金强调按钮 :checked 底 wash（GOLD 描边+文字之下的暖金暗衬，非表面非描线，无现成 token 之家）
 // 数据分类色板：CAT 板是数据编码语言，不受 VIOLET=AI 专属的控制面职责约束（spec §1.4 裁定）
-inline constexpr QColor CAT1 = EMERALD, CAT2 = SKY, CAT3 = GOLD, CAT4 = VIOLET,
+// CAT1/CAT3 原引 EMERALD/GOLD 常量；两者已 lamp-aware 化，数据编码本轮冻结 → 落 L1 同值字面。
+inline constexpr QColor CAT1 = QColor(0x4f, 0xc0, 0x8a), CAT2 = SKY,
+                        CAT3 = QColor(0xd9, 0xa9, 0x4e), CAT4 = VIOLET,
                         CAT5 = CORAL,  CAT6 = ROSE, CAT7 = TEAL, CAT8 = OLIVE;
 inline QColor glowJade() { QColor c = EMERALD_HI; c.setAlpha(115); return c; } // 45%
 inline QColor glowGold() { QColor c = GOLD_HI;   c.setAlpha(102); return c; } // 40%
@@ -122,7 +230,9 @@ namespace Space { // 4px 基网格六级
     inline constexpr int Xs = 4, S = 8, M = 12, L = 16, Xl = 24, Xxl = 32;
 }
 namespace Type {
-    enum class Tier { Display, Title, Head, Body, Small };
+    // 2.41.0 spec §3：七档字阶（+Label 展签体、+MonoMeta 馆务元信息）。
+    // 既有符号名全部保值，调用点零破坏；css() 的档位序与 pts[] 一一对应。
+    enum class Tier { Display, Title, Label, Head, Body, Small, MonoMeta };
     inline QFont yahei(qreal pt, QFont::Weight w = QFont::Normal, qreal ls = 0.0) {
         QFont f(QString::fromUtf8("Microsoft YaHei UI"));
         f.setPointSizeF(pt); f.setWeight(w); f.setStyleStrategy(QFont::PreferAntialias);
@@ -131,13 +241,22 @@ namespace Type {
     }
     inline QFont display()               { return serifFont(20, QFont::Bold); }
     inline QFont title(bool serif = true){ return serif ? serifFont(15, QFont::Bold) : yahei(15, QFont::Bold); }
+    // 展签体（人物名/年份牌/合集题/⌘K 展题）：17px/500，衬线仅 L1/L4 允许。
+    inline QFont label(bool serifAllowed = true)
+    {
+        const bool serif = serifAllowed
+            && (activeLamp() == Lamp::Nocturne || activeLamp() == Lamp::Dusk);
+        return serif ? serifFont(12.75, QFont::DemiBold, 1.0)
+                     : yahei(12.75, QFont::DemiBold);
+    }
     inline QFont head()  { return yahei(12, QFont::Bold); }
     inline QFont body()  { return yahei(9.5); }
     inline QFont smallText(){ return yahei(9); }   // small 撞 Windows RPC 宏，命名 smallText
     inline QFont mono(qreal pt = 9.5) { QFont f(QStringLiteral("Consolas")); f.setPointSizeF(pt); return f; }
+    inline QFont monoMeta() { return mono(8.25); }  // 馆务 Mono-Meta 11px
     inline int px(qreal pt) { return int(pt * 4.0 / 3.0 + 0.5); }
     inline QString css(Tier t) {
-        static const qreal pts[] = {20, 15, 12, 9.5, 9};
+        static const qreal pts[] = {20, 15, 12.75, 12, 9.5, 9, 8.25};
         return QString("font-size:%1px;").arg(px(pts[int(t)]));
     }
 }
@@ -163,8 +282,8 @@ inline QString btnPrimary()
         "padding:8px 18px;color:#06130c;font-weight:bold;}"
         "QPushButton:hover{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
         "stop:0 %3, stop:1 %1);}"
-        "QPushButton:disabled{background:#2a332d;color:#5a6b60;}")
-        .arg(hex(EMERALD_HI), hex(EMERALD_DK), hex(EMERALD));
+        "QPushButton:disabled{background:%4;color:%5;}")
+        .arg(hex(EMERALD_HI), hex(EMERALD_DK), hex(emerald()), hex(inset()), hex(faint()));
 }
 
 // 品牌按钮：金渐变（强调/品牌动作，如「开始选片」）
@@ -176,8 +295,8 @@ inline QString btnGold()
         "padding:8px 18px;color:#1a1204;font-weight:bold;}"
         "QPushButton:hover{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
         "stop:0 %3, stop:1 %1);}"
-        "QPushButton:disabled{background:#2a332d;color:#5a6b60;}")
-        .arg(hex(GOLD_HI), hex(GOLD_DK), hex(GOLD));
+        "QPushButton:disabled{background:%4;color:%5;}")
+        .arg(hex(GOLD_HI), hex(GOLD_DK), hex(gold()), hex(inset()), hex(faint()));
 }
 
 // AI 按钮：紫罗兰渐变（AI 智能体专属语义，大胆点二）
@@ -189,19 +308,21 @@ inline QString btnAi()
         "padding:8px 18px;color:#f2eefc;font-weight:bold;}"
         "QPushButton:hover{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
         "stop:0 %3, stop:1 %1);}"
-        "QPushButton:disabled{background:#2a332d;color:#5a6b60;}")
-        .arg(hex(VIOLET), hex(VIOLET_DK), QColor(0xbd, 0xa4, 0xf0).name());
+        "QPushButton:disabled{background:%4;color:%5;}")
+        .arg(hex(VIOLET), hex(VIOLET_DK), QColor(0xbd, 0xa4, 0xf0).name(),
+             hex(inset()), hex(faint()));
 }
 
 // 幽灵按钮：描边 + hover 微亮（工具/次要动作）
-inline QString btnGhost(const QColor& tint = GOLD)
+inline QString btnGhost(const QColor& tint = gold())
 {
     return QString::fromUtf8(
-        "QPushButton{background:#131a15;border:1px solid #26312a;border-radius:10px;"   // T9: 9->Radius::Ctl 10 (btnGhost)
+        "QPushButton{background:%4;border:1px solid %5;border-radius:10px;"   // T9: 9->Radius::Ctl 10 (btnGhost)
         "padding:6px 14px;color:%1;}"
-        "QPushButton:hover{background:#1a231d;border-color:%2;}"
-        "QPushButton:disabled{color:#5a6b60;border-color:#1c2420;}")
-        .arg(hex(tint), hex(tint), hex(tint));
+        "QPushButton:hover{background:%6;border-color:%2;}"
+        "QPushButton:disabled{color:%7;border-color:%5;}")
+        .arg(hex(tint), hex(tint), hex(tint), hex(card()), hex(line()),
+             hex(cardHi()), hex(faint()));
 }
 
 // AI 动作专用第四形态（VIOLET 职责锁死：非 AI 禁用，spec §1.3）
@@ -211,11 +332,11 @@ inline QString btnViolet()
     return QString::fromUtf8(
         "QPushButton{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
         "stop:0 %1, stop:1 %2);border:none;border-radius:10px;"
-        "padding:8px 16px;color:#f4f7f4;font-weight:bold;}"
+        "padding:8px 16px;color:%6;font-weight:bold;}"
         "QPushButton:hover{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
         "stop:0 %3, stop:1 %1);}"
         "QPushButton:disabled{background:%4;color:%5;}")
-        .arg(hex(VIOLET), hex(VIOLET_DK), hex(hover), hex(DISABLED), hex(FAINT));
+        .arg(hex(VIOLET), hex(VIOLET_DK), hex(hover), hex(DISABLED), hex(faint()), hex(ink()));
 }
 
 inline QString btnOutline(const QColor& accent)
@@ -226,7 +347,7 @@ inline QString btnOutline(const QColor& accent)
         "padding:6px 14px;color:%2;}"
         "QPushButton:hover{border-color:%3;color:%3;background:%4;}"
         "QPushButton:disabled{color:%5;border-color:%6;}")
-        .arg(hex(CARD), hex(accent), hex(hi), hex(CARD_HI), hex(FAINT), hex(LINE));
+        .arg(hex(card()), hex(accent), hex(hi), hex(cardHi()), hex(faint()), hex(line()));
 }
 
 // KPI 卡片：左侧语义色竖条 + 渐变高光底（大胆点三）
@@ -234,11 +355,12 @@ inline QString kpiCard(const QColor& accent)
 {
     return QString::fromUtf8(
         "QLabel{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
-        "stop:0 rgba(%1,46), stop:1 rgba(0,0,0,0)) #131a15;"
-        "border:1px solid #26312a;border-left:3px solid %2;"
+        "stop:0 rgba(%1,46), stop:1 rgba(0,0,0,0)) %3;"
+        "border:1px solid %4;border-left:3px solid %2;"
         "border-radius:14px;padding:10px 18px;}")   // T9: 12->Radius::Card 14 (kpiCard)
         .arg(QString::number(accent.red()) + "," + QString::number(accent.green())
-             + "," + QString::number(accent.blue()), hex(accent));
+             + "," + QString::number(accent.blue()),
+             hex(accent), hex(card()), hex(line()));
 }
 
 // ---- P12「美术馆策展」组件 --------------------------------------------------
@@ -249,47 +371,50 @@ inline QString heroBand()
     return QString::fromUtf8(
         "#hero{background:qlineargradient(x1:0,y1:0,x2:1,y2:1,"
         "stop:0 #14281d, stop:0.45 #0d130f, stop:1 #1c1508);"
-        "border:1px solid #26312a;border-radius:20px;}");   // T9: 16->Radius::Feature 20 (heroBand=首页英雄件 §3.1)
+        "border:1px solid %1;border-radius:20px;}")   // T9: 16->Radius::Feature 20 (heroBand=首页英雄件 §3.1)
+        .arg(hex(line()));
 }
 
 // 胶囊 chip：描边 + 语义色文字
 inline QString pill(const QColor& accent)
 {
     return QString::fromUtf8(
-        "QLabel{background:#0e1410;border:1px solid rgba(%1,120);"
+        "QLabel{background:%3;border:1px solid rgba(%1,120);"
         "border-radius:999px;padding:3px 12px;color:%2;font-size:11px;}")
         .arg(QString::number(accent.red()) + "," + QString::number(accent.green())
-             + "," + QString::number(accent.blue()), hex(accent));
+             + "," + QString::number(accent.blue()), hex(accent), hex(inset()));
 }
 
 // 功能入口卡：图标 + 名称，hover 时语义色描边点亮
 inline QString featureCard(const QColor& accent)
 {
     return QString::fromUtf8(
-        "QToolButton{background:#131a15;border:1px solid #26312a;border-radius:14px;"
-        "padding:12px 8px;color:#f4f7f4;font-weight:bold;font-size:13px;}"
-        "QToolButton:hover{background:#1a231d;border:1px solid %1;}"
-        "QToolButton:pressed{background:#0e1410;}")
-        .arg(hex(accent));
+        "QToolButton{background:%2;border:1px solid %3;border-radius:14px;"
+        "padding:12px 8px;color:%4;font-weight:bold;font-size:13px;}"
+        "QToolButton:hover{background:%5;border:1px solid %1;}"
+        "QToolButton:pressed{background:%6;}")
+        .arg(hex(accent), hex(card()), hex(line()), hex(ink()), hex(cardHi()), hex(inset()));
 }
 
 // 最近作品胶片卡：圆角图 + 底部日期
 inline QString filmCard()
 {
     return QString::fromUtf8(
-        "QToolButton{background:#131a15;border:1px solid #26312a;border-radius:14px;"   // T9: 12->Radius::Card 14 (filmCard)
-        "padding:5px;color:#8da396;font-size:10.5px;}"
-        "QToolButton:hover{border:1px solid #d9a94e;background:#1a231d;}");
+        "QToolButton{background:%1;border:1px solid %2;border-radius:14px;"   // T9: 12->Radius::Card 14 (filmCard)
+        "padding:5px;color:%3;font-size:10.5px;}"
+        "QToolButton:hover{border:1px solid %4;background:%5;}")
+        .arg(hex(card()), hex(line()), hex(muted()), hex(gold()), hex(cardHi()));
 }
 
 // 输入框 / 下拉：胶囊内嵌
 inline QString input()
 {
     return QString::fromUtf8(
-        "QLineEdit,QComboBox{background:#0e1410;border:1px solid #26312a;"
-        "border-radius:10px;padding:6px 12px;color:#f4f7f4;"   // T9: 9->Radius::Ctl 10 (input，brief 裁定 Theme.h 9px 族归 Ctl)
+        "QLineEdit,QComboBox{background:%1;border:1px solid %2;"
+        "border-radius:10px;padding:6px 12px;color:%3;"   // T9: 9->Radius::Ctl 10 (input，brief 裁定 Theme.h 9px 族归 Ctl)
         "selection-background-color:#2f7d57;}"
-        "QLineEdit:focus,QComboBox:focus{border-color:#4fc08a;}");
+        "QLineEdit:focus,QComboBox:focus{border-color:%4;}")
+        .arg(hex(inset()), hex(line()), hex(ink()), hex(emerald()));
 }
 
 // 键盘焦点环（WCAG 2.1：所有可交互控件须有可见焦点指示）。
@@ -306,26 +431,27 @@ inline QString focusRing(const QColor& c = EMERALD_HI)
 }
 
 // 滑杆：翡翠轨道 + 发光手柄
-inline QString slider(const QColor& handle = EMERALD)
+inline QString slider(const QColor& handle = emerald())
 {
     return QString::fromUtf8(
-        "QSlider::groove:horizontal{background:#0e1410;height:4px;border-radius:6px;}"   // T9: 2->Radius::Inset 6（§3.1 r-inset 用途明列滑轨；4px 高轨半径截半仍胶囊，视觉零位移）
+        "QSlider::groove:horizontal{background:%5;height:4px;border-radius:6px;}"   // T9: 2->Radius::Inset 6（§3.1 r-inset 用途明列滑轨；4px 高轨半径截半仍胶囊，视觉零位移）
         "QSlider::handle:horizontal{background:%1;width:12px;height:12px;"
         "border-radius:6px;margin:-4px 0;}"
         "QSlider::sub-page:horizontal{background:rgba(%2,%3,%4,110);border-radius:6px;}")   // T9: 2->Radius::Inset 6（与 groove 同档嵌套等径）
         .arg(hex(handle), QString::number(handle.red()),
-             QString::number(handle.green()), QString::number(handle.blue()));
+             QString::number(handle.green()), QString::number(handle.blue()),
+             hex(inset()));
 }
 
 // 进度条：翡翠渐变 chunk
 inline QString progress()
 {
     return QString::fromUtf8(
-        "QProgressBar{background:#0e1410;border:1px solid #26312a;"
+        "QProgressBar{background:%3;border:1px solid %4;"
         "border-radius:6px;height:8px;text-align:center;}"
         "QProgressBar::chunk{border-radius:6px;"
         "background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 %1, stop:1 %2);}")
-        .arg(hex(EMERALD), hex(EMERALD_HI));
+        .arg(hex(emerald()), hex(EMERALD_HI), hex(inset()), hex(line()));
 }
 
 // 全局滚动条：细翡翠
@@ -341,7 +467,7 @@ inline QString scrollbar()
         "QScrollBar:horizontal{background:transparent;height:10px;margin:2px;}"
         "QScrollBar::handle:horizontal{background:%1;border-radius:4px;min-width:30px;}"
         "QScrollBar::add-line:horizontal,QScrollBar::sub-line:horizontal{width:0;}")
-        .arg(hex(LINE));
+        .arg(hex(line()));
 }
 
 // ---- 2.33 统一选项条（全客户端「选项 chips 条」共用构建器） -----------------
@@ -441,11 +567,13 @@ inline void fillChipRow(QHBoxLayout* lay, QWidget* host,
         more->setToolTip(QCoreApplication::translate("LightAlbum", "展开其余 %1 个选项").arg(hidden));
         auto* menu = new QMenu(more);
         menu->setStyleSheet(QString::fromUtf8(
-            "QMenu{background:#0e130f;color:#d9e4dc;border:1px solid #26312a;"
+            "QMenu{background:%1;color:%2;border:1px solid %3;"
             "border-radius:10px;padding:4px;}"   // T9: 8->Radius::Ctl 10（QMenu 框；嵌套律 框10=项6+padding4 命中）
             "QMenu::item{padding:5px 18px;border-radius:6px;font-size:12px;}"   // T9: 5->Radius::Inset 6（§3.1 归并 5/6/7；font-size 串为豁免文件原位 T8 形态，不动）
-            "QMenu::item:selected{background:#1d2a22;color:#4fc08a;}"
-            "QMenu::item:disabled{color:#5a6b60;}"));
+            "QMenu::item:selected{background:%4;color:%5;}"
+            "QMenu::item:disabled{color:%6;}")
+            .arg(hex(panel()), hex(ink()), hex(line()),
+                 hex(card()), hex(emerald()), hex(faint())));
         const int menuCap = 120;   // 超大库保护：菜单最多列 120 项（QMenu 自带滚动，别塞爆）
         int listed = 0;
         for (int i = shown; i < list.size() && listed < menuCap; ++i, ++listed) {

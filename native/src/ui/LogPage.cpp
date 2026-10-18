@@ -76,7 +76,7 @@ void BarChart::paintEvent(QPaintEvent*)
     const int bw = (width() - pad * 2 - gap * (n - 1)) / n;
     if (bw <= 0) return;
 
-    p.setPen(QPen(Lumen::LINE, 1));
+    p.setPen(QPen(Lumen::line(), 1));
     p.drawLine(pad, baseY, width() - pad, baseY);
 
     QFont vf = Lumen::Type::mono();   // T8 §2.2：P30-C 等宽数字收编 mono()（10pt 粗→9.5pt 常规）
@@ -91,10 +91,10 @@ void BarChart::paintEvent(QPaintEvent*)
         if (h > 1) p.drawRoundedRect(QRect(x, y, bw, h), 4, 4);
         else p.drawRect(QRect(x, baseY - 1, bw, 1));   // 0 值细线占位
         // 数值（等宽）
-        p.setFont(vf); p.setPen(Lumen::INK);
+        p.setFont(vf); p.setPen(Lumen::ink());
         p.drawText(QRect(x, y - 16, bw, 14), Qt::AlignCenter | Qt::AlignBottom, QString::number(v));
         // 横轴标签
-        p.setFont(lf); p.setPen(Lumen::MUTED);
+        p.setFont(lf); p.setPen(Lumen::muted());
         p.drawText(QRect(x, baseY + 2, bw, 12), Qt::AlignCenter | Qt::AlignTop, labels_[i]);
     }
 }
@@ -134,8 +134,8 @@ void PieChart::paintEvent(QPaintEvent*)
         path.arcTo(QRectF(c.x() - R, c.y() - R, 2 * R, 2 * R), -90.0 + ang * 180.0 / M_PI,
                    (a2 - ang) * 180.0 / M_PI);
         path.closeSubpath();
-        QColor col = (i < colors_.size()) ? QColor(colors_[i]) : Lumen::EMERALD;
-        p.setBrush(col); p.setPen(QPen(Lumen::BG, 1.5));
+        QColor col = (i < colors_.size()) ? QColor(colors_[i]) : Lumen::emerald();
+        p.setBrush(col); p.setPen(QPen(Lumen::bg(), 1.5));
         p.drawPath(path);
         ang = a2;
     }
@@ -159,7 +159,7 @@ LogPage::LogPage(const QVector<Photo>* photos, QWidget* parent)
         "repeating-linear-gradient(0deg, rgba(255,255,255,0.02) 0 1px, transparent 1px 26px),"
         "repeating-linear-gradient(90deg, rgba(255,255,255,0.02) 0 1px, transparent 1px 26px),"
         "%1;border:none;}")
-        .arg(Lumen::hex(Lumen::BG)));
+        .arg(Lumen::hex(Lumen::bg())));
     outer->addWidget(scroll);
 
     auto* root = new QWidget(scroll);
@@ -174,11 +174,11 @@ LogPage::LogPage(const QVector<Photo>* photos, QWidget* parent)
     hl->setSpacing(Lumen::Space::S);
     auto* title = new QLabel(QCoreApplication::translate("LightAlbum", "摄影日志"), head);
     title->setFont(Lumen::Type::title(false));   // T8：页主标题 20pt 粗→T2 15pt（雅黑保持，ls 4.0 随档归零 §2.4）
-    title->setStyleSheet(QString::fromUtf8("color:%1;").arg(Lumen::hex(Lumen::INK)));
+    title->setStyleSheet(QString::fromUtf8("color:%1;").arg(Lumen::hex(Lumen::ink())));
     auto* sub = new QLabel(QString::fromUtf8(
         "基于全部作品的 EXIF 信息，统计你的拍摄参数偏好与创作节律。数据会替你说话。"), head);
     sub->setStyleSheet(QString::fromUtf8("color:%1;")
-        .arg(Lumen::hex(Lumen::MUTED))
+        .arg(Lumen::hex(Lumen::muted()))
         + Lumen::Type::css(Lumen::Type::Tier::Small));   // T8：12px=T5 原位
     sub->setWordWrap(true);
     hl->addWidget(title);
@@ -216,7 +216,7 @@ LogPage::LogPage(const QVector<Photo>* photos, QWidget* parent)
         + Lumen::Type::css(Lumen::Type::Tier::Small)   // T8：12px=T5 原位
         + QString::fromUtf8(
         "}QPushButton:hover{background:rgba(217,169,78,0.12);}"))
-        .arg(Lumen::hex(Lumen::GOLD)).arg(Lumen::Radius::Ctl));   // T9 C3: 8px->Radius::Ctl 10   // 描边 c19a4b→GOLD（§1.4 收编值就近归板，ΔRGB≤24 微亮合法化）
+        .arg(Lumen::hex(Lumen::gold())).arg(Lumen::Radius::Ctl));   // T9 C3: 8px->Radius::Ctl 10   // 描边 c19a4b→GOLD（§1.4 收编值就近归板，ΔRGB≤24 微亮合法化）
     tlb->addWidget(exportBtn_);
 
     rebuildFilterChips();
@@ -242,8 +242,8 @@ LogPage::LogPage(const QVector<Photo>* photos, QWidget* parent)
         "QLabel{background:%1;border:none;border-radius:%4px;"
         "padding:12px 16px;color:%2;font-family:Consolas,'SFMono-Regular',monospace;"
         "%3line-height:1.6;}")
-        .arg(Lumen::hex(Lumen::INSET),               // §1.7：0f1512→INSET
-             Lumen::hex(Lumen::INK))                 // 终端体 cfe6d8→INK（§1.7 承载面判例：UI 表面非照片面）
+        .arg(Lumen::hex(Lumen::inset()),               // §1.7：0f1512→INSET
+             Lumen::hex(Lumen::ink()))                 // 终端体 cfe6d8→INK（§1.7 承载面判例：UI 表面非照片面）
         .arg(Lumen::Type::css(Lumen::Type::Tier::Small))
         .arg(Lumen::Radius::Ctl));   // T9 C3: 8px->Radius::Ctl 10. T8：12px=T5 原位（终端面族留串，mono 收编判例见报告）
     lay->addWidget(insight_);
@@ -263,17 +263,17 @@ LogPage::LogPage(const QVector<Photo>* photos, QWidget* parent)
         card->setObjectName(QStringLiteral("logChartCard"));
         card->setStyleSheet(QString::fromUtf8(
             "#logChartCard{background:%1;border:none;border-radius:%2px;}")
-            .arg(Lumen::hex(Lumen::INSET)).arg(Lumen::Radius::Ctl));   // §1.7：0f1512→INSET
+            .arg(Lumen::hex(Lumen::inset())).arg(Lumen::Radius::Ctl));   // §1.7：0f1512→INSET
         auto* cl = new QVBoxLayout(card);
         cl->setContentsMargins(Lumen::Space::M, Lumen::Space::M, Lumen::Space::M, Lumen::Space::M);
         cl->setSpacing(Lumen::Space::S);
         auto* h = new QLabel(t, card);
         QFont hf = Lumen::Type::head();   // T8：卡标题 13pt 粗→T3 head 12pt（ls 2.0 随档归零 §2.4）
         h->setFont(hf); h->setStyleSheet(QString::fromUtf8("color:%1;")
-            .arg(Lumen::hex(Lumen::INK)));
+            .arg(Lumen::hex(Lumen::ink())));
         auto* hi = new QLabel(hint, card);
         hi->setStyleSheet(QString::fromUtf8("color:%1;")
-            .arg(Lumen::hex(Lumen::MUTED))
+            .arg(Lumen::hex(Lumen::muted()))
             + Lumen::Type::css(Lumen::Type::Tier::Small));   // T8：11px→T5(12px)
         cl->addWidget(h);
         cl->addWidget(hi);
@@ -290,7 +290,7 @@ LogPage::LogPage(const QVector<Photo>* photos, QWidget* parent)
     gearLegend_= new QLabel(root);
     gearLegend_->setWordWrap(true);
     gearLegend_->setStyleSheet(QString::fromUtf8("color:%1;")
-        .arg(Lumen::hex(Lumen::MUTED))
+        .arg(Lumen::hex(Lumen::muted()))
         + Lumen::Type::css(Lumen::Type::Tier::Small));   // T8：11px→T5(12px)
     gearLegend_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
     monthChart_= new BarChart(root);
@@ -308,7 +308,7 @@ LogPage::LogPage(const QVector<Photo>* photos, QWidget* parent)
     foot_ = new QLabel(root);
     foot_->setFont(Lumen::Type::mono());   // T8 §2.2：页脚等宽收编 mono()（原 QSS 11px→9.5pt≈13px）
     foot_->setStyleSheet(QString::fromUtf8("color:%1;")
-        .arg(Lumen::hex(Lumen::MUTED)));
+        .arg(Lumen::hex(Lumen::muted())));
     lay->addWidget(foot_);
 
     lay->addStretch(1);
@@ -331,9 +331,9 @@ void LogPage::rebuildFilterChips()
         "QPushButton:hover{color:%4;border-color:%5;}"
         "QPushButton:checked{background:%6;color:%7;border:1px solid %6;"
         "border-radius:999px;padding:0 14px;%9font-weight:bold;}")   // T8：两处 12px=T5 原位；700 归一 bold（§2.4）
-        .arg(Lumen::hex(Lumen::INSET), Lumen::hex(Lumen::MUTED), Lumen::hex(Lumen::LINE),
-             Lumen::hex(Lumen::INK), Lumen::hex(Lumen::FAINT),
-             Lumen::hex(Lumen::EMERALD), Lumen::hex(Lumen::PANEL))
+        .arg(Lumen::hex(Lumen::inset()), Lumen::hex(Lumen::muted()), Lumen::hex(Lumen::line()),
+             Lumen::hex(Lumen::ink()), Lumen::hex(Lumen::faint()),
+             Lumen::hex(Lumen::emerald()), Lumen::hex(Lumen::panel()))
         .arg(Lumen::Type::css(Lumen::Type::Tier::Small))
         .arg(Lumen::Type::css(Lumen::Type::Tier::Small));
 
@@ -492,7 +492,7 @@ void LogPage::recompute()
         if (i < 6) { gk.append(gv[i].first); gc.append(palette[i % palette.size()]); gv_.append(gv[i].second); }
         else other += gv[i].second;
     }
-    if (other > 0) { gk.append(QCoreApplication::translate("LightAlbum", "其他")); gc.append(Lumen::hex(Lumen::FAINT)); gv_.append(other); }
+    if (other > 0) { gk.append(QCoreApplication::translate("LightAlbum", "其他")); gc.append(Lumen::hex(Lumen::faint())); gv_.append(other); }
     gearChart_->setData(gk, gv_, gc);
     QString legendHtml;
     for (int i = 0; i < gk.size(); ++i)
@@ -532,14 +532,14 @@ void LogPage::recompute()
         kpiLbls[i]->setText(QStringLiteral(
             "<b style='font-family:Consolas,monospace;%5color:%4;'>%1</b><br>"
             "<span style='%6color:%3;'>%2</span>")   // T8：16px=T3 原位/11px→T5(12px)。mono 判例：富文本注不进 QFont，面族留串（见 T8 报告）
-            .arg(kpiV[i], kpiL[i], Lumen::hex(Lumen::MUTED),
+            .arg(kpiV[i], kpiL[i], Lumen::hex(Lumen::muted()),
                  Lumen::hex(Lumen::EMERALD_HI))   // §1.7：7fe6ac→EMERALD_HI
             .arg(Lumen::Type::css(Lumen::Type::Tier::Head))
             .arg(Lumen::Type::css(Lumen::Type::Tier::Small)));
         kpiLbls[i]->setStyleSheet(QString::fromUtf8(
             "QLabel{background:%1;border:none;border-radius:%2px;"
             "padding:9px 10px;}")
-            .arg(Lumen::hex(Lumen::INSET)).arg(Lumen::Radius::Ctl));        // §1.7：0f1512→INSET
+            .arg(Lumen::hex(Lumen::inset())).arg(Lumen::Radius::Ctl));        // §1.7：0f1512→INSET
     }
 
     // —— 洞察（终端风）——

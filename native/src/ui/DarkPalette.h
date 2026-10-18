@@ -1,5 +1,9 @@
 #pragma once
-// 「曜石·流明」深色主题 P11（与 ui/Theme.h token 同步：charcoal + 翡翠 + 金）
+// 「曜石·流明」深色主题 P11 → 2.41.0 四灯泛化：
+//   apply() 的角色映射不变，值改读活跃灯的 8 列 token 表（ui/Theme.h Lumen::lamp）。
+//   下面 8 枚 constexpr 不再是「实际发色」，而是 LA_A11Y_CONTRAST_QA 的 15 对对比度
+//   审计夹具（棘轮豁免文件，保留原值 = 老审计可复现），删除即门禁红。
+#include "Theme.h"
 #include <QApplication>
 #include <QPalette>
 #include <QColor>
@@ -14,24 +18,25 @@ inline constexpr QColor Line    = QColor(0x26, 0x31, 0x2a);   // 描边
 inline constexpr QColor Gold    = QColor(0xd9, 0xa9, 0x4e);   // 强调（金）
 inline constexpr QColor Emerald = QColor(0x4f, 0xc0, 0x8a);   // 主操作（翡翠）
 
-inline void apply(QApplication& app)
+inline void apply(QApplication& app, Lumen::Lamp l = Lumen::activeLamp())
 {
+    const Lumen::LampTokens& t = Lumen::lamp(l);
     QPalette pal;
-    pal.setColor(QPalette::Window,          Bg);
-    pal.setColor(QPalette::WindowText,      Ink);
-    pal.setColor(QPalette::Base,            Inset);
-    pal.setColor(QPalette::AlternateBase,   Card);
-    pal.setColor(QPalette::Text,            Ink);
-    pal.setColor(QPalette::Button,          Card);
-    pal.setColor(QPalette::ButtonText,      Ink);
-    pal.setColor(QPalette::ToolTipBase,     Card);
-    pal.setColor(QPalette::ToolTipText,     Ink);
-    pal.setColor(QPalette::BrightText,      Gold);
-    pal.setColor(QPalette::Highlight,       Gold);
-    pal.setColor(QPalette::HighlightedText, Bg);
-    pal.setColor(QPalette::PlaceholderText, Muted);
-    pal.setColor(QPalette::Disabled, QPalette::Text,      Muted);
-    pal.setColor(QPalette::Disabled, QPalette::WindowText, Muted);
+    pal.setColor(QPalette::Window,          t.bg);
+    pal.setColor(QPalette::WindowText,      t.ink);
+    pal.setColor(QPalette::Base,            t.inset);
+    pal.setColor(QPalette::AlternateBase,   t.surface);
+    pal.setColor(QPalette::Text,            t.ink);
+    pal.setColor(QPalette::Button,          t.surface);
+    pal.setColor(QPalette::ButtonText,      t.ink);
+    pal.setColor(QPalette::ToolTipBase,     t.surface);
+    pal.setColor(QPalette::ToolTipText,     t.ink);
+    pal.setColor(QPalette::BrightText,      t.gold);
+    pal.setColor(QPalette::Highlight,       t.gold);
+    pal.setColor(QPalette::HighlightedText, t.bg);
+    pal.setColor(QPalette::PlaceholderText, t.muted);
+    pal.setColor(QPalette::Disabled, QPalette::Text,      t.muted);
+    pal.setColor(QPalette::Disabled, QPalette::WindowText, t.muted);
     app.setPalette(pal);
 }
 } // namespace Dark

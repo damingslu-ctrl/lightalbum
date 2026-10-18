@@ -76,20 +76,20 @@ static QString cullChipCss(bool checked)
         return QString::fromUtf8(
             "QPushButton{background:%1;border:1px solid %2;border-radius:999px;"
             "padding:5px 14px;color:%3;%4font-weight:bold;}")
-            .arg(Lumen::hex(Lumen::CARD_HI))
-            .arg(Lumen::hex(Lumen::EMERALD))
-            .arg(Lumen::hex(Lumen::EMERALD))
+            .arg(Lumen::hex(Lumen::cardHi()))
+            .arg(Lumen::hex(Lumen::emerald()))
+            .arg(Lumen::hex(Lumen::emerald()))
             .arg(Lumen::Type::css(Lumen::Type::Tier::Small));   // T8：12px=T5 原位
     return QString::fromUtf8(
         "QPushButton{background:%1;border:1px solid %2;border-radius:999px;"
         "padding:5px 14px;color:%3;%4}"
         "QPushButton:hover{border-color:%5;color:%6;}")
-        .arg(Lumen::hex(Lumen::CARD))
-        .arg(Lumen::hex(Lumen::LINE))
-        .arg(Lumen::hex(Lumen::MUTED))
+        .arg(Lumen::hex(Lumen::card()))
+        .arg(Lumen::hex(Lumen::line()))
+        .arg(Lumen::hex(Lumen::muted()))
         .arg(Lumen::Type::css(Lumen::Type::Tier::Small))        // T8：12px=T5 原位
-        .arg(Lumen::hex(Lumen::EMERALD))
-        .arg(Lumen::hex(Lumen::INK));
+        .arg(Lumen::hex(Lumen::emerald()))
+        .arg(Lumen::hex(Lumen::ink()));
 }
 } // namespace
 
@@ -274,9 +274,9 @@ void CullCardDelegate::paint(QPainter* p, const QStyleOptionViewItem& o,
     // 标记徽标（单字，避免 emoji 字体缺失）：喜/略/锁
     if (!mark.isEmpty()) {
         QString ch, col;
-        if (mark == QStringLiteral("like"))      { ch = QCoreApplication::translate("LightAlbum", "喜"); col = Lumen::hex(Lumen::EMERALD); }
+        if (mark == QStringLiteral("like"))      { ch = QCoreApplication::translate("LightAlbum", "喜"); col = Lumen::hex(Lumen::emerald()); }
         else if (mark == QStringLiteral("skip")) { ch = QCoreApplication::translate("LightAlbum", "略"); col = Lumen::hex(Lumen::CORAL); }
-        else { ch = QCoreApplication::translate("LightAlbum", "锁"); col = Lumen::hex(Lumen::GOLD); }
+        else { ch = QCoreApplication::translate("LightAlbum", "锁"); col = Lumen::hex(Lumen::gold()); }
         QRect br(imgR.x() + 6, imgR.y() + 6, 22, 22);
         p->setPen(Qt::NoPen);
         p->setBrush(QColor(0x06, 0x08, 0x06, 210));
@@ -459,8 +459,8 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
         auto* lb = new QLabel(QString::fromUtf8(
             "<b style='%4color:%1;'>—</b><br>"
             "<span style='%5color:%2;'>%3</span>")
-            .arg(Lumen::hex(Lumen::INK))
-            .arg(Lumen::hex(Lumen::MUTED))
+            .arg(Lumen::hex(Lumen::ink()))
+            .arg(Lumen::hex(Lumen::muted()))
             .arg(l)
             .arg(Lumen::Type::css(Lumen::Type::Tier::Head))    // T8：15px 主数值就近归 T3(16px)
             .arg(Lumen::Type::css(Lumen::Type::Tier::Small)),  // T8：11px 副标签归 T5(12px)
@@ -468,7 +468,7 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
         lb->setAlignment(Qt::AlignCenter);
         lb->setMinimumWidth(80);
         lb->setStyleSheet(QString::fromUtf8("QLabel{background:%1;border:none;"
-            "border-radius:10px;padding:8px 14px;}").arg(Lumen::hex(Lumen::CARD)));
+            "border-radius:10px;padding:8px 14px;}").arg(Lumen::hex(Lumen::card())));
         kpis_.append(lb);
         kl->addWidget(lb);
     }
@@ -488,7 +488,7 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     auto* sl = new QHBoxLayout(stepWrap);
     sl->setContentsMargins(0, 0, 0, 0); sl->setSpacing(Lumen::Space::S);
     auto* stepLbl = new QLabel(QCoreApplication::translate("LightAlbum", "目标张数"), bar);
-    stepLbl->setStyleSheet(QStringLiteral("color:%1;").arg(Lumen::hex(Lumen::MUTED)));
+    stepLbl->setStyleSheet(QStringLiteral("color:%1;").arg(Lumen::hex(Lumen::muted())));
     auto* minus = new QPushButton(QString::fromUtf8("−"), bar);
     auto* plus  = new QPushButton(QString::fromUtf8("+"), bar);
     topNSpin_ = new QSpinBox(bar);
@@ -499,9 +499,9 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     minus->setFixedWidth(26); plus->setFixedWidth(26);
     minus->setStyleSheet(QString::fromUtf8("QPushButton{background:%1;border:1px solid %2;"
         "border-radius:%4px;color:%3;}")   // T9：7→Radius::Inset 6（§3.1 归并 5/6/7）
-        .arg(Lumen::hex(Lumen::CARD))
-        .arg(Lumen::hex(Lumen::LINE))
-        .arg(Lumen::hex(Lumen::INK))
+        .arg(Lumen::hex(Lumen::card()))
+        .arg(Lumen::hex(Lumen::line()))
+        .arg(Lumen::hex(Lumen::ink()))
         .arg(Lumen::Radius::Inset));
     plus->setStyleSheet(minus->styleSheet());
     sl->addWidget(stepLbl); sl->addWidget(minus); sl->addWidget(topNSpin_); sl->addWidget(plus);
@@ -517,13 +517,13 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     markCombo_->setStyleSheet(Lumen::input());
 
     progress_ = new QLabel(QCoreApplication::translate("LightAlbum", "基于本地缩略图 · 零云端 · 失败即放行"), bar);
-    progress_->setStyleSheet(QStringLiteral("color:%1;").arg(Lumen::hex(Lumen::MUTED)));
+    progress_->setStyleSheet(QStringLiteral("color:%1;").arg(Lumen::hex(Lumen::muted())));
 
     bl->addWidget(runBtn_);
 
     // P25 对决模式入口（分析完成后可点；空结果禁用）
     duelBtn_ = new QPushButton(QCoreApplication::translate("LightAlbum", "开始对决"), bar);
-    duelBtn_->setStyleSheet(Lumen::btnOutline(Lumen::GOLD));
+    duelBtn_->setStyleSheet(Lumen::btnOutline(Lumen::gold()));
     duelBtn_->setEnabled(false);
     connect(duelBtn_, &QPushButton::clicked, this, [this]{ duelEnterMode(); });
     bl->addWidget(duelBtn_);
@@ -555,7 +555,7 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     sbl->setSpacing(Lumen::Space::M);
     selBar_->setObjectName(QStringLiteral("cullSelBar"));
     selBar_->setStyleSheet(QStringLiteral("#cullSelBar{background:%1;border:none;"
-        "border-radius:10px;}").arg(Lumen::hex(Lumen::INSET)));
+        "border-radius:10px;}").arg(Lumen::hex(Lumen::inset())));
     selBar_->setVisible(false);
     selThumb_ = new QLabel(selBar_);
     selThumb_->setFixedSize(56, 56);
@@ -564,7 +564,7 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     selThumb_->setAlignment(Qt::AlignCenter);
     selName_ = new QLabel(selBar_);
     selName_->setStyleSheet(QStringLiteral("color:%1;%2")
-        .arg(Lumen::hex(Lumen::INK))
+        .arg(Lumen::hex(Lumen::ink()))
         .arg(Lumen::Type::css(Lumen::Type::Tier::Small)));   // T8：12px=T5 原位
     auto mkMark = [this](const QString& t, const QString& m, const QString& css){
         auto* b = new QPushButton(t, selBar_);
@@ -576,13 +576,13 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     // unlock 原是中性幽灵（LINE 边 + MUTED 字）→ btnGhost(MUTED)（btnOutline(LINE)
     // 会把文字洗成描边色不可读，保语义优先——brief Step 3「keep semantics」）
     likeBtn_  = mkMark(QCoreApplication::translate("LightAlbum", "喜欢"), QStringLiteral("like"),
-        Lumen::btnOutline(Lumen::EMERALD));
+        Lumen::btnOutline(Lumen::emerald()));
     skipBtn_  = mkMark(QCoreApplication::translate("LightAlbum", "略过"), QStringLiteral("skip"),
         Lumen::btnOutline(Lumen::CORAL));
     lockBtn_  = mkMark(QCoreApplication::translate("LightAlbum", "锁定"), QStringLiteral("lock"),
-        Lumen::btnOutline(Lumen::GOLD));
+        Lumen::btnOutline(Lumen::gold()));
     unlockBtn_ = mkMark(QCoreApplication::translate("LightAlbum", "解除"), QString(),
-        Lumen::btnGhost(Lumen::MUTED));
+        Lumen::btnGhost(Lumen::muted()));
     sbl->addWidget(selThumb_);
     sbl->addWidget(selName_, 1);
     sbl->addWidget(likeBtn_); sbl->addWidget(skipBtn_); sbl->addWidget(lockBtn_); sbl->addWidget(unlockBtn_);
@@ -593,13 +593,13 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     lockFrame_->setFrameShape(QFrame::StyledPanel);
     lockFrame_->setObjectName(QStringLiteral("cullLockFrame"));
     lockFrame_->setStyleSheet(QStringLiteral("#cullLockFrame{background:%1;border:none;border-radius:%2px;}")
-        .arg(Lumen::hex(Lumen::INSET))
+        .arg(Lumen::hex(Lumen::inset()))
         .arg(Lumen::Radius::Card));   // T9：12→Radius::Card 14（§3.1 归并 12/14/16）
     auto* ll = new QVBoxLayout(lockFrame_);
     ll->setContentsMargins(Lumen::Space::M, Lumen::Space::M, Lumen::Space::M, Lumen::Space::M); ll->setSpacing(8);
     lockTitle_ = new QLabel(QCoreApplication::translate("LightAlbum", "锁定区"), lockFrame_);
     lockTitle_->setStyleSheet(QStringLiteral("color:%1;font-weight:bold;%2")
-        .arg(Lumen::hex(Lumen::GOLD))
+        .arg(Lumen::hex(Lumen::gold()))
         .arg(Lumen::Type::css(Lumen::Type::Tier::Body)));   // T8：13px=T4 原位（区块粗体留串）
     ll->addWidget(lockTitle_);
     lockList_ = new QListWidget(lockFrame_);
@@ -626,7 +626,7 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     view_->setSelectionMode(QAbstractItemView::SingleSelection);
     view_->setStyleSheet(QStringLiteral("QListView{background:%1;border:none;"
         "border-radius:%2px;} QListView::item:selected{background:transparent;}")
-        .arg(Lumen::hex(Lumen::PANEL))
+        .arg(Lumen::hex(Lumen::panel()))
         .arg(Lumen::Radius::Card));   // T9：12→Radius::Card 14
     model_ = new CullModel(this);
     proxy_ = new CullProxy(this);
@@ -641,7 +641,7 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
         "尚无分析结果\n\n导入照片后点击「开始分析」\n基于本地缩略图打分 · 零云端 · 失败即放行"), this);
     emptyHint->setAlignment(Qt::AlignCenter);
     emptyHint->setStyleSheet(QStringLiteral("QLabel{color:%1;%2background:transparent;}")
-        .arg(Lumen::hex(Lumen::MUTED))
+        .arg(Lumen::hex(Lumen::muted()))
         .arg(Lumen::Type::css(Lumen::Type::Tier::Body)));   // T8：13px=T4 原位
     gridStack_->addWidget(emptyHint);   // 0
     gridStack_->addWidget(view_);       // 1
@@ -654,7 +654,7 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     duelFrame->setObjectName(QStringLiteral("cullDuelFrame"));
     duelFrame->setStyleSheet(QStringLiteral(
         "#cullDuelFrame{background:%1;border:none;border-radius:%2px;}")
-        .arg(Lumen::hex(Lumen::PANEL))
+        .arg(Lumen::hex(Lumen::panel()))
         .arg(Lumen::Radius::Card));   // T9：12→Radius::Card 14
     duel_ = duelFrame;
     duel_->setFocusPolicy(Qt::StrongFocus);
@@ -665,10 +665,10 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     hrow->setSpacing(Lumen::Space::M);
     duelHead_ = new QLabel(duel_);
     duelHead_->setStyleSheet(QStringLiteral("color:%1;%2border:none;background:transparent;")
-        .arg(Lumen::hex(Lumen::MUTED))
+        .arg(Lumen::hex(Lumen::muted()))
         .arg(Lumen::Type::css(Lumen::Type::Tier::Small)));   // T8：12px=T5 原位
     duelBackBtn_ = new QPushButton(QCoreApplication::translate("LightAlbum", "返回总览 Esc"), duel_);
-    duelBackBtn_->setStyleSheet(Lumen::btnGhost(Lumen::MUTED));
+    duelBackBtn_->setStyleSheet(Lumen::btnGhost(Lumen::muted()));
     hrow->addWidget(duelHead_, 1);
     hrow->addWidget(duelBackBtn_);
     dv->addLayout(hrow);
@@ -687,10 +687,10 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
         "QLabel{color:%1;border:1px solid rgba(%2,%3,%4,.45);border-radius:%6;"
         "font-weight:bold;%5"
         "min-width:40px;min-height:40px;background:transparent;}")
-        .arg(Lumen::hex(Lumen::GOLD))
-        .arg(Lumen::GOLD.red())
-        .arg(Lumen::GOLD.green())
-        .arg(Lumen::GOLD.blue())
+        .arg(Lumen::hex(Lumen::gold()))
+        .arg(Lumen::gold().red())
+        .arg(Lumen::gold().green())
+        .arg(Lumen::gold().blue())
         .arg(Lumen::Type::css(Lumen::Type::Tier::Head))   // T8：Georgia 14px → T3 head
         .arg(Lumen::Radius::Pill));                       // T9：22px→999px 唯一胶囊来源
     mid->addWidget(paneL_, 1);
@@ -702,7 +702,7 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     brow->setSpacing(Lumen::Space::M);
     auto mkDuelBtn = [this](const QString& t, std::function<void()> fn) {
         auto* b = new QPushButton(t, duel_);
-        b->setStyleSheet(Lumen::btnGhost(Lumen::MUTED));
+        b->setStyleSheet(Lumen::btnGhost(Lumen::muted()));
         connect(b, &QPushButton::clicked, this, fn);
         return b;
     };
@@ -713,7 +713,7 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     auto* hint = new QLabel(
         QCoreApplication::translate("LightAlbum", "引擎按分预选（金框）· 败者自动标「略过」· 幸存者留用"), duel_);
     hint->setStyleSheet(QString::fromUtf8("color:%1;%2border:none;background:transparent;")
-        .arg(Lumen::hex(Lumen::MUTED))
+        .arg(Lumen::hex(Lumen::muted()))
         .arg(Lumen::Type::css(Lumen::Type::Tier::Small)));   // T8：11px→T5(12px)
     brow->addStretch(1);
     brow->addWidget(hint);
@@ -730,7 +730,7 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     filmScroll_->setWidgetResizable(true);
     filmScroll_->setFixedHeight(104);
     filmScroll_->setStyleSheet(QStringLiteral("QScrollArea{background:%1;border:none;"
-        "border-radius:%2px;}").arg(Lumen::hex(Lumen::PANEL))
+        "border-radius:%2px;}").arg(Lumen::hex(Lumen::panel()))
         .arg(Lumen::Radius::Card));   // T9：12→Radius::Card 14
     filmRow_ = new QWidget(filmScroll_);
     filmRow_->setLayout(new QHBoxLayout);
@@ -748,18 +748,18 @@ CullPage::CullPage(const QVector<Photo>* photos, const QString& thumbsDir, QWidg
     sv->setSpacing(12);
     auto* rt = new QLabel(QCoreApplication::translate("LightAlbum", "审美档案"), side);
     rt->setStyleSheet(QStringLiteral("color:%1;font-weight:bold;%2")
-        .arg(Lumen::hex(Lumen::INK))
+        .arg(Lumen::hex(Lumen::ink()))
         .arg(Lumen::Type::css(Lumen::Type::Tier::Body)));   // T8：14px→T4(13px) 就近
     radar_ = new RadarWidget(side);
     radar_->setFixedSize(300, 320);
     radarNote_ = new QLabel(side);
     radarNote_->setWordWrap(true);
     radarNote_->setStyleSheet(QStringLiteral("color:%1;%2")
-        .arg(Lumen::hex(Lumen::MUTED))
+        .arg(Lumen::hex(Lumen::muted()))
         .arg(Lumen::Type::css(Lumen::Type::Tier::Small)));   // T8：11px→T5(12px)
     radarCount_ = new QLabel(side);
     radarCount_->setStyleSheet(QStringLiteral("color:%1;%2")
-        .arg(Lumen::hex(Lumen::GOLD))
+        .arg(Lumen::hex(Lumen::gold()))
         .arg(Lumen::Type::css(Lumen::Type::Tier::Small)));   // T8：11px→T5(12px)
     sv->addWidget(rt);
     sv->addWidget(radar_, 0, Qt::AlignHCenter);
@@ -788,9 +788,9 @@ void CullPage::setKpi(int idx, const QString& v, const QString& label)
     kpis_[idx]->setText(QString::fromUtf8(
         "<b style='%5color:%1;'>%2</b><br>"
         "<span style='%6color:%3;'>%4</span>")
-        .arg(Lumen::hex(Lumen::INK))
+        .arg(Lumen::hex(Lumen::ink()))
         .arg(v)
-        .arg(Lumen::hex(Lumen::MUTED))
+        .arg(Lumen::hex(Lumen::muted()))
         .arg(label)
         .arg(Lumen::Type::css(Lumen::Type::Tier::Head))    // T8：15px 主数值就近归 T3(16px)
         .arg(Lumen::Type::css(Lumen::Type::Tier::Small)));   // T8：11px→T5(12px)
@@ -925,7 +925,7 @@ void CullPage::rebuildFilmstrip()
         auto* hint = new QLabel(QCoreApplication::translate("LightAlbum", "保留作品会出现在这条胶片 · 选中后点 ♥/锁"),
                                 filmRow_);
         hint->setStyleSheet(QString::fromUtf8("color:%1;%2")
-            .arg(Lumen::hex(Lumen::MUTED))
+            .arg(Lumen::hex(Lumen::muted()))
             .arg(Lumen::Type::css(Lumen::Type::Tier::Small)));   // T8：11px→T5(12px)
         fl->addWidget(hint);
         return;
@@ -1341,7 +1341,7 @@ void CullPage::runDuelQa(const QString& png)
     const bool saveOk = img.save(png);
     std::fprintf(stderr, "  duelSize=920x580 saveOk=%d\n", int(saveOk));
     std::fflush(stderr);
-    long gold = 0;                            // 金（Lumen::GOLD）：引擎倾向金框/徽章/分条
+    long gold = 0;                            // 金（Lumen::gold()）：引擎倾向金框/徽章/分条
     for (int y = 0; y < img.height(); y += 2) {
         const QRgb* row = reinterpret_cast<const QRgb*>(img.constScanLine(y));
         for (int x = 0; x < img.width(); x += 2) {

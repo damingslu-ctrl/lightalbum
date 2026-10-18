@@ -52,7 +52,7 @@ DedupDialog::DedupDialog(const QVector<Photo>* photos, const QString& thumbsDir,
 
     summary_ = new QLabel(this);
     summary_->setStyleSheet(QString::fromUtf8("color:%1;%2")
-        .arg(Lumen::hex(Lumen::MUTED))
+        .arg(Lumen::hex(Lumen::muted()))
         .arg(Lumen::Type::css(Lumen::Type::Tier::Body)));   // T8：13px=T4 原位
     root->addWidget(summary_);
 
@@ -61,7 +61,7 @@ DedupDialog::DedupDialog(const QVector<Photo>* photos, const QString& thumbsDir,
     // §1.7：滚动区盘底（原值 060806） 即 BG token 值字面量→归引用；私有描边 1c2620→LINE（回家，微亮授权内）
     sa->setStyleSheet(QString::fromUtf8(
         "background:%1;border:1px solid %2;border-radius:10px;")
-        .arg(Lumen::hex(Lumen::BG), Lumen::hex(Lumen::LINE)));
+        .arg(Lumen::hex(Lumen::bg()), Lumen::hex(Lumen::line())));
     auto* list = new QWidget(sa);
     listLay_ = new QVBoxLayout(list);
     listLay_->setContentsMargins(12, 12, 12, 12);
@@ -177,7 +177,7 @@ void DedupDialog::buildGroup(const DupGroup& g, QVBoxLayout* parent)
     // §1.7：组卡内嵌底（原值 0e1410） 即 INSET token 值字面量→归引用；描边 1c2620→LINE（回家）
     w->setStyleSheet(QString::fromUtf8(
         "background:%1;border:1px solid %2;border-radius:10px;")
-        .arg(Lumen::hex(Lumen::INSET), Lumen::hex(Lumen::LINE)));
+        .arg(Lumen::hex(Lumen::inset()), Lumen::hex(Lumen::line())));
     auto* lay = new QHBoxLayout(w);
     lay->setContentsMargins(Lumen::Space::M, Lumen::Space::M, Lumen::Space::M, Lumen::Space::M);
     lay->setSpacing(12);
@@ -192,7 +192,7 @@ void DedupDialog::buildGroup(const DupGroup& g, QVBoxLayout* parent)
     col->setSpacing(Lumen::Space::S);
     auto* reason = new QLabel(g.reason, w);
     reason->setStyleSheet(QStringLiteral("color:%1;%2")
-        .arg(Lumen::hex(Lumen::INK))   // §1.7：抄写盘文字（原值 d9e4dc） → INK（归并，色微亮）
+        .arg(Lumen::hex(Lumen::ink()))   // §1.7：抄写盘文字（原值 d9e4dc） → INK（归并，色微亮）
         .arg(Lumen::Type::css(Lumen::Type::Tier::Small)));   // T8：12px=T5 原位
     col->addWidget(reason);
 

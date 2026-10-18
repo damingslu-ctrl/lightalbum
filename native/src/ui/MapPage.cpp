@@ -37,7 +37,7 @@ MapPage::MapPage(const QVector<Photo>* photos, const QString& thumbsDir,
 
     auto* bar = new QWidget(left);
     bar->setStyleSheet(QString::fromUtf8("background:%1;border-bottom:1px solid %2;")
-        .arg(Lumen::hex(Lumen::PANEL), Lumen::hex(Lumen::LINE)));
+        .arg(Lumen::hex(Lumen::panel()), Lumen::hex(Lumen::line())));
     auto* bl = new QHBoxLayout(bar);
     bl->setContentsMargins(16, 8, 16, 8);
 
@@ -54,7 +54,7 @@ MapPage::MapPage(const QVector<Photo>* photos, const QString& thumbsDir,
     recenterBtn_ = new QPushButton(QString::fromUtf8("\u2302 \u56de\u5230\u4e2d\u56fd"), bar);
     recenterBtn_->setCursor(Qt::PointingHandCursor);
     recenterBtn_->setToolTip(QCoreApplication::translate("LightAlbum", "回到默认视角：缩放归 1、中国居中"));
-    recenterBtn_->setStyleSheet(Lumen::btnGhost(Lumen::EMERALD));
+    recenterBtn_->setStyleSheet(Lumen::btnGhost(Lumen::emerald()));
     connect(recenterBtn_, &QPushButton::clicked, this, &MapPage::onRecenter);
     bl->addWidget(recenterBtn_);
     bl->addStretch(1);
@@ -62,7 +62,7 @@ MapPage::MapPage(const QVector<Photo>* photos, const QString& thumbsDir,
     relocBtn_ = new QPushButton(QCoreApplication::translate("LightAlbum", "◎ 重新定位"), bar);
     relocBtn_->setCursor(Qt::PointingHandCursor);
     relocBtn_->setToolTip(QCoreApplication::translate("LightAlbum", "设置金色航线的起点（我的位置）"));
-    relocBtn_->setStyleSheet(Lumen::btnGhost(Lumen::EMERALD));
+    relocBtn_->setStyleSheet(Lumen::btnGhost(Lumen::emerald()));
     bl->addWidget(relocBtn_);
     // A 方向：足迹层三态开关（光点/轨迹/热力）。默认光点 → 零回归。
     // 铁律：三串必须以 translate() 字面量直调——经 lambda 形参传入会让 lupdate
@@ -71,9 +71,9 @@ MapPage::MapPage(const QVector<Photo>* photos, const QString& thumbsDir,
     footLayerGroup_->setExclusive(true);
     // 幽灵底 + checked 态翡翠点亮：btnGhost 无 checked 语义，:checked 追加串走 token
     //（T4 先例：可勾选按钮保留 btnGhost() + 追加 :checked 规则）
-    const QString segStyle = Lumen::btnGhost(Lumen::MUTED) + QStringLiteral(
+    const QString segStyle = Lumen::btnGhost(Lumen::muted()) + QStringLiteral(
         "QPushButton:checked{background:%1;border-color:%2;color:%2;}")
-        .arg(Lumen::hex(Lumen::CARD_HI), Lumen::hex(Lumen::EMERALD));
+        .arg(Lumen::hex(Lumen::cardHi()), Lumen::hex(Lumen::emerald()));
     auto mkSeg = [&](const QString& label, int mode) {
         QPushButton* b = new QPushButton(label, bar);
         b->setCheckable(true);
@@ -95,7 +95,7 @@ MapPage::MapPage(const QVector<Photo>* photos, const QString& thumbsDir,
     trackPlayBtn_->setEnabled(false);
     trackPlayBtn_->setToolTip(QCoreApplication::translate(
         "LightAlbum", "沿轨迹按拍摄日期依次播放足迹（需先切到「轨迹」层）"));
-    trackPlayBtn_->setStyleSheet(Lumen::btnGhost(Lumen::EMERALD));
+    trackPlayBtn_->setStyleSheet(Lumen::btnGhost(Lumen::emerald()));
     connect(trackPlayBtn_, &QPushButton::clicked, this, [this] {
         if (view_->trackPlaying()) view_->stopTrackPlayback();
         else                       view_->startTrackPlayback();
@@ -116,13 +116,13 @@ MapPage::MapPage(const QVector<Photo>* photos, const QString& thumbsDir,
         "padding:4px 8px;color:%3;min-width:86px;}"
         "QComboBox QAbstractItemView{background:%4;color:%5;"
         "selection-background-color:%6;selection-color:%7;}")
-        .arg(Lumen::hex(Lumen::CARD))      // %1 盘底（token 值字面量归引用）
-        .arg(Lumen::hex(Lumen::LINE))      // %2
-        .arg(Lumen::hex(Lumen::INK))       // %3（原抄写盘文字 → INK，spec §1.7）
-        .arg(Lumen::hex(Lumen::PANEL))     // %4 下拉盘（原菜单底 → PANEL，spec §1.7）
-        .arg(Lumen::hex(Lumen::INK))       // %5
-        .arg(Lumen::hex(Lumen::CARD_HI))   // %6 选中底（原菜单选中底 → CARD_HI：选中态归宿）
-        .arg(Lumen::hex(Lumen::EMERALD))    // %7
+        .arg(Lumen::hex(Lumen::card()))      // %1 盘底（token 值字面量归引用）
+        .arg(Lumen::hex(Lumen::line()))      // %2
+        .arg(Lumen::hex(Lumen::ink()))       // %3（原抄写盘文字 → INK，spec §1.7）
+        .arg(Lumen::hex(Lumen::panel()))     // %4 下拉盘（原菜单底 → PANEL，spec §1.7）
+        .arg(Lumen::hex(Lumen::ink()))       // %5
+        .arg(Lumen::hex(Lumen::cardHi()))   // %6 选中底（原菜单选中底 → CARD_HI：选中态归宿）
+        .arg(Lumen::hex(Lumen::emerald()))    // %7
         .arg(Lumen::Radius::Ctl));          // T9 C3: 9->Radius::Ctl 10（%8 尾插，序号升序绑定安全）
     connect(yearBox_, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [this](int) {
@@ -145,13 +145,13 @@ MapPage::MapPage(const QVector<Photo>* photos, const QString& thumbsDir,
         "padding:4px 8px;color:%3;min-width:64px;}"
         "QComboBox QAbstractItemView{background:%4;color:%5;"
         "selection-background-color:%6;selection-color:%7;}")
-        .arg(Lumen::hex(Lumen::CARD))
-        .arg(Lumen::hex(Lumen::LINE))
-        .arg(Lumen::hex(Lumen::INK))
-        .arg(Lumen::hex(Lumen::PANEL))
-        .arg(Lumen::hex(Lumen::INK))
-        .arg(Lumen::hex(Lumen::CARD_HI))
-        .arg(Lumen::hex(Lumen::EMERALD))
+        .arg(Lumen::hex(Lumen::card()))
+        .arg(Lumen::hex(Lumen::line()))
+        .arg(Lumen::hex(Lumen::ink()))
+        .arg(Lumen::hex(Lumen::panel()))
+        .arg(Lumen::hex(Lumen::ink()))
+        .arg(Lumen::hex(Lumen::cardHi()))
+        .arg(Lumen::hex(Lumen::emerald()))
         .arg(Lumen::Radius::Ctl));   // T9 C3: 9->Radius::Ctl 10（%8 尾插）
     connect(heatRampBox_, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [this](int) {
@@ -173,27 +173,27 @@ MapPage::MapPage(const QVector<Photo>* photos, const QString& thumbsDir,
     stats_->setFixedWidth(272);
     stats_->setStyleSheet(QString::fromUtf8(
         "QWidget{background:%1;border-left:1px solid %2;}")
-        .arg(Lumen::hex(Lumen::PANEL),                        // T7 裁定：0a0e0a→PANEL（ΔRGB≤8 不可辨，侧栏=面板语义）
-             Lumen::hex(Lumen::LINE)));
+        .arg(Lumen::hex(Lumen::panel()),                        // T7 裁定：0a0e0a→PANEL（ΔRGB≤8 不可辨，侧栏=面板语义）
+             Lumen::hex(Lumen::line())));
     auto* sl = new QVBoxLayout(stats_);
     sl->setContentsMargins(Lumen::Space::L, Lumen::Space::L, Lumen::Space::L, Lumen::Space::L);
     sl->setSpacing(12);
 
     auto* head = new QLabel(QCoreApplication::translate("LightAlbum", "区域统计"), stats_);
     head->setFont(Lumen::Type::head());   // T8：14pt 粗体区块标题归 T3(12pt 粗)，ls 3.0 随档归零 §2.4
-    head->setStyleSheet(QStringLiteral("color:%1;").arg(Lumen::hex(Lumen::INK)));
+    head->setStyleSheet(QStringLiteral("color:%1;").arg(Lumen::hex(Lumen::ink())));
     sl->addWidget(head);
 
     statsTitle_ = new QLabel(QCoreApplication::translate("LightAlbum", "尚未选择区域"), stats_);
     statsTitle_->setFont(Lumen::Type::head());   // T8：13pt 粗体归 T3(12pt 粗)
-    statsTitle_->setStyleSheet(QStringLiteral("color:%1;").arg(Lumen::hex(Lumen::GOLD)));
+    statsTitle_->setStyleSheet(QStringLiteral("color:%1;").arg(Lumen::hex(Lumen::gold())));
     statsTitle_->setWordWrap(true);
     sl->addWidget(statsTitle_);
 
     statsBody_ = new QLabel(QStringLiteral(
         "点击地图上的大区或省份，查看该地作品统计，并可一键在图库筛选。"), stats_);
     statsBody_->setStyleSheet(QStringLiteral("color:%1;")
-        .arg(Lumen::hex(Lumen::MUTED))
+        .arg(Lumen::hex(Lumen::muted()))
         + Lumen::Type::css(Lumen::Type::Tier::Small));   // T8：12px=T5 原位
     statsBody_->setWordWrap(true);
     sl->addWidget(statsBody_);
@@ -209,20 +209,20 @@ MapPage::MapPage(const QVector<Photo>* photos, const QString& thumbsDir,
     playBtn_->setCursor(Qt::PointingHandCursor);
     playBtn_->setToolTip(QCoreApplication::translate("LightAlbum", "用爆炸弹层播放该省/国家/大区的全部作品（最多 10 张）"));
     playBtn_->setEnabled(false);
-    playBtn_->setStyleSheet(Lumen::btnGhost(Lumen::EMERALD));
+    playBtn_->setStyleSheet(Lumen::btnGhost(Lumen::emerald()));
     connect(playBtn_, &QPushButton::clicked, this, &MapPage::onPlayAll);
     sl->addWidget(playBtn_);
 
     // P16.4.2 航线基点提示（数据事实：默认上海，可经「重新定位」修改）
     homeHint_ = new QLabel(stats_);
     homeHint_->setStyleSheet(QStringLiteral("color:%1;")
-        .arg(Lumen::hex(Lumen::MUTED))
+        .arg(Lumen::hex(Lumen::muted()))
         + Lumen::Type::css(Lumen::Type::Tier::Small));   // T8：11px→T5(12px)
     homeHint_->setWordWrap(true);
     homeHint_->setText(QString::fromUtf8(
         "<span style='color:%1;'>✈ 航线基点：%2</span><br>"
         "金色航线从这里出发，连向每一处拍摄地；点上方「◎ 重新定位」可更改。")
-        .arg(Lumen::hex(Lumen::GOLD), homeName_));
+        .arg(Lumen::hex(Lumen::gold()), homeName_));
     sl->addWidget(homeHint_);
     sl->addStretch(1);
     lay->addWidget(stats_);
@@ -392,7 +392,7 @@ void MapPage::onPicked(const QString& key, const QString& label, bool isProvince
         : QCoreApplication::translate("LightAlbum", "该大区作品：<b>%1</b> 幅").arg(match);
     if (match == 0)
         body += QCoreApplication::translate("LightAlbum", "<br><span style='color:%1;'>（该区域暂无 GPS 作品，可导入带 GPS 的照片）</span>")
-                    .arg(Lumen::hex(Lumen::MUTED));
+                    .arg(Lumen::hex(Lumen::muted()));
     statsBody_->setText(body);
     viewBtn_->setEnabled(true);
     playBtn_->setEnabled(match > 0);
@@ -459,7 +459,7 @@ void MapPage::onCountryPicked(const QString& name, const QStringList& paths)
     body += QCoreApplication::translate("LightAlbum", "该国家/地区 GPS 作品：<b>%1</b> 幅").arg(paths.size());
     if (paths.isEmpty())
         body += QCoreApplication::translate("LightAlbum", "<br><span style='color:%1;'>（该国暂无 GPS 作品）</span>")
-                    .arg(Lumen::hex(Lumen::MUTED));
+                    .arg(Lumen::hex(Lumen::muted()));
     statsBody_->setText(body);
     viewBtn_->setEnabled(false);
     lastCountryPaths_ = paths;          // 供「▶ 播放本区作品」使用
@@ -528,15 +528,15 @@ void MapPage::onRelocate()
         "QPushButton{background:%6;border:1px solid %7;border-radius:%12px;"
         "padding:6px 14px;color:%8;}"
         "QPushButton QPushButton{color:%9;}")
-        .arg(Lumen::hex(Lumen::PANEL))    // %1 弹层底（原菜单底 → PANEL，spec §1.7）
-        .arg(Lumen::hex(Lumen::INK))      // %2（原抄写盘文字 → INK，spec §1.7）
-        .arg(Lumen::hex(Lumen::CARD))     // %3（token 值字面量）
-        .arg(Lumen::hex(Lumen::LINE))     // %4
-        .arg(Lumen::hex(Lumen::INK))      // %5
-        .arg(Lumen::hex(Lumen::CARD))     // %6
-        .arg(Lumen::hex(Lumen::LINE))     // %7
-        .arg(Lumen::hex(Lumen::INK))      // %8
-        .arg(Lumen::hex(Lumen::INK))      // %9
+        .arg(Lumen::hex(Lumen::panel()))    // %1 弹层底（原菜单底 → PANEL，spec §1.7）
+        .arg(Lumen::hex(Lumen::ink()))      // %2（原抄写盘文字 → INK，spec §1.7）
+        .arg(Lumen::hex(Lumen::card()))     // %3（token 值字面量）
+        .arg(Lumen::hex(Lumen::line()))     // %4
+        .arg(Lumen::hex(Lumen::ink()))      // %5
+        .arg(Lumen::hex(Lumen::card()))     // %6
+        .arg(Lumen::hex(Lumen::line()))     // %7
+        .arg(Lumen::hex(Lumen::ink()))      // %8
+        .arg(Lumen::hex(Lumen::ink()))      // %9
         .arg(Lumen::Type::css(Lumen::Type::Tier::Small))   // %10（T8：12px=T5 原位）
         .arg(Lumen::Radius::Ctl)                           // T9 C3: 8->Radius::Ctl 10（%11 combo/lineedit）
         .arg(Lumen::Radius::Ctl));                         // T9 C3: 8->Radius::Ctl 10（%12 button）
@@ -588,7 +588,7 @@ void MapPage::onRelocate()
         homeHint_->setText(QString::fromUtf8(
             "<span style='color:%1;'>✈ 航线基点：%2</span><br>"
             "金色航线从这里出发，连向每一处拍摄地；点上方「◎ 重新定位」可更改。")
-            .arg(Lumen::hex(Lumen::GOLD), name));
+            .arg(Lumen::hex(Lumen::gold()), name));
     };
     connect(combo, &QComboBox::currentIndexChanged, &dlg, [=, &dlg](int idx) {
         const bool custom = (idx == combo->count() - 1);

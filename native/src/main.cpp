@@ -1163,6 +1163,183 @@ static int runCullExemptQa()
 
 namespace {
 
+// 四灯系统门禁（LA_LAMP_QA，2.41.0 spec §2.1）。
+//
+// 为什么必须有这道门：本产品所有颜色都在构造期以 hex() 烘进 QSS，「切灯」靠的是
+// 整帧重建，而重建读的是 Lumen::lamp(活跃灯) 这张表。表若缺列、串值、或访问器
+// 仍指向旧 constexpr 化石，切灯会**静默变成 no-op**——界面一格没变，却没有任何
+// 断言会因此变红。故本门钉死表值本身（A），再钉死映射与状态机（B/C/D），
+// 最后钉死两条派生公式（E，计划裁决 3）。
+//
+// 断言：
+//   A 4×8=32 格表值逐列钉死 + 四行两两相异（灯与灯必须真的不同）
+//   B lampFor(Hall) 六空间全覆盖
+//   C 锁语义：follow 下 lampFor 优先级 > activeLamp；manual 下恒等 activeLamp
+//   D QSettings 往返：setActiveLamp 四值可读回；越界原始 int 回退 L1
+//   E 派生 token：cardHi()=surface 向 ink 混 8%、faint()=muted 向 bg 混 50%（L1 实值）
+// 反例 LA_LAMP_QA_FORCE_BROKEN=1：A 组经**访问器旁路**读到 L1/L2 两表互换的映射
+//   （模拟「表串值」这一真实缺陷形态）→ A 组 16 格必红；B/C/D/E 走产品原函数不受影响。
+//   旁路只在门禁本地改写查询，不污染 lamp() 表存储。
+// 收尾铁律：本门写 QSettings（lamp/active、lamp/mode），退出前必须还原原值——
+//   否则后续 LA_SMOKE / LA_UI_SHOT 会在另一进程里读到残留的亮灯而误红。
+static int runLampQa()
+{
+    const bool broken = !qEnvironmentVariableIsEmpty("LA_LAMP_QA_FORCE_BROKEN");
+    int checks = 0, fails = 0;
+    QStringList failed;
+    auto chk = [&](bool cond, const char* tag) {
+        ++checks;
+        if (!cond) { ++fails; failed << QString::fromLatin1(tag);
+                     std::fprintf(stderr, "  LA_LAMP_QA FAIL %s\n", tag); }
+    };
+
+    using Lamp = Lumen::Lamp;
+    using Hall = Lumen::Hall;
+
+    // ---- 反例旁路：broken 时把 Nocturne/Jade 两次查询互换 ----
+    auto readLamp = [&](Lamp l) -> const Lumen::LampTokens& {
+        if (broken) {
+            if (l == Lamp::Nocturne) return Lumen::lamp(Lamp::Jade);
+            if (l == Lamp::Jade)     return Lumen::lamp(Lamp::Nocturne);
+        }
+        return Lumen::lamp(l);
+    };
+
+    // ================= A 表值钉死 =================
+    {
+        static const char* kCols[8] = { "bg", "surface", "inset", "ink",
+                                        "muted", "line", "gold", "emerald" };
+        static const Lamp kLamps[4] = { Lamp::Nocturne, Lamp::Jade,
+                                        Lamp::Gekkan,   Lamp::Dusk };
+        static const char* kWant[4][8] = {
+            { "#141b16", "#1d2a22", "#0e1410", "#e8e4d8",
+              "#8da396", "#26312a", "#d8a657", "#4fc08a" },   // L1 夜展
+            { "#f2efe6", "#ffffff", "#e9e5d9", "#2b2b28",
+              "#6d675c", "#e2ded3", "#b98a2f", "#3f6b52" },   // L2 玉照
+            { "#fafafa", "#ffffff", "#efefec", "#111111",
+              "#8a8a85", "#e4e4e0", "#b98a2f", "#b98a2f" },   // L3 素印
+            { "#241a10", "#33241a", "#2a1e14", "#f2e4ce",
+              "#a8896b", "#4a3320", "#e2a95c", "#b98a2f" },   // L4 暮金
+        };
+        for (int i = 0; i < 4; ++i) {
+            const Lumen::LampTokens& t = readLamp(kLamps[i]);
+            const QColor cols[8] = { t.bg, t.surface, t.inset, t.ink,
+                                     t.muted, t.line, t.gold, t.emerald };
+            for (int c = 0; c < 8; ++c) {
+                const QString tag = QStringLiteral("A_L%1_%2")
+                                        .arg(i + 1).arg(QLatin1String(kCols[c]));
+                chk(cols[c].isValid()
+                    && cols[c].name() == QLatin1String(kWant[i][c]),
+                    qPrintable(tag));
+            }
+        }
+        // 四行两两相异：至少一列不同，否则「第 N 灯」是空气
+        for (int i = 0; i < 4; ++i) {
+            for (int j = i + 1; j < 4; ++j) {
+                const QColor a[8] = { readLamp(kLamps[i]).bg, readLamp(kLamps[i]).surface,
+                                      readLamp(kLamps[i]).inset, readLamp(kLamps[i]).ink,
+                                      readLamp(kLamps[i]).muted, readLamp(kLamps[i]).line,
+                                      readLamp(kLamps[i]).gold, readLamp(kLamps[i]).emerald };
+                const QColor b[8] = { readLamp(kLamps[j]).bg, readLamp(kLamps[j]).surface,
+                                      readLamp(kLamps[j]).inset, readLamp(kLamps[j]).ink,
+                                      readLamp(kLamps[j]).muted, readLamp(kLamps[j]).line,
+                                      readLamp(kLamps[j]).gold, readLamp(kLamps[j]).emerald };
+                bool differ = false;
+                for (int c = 0; c < 8; ++c)
+                    if (a[c] != b[c]) { differ = true; break; }
+                chk(differ, qPrintable(QStringLiteral("A_distinct_L%1L%2")
+                                           .arg(i + 1).arg(j + 1)));
+            }
+        }
+    }
+
+    // ================= B 空间映射全覆盖 =================
+    {
+        chk(Lumen::lampFor(Hall::Lobby)   == Lamp::Nocturne, "B1_lobby_nocturne");
+        chk(Lumen::lampFor(Hall::Gallery) == Lamp::Jade,     "B2_gallery_jade");
+        chk(Lumen::lampFor(Hall::People)  == Lamp::Jade,     "B3_people_jade");
+        chk(Lumen::lampFor(Hall::Studio)  == Lamp::Jade,     "B4_studio_jade");
+        chk(Lumen::lampFor(Hall::Vault)   == Lamp::Jade,     "B5_vault_jade");
+        chk(Lumen::lampFor(Hall::Common)  == Lamp::Nocturne, "B6_common_nocturne");
+        chk(Lumen::lampFor(static_cast<Hall>(99)) == Lamp::Nocturne, "B7_oob_fallback");
+    }
+
+    // ---- C/D 写状态：先存原值，退出逐键还原（长生命周期 QSettings 会缓存，故每段用完即弃） ----
+    QVariant oldActive, oldMode;
+    { QSettings r; oldActive = r.value(QStringLiteral("lamp/active"));
+                  oldMode   = r.value(QStringLiteral("lamp/mode")); }
+
+    // ================= C 锁语义（优先级） =================
+    {
+        Lumen::setLampFollowSpace(true);
+        Lumen::setActiveLamp(Lamp::Dusk);            // 手动值故意与空间默认相左
+        chk(Lumen::resolveLamp(Hall::Gallery) == Lamp::Jade, "C1_follow_space_wins");
+        Lumen::setLampFollowSpace(false);            // 锁 = manual
+        chk(Lumen::lampLocked(), "C2_locked_flag");
+        chk(Lumen::resolveLamp(Hall::Gallery) == Lamp::Dusk, "C3_manual_honors_active");
+        Lumen::setLampLocked(false);
+        chk(!Lumen::lampLocked() && Lumen::lampFollowSpace(), "C4_unlock_roundtrip");
+    }
+
+    // ================= D QSettings 往返 =================
+    {
+        static const Lamp kAll[4] = { Lamp::Nocturne, Lamp::Jade, Lamp::Gekkan, Lamp::Dusk };
+        for (int i = 0; i < 4; ++i) {
+            Lumen::setActiveLamp(kAll[i]);
+            chk(Lumen::activeLamp() == kAll[i],
+                qPrintable(QStringLiteral("D1_active_L%1").arg(i + 1)));
+        }
+        { QSettings w; w.setValue(QStringLiteral("lamp/active"), 9); w.sync(); }  // 越界原始值
+        chk(Lumen::activeLamp() == Lamp::Nocturne, "D2_oob_falls_back_L1");
+    }
+
+    // ================= E 派生公式（计划裁决 3；强制 L1 后取实值） ===============
+    {
+        Lumen::setActiveLamp(Lamp::Nocturne);
+        chk(Lumen::activeLamp() == Lamp::Nocturne, "E0_nocturne_forced");
+        // cardHi = surface(#1d2a22) 向 ink(#e8e4d8) 混 8%：r 29+203*8/100=45、
+        //         g 42+186*8/100=56、b 34+182*8/100=48 → #2d3830
+        chk(Lumen::cardHi().name() == QLatin1String("#2d3830"), "E1_cardhi_mix8");
+        // faint = muted(#8da396) 与 bg(#141b16) 各半：(141+20)/2=80、(163+27)/2=95、
+        //         (150+22)/2=86 → #505f56
+        chk(Lumen::faint().name() == QLatin1String("#505f56"), "E2_faint_mix50");
+        chk(Lumen::panel() == Lumen::inset(), "E3_panel_is_inset_col");
+        chk(Lumen::card().name() == QLatin1String("#1d2a22"), "E4_card_is_surface_col");
+        chk(Lumen::bg().name() == QLatin1String("#141b16"), "E5_bg_col");
+        chk(Lumen::gold().name() == QLatin1String("#d8a657"), "E6_gold_col");
+        chk(Lumen::emerald().name() == QLatin1String("#4fc08a"), "E7_emerald_col");
+        chk(Lumen::ink().name() == QLatin1String("#e8e4d8"), "E8_ink_col");
+        chk(Lumen::line().name() == QLatin1String("#26312a"), "E9_line_col");
+        chk(Lumen::muted().name() == QLatin1String("#8da396"), "E10_muted_col");
+    }
+
+    {   // 逐键还原（原值缺键 → remove，避免把「未设」写成「设成默认」）
+        QSettings w;
+        if (oldActive.isValid()) w.setValue(QStringLiteral("lamp/active"), oldActive);
+        else w.remove(QStringLiteral("lamp/active"));
+        if (oldMode.isValid()) w.setValue(QStringLiteral("lamp/mode"), oldMode);
+        else w.remove(QStringLiteral("lamp/mode"));
+        w.sync();
+    }
+    {
+        QSettings after;
+        chk(after.value(QStringLiteral("lamp/active")) == oldActive
+            && after.value(QStringLiteral("lamp/mode")) == oldMode, "Z1_settings_restored");
+    }
+
+    const bool pass = (checks > 0) && (fails == 0);
+    std::fprintf(stderr, "LA_LAMP_QA %s checks=%d failed=%d broken=%d\n",
+                 pass ? "PASS" : "FAIL", checks, fails, broken ? 1 : 0);
+    if (!pass)
+        std::fprintf(stderr, "LA_LAMP_QA failed: %s\n", qPrintable(failed.join(',')));
+    std::fflush(stderr);
+    return pass ? 0 : 1;
+}
+
+} // namespace（四灯系统门禁）
+
+namespace {
+
 // 2.31.0 选片页视频适配门禁（LA_CULL_VIDEO_QA）。
 //
 // 断言：
@@ -8467,12 +8644,12 @@ int main(int argc, char *argv[])
             {"Bg on Gold (selection)",     Dark::Bg,   Dark::Gold,   4.5},
             {"btnGold #1a1204 on Gold",    QColor(0x1a,0x12,0x04), Dark::Gold, 4.5},
             {"checkedChip #0c100d on Gold",QColor(0x0c,0x10,0x0d), Dark::Gold, 4.5},
-            {"hint Lumen::MUTED on Bg",    Lumen::MUTED, Dark::Bg,     4.5},
+            {"hint Lumen::muted() on Bg",    Lumen::muted(), Dark::Bg,     4.5},
             {"lightbox meta #9db2a5 on bottom", QColor(0x9d,0xb2,0xa5), QColor(0x04,0x06,0x04), 4.5},
             // 缺陷②回归：导入菜单逐实例暗色 QSS 配色必须过 WCAG（防止白底白字回潮）
             {"importMenu item #d9e4dc on #0e130f",   QColor(0xd9,0xe4,0xdc), QColor(0x0e,0x13,0x0f), 4.5},
             {"importMenu selected #4fc08a on #1d2a22",QColor(0x4f,0xc0,0x8a), QColor(0x1d,0x2a,0x22), 4.5},
-            {"importMenu disabled MUTED on #0e130f",Lumen::MUTED, QColor(0x0e,0x13,0x0f), 4.5},
+            {"importMenu disabled MUTED on #0e130f",Lumen::muted(), QColor(0x0e,0x13,0x0f), 4.5},
         };
         if (!qEnvironmentVariableIsEmpty("LA_A11Y_CONTRAST_QA_FORCE_BROKEN"))
             pairs.append({"BROKEN Line on Inset", Dark::Line, Dark::Inset, 4.5});
@@ -8497,7 +8674,7 @@ int main(int argc, char *argv[])
     }
 
     app.setOrganizationName(QStringLiteral("lightalbum"));
-    Dark::apply(app);
+    Dark::apply(app, Lumen::activeLamp());
 
     // 方向 F 第二步 i18n（2.10.0）：按语言加载 UI 翻译器。
     // 中文（简/繁）保持原生文案 → 不加载翻译器 → 零回归；其余语言加载 :/i18n/LightAlbum_en.qm。
@@ -8712,6 +8889,10 @@ int main(int argc, char *argv[])
     // 2.34.0 动效引擎：曲线/错峰/预设/回归段/粒子像素契约（纯函数同源）
     if (qEnvironmentVariableIsSet("LA_MOTION_QA"))
         return runMotionQa();
+
+    // 2.41.0 四灯系统：表值/映射/锁语义/派生公式契约（须排在页面门禁之前）
+    if (qEnvironmentVariableIsSet("LA_LAMP_QA"))
+        return runLampQa();
 
     if (qEnvironmentVariableIsSet("LA_ERASE_QA"))
         return runEraseQa();
@@ -9420,7 +9601,7 @@ int main(int argc, char *argv[])
         // 仍携旧 literal #0e130f。两枚底色任一命中即算带暗色 QSS，门禁语义不变：
         // 任一菜单回退系统浅色原生底 → 门红。
         int menuTotal = 0, menuDark = 0;
-        const QString menuBgToken = Lumen::hex(Lumen::PANEL).mid(1);  // "0c100d"
+        const QString menuBgToken = Lumen::hex(Lumen::panel()).mid(1);  // "0c100d"
         for (QMenu* m : win.findChildren<QMenu*>()) {
             ++menuTotal;
             const QString ss = m->styleSheet();

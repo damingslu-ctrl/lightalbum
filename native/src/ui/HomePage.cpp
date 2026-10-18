@@ -138,7 +138,7 @@ QToolButton* makeArrowBtn(QWidget* parent, const QString& ch)
         + QString::fromUtf8(
         "font-weight:bold;}"
         "QToolButton:hover{background:rgba(6,8,6,190);color:%1;}"))
-        .arg(Lumen::hex(Lumen::GOLD))
+        .arg(Lumen::hex(Lumen::gold()))
         .arg(Lumen::Radius::Feature));
     return b;
 }
@@ -156,7 +156,7 @@ QToolButton* makeTextBtn(QWidget* parent, const QString& text, int px)
         "QToolButton:hover{color:%3;}"
         "QToolButton:disabled{color:%4;}")
         .arg(px)
-        .arg(Lumen::hex(Lumen::SOFT_IMG), Lumen::hex(Lumen::GOLD),
+        .arg(Lumen::hex(Lumen::SOFT_IMG), Lumen::hex(Lumen::gold()),
              Lumen::hex(Lumen::DISABLED)));
     return b;
 }
@@ -601,7 +601,7 @@ HomePage::HomePage(Library* lib, const QString& thumbsDir, QWidget* parent)
 {
     setObjectName(QStringLiteral("homePage"));
     setStyleSheet(QString::fromUtf8("QWidget#homePage{background:%1;}")
-        .arg(Lumen::hex(Lumen::BG)));
+        .arg(Lumen::hex(Lumen::bg())));
     setFocusPolicy(Qt::StrongFocus);
 
     auto* root = new QVBoxLayout(this);
@@ -616,7 +616,7 @@ HomePage::HomePage(Library* lib, const QString& thumbsDir, QWidget* parent)
     topBar_->setFixedHeight(56);
     topBar_->setStyleSheet(QString::fromUtf8(
         "#homeTopBar{background:%1;border-bottom:1px solid %2;}")
-        .arg(Lumen::hex(Lumen::BG), Lumen::hex(Lumen::LINE)));   // 发丝缝暖灰 161d18→LINE（§1.1 唯一分隔线；此栏 P29-H 起常隐，零可见影响）
+        .arg(Lumen::hex(Lumen::bg()), Lumen::hex(Lumen::line())));   // 发丝缝暖灰 161d18→LINE（§1.1 唯一分隔线；此栏 P29-H 起常隐，零可见影响）
     auto* tl = new QHBoxLayout(topBar_);
     tl->setContentsMargins(Lumen::Space::Xl, 0, Lumen::Space::Xl, 0);
     tl->setSpacing(16);
@@ -628,11 +628,11 @@ HomePage::HomePage(Library* lib, const QString& thumbsDir, QWidget* parent)
         auto* logo = new QLabel(QCoreApplication::translate("LightAlbum", "光影集"), logoBox);
         logo->setFont(Lumen::serifFont(14, QFont::DemiBold, 3.0));
         logo->setStyleSheet(QString::fromUtf8("color:%1;background:transparent;")
-            .arg(Lumen::hex(Lumen::INK)));
+            .arg(Lumen::hex(Lumen::ink())));
         auto* en = new QLabel(QStringLiteral("QUIET FRAME · LIGHTALBUM"), logoBox);
         en->setFont(Lumen::serifFont(6.8, QFont::Normal, 2.4));
         en->setStyleSheet(QString::fromUtf8("color:%1;background:transparent;")
-            .arg(Lumen::hex(Lumen::GOLD)));
+            .arg(Lumen::hex(Lumen::gold())));
         lv->addWidget(logo);
         lv->addWidget(en);
         tl->addWidget(logoBox);
@@ -653,7 +653,7 @@ HomePage::HomePage(Library* lib, const QString& thumbsDir, QWidget* parent)
             "QToolButton{background:transparent;border:none;color:%1;")
             + Lumen::Type::css(Lumen::Type::Tier::Small)   // T8：12px=T5 原位
             + QStringLiteral("font-weight:bold;}"))
-            .arg(Lumen::hex(Lumen::GOLD)));
+            .arg(Lumen::hex(Lumen::gold())));
     }
     {
         auto* avatar = new QLabel(QCoreApplication::translate("LightAlbum", "光"), topBar_);
@@ -663,7 +663,7 @@ HomePage::HomePage(Library* lib, const QString& thumbsDir, QWidget* parent)
         avatar->setStyleSheet(QString::fromUtf8(
             "QLabel{background:%1;border:1px solid rgba(217,169,78,140);"
             "border-radius:%3px;color:%2;}")   // T9：15→Radius::Card 14（30px 圆头像就近归格，视觉同圆）
-            .arg(Lumen::hex(Lumen::CARD_HI), Lumen::hex(Lumen::GOLD))
+            .arg(Lumen::hex(Lumen::cardHi()), Lumen::hex(Lumen::gold()))
             .arg(Lumen::Radius::Card));
         tl->addWidget(avatar);
     }
@@ -679,13 +679,13 @@ HomePage::HomePage(Library* lib, const QString& thumbsDir, QWidget* parent)
         auto* t = new QLabel(QCoreApplication::translate("LightAlbum", "光影集"), empty);
         t->setFont(Lumen::serifFont(30, QFont::DemiBold, 8.0));
         t->setStyleSheet(QString::fromUtf8("color:%1;")
-            .arg(Lumen::hex(Lumen::INK)));
+            .arg(Lumen::hex(Lumen::ink())));
         t->setAlignment(Qt::AlignCenter);
         auto* s = new QLabel(
             QStringLiteral("导入目录后，首页会按城市分章、全屏轮播你的作品。\n"
                            "（当前库中没有可定位的可见照片）"), empty);
         s->setStyleSheet(QString::fromUtf8("color:%1;")
-            .arg(Lumen::hex(Lumen::MUTED)));
+            .arg(Lumen::hex(Lumen::muted())));
         s->setAlignment(Qt::AlignCenter);
         ev->addWidget(t);
         ev->addWidget(s);
@@ -738,7 +738,7 @@ HomePage::HomePage(Library* lib, const QString& thumbsDir, QWidget* parent)
         titleLbl_ = new QLabel(panel_);
         titleLbl_->setFont(Lumen::serifFont(34, QFont::DemiBold, 1.0));
         titleLbl_->setStyleSheet(QString::fromUtf8("color:%1;background:transparent;")
-            .arg(Lumen::hex(Lumen::INK)));
+            .arg(Lumen::hex(Lumen::ink())));
         titleLbl_->setWordWrap(true);
         pv->addWidget(titleLbl_);
         pv->addSpacing(14);
@@ -746,7 +746,7 @@ HomePage::HomePage(Library* lib, const QString& thumbsDir, QWidget* parent)
         goldRule_ = new QFrame(panel_);
         goldRule_->setFixedSize(34, 2);
         goldRule_->setStyleSheet(QString::fromUtf8("background:%1;border:none;")
-            .arg(Lumen::hex(Lumen::GOLD)));
+            .arg(Lumen::hex(Lumen::gold())));
         pv->addWidget(goldRule_);
         pv->addSpacing(12);
 
@@ -894,7 +894,7 @@ void HomePage::refreshPanel()
             ? QString::fromUtf8("QToolButton{background:rgba(217,169,78,30);"
                                 "border:1px solid %1;border-radius:4px;"
                                 "color:%1;")   // T8：10px→T5(12px)，占位符串尾追加 css
-                  .arg(Lumen::hex(Lumen::GOLD))
+                  .arg(Lumen::hex(Lumen::gold()))
                   + Lumen::Type::css(Lumen::Type::Tier::Small) + QStringLiteral("}")
             : (QString::fromUtf8("QToolButton{background:transparent;border:none;"
                                  "border-radius:4px;color:%1;")
@@ -902,7 +902,7 @@ void HomePage::refreshPanel()
                + QStringLiteral("}"
                                  "QToolButton:hover{color:%2;}"))
               .arg(Lumen::hex(Lumen::MUTED_IMG),   // §1.5：chip 文字 7d887f→MUTED_IMG（照片面暖灰合法化微亮）
-                   Lumen::hex(Lumen::INK)));
+                   Lumen::hex(Lumen::ink())));
     }
     prevChapBtn_->setEnabled(chapters_.size() > 1);
     nextChapBtn_->setEnabled(chapters_.size() > 1);
