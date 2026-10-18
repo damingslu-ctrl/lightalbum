@@ -1729,7 +1729,8 @@ namespace {
 //     并钉「暖冷可分」（否则"恒返回一色"也能骗过 A1/A2）。
 //   B 低饱和灰图 → 回退色 = emerald 亮度 -10%（逐通道 HSL ±容忍），且非黑非白、≠输入灰。
 //   C 钳制真伪判别器：临时开反例臂，同一灰图**必须换一个结果**（回退钳制真被接上）；
-//     反例 LA_GAZE_QA_FORCE_BROKEN=1 时两值相等 → C 必红（连 B 一起 → 整门红证）。
+//     反例 LA_GAZE_QA_FORCE_BROKEN=1 时两值相等 → C1 红，连同 B1/B2/B3/B5（B4「非黑非白」
+//     在纯灰 0x80 下本就成立 → 保持绿）→ 整门红证。
 //   D 私密步进纪律：凝视档 ←/→ 仍走 BrowseScope::nextVisible（锁态跳私密/解锁态可达/端点不回绕）
 //     + 源断言 GazeLightbox.cpp 里 `BrowseScope::nextVisible` 唯一调用点（Gaze 档不得自造翻页）。
 //   E 环境光晕样式契约：Lumen::glowCss 的边缘 alpha ≤ 25/255（10% 硬上限）且被 strength 钳住。
