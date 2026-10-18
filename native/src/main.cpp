@@ -81,6 +81,7 @@
 #include "core/CullEngine.h"
 #include "ui/RetouchPage.h"
 #include "ui/HomePage.h"
+#include "ui/LobbyPage.h"   // 2.41.0 前厅页（LA_LOBBY_QA 直调 onThisDay/recent 纯函数）
 #include "ui/DarkPalette.h"
 #include "ui/Theme.h"
 #include "ui/Splash.h"
@@ -1337,6 +1338,132 @@ static int runLampQa()
 }
 
 } // namespace（四灯系统门禁）
+
+namespace {
+
+// 2.41.0 spec §2.2 前厅门禁（LA_LOBBY_QA）。
+// 铁律 20：直调 LobbyPage::onThisDay / LobbyPage::recent（与产品 UI 同一份纯函数），
+// 断言其确定性行为——回退链 / 闰日并入 / 近年在先排序 / rating 破平 / 私密过滤。
+// 反例 LA_LOBBY_QA_FORCE_BROKEN=1：onThisDay 跳过私密过滤 → E 组必红。
+int runLobbyQa()
+{
+    const bool broken = !qEnvironmentVariableIsEmpty("LA_LOBBY_QA_FORCE_BROKEN");
+    int checks = 0, fails = 0;
+    QStringList failed;
+    auto chk = [&](bool cond, const char* tag) {
+        ++checks;
+        if (!cond) { ++fails; failed << QString::fromLatin1(tag);
+                     std::fprintf(stderr, "  LA_LOBBY_QA FAIL %s\n", tag); }
+    };
+
+    int seq = 0;
+    auto mk = [&seq](const char* date, int rating = 0, bool priv = false,
+                     bool missing = false, bool noThumb = false) {
+        Photo p;
+        ++seq;
+        p.path = QStringLiteral("syn_%1_%2").arg(QString::fromLatin1(date)).arg(seq);
+        p.thumbFile = noThumb ? QString() : QStringLiteral("t%1.jpg").arg(seq);
+        p.date = QString::fromLatin1(date);
+        p.year = p.date.left(4).toInt();
+        p.rating = rating;
+        p.priv = priv;
+        p.missing = missing;
+        return p;
+    };
+    auto anyPriv = [](const QVector<const Photo*>& v) {
+        for (const Photo* p : v) if (p->priv) return true;
+        return false;
+    };
+
+    // —— A 组：onThisDay 正例（近年在先 + rating 破平）——
+    {
+        QVector<Photo> in;
+        in << mk("2023-10-18") << mk("2025-10-18") << mk("2024-10-18");
+        const auto r = LobbyPage::onThisDay(in, QDate(2026, 10, 18), true, 9);
+        chk(r.size() == 3, "A_count3");
+        chk(r.size() == 3 && r[0]->year == 2025 && r[1]->year == 2024 && r[2]->year == 2023,
+            "A_near_year_first");
+
+        QVector<Photo> in2 = in;
+        in2 << mk("2025-10-18", 5);          // 同 2025 年，rating 更高 → 应排在最前
+        const auto r2 = LobbyPage::onThisDay(in2, QDate(2026, 10, 18), true, 9);
+        chk(r2.size() == 4, "A2_count4");
+        chk(r2.size() == 4 && r2[0]->rating == 5 && r2[1]->rating == 0, "A2_rating_tiebreak");
+    }
+
+    // —— B 组：闰日并入（today=2-28 并 2-29；today=2-29 恰等）——
+    {
+        QVector<Photo> in;
+        in << mk("2020-02-29") << mk("2024-02-29") << mk("2016-02-29") << mk("2021-02-28");
+        const auto r = LobbyPage::onThisDay(in, QDate(2025, 2, 28), true, 9);
+        chk(r.size() == 4, "B_28_folds_29");
+
+        const auto r2 = LobbyPage::onThisDay(in, QDate(2020, 2, 29), true, 9);
+        bool only29 = (r2.size() == 3);
+        for (const Photo* p : r2) only29 = only29 && p->date.endsWith(QStringLiteral("-02-29"));
+        chk(only29, "B_29_exact");
+    }
+
+    // —— C 组：回退链（当日 → 同月 → 同季 → 稀薄）——
+    {
+        // C1：0 当日 → 同月（10 月）。掺一张 9 月照（同季不同月）检出「取同月而非同季」。
+        QVector<Photo> in;
+        in << mk("2024-10-05") << mk("2023-10-20") << mk("2022-10-31") << mk("2021-09-09");
+        const auto r = LobbyPage::onThisDay(in, QDate(2026, 10, 18), true, 9);
+        chk(r.size() == 3, "C1_month_fallback");
+        bool allOct = (r.size() == 3);
+        for (const Photo* p : r) allOct = allOct && p->date.mid(5, 2) == QStringLiteral("10");
+        chk(allOct, "C1_month_not_season");
+
+        // C2：同月 0 → 同季（秋：9/10/11 月跨年）。
+        QVector<Photo> in2;
+        in2 << mk("2024-09-03") << mk("2025-11-20") << mk("2023-09-30");
+        const auto r2 = LobbyPage::onThisDay(in2, QDate(2026, 10, 18), true, 9);
+        chk(r2.size() == 3, "C2_season_fallback");
+
+        // C3：全库无同季 → 空（不回填假数据）。
+        QVector<Photo> in3;
+        in3 << mk("2024-04-01") << mk("2025-04-02") << mk("2023-04-03");
+        chk(LobbyPage::onThisDay(in3, QDate(2026, 10, 18), true, 9).isEmpty(), "C3_empty_no_fake");
+    }
+
+    // —— D 组：recent（倒序头取 + 三条过滤 + maxN + 空库）——
+    {
+        QVector<Photo> in;
+        in << mk("2026-10-01") << mk("2026-09-01") << mk("2026-08-01")
+           << mk("2026-07-01", 0, true)                 // priv → 滤
+           << mk("2026-06-01", 0, false, true)          // missing → 滤
+           << mk("2026-05-01", 0, false, false, true);  // 无缩略图 → 滤
+        const auto r = LobbyPage::recent(in, true, 12);
+        chk(r.size() == 3, "D_filter3");
+        chk(r.size() == 3 && r[0]->date.startsWith(QStringLiteral("2026-10"))
+            && r[2]->date.startsWith(QStringLiteral("2026-08")), "D_desc_head");
+        chk(LobbyPage::recent(in, true, 2).size() == 2, "D_maxN2");
+        chk(LobbyPage::recent(QVector<Photo>(), true, 12).isEmpty(), "D_empty");
+    }
+
+    // —— E 组：私密过滤（反例臂在此翻红）——
+    {
+        QVector<Photo> in;
+        in << mk("2025-10-18") << mk("2024-10-18") << mk("2023-10-18")
+           << mk("2022-10-18", 0, true);                 // priv
+        const auto r = LobbyPage::onThisDay(in, QDate(2026, 10, 18), true, 9);
+        chk(r.size() == 3, "E_count_without_priv");
+        chk(!anyPriv(r), "E_priv_hidden");
+        // hidePrivate=false 时私密照应出现（证明过滤开关真实生效，而非恒滤）
+        chk(anyPriv(LobbyPage::onThisDay(in, QDate(2026, 10, 18), false, 9)), "E_priv_shown_when_visible");
+    }
+
+    const bool pass = (checks > 0) && (fails == 0);
+    std::fprintf(stderr, "LA_LOBBY_QA %s checks=%d failed=%d broken=%d\n",
+                 pass ? "PASS" : "FAIL", checks, fails, broken ? 1 : 0);
+    if (!pass)
+        std::fprintf(stderr, "LA_LOBBY_QA failed: %s\n", qPrintable(failed.join(',')));
+    std::fflush(stderr);
+    return pass ? 0 : 1;
+}
+
+} // namespace（前厅门禁）
 
 namespace {
 
@@ -8903,6 +9030,10 @@ int main(int argc, char *argv[])
     // 2.41.0 四灯系统：表值/映射/锁语义/派生公式契约（须排在页面门禁之前）
     if (qEnvironmentVariableIsSet("LA_LAMP_QA"))
         return runLampQa();
+
+    // 2.41.0 前厅：onThisDay/recent 纯函数契约（回退链/闰日/排序/过滤）
+    if (qEnvironmentVariableIsSet("LA_LOBBY_QA"))
+        return runLobbyQa();
 
     if (qEnvironmentVariableIsSet("LA_ERASE_QA"))
         return runEraseQa();
