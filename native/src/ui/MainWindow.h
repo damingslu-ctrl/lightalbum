@@ -23,7 +23,7 @@ class RetouchPage;
 class LogPage;
 class MapView;         // A 现状墨韵·抛光 QA 探针
 class HomePage;        // P17 沉浸式首页（Quiet Frame）
-class PhotoLightbox;   // P15 沉浸式灯箱（MainWindow.cpp 文件内定义）
+class GazeLightbox;   // P15 沉浸式灯箱（2.41.0 T6 独立成 src/ui/GazeLightbox.{h,cpp}）
 class VideoLightbox;    // 2.30.0 视频灯箱（内嵌解码播放器）
 class QPushButton;
 class QVariantAnimation;
@@ -152,7 +152,7 @@ private:
     RetouchPage*     retouch_ = nullptr;
     LogPage*        log_ = nullptr;
 
-    PhotoLightbox*  lightbox_ = nullptr;   // P15 沉浸式灯箱（无边框全窗口覆盖）
+    GazeLightbox*  lightbox_ = nullptr;   // P15 沉浸式灯箱（无边框全窗口覆盖）
     VideoLightbox*   videoLightbox_ = nullptr; // 2.30.0 视频灯箱（video 复用 openLightbox 入口）
 
     // P16 隐私库
