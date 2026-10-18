@@ -83,6 +83,7 @@
 #include "ui/HomePage.h"
 #include "ui/LobbyPage.h"   // 2.41.0 前厅页（LA_LOBBY_QA 直调 onThisDay/recent 纯函数）
 #include "ui/PeoplePage.h"  // 2.41.0 人物馆（LA_PEOPLE_QA 直调 buildRooms 纯函数）
+#include "ui/CmdKPanel.h"   // 2.41.0 ⌘K v1（LA_CMDK_QA 直调 parse/parseChips 纯函数）
 #include "ui/DarkPalette.h"
 #include "ui/Theme.h"
 #include "ui/Splash.h"
@@ -1587,6 +1588,134 @@ int runPeopleQa()
 }
 
 } // namespace（人物馆门禁）
+
+namespace {
+
+// 2.41.0 spec §2.4 ⌘K v1 门禁（LA_CMDK_QA）。
+// 铁律 20：直调 CmdKPanel::parse / parseChips（与产品 UI 同源纯函数）。
+// 反例 LA_CMDK_QA_FORCE_BROKEN=1：month↔season 表互换 → D 组（并及 A/C 月季项）必红。
+int runCmdkQa()
+{
+    const bool broken = !qEnvironmentVariableIsEmpty("LA_CMDK_QA_FORCE_BROKEN");
+    int checks = 0, fails = 0;
+    QStringList failed;
+    auto chk = [&](bool cond, const char* tag) {
+        ++checks;
+        if (!cond) { ++fails; failed << QString::fromLatin1(tag);
+                     std::fprintf(stderr, "  LA_CMDK_QA FAIL %s\n", tag); }
+    };
+
+    const QString kXiaoYu = QString::fromUtf8("小雨");
+    const QString kALan   = QString::fromUtf8("阿岚");
+    const QString kChun   = QString::fromUtf8("春");
+    const QString kXia    = QString::fromUtf8("夏");
+    const QString kQiu    = QString::fromUtf8("秋");
+    const QString kDong   = QString::fromUtf8("冬");
+    const QString kBW     = QString::fromUtf8("黑白");
+    const QString kNight  = QString::fromUtf8("夜景·星空");
+    const QString kFood   = QString::fromUtf8("美食");
+    const QString kHunlun = QString::fromUtf8("呼伦贝尔");
+    const QString kInPark = QString::fromUtf8("在公园的照片");
+    const QDate today = QDate::currentDate();
+
+    // —— A 组：金句集（3 句钉死 + 词典冒烟）——
+    {
+        const CmdFilter f1 = CmdKPanel::parse(
+            QString::fromUtf8("去年秋天和小雨在公园的黑白照片"),
+            QStringList{kXiaoYu}, QStringList{});
+        chk(f1.yearMin == today.year() - 1 && f1.yearMax == today.year() - 1, "A1_year");
+        chk(f1.season == kQiu, "A1_season");
+        chk(f1.person == kXiaoYu, "A1_person");
+        chk(f1.category == kBW, "A1_category");
+        chk(f1.text == kInPark, "A1_text");
+        chk(f1.tokenPlace.isEmpty(), "A1_place_empty");
+
+        const CmdFilter f2 = CmdKPanel::parse(QString::fromUtf8("今年六月的夜景"));
+        chk(f2.yearMin == today.year() && f2.yearMax == today.year(), "A2_year");
+        chk(f2.month == 6, "A2_month");
+        chk(f2.category == kNight, "A2_category");
+
+        const CmdFilter f3 = CmdKPanel::parse(
+            QString::fromUtf8("2019年 阿岚"), QStringList{kALan}, QStringList{});
+        chk(f3.yearMin == 2019 && f3.yearMax == 2019, "A3_year_eq");
+        chk(f3.person == kALan, "A3_person");
+
+        const CmdFilter fp = CmdKPanel::parse(
+            QString::fromUtf8("去年在呼伦贝尔的照片"), QStringList{}, QStringList{kHunlun});
+        chk(fp.tokenPlace == kHunlun, "A_place_dict");
+    }
+
+    // —— B 组：兜底 contains（text 提取正确性；老 search_ 能力零丢失）——
+    {
+        const CmdFilter b1 = CmdKPanel::parse(QString::fromUtf8("街角的猫"));
+        chk(b1.text == QString::fromUtf8("街角的猫"), "B_text_plain");
+        chk(!b1.empty(), "B_text_plain_nonempty");
+
+        const CmdFilter b2 = CmdKPanel::parse(QString::fromUtf8("2019年 阿岚"),
+                                              QStringList{kALan}, QStringList{});
+        chk(b2.text.isEmpty(), "B_text_excludes_matched");
+
+        const CmdFilter b3 = CmdKPanel::parse(QString::fromUtf8("小雨的黑白照片"),
+                                              QStringList{kXiaoYu}, QStringList{});
+        chk(b3.text == QString::fromUtf8("的照片"), "B_text_residual");
+
+        const CmdFilter b4 = CmdKPanel::parse(
+            QString::fromUtf8("去年秋天和小雨在公园的黑白照片"), QStringList{kXiaoYu}, QStringList{});
+        chk(b4.text == kInPark, "B_text_golden1");
+    }
+
+    // —— C 组：月份/季节/日 词法杂测（更杂句不崩）——
+    {
+        chk(CmdKPanel::parse(QString::fromUtf8("6月")).month == 6, "C_month_arabic");
+        chk(CmdKPanel::parse(QString::fromUtf8("三月")).month == 3, "C_month_3");
+        chk(CmdKPanel::parse(QString::fromUtf8("十一月")).month == 11, "C_month_11");
+        chk(CmdKPanel::parse(QString::fromUtf8("十二月")).month == 12, "C_month_12");
+        chk(CmdKPanel::parse(QString::fromUtf8("冬天")).season == kDong, "C_season_winter");
+        chk(CmdKPanel::parse(QString::fromUtf8("春季")).season == kChun, "C_season_spring");
+        chk(CmdKPanel::parse(QString::fromUtf8("3日")).day == 3, "C_day_ri");
+        chk(CmdKPanel::parse(QString::fromUtf8("15号")).day == 15, "C_day_hao");
+
+        const CmdFilter m = CmdKPanel::parse(
+            QString::fromUtf8("前年夏天7月3日在黄山拍的美食"));
+        chk(m.yearMin == today.year() - 2 && m.season == kXia && m.month == 7
+            && m.day == 3 && m.category == kFood
+            && m.text.contains(QString::fromUtf8("黄山")), "C_mixed");
+    }
+
+    // —— D 组：月/季 表身份（反例臂 LA_CMDK_QA_FORCE_BROKEN 在此翻红）——
+    {
+        const CmdFilter d1 = CmdKPanel::parse(QString::fromUtf8("今年六月的夜景"));
+        chk(d1.month == 6 && d1.season.isEmpty(), "D_month_table");
+        const CmdFilter d2 = CmdKPanel::parse(QString::fromUtf8("去年秋天的照片"));
+        chk(d2.season == kQiu && d2.month == 0, "D_season_table");
+    }
+
+    // —— E 组：empty() 判据 + chip 对仗（chip 数 == 捕获词数）——
+    {
+        chk(CmdKPanel::parse(QString()).empty(), "E_empty_sentence");
+        chk(CmdKPanel::parse(QStringLiteral("   ")).empty(), "E_empty_ws");
+
+        const QStringList c3 = CmdKPanel::parseChips(QString::fromUtf8("2019年 阿岚"),
+                                                     QStringList{kALan}, QStringList{});
+        chk(c3.size() == 2, "E_chip_capture_count");
+
+        const QStringList c1 = CmdKPanel::parseChips(
+            QString::fromUtf8("去年秋天和小雨在公园的黑白照片"), QStringList{kXiaoYu}, QStringList{});
+        chk(c1.size() == 4 && !c1.isEmpty()
+            && c1.first() == QString::fromUtf8("去年秋天")
+            && c1.contains(kXiaoYu) && c1.contains(kBW), "E_chip_merge");
+    }
+
+    const bool pass = (checks > 0) && (fails == 0);
+    std::fprintf(stderr, "LA_CMDK_QA %s checks=%d failed=%d broken=%d\n",
+                 pass ? "PASS" : "FAIL", checks, fails, broken ? 1 : 0);
+    if (!pass)
+        std::fprintf(stderr, "LA_CMDK_QA failed: %s\n", qPrintable(failed.join(',')));
+    std::fflush(stderr);
+    return pass ? 0 : 1;
+}
+
+} // namespace（⌘K 门禁）
 
 namespace {
 
@@ -9161,6 +9290,10 @@ int main(int argc, char *argv[])
     // 2.41.0 人物馆：buildRooms 聚合契约（一照双名/升序/priv/空防御）
     if (qEnvironmentVariableIsSet("LA_PEOPLE_QA"))
         return runPeopleQa();
+
+    // 2.41.0 ⌘K v1：parse/parseChips 词典层契约（3 金句/兜底/月季词法/empty/chip）
+    if (qEnvironmentVariableIsSet("LA_CMDK_QA"))
+        return runCmdkQa();
 
     if (qEnvironmentVariableIsSet("LA_ERASE_QA"))
         return runEraseQa();
