@@ -40,6 +40,8 @@ envs/
 probe_*.py.out
 /tmp/
 _gold_lumen/
+# SDD 执行工作区（ledger/brief/report 临时，不入库）
+.superpowers/
 # 第四轮 T7 开发 scratch（真图派生张量 in_f32.bin / 已废 mitchell 变体 / oracle 跑批日志，
 # R-06 派生数据绝不入库；生成代码已收编 ai_export/，见评审 I-5/M-h）
 _t7_scratch/
