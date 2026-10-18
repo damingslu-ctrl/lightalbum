@@ -177,6 +177,18 @@ inline constexpr QColor CAT1 = QColor(0x4f, 0xc0, 0x8a), CAT2 = SKY,
 inline QColor glowJade() { QColor c = EMERALD_HI; c.setAlpha(115); return c; } // 45%
 inline QColor glowGold() { QColor c = GOLD_HI;   c.setAlpha(102); return c; } // 40%
 
+// 人物色环单源：FNV-1a 稳定哈希 → CAT1..8 具名板。
+// GalleryPage 的人物 chip 底色与 PeoplePage 的展室环共用同一份映射（此前 GalleryPage 本地一份）；
+// 哈希仅用于「稳定选色」（同姓名恒同色），不代表任何人物语义。
+inline QColor personRing(const QString& name)
+{
+    const QByteArray s = name.toUtf8();
+    uint h = 2166136261u;
+    for (char c : s) { h ^= (unsigned char)c; h *= 16777619u; }
+    static const QColor pal[] = { CAT1, CAT2, CAT3, CAT4, CAT5, CAT6, CAT7, CAT8 };
+    return pal[h % (sizeof(pal) / sizeof(pal[0]))];
+}
+
 // 注意：返回值含前导 '#'（QColor::name()）。QSS 模板占位符前不得再写字面 #，
 // 否则拼出 "##rrggbb"，Qt 样式表解析器会整条丢弃该声明（Task 4 offscreen 实测）。
 inline QString hex(const QColor& c) { return c.name(); }

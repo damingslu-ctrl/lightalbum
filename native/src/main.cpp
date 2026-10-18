@@ -82,6 +82,7 @@
 #include "ui/RetouchPage.h"
 #include "ui/HomePage.h"
 #include "ui/LobbyPage.h"   // 2.41.0 前厅页（LA_LOBBY_QA 直调 onThisDay/recent 纯函数）
+#include "ui/PeoplePage.h"  // 2.41.0 人物馆（LA_PEOPLE_QA 直调 buildRooms 纯函数）
 #include "ui/DarkPalette.h"
 #include "ui/Theme.h"
 #include "ui/Splash.h"
@@ -1464,6 +1465,128 @@ int runLobbyQa()
 }
 
 } // namespace（前厅门禁）
+
+namespace {
+
+// 2.41.0 spec §2.3 人物馆门禁（LA_PEOPLE_QA）。
+// 铁律 20：直调 PeoplePage::buildRooms（与产品 UI 同一份纯函数）。
+// 反例 LA_PEOPLE_QA_FORCE_BROKEN=1：buildRooms 忽略 hidePrivate（priv 涌入）→ C 组必红。
+int runPeopleQa()
+{
+    const bool broken = !qEnvironmentVariableIsEmpty("LA_PEOPLE_QA_FORCE_BROKEN");
+    int checks = 0, fails = 0;
+    QStringList failed;
+    auto chk = [&](bool cond, const char* tag) {
+        ++checks;
+        if (!cond) { ++fails; failed << QString::fromLatin1(tag);
+                     std::fprintf(stderr, "  LA_PEOPLE_QA FAIL %s\n", tag); }
+    };
+
+    int seq = 0;
+    auto mk = [&seq](const char* date, const char* person, bool priv = false,
+                     bool missing = false, bool noThumb = false) {
+        Photo p;
+        ++seq;
+        p.path = QStringLiteral("syn_p%1").arg(seq);
+        p.thumbFile = noThumb ? QString() : QStringLiteral("tp%1.jpg").arg(seq);
+        p.date = QString::fromLatin1(date);
+        p.year = p.date.left(4).toInt();
+        p.person = QString::fromUtf8(person);
+        p.priv = priv;
+        p.missing = missing;
+        return p;
+    };
+    auto findRoom = [](const QVector<Room>& rs, const QString& n) -> const Room* {
+        for (const Room& r : rs) if (r.name == n) return &r;
+        return nullptr;
+    };
+    const QString kXiaoYu = QString::fromUtf8("小雨");
+    const QString kALan   = QString::fromUtf8("阿岚");
+
+    QVector<Photo> base;
+    base << mk("2019-05-01", "小雨") << mk("2024-07-02", "小雨")
+         << mk("2021-03-03", "阿岚") << mk("2022-01-01", "小雨,阿岚");
+
+    // —— A 组：聚合正例（一照双名 CSV + count 降序 + 同级 name 升序 + 色环确定性）——
+    {
+        const auto rs = PeoplePage::buildRooms(base, true);
+        const Room* x = findRoom(rs, kXiaoYu);
+        const Room* a = findRoom(rs, kALan);
+        chk(rs.size() == 2, "A_two_rooms");
+        chk(x && x->count == 3, "A_xiaoyu_count3");
+        chk(a && a->count == 2, "A_alan_count2");
+        chk(!rs.isEmpty() && rs.first().name == kXiaoYu, "A_order_count_desc");
+        chk(x && x->ring.isValid(), "A_ring_valid");
+        const auto rsB = PeoplePage::buildRooms(base, true);
+        const Room* xB = findRoom(rsB, kXiaoYu);
+        chk(x && xB && x->ring == xB->ring, "A_ring_deterministic");
+
+        QVector<Photo> tie;
+        tie << mk("2020-01-01", "张") << mk("2020-01-02", "李");
+        const auto rsT = PeoplePage::buildRooms(tie, true);
+        chk(rsT.size() == 2 && rsT[0].name < rsT[1].name, "A_tie_name_asc");
+    }
+
+    // —— B 组：房内日期升序 + 年跨度 ——
+    {
+        const auto rs = PeoplePage::buildRooms(base, true);
+        const Room* x = findRoom(rs, kXiaoYu);
+        chk(x && x->photos.size() == 3 && x->photos[0]->date < x->photos[1]->date
+            && x->photos[1]->date < x->photos[2]->date, "B_ascending");
+        chk(x && x->yearMin == 2019 && x->yearMax == 2024, "B_year_span");
+    }
+
+    // —— C 组：私密剔除（反例臂在此翻红）——
+    {
+        QVector<Photo> in = base;
+        in << mk("2023-04-04", "小雨", true);
+        const auto rs = PeoplePage::buildRooms(in, true);
+        const Room* x = findRoom(rs, kXiaoYu);
+        chk(x && x->count == 3, "C_priv_excluded");
+        bool anyPriv = false;
+        if (x) for (const Photo* p : x->photos) anyPriv = anyPriv || p->priv;
+        chk(!anyPriv, "C_no_priv_member");
+        const auto rs2 = PeoplePage::buildRooms(in, false);
+        const Room* x2 = findRoom(rs2, kXiaoYu);
+        chk(x2 && x2->count == 4, "C_priv_visible_when_unlocked");
+    }
+
+    // —— D 组：空库 / 空 person / 不可用照片防御 ——
+    {
+        chk(PeoplePage::buildRooms(QVector<Photo>(), true).isEmpty(), "D_empty");
+        QVector<Photo> blank;
+        blank << mk("2020-01-01", "") << mk("2020-01-02", " , ") << mk("2020-01-03", "   ");
+        chk(PeoplePage::buildRooms(blank, true).isEmpty(), "D_blank_person");
+        QVector<Photo> unusable;
+        unusable << mk("2020-01-01", "小雨", false, true)
+                 << mk("2020-01-02", "小雨", false, false, true);
+        chk(PeoplePage::buildRooms(unusable, true).isEmpty(), "D_unusable_excluded");
+    }
+
+    // —— E 组：count 口径 + 姓名 trim（前后空白 / CSV 逐段 trim）——
+    {
+        QVector<Photo> in;
+        in << mk("2020-01-01", " 小雨 ") << mk("2021-01-01", "小雨 , 阿岚");
+        const auto rs = PeoplePage::buildRooms(in, true);
+        bool countOk = !rs.isEmpty();
+        for (const Room& r : rs) countOk = countOk && (r.count == r.photos.size());
+        chk(countOk, "E_count_eq_photos");
+        const Room* x = findRoom(rs, kXiaoYu);
+        const Room* a = findRoom(rs, kALan);
+        chk(x && x->count == 2, "E_trim_same_room");
+        chk(a && a->count == 1, "E_trim_csv_split");
+    }
+
+    const bool pass = (checks > 0) && (fails == 0);
+    std::fprintf(stderr, "LA_PEOPLE_QA %s checks=%d failed=%d broken=%d\n",
+                 pass ? "PASS" : "FAIL", checks, fails, broken ? 1 : 0);
+    if (!pass)
+        std::fprintf(stderr, "LA_PEOPLE_QA failed: %s\n", qPrintable(failed.join(',')));
+    std::fflush(stderr);
+    return pass ? 0 : 1;
+}
+
+} // namespace（人物馆门禁）
 
 namespace {
 
@@ -9034,6 +9157,10 @@ int main(int argc, char *argv[])
     // 2.41.0 前厅：onThisDay/recent 纯函数契约（回退链/闰日/排序/过滤）
     if (qEnvironmentVariableIsSet("LA_LOBBY_QA"))
         return runLobbyQa();
+
+    // 2.41.0 人物馆：buildRooms 聚合契约（一照双名/升序/priv/空防御）
+    if (qEnvironmentVariableIsSet("LA_PEOPLE_QA"))
+        return runPeopleQa();
 
     if (qEnvironmentVariableIsSet("LA_ERASE_QA"))
         return runEraseQa();

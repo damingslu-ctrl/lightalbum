@@ -34,16 +34,10 @@ static QStringList catOrder()
 // 说明：FaceCluster 仅存 embedding，磁盘无现成人脸代表图，故用首字母 + 色环，
 // 诚实不伪装成照片；配色由名字哈希确定。
 // design-language-v2 T6：八色自拟盘（off-token 绿青褐系）退役 → CAT1..8 具名板（spec §1.4/§1.7）。
-// FNV 选择器保留：对稳定姓名做稳定哈希本身确定，满足 spec「固定映射」意图——
-// 原缺陷是板色 off-token + 相邻色同色不可读，具名高对比 CAT 板已修复此两点。
+// T4（2.41.0）：哈希实现上移 Theme.h `Lumen::personRing()` 作单源（人物馆展室环共用），此处仅取 hex。
 static QString storyAvatarColor(const QString& name)
 {
-    const QByteArray s = name.toUtf8();
-    uint h = 2166136261u;
-    for (char c : s) { h ^= (unsigned char)c; h *= 16777619u; }
-    static const QColor palette[] = { Lumen::CAT1, Lumen::CAT2, Lumen::CAT3, Lumen::CAT4,
-                                      Lumen::CAT5, Lumen::CAT6, Lumen::CAT7, Lumen::CAT8 };
-    return Lumen::hex(palette[h % (sizeof(palette) / sizeof(palette[0]))]);
+    return Lumen::hex(Lumen::personRing(name));
 }
 
 // design-language-v2 T6：chip 族单源（分类/聚类/故事三条共用一份配方，终结 3 处克隆漂移）。

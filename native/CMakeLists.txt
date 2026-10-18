@@ -89,6 +89,8 @@ set(LA_SOURCES
     src/ui/HomePage.cpp
     src/ui/LobbyPage.h
     src/ui/LobbyPage.cpp
+    src/ui/PeoplePage.h
+    src/ui/PeoplePage.cpp
     src/ui/Splash.h
     src/ui/Splash.cpp
     src/ui/HiDpi.h
