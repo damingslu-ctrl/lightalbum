@@ -1,5 +1,8 @@
 #include "GazeLightbox.h"
 #include "../core/Library.h"
+#include "../core/MotionKit.h"     // 2.41.0 §2.5 换展动画（kLightbox）
+#include "../core/MotionDriver.h"  // 2.41.0 §2.5 唯一 Qt 驱动器
+#include "../core/MotionPref.h"    // Lumen::systemReducedMotion
 #include "FullCache.h"
 #include <QLabel>
 #include <QFrame>
@@ -11,6 +14,7 @@
 #include <QVariantAnimation>
 #include <QPropertyAnimation>
 #include <QPointer>
+#include <QTimer>
 #include <QDir>
 #include <QFileInfo>
 #include <QCoreApplication>
@@ -20,9 +24,73 @@
 #include <QResizeEvent>
 #include <QEvent>
 #include <QLayout>
+#include <algorithm>
 
 // T6 零行为迁出：以下全部定义自 MainWindow.cpp（P15 起）逐字搬运，仅类名改
 // PhotoLightbox → GazeLightbox。
+
+namespace {
+// 2.41.0 §2.5 换展淡入时长（spec 明文 120ms const）。
+constexpr int kExhibitFadeMs = 120;
+// 主色采样：缩略图边长（spec 明文 64px）与饱和度门槛（spec 明文 >0.25）。
+constexpr int    kDominantSamplePx  = 64;
+constexpr double kDominantSatMin    = 0.25;
+constexpr double kDominantFallbackL = 0.90;   // 低饱和回退 = emerald 亮度 -10%
+} // namespace
+
+// 2.41.0 §2.5 主色纯函数（铁律 20：产品光晕与 LA_GAZE_QA 同一实现）。
+// 反例臂（铁律 35）：LA_GAZE_QA_FORCE_BROKEN=1 时**旁路低饱和回退** —— 无达标样本
+// 时不再落 emerald 暗化，而把全样本中位数原样返回（灰图 → 灰，非主色）→ B 组必红。
+QColor GazeLightbox::dominantColor(const QImage& thumb)
+{
+    const bool broken = !qEnvironmentVariableIsEmpty("LA_GAZE_QA_FORCE_BROKEN");
+    auto fallback = []() {
+        QColor e = Lumen::emerald();
+        int h = 0, s = 0, l = 0, a = 0;
+        e.getHsl(&h, &s, &l, &a);
+        return QColor::fromHsl(h, s, int(l * kDominantFallbackL + 0.5), a);
+    };
+    if (thumb.isNull()) return fallback();
+
+    const QImage im = thumb.scaled(kDominantSamplePx, kDominantSamplePx,
+                                   Qt::KeepAspectRatio, Qt::SmoothTransformation)
+                          .convertToFormat(QImage::Format_ARGB32);
+    const int w = im.width(), hgt = im.height();
+    if (w <= 0 || hgt <= 0) return fallback();
+    const double cx = w / 2.0, cy = hgt / 2.0;
+    const double innerR = qMin(w, hgt) / 4.0;    // 中心 1/2 半径
+
+    QVector<QColor> samples;
+    samples.reserve(w * hgt);
+    for (int y = 0; y < hgt; ++y) {
+        for (int x = 0; x < w; ++x) {
+            const double dx = x + 0.5 - cx, dy = y + 0.5 - cy;
+            const bool inner = (dx * dx + dy * dy) <= innerR * innerR;
+            if (!inner && ((x % 2) != 0 || (y % 2) != 0)) continue;   // 外圈每 2px 采样
+            samples.append(QColor::fromRgba(im.pixel(x, y)));
+        }
+    }
+    if (samples.isEmpty()) return broken ? QColor(Qt::black) : fallback();
+
+    // 达标样本：HSL 饱和度 > 0.25（qFuzzyCompare 排序，中位数取样）。
+    QVector<QColor> hot;
+    for (const QColor& c : samples)
+        if (c.toHsl().saturationF() > kDominantSatMin) hot.append(c);
+    if (hot.isEmpty())
+        return broken ? samples.at(samples.size() / 2) : fallback();
+
+    std::sort(hot.begin(), hot.end(), [](const QColor& a, const QColor& b) {
+        const QColor ha = a.toHsl(), hb = b.toHsl();
+        if (!qFuzzyCompare(ha.saturationF() + 1.0, hb.saturationF() + 1.0))
+            return ha.saturationF() < hb.saturationF();
+        if (!qFuzzyCompare(ha.lightnessF()  + 1.0, hb.lightnessF()  + 1.0))
+            return ha.lightnessF() < hb.lightnessF();
+        if (!qFuzzyCompare(ha.hueF()        + 1.0, hb.hueF()        + 1.0))
+            return ha.hueF() < hb.hueF();
+        return false;
+    });
+    return hot.at(hot.size() / 2);
+}
 
 void GazeLightbox::setFullCache(FullCache* fc) { full_ = fc; }
 FullCache* GazeLightbox::fullCache() const { return full_; }
@@ -98,6 +166,7 @@ GazeLightbox::GazeLightbox(Library* lib, QWidget* parent)
 
 void GazeLightbox::setPhoto(const Photo* ph, const QString& thumbsDir)
 {
+    const QString prevPath = path_;          // 换展判据（Gaze 档动画用）
     path_ = ph->path;
     thumbsDir_ = thumbsDir;   // F3 a11y：翻图复用
     changed_ = false;
@@ -107,6 +176,9 @@ void GazeLightbox::setPhoto(const Photo* ph, const QString& thumbsDir)
     orig_ = QPixmap(QDir(thumbsDir).filePath(ph->thumbFile));
     hasFull_ = false;
     layoutImage();
+    // 2.41.0 §2.5：凝视档的环境光晕按**缩略图**主色算（不落库、不写设置）。
+    if (mode_ == Mode::Gaze)
+        applyGlow(dominantColor(orig_.toImage()));
     if (full_) {
         QPointer<GazeLightbox> self(this);
         full_->request(ph->path, this, [self](const QImage& full) {
@@ -147,6 +219,7 @@ void GazeLightbox::setPhoto(const Photo* ph, const QString& thumbsDir)
             curRating_ = nr;
             changed_ = true;
             setStars(nr);
+            emit ratingChanged(path_, nr);   // 2.41.0 §2.5：观测信号（T8 可改读型刷新）
         });
         sl->addWidget(sb);
         starBtns_.append(sb);
@@ -181,6 +254,31 @@ void GazeLightbox::setPhoto(const Photo* ph, const QString& thumbsDir)
     close->setStyleSheet(Lumen::btnGhost());
     connect(close, &QPushButton::clicked, this, &GazeLightbox::close);
     cl->addWidget(privBtn); cl->addWidget(open); cl->addWidget(close);
+
+    // 2.41.0 §2.5：凝视档「换展」——只在真的换了一张时才动（首装不闪）。
+    if (mode_ == Mode::Gaze && !prevPath.isEmpty() && prevPath != path_)
+        startExhibitAnim();
+}
+
+// 2.41.0 §2.5 入馆：Browse 零行为；Gaze 叠环境光晕（无边框形态本就成立）。
+void GazeLightbox::enter(Mode m, const QString& startPath)
+{
+    // QA 取证通道（与 LA_LIGHTBOX_HOVER 同一既有先例）：offscreen 截图探针没有快捷键，
+    //   让 LA_LIGHTBOX_GAZE 把入馆档位直接抬到「凝视」，好让光晕/雾条形态可被 grab 取证。
+    if (qEnvironmentVariableIsSet("LA_LIGHTBOX_GAZE")) m = Mode::Gaze;
+    const bool wasGaze = (mode_ == Mode::Gaze);
+    mode_ = m;
+    if (m == Mode::Gaze && !wasGaze) {
+        // 主色由 setPhoto 算（此处仅在已有图时补算一次，防 enter 先于 setPhoto）
+        if (!orig_.isNull()) applyGlow(dominantColor(orig_.toImage()));
+    } else if (m == Mode::Browse && wasGaze) {
+        // 退回浏览：黑幕复位，光晕撤场
+        setStyleSheet(QStringLiteral("QWidget#photoLightbox{background:rgba(6,8,6,0.97);}"));
+    }
+    if (!startPath.isEmpty() && lib_) {
+        const Photo* ph = lib_->find(startPath);
+        if (ph && startPath != path_) setPhoto(ph, thumbsDir_);
+    }
 }
 
 void GazeLightbox::showEvent(QShowEvent* e) {
@@ -193,7 +291,110 @@ void GazeLightbox::keyPressEvent(QKeyEvent* e) {
     if (e->key() == Qt::Key_Escape) { e->accept(); close(); }
     else if (e->key() == Qt::Key_Left)  { navigate(-1); e->accept(); }
     else if (e->key() == Qt::Key_Right) { navigate( 1); e->accept(); }
+    // 2.41.0 §2.5 凝视键位（只在 Gaze 档生效，Browse 档保持零行为）：
+    //   S=喜欢 / A|Delete=略过 / L=封存。**每次按键即发** —— 写库即回，不做批量缓冲。
+    else if (mode_ == Mode::Gaze && e->key() == Qt::Key_S) { handleGazeMark(QStringLiteral("like")); e->accept(); }
+    else if (mode_ == Mode::Gaze
+             && (e->key() == Qt::Key_A || e->key() == Qt::Key_Delete)) { handleGazeMark(QStringLiteral("skip")); e->accept(); }
+    else if (mode_ == Mode::Gaze && e->key() == Qt::Key_L) { handleGazeMark(QStringLiteral("lock")); e->accept(); }
     else QWidget::keyPressEvent(e);
+}
+
+// 2.41.0 §2.5：S/A/L 即写标。同键在 toast 期内再按 = 撤销（发空 mark → 主窗 setMark(path,"")）。
+void GazeLightbox::handleGazeMark(const QString& mark)
+{
+    if (path_.isEmpty()) return;
+    const bool undo = (toastTimer_ && toastTimer_->isActive()
+                       && mark == pendingMark_ && path_ == pendingPath_);
+    if (undo) {
+        pendingMark_.clear();
+        pendingPath_.clear();
+        if (toastTimer_) toastTimer_->stop();
+        emit markRequested(path_, QString());
+        showToast(QCoreApplication::translate("LightAlbum", "已撤销"));
+    } else {
+        pendingMark_ = mark;
+        pendingPath_ = path_;
+        emit markRequested(path_, mark);
+        const QString label = mark == QLatin1String("like")   ? QCoreApplication::translate("LightAlbum", "喜欢")
+                            : mark == QLatin1String("skip")   ? QCoreApplication::translate("LightAlbum", "略过")
+                                                              : QCoreApplication::translate("LightAlbum", "封存");
+        showToast(QCoreApplication::translate("LightAlbum", "已标记 %1 · 再按同键撤销").arg(label));
+    }
+}
+
+// 2.41.0 §2.5：底部 toast（3s 自动收起；收起时关掉撤销窗口）。
+void GazeLightbox::showToast(const QString& text)
+{
+    if (!toast_) {
+        toast_ = new QLabel(this);
+        toast_->setObjectName(QStringLiteral("gazeToast"));
+        toast_->setAlignment(Qt::AlignCenter);
+        toast_->setStyleSheet(QString::fromUtf8(
+            "QLabel#gazeToast{background:rgba(6,8,6,0.86);"
+            "border:1px solid %1;color:%2;border-radius:%3;padding:8px 16px;}")
+            .arg(Lumen::hex(Lumen::line()))
+            .arg(Lumen::hex(Lumen::ink()))
+            .arg(Lumen::Radius::Pill)
+            + Lumen::Type::css(Lumen::Type::Tier::Small));
+        toastTimer_ = new QTimer(this);
+        toastTimer_->setSingleShot(true);
+        connect(toastTimer_, &QTimer::timeout, this, [this] {
+            pendingMark_.clear();
+            pendingPath_.clear();
+            if (toast_) toast_->hide();
+        });
+    }
+    toast_->setText(text);
+    toast_->adjustSize();
+    toast_->move((width() - toast_->width()) / 2, height() - 172);
+    toast_->raise();
+    toast_->show();
+    toastTimer_->start(3000);   // spec §2.5：3s
+}
+
+// 2.41.0 §2.5：环境光晕 = 影院黑幕换成「主色四缘淡晕」（Lumen::glowCss，alpha ≤10%）。
+void GazeLightbox::applyGlow(const QColor& c)
+{
+    setStyleSheet(Lumen::glowCss(c, 1.0));
+}
+
+// 2.41.0 §2.5：换展动画 —— 旧画淡出 120ms（const）+ 新画 kLightbox 入画，≤2 并发。
+void GazeLightbox::startExhibitAnim()
+{
+    // ≤2 并发：起新前若已有 2 个活跃 Driver，停最旧。
+    // Motion::Driver 无 stop() —— 删 Driver 即销毁其子 QVariantAnimation（唯一停法）。
+    while (drivers_.size() >= 2) {
+        Motion::Driver* old = drivers_.takeFirst();
+        if (old) old->deleteLater();
+    }
+
+    // 新画入画：淡入 120ms（const 时长）。
+    auto* eff = new QGraphicsOpacityEffect(img_);
+    eff->setOpacity(0.0);
+    img_->setGraphicsEffect(eff);
+    auto* in = new QPropertyAnimation(eff, "opacity", this);
+    in->setDuration(kExhibitFadeMs);
+    in->setStartValue(0.0);
+    in->setEndValue(1.0);
+    in->setEasingCurve(QEasingCurve::OutCubic);
+    connect(in, &QPropertyAnimation::finished, this, [this] {
+        if (auto* e = qobject_cast<QGraphicsOpacityEffect*>(img_->graphicsEffect()))
+            e->setEnabled(false);   // 静置恢复无损原生渲染
+    });
+    in->start(QAbstractAnimation::DeleteWhenStopped);
+
+    auto* drv = new Motion::Driver(Motion::kLightbox, Lumen::systemReducedMotion(), this);
+    connect(drv, &Motion::Driver::valueFor, this, [this](const QByteArray& prop, double v) {
+        if (prop == Motion::kPropOffsetX) img_->move(int(-v * 28), 0);   // 横滑轻推入画
+    });
+    connect(drv, &Motion::Driver::finishedSignal, this, [this, drv] {
+        img_->move(0, 0);
+        drivers_.removeOne(drv);
+        drv->deleteLater();
+    });
+    drivers_.append(drv);
+    drv->start();
 }
 
 // P20：满幅 img_ + 底部黑幕跟随窗口尺寸（黑幕常驻最上层）
@@ -220,7 +421,8 @@ bool GazeLightbox::eventFilter(QObject* obj, QEvent* ev) {
 
 void GazeLightbox::closeEvent(QCloseEvent* e) {
     QWidget::closeEvent(e);
-    emit dismissed();
+    // 2.41.0 §2.5：dirty 随关灯上报（凝视档 S/A/L 已即写库，故此处只管评分/私密）。
+    emit dismissed(changed_);
 }
 
 void GazeLightbox::clearLayout(QLayout* lay) {

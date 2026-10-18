@@ -177,6 +177,21 @@ inline constexpr QColor CAT1 = QColor(0x4f, 0xc0, 0x8a), CAT2 = SKY,
 inline QColor glowJade() { QColor c = EMERALD_HI; c.setAlpha(115); return c; } // 45%
 inline QColor glowGold() { QColor c = GOLD_HI;   c.setAlpha(102); return c; } // 40%
 
+// 2.41.0 §2.5 凝视模式「环境光晕」：以主色在窗口四缘铺一层极淡径向渐变 —— 中心
+// 仍是影院黑幕（照片压得住），越靠边越泛主色。strength∈[0,1]，实际 alpha 硬顶在
+// 10%（25/255）以内（spec 明文 ≤10%）；吸顶取整后仍 ≤ 25。
+inline QString glowCss(const QColor& c, double strength = 1.0)
+{
+    QColor edge = c;
+    edge.setAlpha(int(qBound(0.0, strength, 1.0) * 25.0 + 0.5));
+    // 注意：QColor::name() 丢 alpha，须显式 HexArgb（#aarrggbb）。
+    return QStringLiteral(
+        "QWidget#photoLightbox{background:qradialgradient("
+        "cx:0.5,cy:0.5,radius:0.78,fx:0.5,fy:0.5,"
+        "stop:0 rgba(6,8,6,0.97),stop:1 %1);}")
+        .arg(edge.name(QColor::HexArgb));
+}
+
 // 人物色环单源：FNV-1a 稳定哈希 → CAT1..8 具名板。
 // GalleryPage 的人物 chip 底色与 PeoplePage 的展室环共用同一份映射（此前 GalleryPage 本地一份）；
 // 哈希仅用于「稳定选色」（同姓名恒同色），不代表任何人物语义。

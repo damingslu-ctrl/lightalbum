@@ -771,14 +771,23 @@ void MainWindow::openLightbox(const QString& path, const QStringList& scope)
             retouch_->openPhoto(p);
             nav_->setCurrentRow(4);
         });
-        connect(lightbox_, &GazeLightbox::dismissed, this, [this] {
-            const bool dirty = lightbox_ && lightbox_->hasChanges();
+        // 2.41.0 §2.5：凝视档 S/A/L 即写库（单张 len=1 语义）；空 mark = 撤销。
+        // 写库即回 —— 不做批量缓冲；随后 read 型刷新（T8 汇入统一刷新点）。
+        connect(lightbox_, &GazeLightbox::markRequested, this,
+                [this](const QString& p, const QString& m) {
+            lib_->setMark(p, m);
+            gallery_->refresh();
+        });
+        connect(lightbox_, &GazeLightbox::dismissed, this, [this](bool dirty) {
             if (lightbox_) { lightbox_->hide(); lightbox_->clearChanges(); }
             if (dirty) gallery_->refresh();
         });
     }
     lightbox_->setScope(scope);
     lightbox_->setHidePrivate(!vaultUnlocked_);
+    // 2.41.0 §2.5：T7 只走 Browse 档（凝视入口由 T8 接线）。startPath 留空 →
+    //   照片装载仍走下一行的 setPhoto，故这里是**零行为**的档位归位。
+    lightbox_->enter(GazeLightbox::Mode::Browse, QString());
     lightbox_->setPhoto(ph, thumbsDir_);
     lightbox_->show();
     lightbox_->raise();

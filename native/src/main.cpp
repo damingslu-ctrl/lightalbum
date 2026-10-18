@@ -84,6 +84,7 @@
 #include "ui/LobbyPage.h"   // 2.41.0 前厅页（LA_LOBBY_QA 直调 onThisDay/recent 纯函数）
 #include "ui/PeoplePage.h"  // 2.41.0 人物馆（LA_PEOPLE_QA 直调 buildRooms 纯函数）
 #include "ui/CmdKPanel.h"   // 2.41.0 ⌘K v1（LA_CMDK_QA 直调 parse/parseChips 纯函数）
+#include "ui/GazeLightbox.h"   // 2.41.0 §2.5 凝视灯箱（LA_GAZE_QA 直调 dominantColor 纯函数）
 #include "ui/DarkPalette.h"
 #include "ui/Theme.h"
 #include "ui/Splash.h"
@@ -1716,6 +1717,161 @@ int runCmdkQa()
 }
 
 } // namespace（⌘K 门禁）
+
+namespace {
+
+// 2.41.0 spec §2.5 凝视模式门禁（LA_GAZE_QA）。
+//
+// 铁律 20：直调 GazeLightbox::dominantColor（与产品环境光晕同一纯函数）+ 
+//   BrowseScope::nextVisible（与 LA_PRIVACY_QA / GazeLightbox::navigate 同源）。
+// 断言：
+//   A 三合成图（暖/冷/灰）：纯橙、纯蓝图 → 主色色相中位数 ≈ 目标色相（同一 QColor 求期望）；
+//     并钉「暖冷可分」（否则"恒返回一色"也能骗过 A1/A2）。
+//   B 低饱和灰图 → 回退色 = emerald 亮度 -10%（逐通道 HSL ±容忍），且非黑非白、≠输入灰。
+//   C 钳制真伪判别器：临时开反例臂，同一灰图**必须换一个结果**（回退钳制真被接上）；
+//     反例 LA_GAZE_QA_FORCE_BROKEN=1 时两值相等 → C 必红（连 B 一起 → 整门红证）。
+//   D 私密步进纪律：凝视档 ←/→ 仍走 BrowseScope::nextVisible（锁态跳私密/解锁态可达/端点不回绕）
+//     + 源断言 GazeLightbox.cpp 里 `BrowseScope::nextVisible` 唯一调用点（Gaze 档不得自造翻页）。
+//   E 环境光晕样式契约：Lumen::glowCss 的边缘 alpha ≤ 25/255（10% 硬上限）且被 strength 钳住。
+int runGazeQa()
+{
+    const bool broken = !qEnvironmentVariableIsEmpty("LA_GAZE_QA_FORCE_BROKEN");
+    int checks = 0, fails = 0;
+    QStringList failed;
+    auto chk = [&](bool cond, const char* tag) {
+        ++checks;
+        if (!cond) { ++fails; failed << QString::fromLatin1(tag);
+                     std::fprintf(stderr, "  LA_GAZE_QA FAIL %s\n", tag); }
+    };
+
+    // 三张合成图（QA 全用合成图，R-06：用户真实照片永不进仓）。
+    auto solid = [](QColor c) {
+        QImage im(96, 64, QImage::Format_ARGB32);
+        im.fill(c);
+        return im;
+    };
+    const QColor kOrange(0xff, 0x8c, 0x1a), kBlue(0x1a, 0x66, 0xff), kGray(0x80, 0x80, 0x80);
+    const QImage warm = solid(kOrange), cool = solid(kBlue), gray = solid(kGray);
+
+    // —— A 组：暖/冷/灰三合成图（色相中位数）——
+    {
+        const QColor wc = GazeLightbox::dominantColor(warm);
+        const QColor cc = GazeLightbox::dominantColor(cool);
+        chk(qAbs(wc.hueF() - kOrange.hueF()) <= 0.02, "A1_warm_hue");
+        chk(qAbs(cc.hueF() - kBlue.hueF())   <= 0.02, "A2_cool_hue");
+        chk(qAbs(wc.hueF() - cc.hueF()) > 0.25, "A3_warm_cool_distinct");
+        chk(wc.saturationF() > 0.5 && cc.saturationF() > 0.5, "A4_samples_saturated");
+    }
+
+    // —— B 组：低饱和灰图 → 回退 = emerald 亮度 -10%（非黑非白）——
+    {
+        const QColor gc = GazeLightbox::dominantColor(gray);
+        const QColor e = Lumen::emerald();
+        int eh = 0, es = 0, el = 0, ea = 0;
+        e.getHsl(&eh, &es, &el, &ea);
+        const QColor want = QColor::fromHsl(eh, es, int(el * 0.90 + 0.5), ea);
+        chk(qAbs(gc.hue()        - want.hue())        <= 2, "B1_fallback_hue");
+        chk(qAbs(gc.saturation() - want.saturation()) <= 4, "B2_fallback_sat");
+        chk(qAbs(gc.lightness()  - want.lightness())  <= 4, "B3_fallback_light");
+        chk(gc.lightness() > 30 && gc.lightness() < 225, "B4_fallback_not_black_white");
+        // 回退色必须 ≠ 输入灰（否则「原样返回」也能过 B1..B4 —— 反例臂正是如此）
+        chk(!(qAbs(gc.red() - kGray.red())   <= 6
+              && qAbs(gc.green() - kGray.green()) <= 6
+              && qAbs(gc.blue()  - kGray.blue())  <= 6), "B5_fallback_not_input_gray");
+    }
+
+    // —— C 组：钳制真伪判别器（反例臂自检；FAULT-INJECTION 临时开关，用后原样还原）——
+    {
+        const char* kEnv = "LA_GAZE_QA_FORCE_BROKEN";
+        const bool wasSet = qEnvironmentVariableIsSet(kEnv);
+        const QByteArray saved = wasSet ? qgetenv(kEnv) : QByteArray();
+        qputenv(kEnv, "1");
+        const QColor armedGray = GazeLightbox::dominantColor(gray);
+        if (wasSet) qputenv(kEnv, saved); else qunsetenv(kEnv);
+        const QColor normalGray = GazeLightbox::dominantColor(gray);
+        // 反例臂开 → 旁路回退（全样本中位数）；关 → 回退 emerald 暗化。两值必须不同。
+        // 若 FORCE_BROKEN 断链（钳制未接），两值相等 → 本条红（铁律 34）。
+        chk(armedGray != normalGray, "C1_clamp_arm_wired");
+        // 反例臂下灰图应回「灰」（全样本中位数），证明确实旁路了钳制。
+        chk(qAbs(armedGray.red() - kGray.red()) <= 6
+            && qAbs(armedGray.green() - kGray.green()) <= 6
+            && qAbs(armedGray.blue() - kGray.blue()) <= 6, "C2_broken_bypasses_clamp");
+    }
+
+    // —— D 组：私密步进纪律（凝视档同口径）+ 唯一翻页真源 ——
+    {
+        auto slot = [](const char* p, bool priv) {
+            BrowseSlot s; s.path = QString::fromLatin1(p); s.priv = priv; return s;
+        };
+        // 6 槽：公-私-公-公-私-公（形与 LA_PRIVACY_QA 的 5 槽交替不同）。
+        const QVector<BrowseSlot> seq = {
+            slot("g0", false), slot("g1", true),  slot("g2", false),
+            slot("g3", false), slot("g4", true),  slot("g5", false) };
+        chk(BrowseScope::nextVisible(seq, 0, +1, true)  == 2,  "D1_gazeLockedFwd");
+        chk(BrowseScope::nextVisible(seq, 2, +1, true)  == 3,  "D2_gazeLockedAdjacent");
+        chk(BrowseScope::nextVisible(seq, 3, +1, true)  == 5,  "D3_gazeLockedSkipsPriv");
+        chk(BrowseScope::nextVisible(seq, 5, -1, true)  == 3,  "D4_gazeLockedBack");
+        chk(BrowseScope::nextVisible(seq, 0, +1, false) == 1,  "D5_gazeUnlockedReachesPriv");
+        chk(BrowseScope::nextVisible(seq, 5, +1, true)  == -1, "D6_gazeEndNoWrap");
+
+        // 源断言（v2 承 :723 注释例）：凝视灯箱的翻页真源唯一 —— `BrowseScope::nextVisible`
+        // 在 GazeLightbox.cpp 里只允许 1 个调用点（Gaze 档若自造翻页 → 计数变 2 → 红）。
+        QString root;
+        for (const QString& cand : { QCoreApplication::applicationDirPath() + QStringLiteral("/../src/ui"),
+                                     QCoreApplication::applicationDirPath() + QStringLiteral("/src/ui"),
+                                     QStringLiteral("src/ui") }) {
+            if (QFileInfo(cand).isDir()) { root = cand; break; }
+        }
+        int files = 0, nvCalls = 0;
+        bool hasNavigateDef = false;
+        if (!root.isEmpty()) {
+            QFile f(QDir(root).filePath(QStringLiteral("GazeLightbox.cpp")));
+            if (f.open(QIODevice::ReadOnly)) {
+                ++files;
+                QString text = QString::fromUtf8(f.readAll());
+                text.remove(QRegularExpression(QStringLiteral("/\\*.*?\\*/"),
+                    QRegularExpression::DotMatchesEverythingOption));   // 剥块注释
+                text.remove(QRegularExpression(QStringLiteral("//[^\\n]*")));  // 剥行注释
+                nvCalls = text.count(QStringLiteral("BrowseScope::nextVisible"));
+                hasNavigateDef = text.contains(QStringLiteral("void GazeLightbox::navigate(int delta)"));
+            }
+        }
+        // fail-open 守卫：源没读到就红（绝不静默放行，铁律 34）
+        chk(files > 0, "D7_source_scanned");
+        chk(nvCalls == 1, "D8_single_traversal_site");
+        chk(hasNavigateDef, "D9_navigate_defined");
+    }
+
+    // —— E 组：环境光晕样式契约（spec §2.5「alpha ≤10%」硬上限；防日后被调亮）——
+    {
+        // Lumen::glowCss 出 #aarrggbb（HexArgb）——把边缘 alpha 抽出来直接量化。
+        auto edgeAlpha = [](const QString& css, bool* ok) {
+            static const QRegularExpression re(QStringLiteral("stop:1 #([0-9a-fA-F]{8})"));
+            const QRegularExpressionMatch m = re.match(css);
+            if (!m.hasMatch()) { *ok = false; return -1; }
+            *ok = true;
+            return m.captured(1).left(2).toInt(nullptr, 16);
+        };
+        const QString g1 = Lumen::glowCss(QColor(0xff, 0x8c, 0x1a), 1.0);
+        const QString g2 = Lumen::glowCss(QColor(0xff, 0x8c, 0x1a), 5.0);   // 超上限必须被钳住
+        bool ok1 = false, ok2 = false;
+        const int a1 = edgeAlpha(g1, &ok1), a2 = edgeAlpha(g2, &ok2);
+        chk(ok1 && ok2, "E1_glow_parseable");
+        chk(ok1 && a1 > 0 && a1 <= 25, "E2_glow_alpha_le_10pct");
+        chk(ok2 && a2 <= 25, "E3_glow_strength_clamped");
+        chk(g1.contains(QStringLiteral("qradialgradient(")), "E4_glow_is_radial");
+    }
+
+    const bool pass = (checks > 0) && (fails == 0);
+    std::fprintf(stderr, "LA_GAZE_QA %s checks=%d failed=%d broken=%d\n",
+                 pass ? "PASS" : "FAIL", checks, fails, broken ? 1 : 0);
+    if (!pass)
+        std::fprintf(stderr, "LA_GAZE_QA failed: %s\n", qPrintable(failed.join(',')));
+    std::fflush(stderr);
+    return pass ? 0 : 1;
+}
+
+} // namespace（凝视门禁）
 
 namespace {
 
@@ -9294,6 +9450,10 @@ int main(int argc, char *argv[])
     // 2.41.0 ⌘K v1：parse/parseChips 词典层契约（3 金句/兜底/月季词法/empty/chip）
     if (qEnvironmentVariableIsSet("LA_CMDK_QA"))
         return runCmdkQa();
+
+    // 2.41.0 §2.5 凝视模式：dominantColor 纯函数 + 私密步进纪律 + 唯一翻页真源
+    if (qEnvironmentVariableIsSet("LA_GAZE_QA"))
+        return runGazeQa();
 
     if (qEnvironmentVariableIsSet("LA_ERASE_QA"))
         return runEraseQa();
