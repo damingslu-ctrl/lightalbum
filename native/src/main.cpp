@@ -8952,6 +8952,19 @@ int main(int argc, char *argv[])
                   QStringLiteral("Detection interrupted (partial results may have been written)."));
         i18nCheck("聚类过程中断（可能已部分写入）。",
                   QStringLiteral("Clustering interrupted (partial results may have been written)."));
+        // 2.41.0 T10：波1+波2 新页面（前厅/人物馆/⌘K/凝视/四灯菜单）核心词入册。
+        //   每条都在源码里真实存在（grep translate("LightAlbum", ...) 实点为真值），
+        //   缺译→Qt 回落源码→三态判别同时破 ①② → 变红。
+        i18nCheck("前厅", QStringLiteral("Lobby"));
+        i18nCheck("人物馆", QStringLiteral("People Hall"));
+        i18nCheck("今日展", QStringLiteral("Today's Exhibition"));
+        i18nCheck("最新到馆", QStringLiteral("New Arrivals"));
+        i18nCheck("全部藏品", QStringLiteral("All Holdings"));
+        i18nCheck("检索馆藏", QStringLiteral("Search Collection"));
+        i18nCheck("展厅灯光", QStringLiteral("Hall Lighting"));
+        i18nCheck("跟随空间", QStringLiteral("Follow Space"));
+        i18nCheck("已标记 %1 · 再按同键撤销",
+                  QStringLiteral("Marked %1 · press the same key to undo"));
         // 默认路径语言决策断言（2.11.1）：构造 locale 跨机确定性——
         // zh 系显示语言必须不加载 en（本事故根因）；en 系必须加载；forced 覆盖优先。
         struct I18nDecisionCase { const char* forced; const char* locName; bool expectLoad; };

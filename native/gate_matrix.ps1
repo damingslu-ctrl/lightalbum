@@ -345,6 +345,20 @@ $GateTable = @(
   # tautology (rule 16). Counter-example LA_CULL_EXEMPT_QA_FORCE_BROKEN=1 disables the RAW
   # exemption -> B1 goes RED while group A stays green.
   @{n="LA_CULL_EXEMPT_QA"; png=$false; tier="fast"; measuredMs=74},
+  # 2.41.0 wave1+2 trust+reach gates (LA_LOBBY_QA / LA_PEOPLE_QA / LA_CMDK_QA /
+  # LA_GAZE_QA / LA_LAMP_QA). Pure synthetic-fixture gates (R-06: no user photos in
+  # repo); assert-group shape inherited from LA_CULL_EXEMPT_QA. Each proven
+  # non-vacuous via its own FORCE_BROKEN hook: LA_LOBBY_QA drops the privacy filter
+  # (measured: E_count_without_priv + E_priv_hidden RED); LA_PEOPLE_QA ignores
+  # hidePrivate (C_priv_excluded + C_no_priv_member RED); LA_CMDK_QA swaps the
+  # month/season lexicon (14 asserts RED incl. D_month_table / D_season_table);
+  # LA_GAZE_QA bypasses the low-saturation fallback (B1/B2/B3/B5 + C1 RED);
+  # LA_LAMP_QA swaps the L1/L2 tables (A_L1_* and A_L2_*, 16 asserts RED).
+  @{n="LA_LOBBY_QA";  png=$false; tier="fast"; measuredMs=281},
+  @{n="LA_PEOPLE_QA"; png=$false; tier="fast"; measuredMs=387},
+  @{n="LA_CMDK_QA";   png=$false; tier="fast"; measuredMs=385},
+  @{n="LA_GAZE_QA";   png=$false; tier="fast"; measuredMs=331},
+  @{n="LA_LAMP_QA";   png=$false; tier="fast"; measuredMs=281},
   # 2.29.0 RAW/video retouch pipeline gate (LA_EDIT_RAW_QA). The retouch page used to read the
   # original straight through QImage(ph.path), which measured 0x0 null=1 for RAW -> RAW could
   # never reach the retouch page at all (2.28.0 missed this entry point). Photo, RAW and video

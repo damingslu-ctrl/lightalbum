@@ -1555,5 +1555,153 @@ Errors: %1 — %2</translation>
         <source>重命名人物</source>
         <translation>Rename Person</translation>
     </message>
+    <message>
+        <source>前厅</source>
+        <translation>Lobby</translation>
+    </message>
+    <message>
+        <source>今日展</source>
+        <translation>Today&apos;s Exhibition</translation>
+    </message>
+    <message>
+        <source>今日无展 · 明日再会</source>
+        <translation>No exhibition today · See you tomorrow</translation>
+    </message>
+    <message>
+        <source>最新到馆</source>
+        <translation>New Arrivals</translation>
+    </message>
+    <message>
+        <source>暂无新到馆藏</source>
+        <translation>No new arrivals yet</translation>
+    </message>
+    <message>
+        <source>搜索、跳转、问问馆藏…</source>
+        <translation>Search, jump, or ask the collection…</translation>
+    </message>
+    <message>
+        <source>馆内尚无藏品</source>
+        <translation>The hall holds no works yet</translation>
+    </message>
+    <message>
+        <source>导入一个目录或 iCloud 相册，开始你的第一场展览。</source>
+        <translation>Import a folder or an iCloud album to begin your first exhibition.</translation>
+    </message>
+    <message>
+        <source>人物馆</source>
+        <translation>People Hall</translation>
+    </message>
+    <message>
+        <source>%1 张</source>
+        <translation>%1 photos</translation>
+    </message>
+    <message>
+        <source>在图库筛选</source>
+        <translation>Filter in Gallery</translation>
+    </message>
+    <message>
+        <source>馆内布展中</source>
+        <translation>Curating the hall</translation>
+    </message>
+    <message>
+        <source>识别照片中的人物，即可为他们各开一间展室。</source>
+        <translation>Detect the people in your photos to open a room for each of them.</translation>
+    </message>
+    <message>
+        <source>检索馆藏</source>
+        <translation>Search Collection</translation>
+    </message>
+    <message>
+        <source>试试：去年秋天和小雨在公园的黑白照片</source>
+        <translation>Try: last autumn, Xiaoyu, black-and-white photos in the park</translation>
+    </message>
+    <message>
+        <source>执行</source>
+        <translation>Run</translation>
+    </message>
+    <message>
+        <source>暂存为合集</source>
+        <translation>Save as Collection</translation>
+    </message>
+    <message>
+        <source>下轮上线</source>
+        <translation>Coming next round</translation>
+    </message>
+    <message>
+        <source>点击切换候选，右键移除</source>
+        <translation>Click to cycle candidates, right-click to remove</translation>
+    </message>
+    <message>
+        <source>右键移除此条</source>
+        <translation>Right-click to remove this entry</translation>
+    </message>
+    <message>
+        <source>去年 · 今年 · 春天 · 六月</source>
+        <translation>Last year · This year · Spring · June</translation>
+    </message>
+    <message>
+        <source>尚未识别</source>
+        <translation>Not yet detected</translation>
+    </message>
+    <message>
+        <source>无地点元数据</source>
+        <translation>No location metadata</translation>
+    </message>
+    <message>
+        <source>人像 · 风光 · 夜景·星空 · 黑白</source>
+        <translation>Portrait · Landscape · Night sky · Black &amp; white</translation>
+    </message>
+    <message>
+        <source>时间</source>
+        <translation>Time</translation>
+    </message>
+    <message>
+        <source>人物</source>
+        <translation>People</translation>
+    </message>
+    <message>
+        <source>地点</source>
+        <translation>Place</translation>
+    </message>
+    <message>
+        <source>风格</source>
+        <translation>Style</translation>
+    </message>
+    <message>
+        <source>已撤销</source>
+        <translation>Undone</translation>
+    </message>
+    <message>
+        <source>封存</source>
+        <translation>Archived</translation>
+    </message>
+    <message>
+        <source>已标记 %1 · 再按同键撤销</source>
+        <translation>Marked %1 · press the same key to undo</translation>
+    </message>
+    <message>
+        <source>展厅灯光</source>
+        <translation>Hall Lighting</translation>
+    </message>
+    <message>
+        <source>检索（Ctrl+K）</source>
+        <translation>Search (Ctrl+K)</translation>
+    </message>
+    <message>
+        <source>跟随空间</source>
+        <translation>Follow Space</translation>
+    </message>
+    <message>
+        <source>全部藏品</source>
+        <translation>All Holdings</translation>
+    </message>
+    <message>
+        <source>%1 %2</source>
+        <translation>%1 %2</translation>
+    </message>
+    <message>
+        <source>检索：%1</source>
+        <translation>Search: %1</translation>
+    </message>
 </context>
 </TS>
