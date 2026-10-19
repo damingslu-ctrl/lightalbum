@@ -107,6 +107,7 @@ set(LA_SOURCES
     src/core/PhotoCluster.cpp
     src/core/StoryGen.h
     src/core/StoryGen.cpp
+    src/core/CurateState.h
     src/core/PhotoDedup.h
     src/core/PhotoDedup.cpp
     src/core/BrowseScope.h

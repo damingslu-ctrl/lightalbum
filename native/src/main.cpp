@@ -44,6 +44,7 @@
 #include "core/AiWriter.h"     // 单写者投递器：门在主线程，写回经 QueuedConnection + processEvents 落地
 #include "core/FaceCluster.h"     // 方向 C·人物自动聚类：阈值余弦聚类纯函数（QA 门直调）
 #include "core/StoryGen.h"        // 人物故事方向·B：自动故事相册纯函数（LA_STORY_QA 直调）
+#include "core/CurateState.h"     // 2.42.0 波3 策展系统领域类型（LA_CURATE_QA 直调）
 #include "ui/GalleryCardPainter.h"  // 2.22.0 骨架屏纯函数（QA 门直调，铁律 20 同源）
 #include "ui/FullCache.h"           // 2.22.0 灯箱原图 LRU（QA 门直调）
 #include "core/MotionKit.h"         // 2.34.0 动效引擎纯函数（LA_MOTION_QA 直调，铁律 20 同源）
@@ -1915,6 +1916,18 @@ int runCurateQa()
         report("A0_seenAt_loaded",
                built && opened && !ps.isEmpty() && ps[0].seenAt == 1760000000LL);
     }
+
+    // —— A1：枚举契约（T2）——
+    // TemplateId 序即 V6 §三表序；kTemplateCount 由末位枚举推导 ⇒ 断言恒 12（少一枚即红）。
+    report("A_templateTableCount", Curate::kTemplateCount == 12);
+    // Weights::pref 恒 0（R2 类型级锁）；fresh/quality/repeat 取 spec §2.1 默认值。
+    {
+        const Curate::Weights w;
+        report("A_weightsPrefZero",
+               w.pref == 0.0 && w.fresh == 0.55 && w.quality == 0.30 && w.repeat == 0.15);
+    }
+    // Exhibit 默认 invalid（未成展不得伪装有效，R7）。
+    report("A_exhibitDefaultsInvalid", Curate::Exhibit().valid == false);
 
     const bool pass = (checks > 0) && (fails == 0);
     std::fprintf(stderr, "LA_CURATE_QA %s checks=%d failed=%d broken=%d\n",
