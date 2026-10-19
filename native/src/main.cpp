@@ -2206,6 +2206,156 @@ int runCurateQa()
         report("H_teeth_quality_observable", wiredBlur != wiredSharp);  // 证明本测量能咬红
     }
 
+    // —— I：废片巡检（T6，spec 红线3：只打包不删除 + 整批反悔可回原态）——
+    //   红线 3 的编译期保障是签名只收 `const QVector<Photo>&`；运行期臂再加一道：
+    //   巡检前后**磁盘库行数逐行不变**（若日后有人给巡检接上删除，必红）。
+    {
+        const QString dir = QDir::tempPath() + QStringLiteral("/la_curate_qa_t6");
+        QDir(dir).removeRecursively();
+        QDir().mkpath(dir);
+        const QString thumbs = dir + QStringLiteral("/thumbs");
+        QDir().mkpath(thumbs);
+        const QString dbp = dir + QStringLiteral("/lib.sqlite");
+        QFile::remove(dbp);
+
+        // 合成缩略图（确定性低/高频签名，使三条规则各自可分且互不串扰）：
+        //   横向条纹×3（**逐像素相同** → phash 邻域 >2）= burst；线性斜坡（Laplacian≈0）= blurry；
+        //   纵向条纹 + 文件名含 "Screenshot" + seenAt 逾 730 天 = stale-shot；四分棋盘（唯一锐图、
+        //   近期入库）= 对照不入批。rawE(.CR2)/vidF(video) 为平坦灰 —— 验 RAW/视频豁免（不判糊）。
+        auto save = [&](const QString& name, int kind) {
+            QImage im(64, 64, QImage::Format_Grayscale8);
+            for (int y = 0; y < 64; ++y) {
+                uchar* l = im.scanLine(y);
+                for (int x = 0; x < 64; ++x) {
+                    uchar v;
+                    switch (kind) {
+                    case 0:  v = ((y / 16) % 2) ? 188 : 68; break;           // 横向条纹
+                    case 1:  v = ((x / 16) % 2) ? 188 : 68; break;           // 纵向条纹
+                    case 2:  v = uchar(68 + (x * 120) / 63); break;          // 线性斜坡（平滑 → 低方差）
+                    case 3:  v = (((x / 32 + y / 32) % 2) ? 188 : 68); break; // 四分棋盘
+                    default: v = 128; break;                                // 平坦
+                    }
+                    l[x] = v;
+                }
+            }
+            im.save(QDir(thumbs).filePath(name));
+        };
+        save(QStringLiteral("burstA_0.png"), 0);
+        save(QStringLiteral("burstA_1.png"), 0);
+        save(QStringLiteral("burstA_2.png"), 0);
+        save(QStringLiteral("blurB.png"), 2);
+        save(QStringLiteral("staleD_Screenshot_2020.png"), 1);
+        save(QStringLiteral("goodC.png"), 3);
+        save(QStringLiteral("rawE.png"), 4);
+        save(QStringLiteral("vidF.png"), 4);
+
+        const Curate::Now now{1760000000, 2026, 10, 19};
+        struct Fx { const char* rel; const char* thumb; qint64 agoDays; const char* media; };
+        const Fx fx[] = {
+            { "burstA_0.jpg", "burstA_0.png",  10,  "image" },
+            { "burstA_1.jpg", "burstA_1.png",  10,  "image" },
+            { "burstA_2.jpg", "burstA_2.png",  10,  "image" },
+            { "blurB.jpg",    "blurB.png",     10,  "image" },
+            { "staleD_Screenshot_2020.jpg", "staleD_Screenshot_2020.png", 900, "image" },
+            { "goodC.jpg",    "goodC.png",     10,  "image" },
+            { "rawE.CR2",     "rawE.png",      10,  "image" },
+            { "vidF.mp4",     "vidF.png",      10,  "video" },
+        };
+        QVector<Library::SynthRow> rows;
+        for (const Fx& f : fx) {
+            Library::SynthRow r;
+            r.path = QDir(dir).filePath(QString::fromLatin1(f.rel));
+            r.date = QStringLiteral("2026-10-19");
+            r.year = 2026;
+            r.seenAt = double(now.epochSec - f.agoDays * 86400);
+            r.mediaType = QString::fromLatin1(f.media);
+            rows << r;
+        }
+        QString err;
+        Library::makeSyntheticDb(dbp, rows, &err);
+        Library lib;
+        lib.open(dbp, &err);
+
+        // 门禁侧自建 all：path 与库一致（供 setMarks 落库），thumbFile 指到合成缩略图。
+        QVector<Photo> all = lib.photos();
+        for (Photo& p : all) {
+            const QString base = QFileInfo(p.path).fileName();
+            for (const Fx& f : fx)
+                if (base == QString::fromLatin1(f.rel)) p.thumbFile = QString::fromLatin1(f.thumb);
+        }
+        const int rowsBefore = all.size();
+        report("I_fixture_rows", rowsBefore == 8);
+
+        const Curate::BadShotBatch batch = Curate::inspectBadShots(all, thumbs, now);
+        QStringList batchPaths;
+        QSet<QString> batchSet;
+        bool whyOk = true;
+        for (const Curate::BadShotRecord& r : batch.items) {
+            batchPaths << r.path;
+            batchSet.insert(r.path);
+            if (r.why != QLatin1String("burst") && r.why != QLatin1String("blurry")
+                && r.why != QLatin1String("stale-shot")) whyOk = false;
+        }
+        report("I_batch_size", batch.items.size() == 5);   // 3 burst + 1 blurry + 1 stale-shot
+        report("I_why_valid", whyOk && !batch.items.isEmpty());
+        report("I_why_list_parity", Curate::badShotWhy(batch).size() == batch.items.size());
+        report("I_good_not_flagged",
+               !batchSet.contains(QDir(dir).filePath(QStringLiteral("goodC.jpg"))));
+        report("I_raw_video_exempt",
+               !batchSet.contains(QDir(dir).filePath(QStringLiteral("rawE.CR2")))
+               && !batchSet.contains(QDir(dir).filePath(QStringLiteral("vidF.mp4"))));
+        QSet<QString> allSet;
+        for (const Photo& p : all) allSet.insert(p.path);
+        bool subset = !batchPaths.isEmpty();
+        for (const QString& pth : batchPaths) if (!allSet.contains(pth)) subset = false;
+        report("I_pack_subset_of_all", subset);
+
+        // 反例臂（LA_CURATE_QA_FORCE_BROKEN_I=1）：模拟「巡检越界删除」——真删一行库记录，
+        //   I_never_deletes 必红，证明本测量能咬住红线 3 的违约形态。
+        if (!qEnvironmentVariableIsEmpty("LA_CURATE_QA_FORCE_BROKEN_I")) {
+            QSqlDatabase bdb = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"),
+                                                         QStringLiteral("la_curate_t6_break"));
+            bdb.setDatabaseName(dbp);
+            bdb.open();
+            QSqlQuery del(bdb);
+            del.prepare(QStringLiteral("DELETE FROM photos WHERE path = ?"));
+            del.addBindValue(QDir(dir).filePath(QStringLiteral("vidF.mp4")));
+            del.exec();
+            bdb.close();
+            QSqlDatabase::removeDatabase(QStringLiteral("la_curate_t6_break"));
+        }
+        Library disk;
+        disk.open(dbp, &err);
+        report("I_never_deletes", disk.photos().size() == rowsBefore);   // 磁盘行数逐行不变
+
+        // 整批退藏（setMarks）→ 内存与磁盘双证；再整批反悔（清 mark）→ 回原态。
+        const BatchResult m1 = lib.setMarks(batchPaths, QStringLiteral("skip"));
+        bool marked = m1.ok;
+        for (const QString& pth : batchPaths) {
+            const Photo* f = lib.find(pth);
+            if (!f || f->mark != QLatin1String("skip")) marked = false;
+        }
+        { Library d2; d2.open(dbp, &err);
+          for (const QString& pth : batchPaths) {
+              const Photo* f = d2.find(pth);
+              if (!f || f->mark != QLatin1String("skip")) marked = false;
+          } }
+        report("I_pack_marked", marked);
+
+        const BatchResult m2 = lib.setMarks(batchPaths, QString());
+        bool undone = m2.ok;
+        for (const QString& pth : batchPaths) {
+            const Photo* f = lib.find(pth);
+            if (!f || !f->mark.isEmpty()) undone = false;
+        }
+        { Library d3; d3.open(dbp, &err);
+          for (const QString& pth : batchPaths) {
+              const Photo* f = d3.find(pth);
+              if (!f || !f->mark.isEmpty()) undone = false;
+          } }
+        report("I_undo_restores", undone);
+    }
+
     const bool pass = (checks > 0) && (fails == 0);
     std::fprintf(stderr, "LA_CURATE_QA %s checks=%d failed=%d broken=%d\n",
                  pass ? "PASS" : "FAIL", checks, fails, broken ? 1 : 0);

@@ -1,10 +1,12 @@
 // 2.42.0 波3 策展引擎实现（spec §2.2/§2.3）。纯函数，见头文件铁律说明。
 #include "CurateEngine.h"
 #include "CullEngine.h"   // blurScore/exposureStats/computePhash/hamming（画质唯一真源）
+#include "RawDecode.h"     // isRawExt（RAW 判定的唯一真源，禁另立扩展名表，铁律 6）
 #include <QSet>
 #include <QHash>
 #include <QImage>
 #include <QDir>
+#include <QFileInfo>
 #include <algorithm>
 
 namespace {
@@ -414,6 +416,76 @@ Theme compose(const Theme& t, const QVector<Photo>& all, const QString& thumbsDi
 
     for (const Cand& c : chosen) out.paths.push_back(c.p->path);
     out.primaryPath = chosen[0].p->path;
+    return out;
+}
+
+BadShotBatch inspectBadShots(const QVector<Photo>& all, const QString& thumbsDir, const Now& now)
+{
+    // ★ 红线 3：只打包，永不删除 —— 本函数**无任何删除/写库调用**（签名只收 const）。
+    //   返回的记录由 UI 侧 setMarks 落「待点头」标记，用户可整批反悔（spec §3 I 组）。
+    BadShotBatch batch;
+    batch.builtAt = now.epochSec;
+
+    // —— 规则 1：连拍冗余（phash 邻域内 >2 帧 = 冗余）——
+    //   邻域判据承 CullEngine::computePhash/hamming（阈值 8 = CullOptions::dedupThreshold）。
+    //   缩略图不可读 → hash 0（不参与冗余，绝不用 0 当「全等」）。
+    QHash<QString, quint64> hcache;
+    QVector<quint64> hashes(all.size(), 0);
+    for (int i = 0; i < all.size(); ++i)
+        hashes[i] = thumbPhash(all[i], thumbsDir, hcache);
+    QVector<bool> isBurst(all.size(), false);
+    for (int i = 0; i < all.size(); ++i) {
+        if (hashes[i] == 0) continue;
+        int near = 0;
+        for (int j = 0; j < all.size(); ++j)
+            if (j != i && hashes[j] != 0 && CullEngine::hamming(hashes[i], hashes[j]) <= 8) ++near;
+        if (near + 1 > 2) isBurst[i] = true;          // 邻域（含自身）>2
+    }
+
+    // —— 规则 2：糊图（Laplacian 方差 < blurThreshold=80，承 CullEngine.h:88）——
+    //   ★ RAW/视频豁免（承 CullEngine.h:9-13 铁律：缩略图不代表其真实画质，与选片页同源）。
+    //   ★ 不可评估（不可读 / 边长<3）→ 不判糊（失败即放行，与 CullEngine 同源）。
+    QVector<bool> isBlurry(all.size(), false);
+    for (int i = 0; i < all.size(); ++i) {
+        const Photo& p = all[i];
+        if (p.mediaType == QStringLiteral("video")) continue;
+        if (RawDecode::isRawExt(p.path)) continue;
+        const QImage img(QDir(thumbsDir).filePath(p.thumbFile));
+        if (img.isNull()) continue;
+        const QImage gray = img.convertToFormat(QImage::Format_Grayscale8);
+        if (gray.width() < 3 || gray.height() < 3) continue;
+        if (CullEngine::blurScore(gray) < 80.0) isBlurry[i] = true;
+    }
+
+    // —— 规则 3：截图过期（文件名启发 + 入库逾 730 天）——
+    //   Photo 无像素尺寸（仅 dim 字串），故 v1 只用文件名启发（spec §2.3 v1 降级惯例，如实记）。
+    QVector<bool> isStale(all.size(), false);
+    for (int i = 0; i < all.size(); ++i) {
+        const Photo& p = all[i];
+        const QString base = QFileInfo(p.path).fileName().toLower();
+        const bool shotish = base.contains(QStringLiteral("screenshot"))
+                          || base.contains(QString::fromUtf8("截屏"))
+                          || base.contains(QString::fromUtf8("屏幕快照"));
+        if (shotish && p.seenAt > 0 && now.epochSec - p.seenAt > 730LL * 86400)
+            isStale[i] = true;
+    }
+
+    // 每条恰录一次，理由优先序 burst > blurry > stale-shot（确定性，禁依赖容器序）。
+    for (int i = 0; i < all.size(); ++i) {
+        QString why;
+        if (isBurst[i])       why = QStringLiteral("burst");
+        else if (isBlurry[i]) why = QStringLiteral("blurry");
+        else if (isStale[i])  why = QStringLiteral("stale-shot");
+        if (!why.isEmpty()) batch.items.push_back(BadShotRecord{ all[i].path, why });
+    }
+    return batch;
+}
+
+QStringList badShotWhy(const BadShotBatch& batch)
+{
+    QStringList out;
+    out.reserve(batch.items.size());
+    for (const BadShotRecord& r : batch.items) out << r.why;
     return out;
 }
 

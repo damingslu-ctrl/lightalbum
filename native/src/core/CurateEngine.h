@@ -62,4 +62,13 @@ Theme compose(const Theme& t, const QVector<Photo>& all, const QString& thumbsDi
 //   缩略图不可读 → 返回 -1（失败即未知，绝不编造）。
 double qualityScore(const Photo& p, const QString& thumbsDir);
 
+// 废片巡检（spec §2.2 / 红线 3）：连拍冗余 · 糊图 · 截图过期 三条规则**并集**，
+//   逐条记为 `BadShotRecord{path, why}`（why ∈ {burst, blurry, stale-shot}）。
+//   ★ 只打包，永不删除 —— 本函数**无任何删除/写库调用**（编译期签名只收 const）。
+//   ★ RAW/视频豁免糊图判定（承 CullEngine.h:9-13 铁律：缩略图不代表其真实画质）。
+BadShotBatch inspectBadShots(const QVector<Photo>& all, const QString& thumbsDir, const Now& now);
+
+// 批次内每条记录的理由 token 列表（序与 items 一致；UI 展示「为什么建议退藏」用）。
+QStringList badShotWhy(const BadShotBatch& batch);
+
 }   // namespace Curate
