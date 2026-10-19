@@ -45,6 +45,7 @@
 #include "core/FaceCluster.h"     // 方向 C·人物自动聚类：阈值余弦聚类纯函数（QA 门直调）
 #include "core/StoryGen.h"        // 人物故事方向·B：自动故事相册纯函数（LA_STORY_QA 直调）
 #include "core/CurateState.h"     // 2.42.0 波3 策展系统领域类型（LA_CURATE_QA 直调）
+#include "core/CurateEngine.h"    // 2.42.0 波3 策展引擎纯函数（LA_CURATE_QA 直调，铁律 20 同源）
 #include "ui/GalleryCardPainter.h"  // 2.22.0 骨架屏纯函数（QA 门直调，铁律 20 同源）
 #include "ui/FullCache.h"           // 2.22.0 灯箱原图 LRU（QA 门直调）
 #include "core/MotionKit.h"         // 2.34.0 动效引擎纯函数（LA_MOTION_QA 直调，铁律 20 同源）
@@ -1881,6 +1882,38 @@ namespace {
 // 反例 LA_CURATE_QA_FORCE_BROKEN=1：各对应组红（见各组注）。
 // 组：A 模板表/确定  B 候选池  C 新鲜感  D 重复惩罚  E 无偏好学习  F 频控
 //     G 冷启动  H 画质不越界  I 废片巡检  J 文案非 LLM  K 缺源诚实  L 反例矩阵
+// 合成照片工厂（LA_CURATE_QA 专用；R-06：仓库零真实照片，全部内存构造）。
+// 确定性：同 n 恒同结果。i%15==7 → 2 张私密（n=30 时 i=7,22）；首 3 张约定为「近展」。
+// 覆盖桶维度：category(8 类) / person(Alice,Bob) / year / city / mark。
+static QVector<Photo> makeSyntheticPhotos(int n)
+{
+    static const char* const kCats[8] = {"风景", "人像", "街拍", "美食",
+                                         "建筑", "黑白", "夜景·星空", "其他"};
+    QVector<Photo> v;
+    v.reserve(n);
+    for (int i = 0; i < n; ++i) {
+        Photo p;
+        p.path = QStringLiteral("/syn/%1.jpg").arg(i, 3, 10, QLatin1Char('0'));
+        p.rel  = QStringLiteral("%1.jpg").arg(i, 3, 10, QLatin1Char('0'));
+        p.year = 2020 + (i % 5);
+        const int mo = 1 + (i % 12), dy = 1 + (i % 28);
+        p.date = QStringLiteral("%1-%2-%3").arg(p.year)
+                     .arg(mo, 2, 10, QLatin1Char('0')).arg(dy, 2, 10, QLatin1Char('0'));
+        p.city = (i % 3 == 0) ? QStringLiteral("beijing")
+               : (i % 3 == 1) ? QStringLiteral("shanghai") : QString();
+        p.category = QString::fromUtf8(kCats[i % 8]);
+        p.person = (i % 4 == 0) ? QStringLiteral("Alice")
+                 : (i % 4 == 1) ? QStringLiteral("Bob") : QString();
+        p.priv = (i % 15 == 7);
+        p.hasGps = (i % 3 != 2);
+        if (p.hasGps) { p.la = 30.0 + i * 0.01; p.lo = 120.0 + i * 0.01; }
+        p.seenAt = 1700000000 + qint64(i) * 1000;
+        p.mediaType = QStringLiteral("image");
+        v.push_back(p);
+    }
+    return v;
+}
+
 int runCurateQa()
 {
     const bool broken = !qEnvironmentVariableIsEmpty("LA_CURATE_QA_FORCE_BROKEN");
@@ -1928,6 +1961,64 @@ int runCurateQa()
     }
     // Exhibit 默认 invalid（未成展不得伪装有效，R7）。
     report("A_exhibitDefaultsInvalid", Curate::Exhibit().valid == false);
+
+    // —— A2：模板表（T3，spec §2.3）——
+    {
+        const auto& tt = Curate::templateTable();
+        report("A_templateTable_12", tt.size() == 12);
+        // 方向：Up×11 + Down×1（仅 BadShotSweep 为 Down）。
+        int down = 0;
+        for (const auto& s : tt) if (s.direction == Curate::Direction::Down) ++down;
+        report("A_direction_down_only_sweep", down == 1);
+        // id 无重（12 枚枚举各出现恰一次）。
+        QSet<int> ids;
+        for (const auto& s : tt) ids.insert(int(s.id));
+        report("A_ids_unique", ids.size() == 12);
+        // 每条声明非空数据源（R7 缺源判定的前提）。
+        bool anyEmpty = false;
+        for (const auto& s : tt) if (s.sourceId.isEmpty() || s.nameKey.isEmpty()) anyEmpty = true;
+        report("A_source_nonempty", !anyEmpty);
+    }
+
+    // —— B：候选池（T3，spec §2.2）——
+    {
+        const QVector<Photo> all = makeSyntheticPhotos(30);   // 2 私密（i=7,22）
+        QStringList recent;
+        for (int i = 0; i < 3; ++i) recent << all[i].path;     // 近 4 周已展出 3 张
+        const auto pool = Curate::candidatePool(all, /*hidePrivate=*/true, recent,
+                                                Curate::Now{1760000000, 2026, 10, 19});
+        bool anyPriv = false, anyRecent = false;
+        for (const Photo* p : pool) {
+            if (p->priv) anyPriv = true;
+            if (recent.contains(p->path)) anyRecent = true;
+        }
+        report("B_excl_priv", !anyPriv);
+        report("B_excl_recent", !anyRecent);
+        report("B_keeps_rest", pool.size() == 25);
+
+        // 保守派：hidePrivate=false 时私密照保留（开关有效，非恒删）。
+        const auto pool2 = Curate::candidatePool(all, /*hidePrivate=*/false, recent,
+                                                 Curate::Now{1760000000, 2026, 10, 19});
+        report("B_priv_kept_when_visible", pool2.size() == 27);
+    }
+
+    // —— B2：分桶（T3，计划裁决 3 的键命名）——
+    {
+        const QVector<Photo> all = makeSyntheticPhotos(30);
+        const auto pool = Curate::candidatePool(all, true, QStringList(),
+                                                Curate::Now{1760000000, 2026, 10, 19});
+        const Curate::Buckets bk = Curate::bucket(pool);
+        report("B2_bucket_cat_key", bk.byKey.contains(QStringLiteral("cat:风景")));
+        report("B2_bucket_person_key", bk.byKey.contains(QStringLiteral("person:Alice")));
+        report("B2_bucket_year_key", bk.byKey.contains(QStringLiteral("y:2020")));
+        report("B2_bucket_ym_key", bk.byKey.contains(QStringLiteral("ym:2020-01")));
+        report("B2_bucket_city_key", bk.byKey.contains(QStringLiteral("city:beijing")));
+        // 桶内下标恒在池范围内（守恒：不越界、不串池）。
+        bool idxOk = true;
+        for (auto it = bk.byKey.cbegin(); it != bk.byKey.cend(); ++it)
+            for (int ix : it.value()) if (ix < 0 || ix >= pool.size()) idxOk = false;
+        report("B2_bucket_indices_in_range", idxOk);
+    }
 
     const bool pass = (checks > 0) && (fails == 0);
     std::fprintf(stderr, "LA_CURATE_QA %s checks=%d failed=%d broken=%d\n",

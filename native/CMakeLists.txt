@@ -108,6 +108,8 @@ set(LA_SOURCES
     src/core/StoryGen.h
     src/core/StoryGen.cpp
     src/core/CurateState.h
+    src/core/CurateEngine.h
+    src/core/CurateEngine.cpp
     src/core/PhotoDedup.h
     src/core/PhotoDedup.cpp
     src/core/BrowseScope.h
