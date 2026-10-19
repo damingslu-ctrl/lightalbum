@@ -101,10 +101,12 @@ public:
     // 复用点：相似照片去重（PhotoDedup）直接调用本算法，保持 pHash 唯一真源。
     static quint64 computePhash(const QImage& src, int hashSize);
     static int    hamming(quint64 a, quint64 b);
-private:
+    // 2.42.0 波3：策展成展器的画质分（Curate::qualityScore）复用同一对本地维度算子
+    // （唯一真源：不另立第二份 Laplacian/曝光实现）。二者均为纯函数、只读 gray。
     static double blurScore(const QImage& gray);
     static void   exposureStats(const QImage& gray, double& mean, double& under,
                                 double& over, QString& verdict);
+private:
     static double sharpnessScore(double var);
     static double lightingScore(const QString& verdict);
     static double computeTotal(double sharpness, double lighting, double& coverage);

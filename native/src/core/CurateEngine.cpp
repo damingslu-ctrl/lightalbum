@@ -1,7 +1,11 @@
 // 2.42.0 波3 策展引擎实现（spec §2.2/§2.3）。纯函数，见头文件铁律说明。
 #include "CurateEngine.h"
+#include "CullEngine.h"   // blurScore/exposureStats/computePhash/hamming（画质唯一真源）
 #include <QSet>
 #include <QHash>
+#include <QImage>
+#include <QDir>
+#include <algorithm>
 
 namespace {
 
@@ -47,6 +51,18 @@ bool isFixedHoliday(int m, int d)
         || (m == 5 && d == 1)      // 劳动节
         || (m == 10 && d == 1)     // 国庆
         || (m == 12 && d == 25);   // 圣诞
+}
+
+// 缩略图 pHash（带进程内缓存，避免 compose 多次取同一帧）；不可读 → 0（视为不重复）。
+quint64 thumbPhash(const Photo& p, const QString& thumbsDir, QHash<QString, quint64>& cache)
+{
+    const QString tp = QDir(thumbsDir).filePath(p.thumbFile);
+    const auto it = cache.constFind(tp);
+    if (it != cache.constEnd()) return it.value();
+    const QImage img(tp);
+    const quint64 h = img.isNull() ? 0 : CullEngine::computePhash(img, 8);
+    cache.insert(tp, h);
+    return h;
 }
 
 }   // namespace
@@ -324,6 +340,81 @@ bool frequencyAllows(const Theme& t, const ExhibitHistory& h, const MuteState& m
         if ((now.epochSec - it.value()) < 60LL * 86400) return false;
     }
     return true;
+}
+
+double qualityScore(const Photo& p, const QString& thumbsDir)
+{
+    // 复用 CullEngine 的同一对本地维度算子（唯一真源，R7），归一到 [0,1]：
+    //   清晰 = min(blur / blurThreshold, 1)（80 = CullOptions::blurThreshold 同锚）；
+    //   光影 = 1 − min(max(欠曝比, 过曝比) / 0.45, 1)。
+    const QImage img(QDir(thumbsDir).filePath(p.thumbFile));
+    if (img.isNull()) return -1.0;            // 失败即未知（不编造，与 CullEngine 失败即放行同源）
+    QImage gray = img.convertToFormat(QImage::Format_Grayscale8);
+    const int m = std::max(gray.width(), gray.height());
+    if (m > 512) {
+        const double s = 512.0 / m;
+        gray = gray.scaled(int(gray.width() * s), int(gray.height() * s),
+                           Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    }
+    double mean = 0, under = 0, over = 0;
+    QString verdict;
+    CullEngine::exposureStats(gray, mean, under, over, verdict);
+    // ★ blurScore 的「无法评估」哨兵是 999.0（非 Grayscale8 / 边长<3），而真实锐图的
+    //   Laplacian 方差可远超 999（棋盘即 57600）——故**不能**用 `blur >= 999` 判不可评估，
+    //   否则把高方差锐图误零。这里已自控格式（convertToFormat）且非 null，唯一剩余失败面是
+    //   边长 <3；按此**前置条件**判定，与 CullEngine.cpp:226 的 img.isNull() 分派同源。
+    const bool evaluable = (gray.width() >= 3 && gray.height() >= 3);
+    const double blur = evaluable ? CullEngine::blurScore(gray) : 0.0;
+    const double sharp = std::min(blur / 80.0, 1.0);
+    const double light = 1.0 - std::min(std::max(under, over) / 0.45, 1.0);
+    return 0.5 * sharp + 0.5 * light;
+}
+
+Theme compose(const Theme& t, const QVector<Photo>& all, const QString& thumbsDir)
+{
+    // ★ R7：qualityScore 只在本主题的候选帧（= t.paths）上调用，绝不进入全局打分。
+    Theme out = t;
+    QHash<QString, const Photo*> ix;
+    ix.reserve(all.size());
+    for (const Photo& p : all) ix.insert(p.path, &p);
+
+    struct Cand { const Photo* p; double q; };
+    QVector<Cand> cands;
+    cands.reserve(t.paths.size());
+    for (const QString& path : t.paths) {
+        const Photo* p = ix.value(path, nullptr);
+        if (p) cands.push_back({p, qualityScore(*p, thumbsDir)});
+    }
+    // 画质降序；同分按 path 升序（确定性，禁依赖容器序）。
+    std::sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) {
+        if (a.q != b.q) return a.q > b.q;
+        return a.p->path < b.p->path;
+    });
+
+    out.paths.clear();
+    out.primaryPath.clear();
+    if (cands.isEmpty()) return out;           // 无可用帧 → 空（不伪造主图）
+
+    const int n = qBound(5, cands.size(), 9);   // 展内总量裁到 5..9
+    QVector<Cand> chosen;
+    chosen.push_back(cands[0]);                 // 主图：展内画质最高
+    QHash<QString, quint64> hcache;
+    QVector<quint64> hashes{ thumbPhash(*cands[0].p, thumbsDir, hcache) };
+    for (int i = 1; i < cands.size() && chosen.size() < n; ++i) {
+        const quint64 h = thumbPhash(*cands[i].p, thumbsDir, hcache);
+        bool dup = false;
+        for (quint64 k : hashes) if (k != 0 && h != 0 && CullEngine::hamming(h, k) <= 8) { dup = true; break; }
+        if (!dup) { chosen.push_back(cands[i]); hashes.push_back(h); }
+    }
+    for (int i = 1; i < cands.size() && chosen.size() < n; ++i) {   // 去冗余后不足 → 按画质回填（≥5 保底）
+        bool has = false;
+        for (const Cand& c : chosen) if (c.p->path == cands[i].p->path) { has = true; break; }
+        if (!has) chosen.push_back(cands[i]);
+    }
+
+    for (const Cand& c : chosen) out.paths.push_back(c.p->path);
+    out.primaryPath = chosen[0].p->path;
+    return out;
 }
 
 }   // namespace Curate

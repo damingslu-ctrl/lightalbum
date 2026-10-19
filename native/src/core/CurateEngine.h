@@ -53,4 +53,13 @@ double score(const Theme& t, const Weights& w, const ExhibitHistory& h, const No
 // 频控：每周 ≤1 · 同人同题 60 天冷却 · 静音（全局或模板级）→ 返回是否放行。
 bool frequencyAllows(const Theme& t, const ExhibitHistory& h, const MuteState& m, const Now& now);
 
+// 成展器：展内排序 = w3·画质（**唯一消费 quality 的地方**，R7）；
+//   主图 = 展内画质分最高；陪展 = 类内多样（phash 邻域去冗余）；总量裁到 5..9。
+//   ★ 只对本主题的候选帧算画质（不碰全库）；thumbsDir 与 Photo::thumbFile 拼接取图。
+Theme compose(const Theme& t, const QVector<Photo>& all, const QString& thumbsDir);
+
+// 画质分（V6「凝视分」本波定义）：CullEngine::blurScore+exposureStats 合成归一化到 [0,1]。
+//   缩略图不可读 → 返回 -1（失败即未知，绝不编造）。
+double qualityScore(const Photo& p, const QString& thumbsDir);
+
 }   // namespace Curate

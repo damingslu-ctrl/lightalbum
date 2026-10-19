@@ -2115,6 +2115,97 @@ int runCurateQa()
         report("K_missing_source_skips", allEmpty);
     }
 
+    // —— H：画质不越界（全局选题不含画质）+ compose 腿（T5，spec R7）——
+    {
+        const QString td = QDir::tempPath() + QStringLiteral("/la_curate_qa_t5_thumbs");
+        QDir().mkpath(td);
+        // 锐 = 中灰棋盘（高 Laplacian 方差 + 无截断曝光）；糊 = 纯灰（方差 0）。
+        // 二者 qualityScore 明显可分（≈1.0 vs ≈0.5），使「主图=画质最高」可被咬红。
+        auto saveThumb = [&](const QString& name, bool sharp) {
+            QImage im(64, 64, QImage::Format_Grayscale8);
+            for (int y = 0; y < 64; ++y) {
+                uchar* ln = im.scanLine(y);
+                for (int x = 0; x < 64; ++x)
+                    ln[x] = sharp ? uchar(((x + y) % 2) ? 188 : 68) : uchar(128);
+            }
+            im.save(QDir(td).filePath(name));
+        };
+
+        QVector<Photo> photos;
+        QStringList sharpPaths;
+        for (int i = 0; i < 9; ++i) {
+            const bool sharp = (i < 5);
+            const QString name = QStringLiteral("t5_%1.png").arg(i);
+            saveThumb(name, sharp);
+            Photo p;
+            p.path = QDir(td).filePath(name);
+            p.thumbFile = name;
+            p.category = QStringLiteral("风景");
+            p.person = QStringLiteral("Alice");
+            photos.push_back(p);
+            if (sharp) sharpPaths << p.path;
+        }
+
+        Curate::Theme t;
+        t.id = Curate::TemplateId::OnThisDay;
+        for (const Photo& p : photos) t.paths.push_back(p.path);
+
+        const Curate::Theme composed = Curate::compose(t, photos, td);
+        report("compose_size_5to9", composed.paths.size() >= 5 && composed.paths.size() <= 9);
+        // 主图 = 展内画质最高（门禁侧用同一 qualityScore 独立重算 argmax）。
+        double bestQ = -1e9;
+        QString bestPath;
+        for (const QString& path : composed.paths) {
+            const Photo* found = nullptr;
+            for (const Photo& p : photos) if (p.path == path) { found = &p; break; }
+            if (!found) continue;
+            const double q = Curate::qualityScore(*found, td);
+            if (q > bestQ) { bestQ = q; bestPath = path; }
+        }
+        report("compose_primary_is_best", composed.primaryPath == bestPath);
+        report("compose_primary_is_sharp", sharpPaths.contains(composed.primaryPath));
+
+        // H 组：全局选题（propose+score）不含画质 —— 同批 Photo 字段，缩略图先全糊、再全锐，
+        //   两次全局签名必须逐字节相同。守界本质是编译期（score/propose 无形参载体），
+        //   运行期臂再加一道：一旦有人把画质接进全局签名，本测量必能咬红（H_teeth_*）。
+        auto globalSig = [&]() {
+            const Curate::Now now{1760000000, 2026, 10, 19};
+            const auto pool = Curate::candidatePool(photos, true, QStringList(), now);
+            const Curate::Buckets bk = Curate::bucket(pool);
+            QString sig;
+            for (const auto& spec : Curate::templateTable()) {
+                const auto themes = Curate::propose(spec.id, bk, pool, now);
+                for (const auto& th : themes)
+                    sig += QString::fromLatin1(Curate::templateIdToken(th.id)) + QLatin1Char('|')
+                         + QString::number(Curate::score(th, Curate::Weights(),
+                                                         Curate::ExhibitHistory(), now), 'g', 12)
+                         + QLatin1Char('|') + th.paths.join(QLatin1Char(',')) + QLatin1Char(';');
+            }
+            return sig;
+        };
+        auto sigWiredWithQuality = [&]() {                 // 反例形态：故意把画质接进签名
+            double q = 0.0;
+            for (const Photo& p : photos) q += Curate::qualityScore(p, td);
+            return globalSig() + QLatin1Char('#') + QString::number(q, 'g', 12);
+        };
+
+        for (int i = 0; i < 9; ++i) saveThumb(QStringLiteral("t5_%1.png").arg(i), false);  // 全糊
+        const QString sigBlur = globalSig();
+        const QString wiredBlur = sigWiredWithQuality();
+        for (int i = 0; i < 9; ++i) saveThumb(QStringLiteral("t5_%1.png").arg(i), true);   // 全锐
+        const QString sigSharp = globalSig();
+        const QString wiredSharp = sigWiredWithQuality();
+
+        // 反例臂（LA_CURATE_QA_FORCE_BROKEN_H=1）：把画质**故意接进被比较的签名**，
+        //   H_quality_not_global 必红 —— 证明该门能咬「画质越界」这一缺陷形态（独立于 E 组臂）。
+        const bool brokenH = !qEnvironmentVariableIsEmpty("LA_CURATE_QA_FORCE_BROKEN_H");
+        const QString cmpBlur  = brokenH ? wiredBlur  : sigBlur;
+        const QString cmpSharp = brokenH ? wiredSharp : sigSharp;
+        report("H_quality_not_global", cmpBlur == cmpSharp);
+        report("H_sig_nonempty", !sigBlur.isEmpty());       // 防「空==空」恒真门
+        report("H_teeth_quality_observable", wiredBlur != wiredSharp);  // 证明本测量能咬红
+    }
+
     const bool pass = (checks > 0) && (fails == 0);
     std::fprintf(stderr, "LA_CURATE_QA %s checks=%d failed=%d broken=%d\n",
                  pass ? "PASS" : "FAIL", checks, fails, broken ? 1 : 0);
