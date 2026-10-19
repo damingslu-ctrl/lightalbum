@@ -5,6 +5,8 @@
 #include <QSqlError>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QDateTime>
+#include <QFileInfo>
 #include <QSet>
 #include <QThread>
 #include <algorithm>
@@ -17,6 +19,11 @@ static bool g_forcePersonNoSync = false;
 bool Library::open(const QString& dbPath, QString* err)
 {
     dbPath_ = dbPath;
+
+    // 波3：重开时把惰性读写连接一并重绑到新库路径。否则第二个 Library 实例的写会落到
+    // 上一个实例的旧文件（la_rw 只在「不存在」时才建，且绑的是旧 dbPath_）。
+    if (QSqlDatabase::contains(QStringLiteral("la_rw")))
+        QSqlDatabase::removeDatabase(QStringLiteral("la_rw"));
 
     // ---- P16 列迁移：旧库可能缺 category/person/private 列（CREATE TABLE IF NOT EXISTS
     //      不会补列，同 Scanner EXTRA_COLUMNS 思路）。重复 ADD 报错无害，静默忽略。
@@ -36,8 +43,27 @@ bool Library::open(const QString& dbPath, QString* err)
             // 2.28.0 视频：与 Scanner 的 kExtraColumns 对齐（重复 ADD 报错无害，静默忽略）
             m.exec(QStringLiteral("ALTER TABLE photos ADD COLUMN media_type TEXT"));
             m.exec(QStringLiteral("ALTER TABLE photos ADD COLUMN dur_sec REAL"));
+            // 波3：seen_at 是 Scanner 基表列，但历史/测试库可能未建（同 EXTRA_COLUMNS 思路），
+            // 缺列会让下方 SELECT 直接 open 失败 —— 幂等补齐。
+            m.exec(QStringLiteral(
+                "ALTER TABLE photos ADD COLUMN seen_at REAL NOT NULL DEFAULT 0"));
             m.exec(QStringLiteral(
                 "CREATE INDEX IF NOT EXISTS idx_photos_cat ON photos(category)"));
+            // 波3 curate「常设展」：展历史 / 合集 / 模板冷却（spec §4，幂等）
+            m.exec(QStringLiteral(
+                "CREATE TABLE IF NOT EXISTS exhibits ("
+                " id INTEGER PRIMARY KEY, template TEXT, title TEXT, blurb TEXT,"
+                " primary_path TEXT, paths TEXT, generated_at REAL, shown_at REAL,"
+                " feedback TEXT)"));
+            m.exec(QStringLiteral(
+                "CREATE TABLE IF NOT EXISTS albums ("
+                " id INTEGER PRIMARY KEY, name TEXT, created_at REAL, source TEXT)"));
+            m.exec(QStringLiteral(
+                "CREATE TABLE IF NOT EXISTS album_items ("
+                " album_id INTEGER, path TEXT, ord INTEGER)"));
+            m.exec(QStringLiteral(
+                "CREATE TABLE IF NOT EXISTS template_mutes ("
+                " template TEXT PRIMARY KEY, until REAL)"));
             mig.close();
         }
         QSqlDatabase::removeDatabase(QStringLiteral("la_mig"));
@@ -59,7 +85,7 @@ bool Library::open(const QString& dbPath, QString* err)
     q.setForwardOnly(true);
     if (!q.exec(QStringLiteral(
             "SELECT path, rel, thumb, missing, exif_json, "
-            "category, person, private, rating, mark, media_type, dur_sec FROM photos"))) {
+            "category, person, private, rating, mark, media_type, dur_sec, seen_at FROM photos"))) {
         if (err) *err = q.lastError().text();
         return false;
     }
@@ -111,6 +137,7 @@ bool Library::open(const QString& dbPath, QString* err)
         p.mediaType = q.value(10).toString();
         if (p.mediaType.isEmpty()) p.mediaType = QStringLiteral("image");
         p.durSec    = q.value(11).toDouble();
+        p.seenAt    = qint64(q.value(12).toDouble());   // 波3：seen_at（入库时间，秒）
         p.mark   = q.value(9).toString();
         if (p.title.isEmpty()) p.title = p.rel;   // 兜底展示名（非编造 EXIF）
         // P10 离线逆地理回填（读时计算，库保持只读）：仅路径推导缺失且真有 GPS 时
@@ -604,4 +631,217 @@ bool Library::setMetaValue(const QString& key, const QString& value)
     q.addBindValue(key);
     q.addBindValue(value);
     return q.exec();
+}
+
+// ================= 波3 curate「常设展」持久层 =================
+// 写：走 rw()（GUI 线程唯一写者，见 open() 上方约束）；读：走只读 la_lib。
+
+qint64 Library::addExhibit(const QString& tmpl, const QString& title, const QString& blurb,
+                           const QString& primary, const QStringList& paths,
+                           qint64 generatedAt, const QString& feedback)
+{
+    noteWriteThread();
+    QSqlQuery q(rw());
+    q.prepare(QStringLiteral(
+        "INSERT INTO exhibits"
+        "(template,title,blurb,primary_path,paths,generated_at,shown_at,feedback)"
+        " VALUES(?,?,?,?,?,?,?,?)"));
+    q.addBindValue(tmpl);
+    q.addBindValue(title);
+    q.addBindValue(blurb);
+    q.addBindValue(primary);
+    q.addBindValue(paths.join(QChar(',')));      // 逗号串，与 Photo::person 同格式（计划裁决 4）
+    q.addBindValue(double(generatedAt));
+    q.addBindValue(double(generatedAt));         // shown_at 初始 = 生成时刻
+    q.addBindValue(feedback);
+    if (!q.exec()) return 0;
+    return q.lastInsertId().toLongLong();
+}
+
+bool Library::updateExhibitFeedback(qint64 id, const QString& feedback)
+{
+    noteWriteThread();
+    QSqlQuery q(rw());
+    q.prepare(QStringLiteral("UPDATE exhibits SET feedback=? WHERE id=?"));
+    q.addBindValue(feedback);
+    q.addBindValue(id);
+    return q.exec();
+}
+
+QVector<ExhibitRow> Library::loadExhibitHistory() const
+{
+    QVector<ExhibitRow> out;
+    if (!QSqlDatabase::contains(QStringLiteral("la_lib"))) return out;
+    QSqlQuery q(QSqlDatabase::database(QStringLiteral("la_lib")));
+    if (!q.exec(QStringLiteral(
+            "SELECT id, template, title, blurb, primary_path, paths,"
+            " generated_at, shown_at, feedback FROM exhibits ORDER BY generated_at DESC"))) {
+        return out;
+    }
+    while (q.next()) {
+        ExhibitRow r;
+        r.id          = q.value(0).toLongLong();
+        r.tmpl        = q.value(1).toString();
+        r.title       = q.value(2).toString();
+        r.blurb       = q.value(3).toString();
+        r.primary     = q.value(4).toString();
+        r.paths       = q.value(5).toString();
+        r.generatedAt = qint64(q.value(6).toDouble());
+        r.shownAt     = qint64(q.value(7).toDouble());
+        r.feedback    = q.value(8).toString();
+        out.append(r);
+    }
+    return out;
+}
+
+qint64 Library::lastExhibitAt() const
+{
+    if (!QSqlDatabase::contains(QStringLiteral("la_lib"))) return 0;
+    QSqlQuery q(QSqlDatabase::database(QStringLiteral("la_lib")));
+    if (!q.exec(QStringLiteral("SELECT max(generated_at) FROM exhibits")) || !q.next())
+        return 0;
+    if (q.value(0).isNull()) return 0;
+    return qint64(q.value(0).toDouble());
+}
+
+bool Library::muteTemplate(const QString& tmpl, qint64 until)
+{
+    noteWriteThread();
+    QSqlQuery q(rw());
+    q.prepare(QStringLiteral(
+        "INSERT INTO template_mutes(template,until) VALUES(?,?) "
+        "ON CONFLICT(template) DO UPDATE SET until=excluded.until"));
+    q.addBindValue(tmpl);
+    q.addBindValue(double(until));
+    return q.exec();
+}
+
+QStringList Library::loadMuteState(qint64 now) const
+{
+    QStringList out;
+    if (!QSqlDatabase::contains(QStringLiteral("la_lib"))) return out;
+    QSqlQuery q(QSqlDatabase::database(QStringLiteral("la_lib")));
+    q.prepare(QStringLiteral("SELECT template FROM template_mutes WHERE until > ?"));
+    q.addBindValue(double(now));
+    if (!q.exec()) return out;
+    while (q.next()) out << q.value(0).toString();
+    return out;
+}
+
+qint64 Library::createAlbum(const QString& name, const QStringList& paths, const QString& source)
+{
+    noteWriteThread();
+    QSqlDatabase db = rw();
+    if (!db.transaction()) return 0;
+    qint64 id = 0;
+    {
+        QSqlQuery a(db);
+        a.prepare(QStringLiteral("INSERT INTO albums(name,created_at,source) VALUES(?,?,?)"));
+        a.addBindValue(name);
+        a.addBindValue(double(QDateTime::currentSecsSinceEpoch()));
+        a.addBindValue(source);
+        if (!a.exec()) { db.rollback(); return 0; }
+        id = a.lastInsertId().toLongLong();
+    }
+    {
+        QSqlQuery it(db);
+        it.prepare(QStringLiteral("INSERT INTO album_items(album_id,path,ord) VALUES(?,?,?)"));
+        for (int i = 0; i < paths.size(); ++i) {
+            it.addBindValue(id);
+            it.addBindValue(paths[i]);
+            it.addBindValue(i);
+            if (!it.exec()) { db.rollback(); return 0; }
+        }
+    }
+    if (!db.commit()) { db.rollback(); return 0; }
+    return id;
+}
+
+QVector<AlbumRow> Library::listAlbums() const
+{
+    QVector<AlbumRow> out;
+    if (!QSqlDatabase::contains(QStringLiteral("la_lib"))) return out;
+    QSqlQuery q(QSqlDatabase::database(QStringLiteral("la_lib")));
+    if (!q.exec(QStringLiteral(
+            "SELECT a.id, a.name, a.source, a.created_at,"
+            " (SELECT count(*) FROM album_items i WHERE i.album_id=a.id)"
+            " FROM albums a ORDER BY a.created_at DESC"))) {
+        return out;
+    }
+    while (q.next()) {
+        AlbumRow r;
+        r.id        = q.value(0).toLongLong();
+        r.name      = q.value(1).toString();
+        r.source    = q.value(2).toString();
+        r.createdAt = qint64(q.value(3).toDouble());
+        r.count     = q.value(4).toInt();
+        out.append(r);
+    }
+    return out;
+}
+
+// ---- QA 合成库辅助（仅门禁用；生产零调用）----
+bool Library::makeSyntheticDb(const QString& dbPath, const QVector<SynthRow>& rows, QString* err)
+{
+    if (QSqlDatabase::contains(QStringLiteral("la_synth")))
+        QSqlDatabase::removeDatabase(QStringLiteral("la_synth"));
+    QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"),
+                                                QStringLiteral("la_synth"));
+    db.setDatabaseName(dbPath);
+    if (!db.open()) {
+        if (err) *err = db.lastError().text();
+        QSqlDatabase::removeDatabase(QStringLiteral("la_synth"));
+        return false;
+    }
+    bool ok = true;
+    {
+        QSqlQuery q(db);
+        ok = q.exec(QStringLiteral(
+            "CREATE TABLE IF NOT EXISTS photos ("
+            " path TEXT PRIMARY KEY, root TEXT NOT NULL DEFAULT '', rel TEXT NOT NULL DEFAULT '',"
+            " src TEXT NOT NULL DEFAULT 'native', size INTEGER NOT NULL DEFAULT 0,"
+            " mtime REAL NOT NULL DEFAULT 0, thumb TEXT, exif_json TEXT,"
+            " missing INTEGER NOT NULL DEFAULT 0, seen_at REAL NOT NULL DEFAULT 0,"
+            " category TEXT, cat_score REAL, cat_at REAL, rating INTEGER DEFAULT 0,"
+            " person TEXT, media_type TEXT DEFAULT 'image', dur_sec REAL DEFAULT 0,"
+            " private INTEGER DEFAULT 0, mark TEXT, face_emb BLOB)"));
+        ok = ok && q.exec(QStringLiteral(
+            "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)"));
+        if (!ok && err) *err = q.lastError().text();
+    }
+    for (const SynthRow& r : rows) {
+        QSqlQuery ins(db);
+        ins.prepare(QStringLiteral(
+            "INSERT OR REPLACE INTO photos"
+            "(path,root,rel,src,size,mtime,thumb,exif_json,missing,seen_at,"
+            " category,rating,person,media_type,dur_sec,private,mark)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"));
+        // date/year/GPS 经 exif_json 还原，与真实扫描同格式。
+        QJsonObject o;
+        o.insert(QStringLiteral("d"), r.date);
+        o.insert(QStringLiteral("y"), r.year);
+        if (r.hasGps) { o.insert(QStringLiteral("la"), r.la); o.insert(QStringLiteral("lo"), r.lo); }
+        if (!r.city.isEmpty()) o.insert(QStringLiteral("ct"), r.city);
+        ins.addBindValue(r.path);
+        ins.addBindValue(QString());
+        ins.addBindValue(QFileInfo(r.path).fileName());
+        ins.addBindValue(QStringLiteral("native"));
+        ins.addBindValue(qint64(0));
+        ins.addBindValue(r.seenAt);
+        ins.addBindValue(QString());
+        ins.addBindValue(QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact)));
+        ins.addBindValue(r.missing ? 1 : 0);
+        ins.addBindValue(r.seenAt);
+        ins.addBindValue(r.category);
+        ins.addBindValue(r.rating);
+        ins.addBindValue(r.person);
+        ins.addBindValue(r.mediaType);
+        ins.addBindValue(0.0);
+        ins.addBindValue(r.priv ? 1 : 0);
+        ins.addBindValue(r.mark);
+        if (!ins.exec()) { ok = false; if (err) *err = ins.lastError().text(); break; }
+    }
+    db.close();
+    QSqlDatabase::removeDatabase(QStringLiteral("la_synth"));
+    return ok;
 }

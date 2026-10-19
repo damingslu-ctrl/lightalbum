@@ -71,6 +71,9 @@ struct Photo {
     // durSec = 时长（秒，0 = 未知）。取自 ffprobe，随列一并读出。
     QString mediaType = QStringLiteral("image");
     double  durSec = 0;
+    // 波3 curate（R6）：photos.seen_at（扫描/入库时间，秒）。语义是「入库」**不是**拍摄时间，
+    // 文案不得说成「拍摄于」。旧实现根本不 SELECT 该列 → 恒 0。
+    qint64 seenAt = 0;
 };
 
 struct Kpi {
@@ -78,6 +81,20 @@ struct Kpi {
     int yearCount = 0;
     int provCount = 0;
     int minYear = 0, maxYear = 0;
+};
+
+// 波3 curate：exhibits 行形状（一版「常设展」的历史记录；paths 为逗号串）。
+struct ExhibitRow {
+    qint64 id = 0;
+    QString tmpl, title, blurb, primary, paths, feedback;   // feedback: ''/'kept'/'swapped'/'muted'
+    qint64 generatedAt = 0, shownAt = 0;
+};
+// 波3 curate：albums 行形状（「收藏此展」→ 永久合集，source='curate'）。
+struct AlbumRow {
+    qint64 id = 0;
+    QString name, source;
+    qint64 createdAt = 0;
+    int count = 0;
 };
 
 class Library {
@@ -142,6 +159,32 @@ public:
     // meta 表 KV（隐私库口令 salt/hash 存这里）
     QString metaValue(const QString& key) const;
     bool setMetaValue(const QString& key, const QString& value);
+
+    // ---- 波3 curate「常设展」持久层（GUI 线程唯一写者；见 open() 上方线程约束）----
+    // 展历史 + 冷却/静音 + 「收藏此展」永久合集。所有写 API 只在 GUI 线程调用。
+    qint64 addExhibit(const QString& tmpl, const QString& title, const QString& blurb,
+                      const QString& primary, const QStringList& paths,
+                      qint64 generatedAt, const QString& feedback = QString());
+    bool   updateExhibitFeedback(qint64 id, const QString& feedback);
+    QVector<ExhibitRow> loadExhibitHistory() const;
+    qint64 lastExhibitAt() const;                       // 0 = 从未生成
+    bool   muteTemplate(const QString& tmpl, qint64 until);  // 写冷却（直到 until 秒）
+    QStringList loadMuteState(qint64 now) const;        // 仍在冷却中的模板 id 列表
+    qint64 createAlbum(const QString& name, const QStringList& paths, const QString& source);
+    QVector<AlbumRow> listAlbums() const;
+
+    // ---- QA 合成库辅助（仅门禁用；生产零调用）----
+    // 建最小 schema（photos 含全列 + meta）并插入合成行，供 LA_CURATE_QA 等在临时目录
+    // 构造确定性库（R-06：仓库零真实照片）。date/year/GPS 经 exif_json 还原，与真实扫描同格式。
+    struct SynthRow {
+        QString path, date, category, person, city, mark;
+        QString mediaType = QStringLiteral("image");
+        int year = 0, rating = 0;
+        double seenAt = 0, la = 0, lo = 0;
+        bool priv = false, hasGps = false, missing = false;
+    };
+    static bool makeSyntheticDb(const QString& dbPath, const QVector<SynthRow>& rows,
+                                QString* err = nullptr);
 
 private:
     enum class BatchField { Rating, Private, Mark };

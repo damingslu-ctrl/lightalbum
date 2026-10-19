@@ -1874,6 +1874,61 @@ int runGazeQa()
 
 namespace {
 
+// 波3「主动」智能策展系统门禁（LA_CURATE_QA，2.42.0 spec §3）。
+// 铁律 20：直调 Curate::* 纯函数（与产品同一份实现）；铁律 21：私密照不入池（函数参数
+// hidePrivate，非视图开关）。全合成 fixture（R-06：仓库零真实照片）。
+// 反例 LA_CURATE_QA_FORCE_BROKEN=1：各对应组红（见各组注）。
+// 组：A 模板表/确定  B 候选池  C 新鲜感  D 重复惩罚  E 无偏好学习  F 频控
+//     G 冷启动  H 画质不越界  I 废片巡检  J 文案非 LLM  K 缺源诚实  L 反例矩阵
+int runCurateQa()
+{
+    const bool broken = !qEnvironmentVariableIsEmpty("LA_CURATE_QA_FORCE_BROKEN");
+    int checks = 0, fails = 0;
+    QStringList failed;
+    auto report = [&](const char* tag, bool ok) {
+        ++checks;
+        if (!ok) { ++fails; failed << QString::fromLatin1(tag);
+                   std::fprintf(stderr, "  LA_CURATE_QA FAIL %s\n", tag); }
+    };
+
+    // —— A0：Photo::seenAt 载入腿（R6）——
+    // 合成库写 seen_at=1760000000，open() 后必须原值读出（旧实现根本不 SELECT 该列 → 恒 0）。
+    {
+        const QString dir = QDir::tempPath() + QStringLiteral("/la_curate_qa_t1");
+        QDir().mkpath(dir);
+        const QString dbp = dir + QStringLiteral("/lib.sqlite");
+        QFile::remove(dbp);
+        QVector<Library::SynthRow> rows;
+        {
+            Library::SynthRow r;
+            r.path = dir + QStringLiteral("/a.jpg");
+            r.date = QStringLiteral("2026-10-19");
+            r.year = 2026;
+            r.seenAt = 1760000000.0;
+            rows << r;
+        }
+        QString err;
+        const bool built = Library::makeSyntheticDb(dbp, rows, &err);
+        Library lib;
+        const bool opened = lib.open(dbp, &err);
+        const auto& ps = lib.photos();
+        report("A0_seenAt_loaded",
+               built && opened && !ps.isEmpty() && ps[0].seenAt == 1760000000LL);
+    }
+
+    const bool pass = (checks > 0) && (fails == 0);
+    std::fprintf(stderr, "LA_CURATE_QA %s checks=%d failed=%d broken=%d\n",
+                 pass ? "PASS" : "FAIL", checks, fails, broken ? 1 : 0);
+    if (!pass)
+        std::fprintf(stderr, "LA_CURATE_QA failed: %s\n", qPrintable(failed.join(',')));
+    std::fflush(stderr);
+    return pass ? 0 : 1;
+}
+
+} // namespace（策展门禁）
+
+namespace {
+
 // RAW/视频进入修图链路门禁（LA_EDIT_RAW_QA，2.29.0）。
 //
 // 背景：2.28.0 让 RAW 进了库与缩略图，却漏了修图页入口 —— `RetouchPage.cpp:1027`
@@ -9289,6 +9344,10 @@ int main(int argc, char *argv[])
     // 2.41.0 §2.5 凝视模式：dominantColor 纯函数 + 私密步进纪律 + 唯一翻页真源
     if (qEnvironmentVariableIsSet("LA_GAZE_QA"))
         return runGazeQa();
+
+    // 2.42.0 波3 策展系统：Curate::* 纯函数契约（模板表/候选池/选题/打分/频控/画质/废片）
+    if (qEnvironmentVariableIsSet("LA_CURATE_QA"))
+        return runCurateQa();
 
     if (qEnvironmentVariableIsSet("LA_ERASE_QA"))
         return runEraseQa();

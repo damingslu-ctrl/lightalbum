@@ -359,6 +359,11 @@ $GateTable = @(
   @{n="LA_CMDK_QA";   png=$false; tier="fast"; measuredMs=385},
   @{n="LA_GAZE_QA";   png=$false; tier="fast"; measuredMs=331},
   @{n="LA_LAMP_QA";   png=$false; tier="fast"; measuredMs=281},
+  # 2.42.0 wave3 curation engine (LA_CURATE_QA). Pure-function contract gate (R-06: no
+  # user photos; synthetic library built in a temp dir). Counter-example
+  # LA_CURATE_QA_FORCE_BROKEN=1 flips the matching group RED. measuredMs is backfilled
+  # in T11 from the -Timing measurement.
+  @{n="LA_CURATE_QA"; png=$false; tier="fast"; measuredMs=300},
   # 2.29.0 RAW/video retouch pipeline gate (LA_EDIT_RAW_QA). The retouch page used to read the
   # original straight through QImage(ph.path), which measured 0x0 null=1 for RAW -> RAW could
   # never reach the retouch page at all (2.28.0 missed this entry point). Photo, RAW and video
