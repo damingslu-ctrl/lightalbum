@@ -64,6 +64,29 @@ void PeoplePage::setHidePrivate(bool hide)
 
 void PeoplePage::refresh() { rebuild(); }
 
+// 2.41.0 T8：⌘K 人名高置信 → 直接推门进那间展室。rooms_ 由 buildRooms 纯函数聚合
+// （与门禁同源，铁律 20），故按名定位不重算全库；找不到则保持原展开态重建（不猜房）。
+void PeoplePage::focusRoom(const QString& name)
+{
+    for (int i = 0; i < rooms_.size(); ++i) {
+        if (rooms_[i].name == name) { expanded_ = i; break; }
+    }
+    rebuild();
+}
+
+// 2.41.0 T8：凝视档翻图作用域 = 该展室全部照片（房内日期升序，与串列所见同序）。
+QStringList PeoplePage::roomPaths(const QString& name) const
+{
+    for (const Room& r : rooms_) {
+        if (r.name != name) continue;
+        QStringList out;
+        out.reserve(r.photos.size());
+        for (const Photo* p : r.photos) out << p->path;
+        return out;
+    }
+    return {};
+}
+
 QVector<Room> PeoplePage::buildRooms(const QVector<Photo>& in, bool hidePrivate)
 {
     // 反例臂：LA_PEOPLE_QA_FORCE_BROKEN=1 时忽略 hidePrivate（私密照涌入展室）→ 门禁 C 组翻红。

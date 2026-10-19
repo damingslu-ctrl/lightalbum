@@ -1,6 +1,7 @@
 #include "LobbyPage.h"
 #include "ThumbCache.h"
 #include "Theme.h"
+#include "../core/CmdFilter.h"   // seasonIndexOf：四季表唯一真源
 
 #include <QCoreApplication>
 #include <QFrame>
@@ -103,14 +104,9 @@ QDate parsePhotoDate(const Photo& p)
     return d;
 }
 
-// 四季划分：3-5 春 / 6-8 夏 / 9-11 秋 / 12-2 冬。
-int seasonOf(int month)
-{
-    if (month >= 3 && month <= 5)  return 0;
-    if (month >= 6 && month <= 8)  return 1;
-    if (month >= 9 && month <= 11) return 2;
-    return 3;
-}
+// 四季划分委派 core/CmdFilter.h::seasonIndexOf（3-5 春 / 6-8 夏 / 9-11 秋 / 12-2 冬）。
+// 本地包装保留调用点不动；调用点只在 QDate::isValid() 之后取月份，故 -1 分支不可达。
+int seasonOf(int month) { return seasonIndexOf(month); }
 
 } // namespace
 
@@ -252,7 +248,10 @@ QWidget* LobbyPage::makeHeroCard()
     title->setStyleSheet(QStringLiteral("color:%1;background:transparent;").arg(Lumen::hex(Lumen::ink())));
     v->addWidget(title);
 
-    const QVector<const Photo*> picks = onThisDay(*photos_, today, hidePrivate_, 9);
+    // 一排 7 幅是硬最小宽算出来的：7*148 + 6*12 + 卡内边距 48 + 页边距 64 + 导航 74
+    // ≈ 1300。再多一幅就把窗口最小宽顶过 1440，窄屏（1366 笔电）下 QHBoxLayout 会把
+    // 定尺寸卡压扁、日期图注互相叠字（LA_UI_SHOT 800 宽实测）。
+    const QVector<const Photo*> picks = onThisDay(*photos_, today, hidePrivate_, 7);
     if (picks.isEmpty()) {
         auto* none = new QLabel(
             QCoreApplication::translate("LightAlbum", "今日无展 · 明日再会"), card);
@@ -286,7 +285,8 @@ QWidget* LobbyPage::makeThumbStrip()
         QStringLiteral("color:%1;background:transparent;").arg(Lumen::hex(Lumen::ink())));
     v->addWidget(head);
 
-    const QVector<const Photo*> rows = recent(*photos_, hidePrivate_, 12);
+    // 同一条排宽度纪律：8*116 + 7*12 + 页边距 64 ≈ 1076，不成为约束项。
+    const QVector<const Photo*> rows = recent(*photos_, hidePrivate_, 8);
     if (rows.isEmpty()) {
         auto* none = new QLabel(
             QCoreApplication::translate("LightAlbum", "暂无新到馆藏"), wrap);
@@ -326,11 +326,14 @@ QWidget* LobbyPage::makeThumbCard(const Photo& p, int sidePx, bool feature)
 
 QWidget* LobbyPage::makeCommandBar()
 {
-    auto* bar = new QFrame(content_);
+    // 2.41.0 T8：玻璃指令栏 = ⌘K 入口（不能只当装饰）。整条做成 QPushButton，
+    // 子 QLabel 全部透传鼠标，点击才落在按钮本体上而不是落在标签上没反应。
+    auto* bar = new QPushButton(content_);
     bar->setObjectName(QStringLiteral("cmdbar"));
+    bar->setCursor(Qt::PointingHandCursor);
     bar->setStyleSheet(QStringLiteral(
-        "QFrame#cmdbar{background:%1;border:1px solid %2;"
-        "border-radius:%3px;}")
+        "QPushButton#cmdbar{background:%1;border:1px solid %2;"
+        "border-radius:%3px;text-align:left;}")
         .arg(Lumen::hex(Lumen::panel()), Lumen::hex(Lumen::line()))
         .arg(Lumen::Radius::Feature));
     auto* h = new QHBoxLayout(bar);
@@ -340,6 +343,7 @@ QWidget* LobbyPage::makeCommandBar()
 
     auto* hint = new QLabel(
         QCoreApplication::translate("LightAlbum", "搜索、跳转、问问馆藏…"), bar);
+    hint->setAttribute(Qt::WA_TransparentForMouseEvents, true);
     hint->setFont(Lumen::Type::body());
     hint->setStyleSheet(
         QStringLiteral("color:%1;background:transparent;border:none;").arg(Lumen::hex(Lumen::faint())));
@@ -347,6 +351,7 @@ QWidget* LobbyPage::makeCommandBar()
     h->addStretch(1);
 
     auto* key = new QLabel(QStringLiteral("Ctrl+K"), bar);
+    key->setAttribute(Qt::WA_TransparentForMouseEvents, true);
     key->setFont(Lumen::Type::monoMeta());
     key->setStyleSheet(QStringLiteral(
         "background:%1;border:1px solid %2;border-radius:%3px;"
@@ -355,6 +360,10 @@ QWidget* LobbyPage::makeCommandBar()
         .arg(Lumen::Radius::Inset)
         .arg(Lumen::hex(Lumen::muted())));
     h->addWidget(key);
+    // QPushButton::minimumSizeHint() 出自样式而非子布局：无文字按钮只给到 19px，
+    // 会把内嵌布局的 34px 裁掉（LA_UI_SHOT 实测图注被拦腰切）。把布局最小高交还按钮。
+    bar->setMinimumHeight(h->totalMinimumSize().height());
+    connect(bar, &QPushButton::clicked, this, &LobbyPage::commandRequested);
     return bar;
 }
 

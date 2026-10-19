@@ -6,6 +6,7 @@
 #include <QHash>
 #include <QSet>
 #include <QStringList>
+#include "../core/CmdFilter.h"
 #include "../core/Library.h"
 #include "ThumbCache.h"   // 需要 ThumbCache::Level 作 pixmapAt 默认实参（非前向声明）
 
@@ -42,6 +43,11 @@ public:
     void clearClusterFilter();
     int  clusterDim() const { return clusterDim_; }
     bool hasClusterFilter() const { return !clusterKey_.isEmpty(); }
+    // 2.41.0 spec §2.4：⌘K 自然语言过滤袋（年/月/日/季/人/地/风格/兜底词）。
+    // 与上面各筛选**并存叠加**（AND），空 filter = 不启用。
+    void setCmdFilter(const CmdFilter& f);
+    void clearCmdFilter();
+    bool hasCmdFilter() const { return !cmd_.empty(); }
     void setHidePrivate(bool hide);                // P16 隐私库锁定时隐藏私密照片
     const Photo* photoAt(int row) const;           // 行 → Photo*（供点击跳转修图）
     // 隐私门（2.33.0）：当前过滤后可见的行序路径集。
@@ -76,5 +82,6 @@ private:
                                    //   O(故事长度) 降为 O(1)（大故事可达数千张 × 全库行）
     int    clusterDim_  = -1;      // 方向 C：聚类维度（-1=未启用）
     QString clusterKey_;           // 方向 C：簇键（空=不筛选）
+    CmdFilter cmd_;                // 2.41.0 ⌘K：值语义过滤袋（empty()=未启用）
     bool   hidePrivate_ = true;   // P16 锁定时隐藏私密照片（默认锁）
 };

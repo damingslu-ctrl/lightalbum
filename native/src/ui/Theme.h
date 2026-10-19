@@ -340,16 +340,26 @@ inline QString btnAi()
              hex(inset()), hex(faint()));
 }
 
-// 幽灵按钮：描边 + hover 微亮（工具/次要动作）
-inline QString btnGhost(const QColor& tint = gold())
+// 幽灵按钮：描边 + hover 微亮（工具/次要动作）。
+// cls 参数：顶栏灯钮是 QToolButton，而本函数选择器若写死 QPushButton，整条 QSS 挂上去
+// 不生效（实测：灯钮吃到的是全局样式，换灯时描边/图标色不跟）。padding 同理要能归零——
+// 32×32 定尺寸图标钮上 14px 横向 padding 会把 18px 图标挤裁。
+inline QString btnGhost(const QColor& tint = gold(), const char* cls = "QPushButton",
+                        const char* pad = "6px 14px")
 {
     return QString::fromUtf8(
-        "QPushButton{background:%4;border:1px solid %5;border-radius:10px;"   // T9: 9->Radius::Ctl 10 (btnGhost)
-        "padding:6px 14px;color:%1;}"
-        "QPushButton:hover{background:%6;border-color:%2;}"
-        "QPushButton:disabled{color:%7;border-color:%5;}")
-        .arg(hex(tint), hex(tint), hex(tint), hex(card()), hex(line()),
-             hex(cardHi()), hex(faint()));
+        "%1{background:%4;border:1px solid %5;border-radius:10px;"   // T9: 9->Radius::Ctl 10 (btnGhost)
+        "padding:%8;color:%2;}"
+        "%1:hover{background:%6;border-color:%3;}"
+        "%1:disabled{color:%7;border-color:%5;}")
+        .arg(QString::fromLatin1(cls))          // %1 选择器（三处）
+        .arg(hex(tint))                         // %2 字/图标色
+        .arg(hex(tint))                         // %3 hover 描边
+        .arg(hex(card()))                       // %4 底色
+        .arg(hex(line()))                       // %5 描边（含 disabled）
+        .arg(hex(cardHi()))                     // %6 hover 底色
+        .arg(hex(faint()))                      // %7 disabled 字色
+        .arg(QString::fromLatin1(pad));         // %8 内边距
 }
 
 // AI 动作专用第四形态（VIOLET 职责锁死：非 AI 禁用，spec §1.3）

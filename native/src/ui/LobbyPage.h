@@ -43,6 +43,7 @@ signals:
     void navigateTo(int row);
     void importRequested();
     void icloudImportRequested();
+    void commandRequested();   // 2.41.0 T8：玻璃指令栏点击 → ⌘K 开馆
 
 private:
     void rebuild();

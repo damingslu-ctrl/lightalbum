@@ -1,11 +1,13 @@
 #include "MainWindow.h"
 #include "Icons.h"
 #include "Theme.h"
-#include "HomePage.h"
+#include "DarkPalette.h"
+#include "LobbyPage.h"      // 2.41.0 spec §2.2：前厅（接替 HomePage）
 #include "GalleryPage.h"
 #include "MapPage.h"
 #include "LogPage.h"
-#include "CullPage.h"
+#include "PeoplePage.h"     // 2.41.0 spec §2.3：人物馆（接管选片导航位）
+#include "CmdKPanel.h"      // 2.41.0 spec §2.4：⌘K 检索面板
 #include "RetouchPage.h"
 #include "VideoLightbox.h"
 #include "GazeLightbox.h"   // 2.41.0：原 PhotoLightbox 独立成类（T6 零行为迁出）
@@ -34,6 +36,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QStyledItemDelegate>   // 2.41.0：本文件自持 NavGroupDelegate（此前间接吃到旧页头）
 #include <QMessageBox>
 #include <QProgressDialog>
 #include <QPushButton>
@@ -64,6 +67,11 @@
 
 #include <QComboBox>
 
+#include <QAction>          // 2.41.0 §2.6：四灯菜单项
+#include <QActionGroup>     // 2.41.0 §2.6：四灯互斥
+#include <QDate>            // 2.41.0 §2.2：前厅「往年今日」取当日
+#include <QShortcut>        // 2.41.0 §2.4：Ctrl+K / Esc
+
 #ifdef Q_OS_WIN
 #include <windows.h>   // MinGW os_defines.h 已定义 NOMINMAX，避免 min/max 宏污染
 #endif
@@ -79,7 +87,7 @@ int countLabeled(const QVector<Photo>& photos, const QString Photo::*field)
     return n;
 }
 
-// 2.33 浮岛分组分割线 delegate：在分组首项（row 3=选片, row 5=日志）顶部画细线。
+// 2.33 浮岛分组分割线 delegate：在分组首项（row 3=人物馆, row 5=日志）顶部画细线。
 // 不加假 item，保持 QListWidget row 索引与 stack_ 索引一一对应。
 class NavGroupDelegate : public QStyledItemDelegate {
 public:
@@ -88,7 +96,7 @@ public:
                const QModelIndex& ix) const override
     {
         QStyledItemDelegate::paint(p, opt, ix);
-        // 分组分割线：row 3（编辑组首项）和 row 5（工具组首项）顶部
+        // 分组分割线：row 3（人物组首项）和 row 5（工具组首项）顶部
         if (ix.row() == 3 || ix.row() == 5) {
             p->save();
             QPen sep(QColor(0x1a, 0x23, 0x1d), 1);
@@ -101,16 +109,25 @@ public:
     }
 };
 struct NavItem { const char* label; const char* phase; };
-// 与 web 版导航一致：首页/足迹/图库 · 智能选片/修图 · 日志/关于（三组分隔在 P1 用间隔项体现）
+// 2.41.0 spec §2.6：前厅/人物馆接管 0/3 两行（HomePage/CullPage 退役见 T9）。
+// 分组：浏览(前厅/足迹/图库) | 人物·修图 | 工具(日志/关于)。
 const NavItem kNav[] = {
-    {"首页", "P1"}, {"足迹", "P2"}, {"图库", "P1"},
-    {"选片", "P3"}, {"修图", "P3"},
+    {"前厅", "P1"}, {"足迹", "P2"}, {"图库", "P1"},
+    {"人物馆", "P3"}, {"修图", "P3"},
     {"日志", "P2"}, {"关于", "P3"},
+};
+
+// 导航行 → 空间语义键（spec §1.3 六空间；Vault 不经导航，只由顶栏锁钮进）。
+// 「跟随空间」模式下 resolveLamp 据此选灯，故这张表也是灯色的路由真源。
+const Lumen::Hall kNavHall[] = {
+    Lumen::Hall::Lobby,  Lumen::Hall::Gallery, Lumen::Hall::Gallery,
+    Lumen::Hall::People, Lumen::Hall::Studio,
+    Lumen::Hall::Common, Lumen::Hall::Common,
 };
 
 // 导航图标名（与 kNav 一一对应；历史映射：日志→enhance、关于→log，勿重排）
 // P24 A 抛光图标轨：激活态在 updateNavActive 用金色重绘同一图标。
-const char* kNavIcons[] = { "home", "map", "gallery", "cull", "retouch", "enhance", "log" };
+const char* kNavIcons[] = { "lobby", "map", "gallery", "people", "retouch", "enhance", "log" };
 
 // P29 无标题栏：判定某点下的控件是否「交互型」（按钮/输入/列表/滚动等）→
 // 命中交互控件时不抢作窗口拖拽区（WM_NCHITTEST 用）。
@@ -144,15 +161,53 @@ QPixmap roundedThumb(const QString& path, int size, int radius)
     p.drawPixmap((src.width() - size) / 2, (src.height() - size) / 2, src);
     return out;
 }
+// 2.41.0 T8：暗色弹层菜单皮肤单源（导入菜单与灯钮菜单同一条 QSS）。
+// 缺陷②原注：QMenu 是独立顶层弹出窗口，不继承应用级暗色 palette/QSS，落在系统
+// 浅色原生菜单上会叠加全局浅色文字 → 白底白字。故逐实例设置（配色复用暗色弹层
+// 色系：panel/ink/line/cardHi/emerald/muted，disabled 用 muted 满足 WCAG 对比）。
+QString menuCss()
+{
+    return QString::fromUtf8(
+        "QMenu{background:%1;color:%2;border:1px solid %3;}"
+        "QMenu::item{background:transparent;color:%2;padding:6px 24px 6px 12px;}"
+        "QMenu::item:selected{background:%4;color:%5;}"
+        "QMenu::item:disabled{color:%6;}"
+        "QMenu::separator{height:1px;background:%3;margin:4px 8px;}")
+        .arg(Lumen::hex(Lumen::panel()), Lumen::hex(Lumen::ink()), Lumen::hex(Lumen::line()),
+             Lumen::hex(Lumen::cardHi()), Lumen::hex(Lumen::emerald()),
+             Lumen::hex(Lumen::muted()));
+}
 } // namespace
 
 
 MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
                        const QString& dbPath, QWidget* parent)
-    : QMainWindow(parent), lib_(lib), dbPath_(dbPath)
+    : QMainWindow(parent), lib_(lib), dbPath_(dbPath), thumbsDir_(thumbsDir)
 {
     // P29 无标题栏：移除原生 Windows 标题栏，改由自定义顶栏 + 常驻控制簇（winCtl_）承载。
     setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
+
+    // 2.41.0 spec §2.6：跨帧三件只在此处造一次。rethemeAll 切灯会重建整帧，若跟着
+    // 重造就会有两台 30fps 呼吸定时器 / 两份原图 LRU（灯箱持的是注入指针，换即悬垂）。
+    topSolidAnim_ = new QVariantAnimation(this);
+    topSolidAnim_->setDuration(240);
+    topSolidAnim_->setEasingCurve(QEasingCurve::OutCubic);
+    connect(topSolidAnim_, &QVariantAnimation::valueChanged, this, [this](const QVariant& v) {
+        applyTopSolid(v.toDouble());
+    });
+    fullCache_ = new FullCache(this);
+    animEnabled_ = uiAnimEnabled();
+    setupBreathing();
+
+    buildUi();
+    nav_->setCurrentRow(0);   // 默认落在前厅
+}
+
+// 2.41.0 spec §2.6：整帧建 UI。灯色在构造期就烘进各控件的 QSS（不是运行期可改的
+// 属性），所以「切灯」唯一可靠的做法是重跑本函数——见 rethemeAll 的重建序。
+// 前提：调用方已备好跨帧三件（topSolidAnim_ / fullCache_ / animEnabled_ + 呼吸定时器）。
+void MainWindow::buildUi()
+{
     auto* central = new QWidget(this);
     auto* root = new QHBoxLayout(central);
     root->setContentsMargins(0, 0, 0, 0);
@@ -210,13 +265,13 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
         "stop:1 rgba(217,169,78,8));}")
         .arg(Lumen::Radius::Card));   // T9 C3: 12px->Radius::Card 14（§3.1 归并 12/14/16）
     nav_->setIconSize(QSize(22, 22));
-    // 三组：浏览(首页/足迹/图库) | 编辑(选片/修图) | 工具(日志/关于)
+    // 三组：浏览(前厅/足迹/图库) | 人物·修图 | 工具(日志/关于)
     // 分割线由 delegate 在 row 3/5 顶部绘制（不加假 item，保持 row→stack 索引一致）
     for (int i = 0; i < int(sizeof(kNavIcons) / sizeof(kNavIcons[0])); ++i) {
         auto* it = new QListWidgetItem;
         it->setSizeHint(QSize(68, 42));
         it->setIcon(Icons::make(QString::fromLatin1(kNavIcons[i]),
-                                QColor(0x9f, 0xa8, 0xa3), 22));
+                                 Lumen::muted(), 22));
         it->setToolTip(QString::fromUtf8(kNav[i].label));
         nav_->addItem(it);
         navItems_.append(it);
@@ -229,14 +284,6 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
     nwLay->addWidget(navBox_);
     nwLay->addStretch(1);
     root->addWidget(navWrap);
-
-    // P19：顶栏渐显动画（底色层透明度同源驱动）
-    topSolidAnim_ = new QVariantAnimation(this);
-    topSolidAnim_->setDuration(240);
-    topSolidAnim_->setEasingCurve(QEasingCurve::OutCubic);
-    connect(topSolidAnim_, &QVariantAnimation::valueChanged, this, [this](const QVariant& v) {
-        applyTopSolid(v.toDouble());
-    });
 
     // ---- 右侧：顶栏 + 页面栈 ----
     auto* right = new QWidget(central);
@@ -270,17 +317,12 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
         .arg(Lumen::hex(Lumen::gold()))
         .arg(Lumen::Radius::Micro));   // T9 C3: 2px->Radius::Micro 4（4x4 金点，半径>高/2 截半仍正圆，视觉零位移）
     tl->addWidget(dotSep);
-    moduleLbl_ = new QLabel(QCoreApplication::translate("LightAlbum", "首页"), topbar);   // P19：自 kpis_ 迁入
+    moduleLbl_ = new QLabel(QCoreApplication::translate("LightAlbum", "前厅"), topbar);   // P19：自 kpis_ 迁入
     moduleLbl_->setFont(Lumen::Type::smallText());   // T8：11pt 粗→T5 9pt（粗体/ls 4.0 随档归一，漂移入 T12 清单）
     moduleLbl_->setStyleSheet(QString::fromUtf8("color:%1;background:transparent;")
         .arg(Lumen::hex(Lumen::muted())));
     tl->addWidget(moduleLbl_);
     tl->addStretch(1);
-    search_ = new QLineEdit(topbar);
-    search_->setPlaceholderText(QCoreApplication::translate("LightAlbum", "搜索标题 / 文件名 / 器材…"));
-    search_->setFixedWidth(220);
-    search_->setStyleSheet(Lumen::input());
-    search_->hide();                             // P19：点击 🔍 展开
     // P16 隐私库锁按钮：未初始化 → 设密码；锁定 → 输密码解锁；已解锁 → 重新上锁
     vaultBtn_ = new QPushButton(QStringLiteral("🔒"), topbar);
     vaultBtn_->setToolTip(QCoreApplication::translate("LightAlbum", "隐私库"));
@@ -289,14 +331,26 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
     vaultBtn_->setStyleSheet(Lumen::btnGhost());
     connect(vaultBtn_, &QPushButton::clicked, this, &MainWindow::onVaultButton);
     tl->addWidget(vaultBtn_);
+    // 2.41.0 spec §2.6：四灯切换钮（Icons 自绘 lamp，InstantPopup 菜单）。
+    // 为什么是 QToolButton 而不是第四个 ghost 按钮：4 灯 + 「跟随空间」是互斥选择，
+    // 平铺要 5×32px，顶栏右端只预留了 120px 窗控宽度（与导入钮同判例）。
+    lampBtn_ = new QToolButton(topbar);
+    lampBtn_->setToolTip(QCoreApplication::translate("LightAlbum", "展厅灯光"));
+    lampBtn_->setCursor(Qt::PointingHandCursor);
+    lampBtn_->setFixedSize(32, 32);
+    lampBtn_->setStyleSheet(Lumen::btnGhost(Lumen::gold(), "QToolButton", "0px"));
+    lampBtn_->setPopupMode(QToolButton::InstantPopup);
+    lampBtn_->setIcon(Icons::make(QStringLiteral("lamp"), Lumen::gold(), 18));
+    lampBtn_->setMenu(buildLampMenu());
+    tl->addWidget(lampBtn_);
+    // 2.41.0 spec §2.6：🔍 不再展开顶栏搜索框（search_ 已删），改指 ⌘K 检索面板。
     searchToggle_ = new QPushButton(QStringLiteral("🔍"), topbar);
-    searchToggle_->setToolTip(QCoreApplication::translate("LightAlbum", "搜索（图库筛选）"));
+    searchToggle_->setToolTip(QCoreApplication::translate("LightAlbum", "检索（Ctrl+K）"));
     searchToggle_->setCursor(Qt::PointingHandCursor);
     searchToggle_->setFixedSize(32, 32);
     searchToggle_->setStyleSheet(Lumen::btnGhost());
     connect(searchToggle_, &QPushButton::clicked, this, [this] {
-        if (search_->isVisible()) { search_->hide(); }
-        else { search_->show(); search_->raise(); search_->setFocus(); }
+        if (cmdk_ && cmdk_->isVisible()) closeCmdK(); else openCmdK();
     });
     tl->addWidget(searchToggle_);
     // P8：原生导入器入口（补齐 P7 审计的唯一硬缺口）
@@ -310,7 +364,7 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
     importBtn->setFixedSize(32, 32);
     importBtn->setStyleSheet(Lumen::btnGold());
     importBtn->setPopupMode(QToolButton::InstantPopup);
-    importBtn->setMenu(buildImportMenu());
+    importBtn->setMenu(buildImportMenu(importBtn));
     tl->addWidget(importBtn);
     tl->addSpacing(120);   // P29 预留窗口控制簇宽度，避免导入钮被 winCtl_ 覆盖
     topbar->installEventFilter(this);            // P19：入栏渐显
@@ -364,42 +418,106 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
     kpis_->hide();
 
     stack_ = new QStackedWidget(right);
-    // 页序与 kNav 一致；P17 起首页 = 「Quiet Frame」沉浸式影集（内容绑定真实库），日志为 EXIF 分析页，关于页实装
-    home_ = new HomePage(lib_, thumbsDir, stack_);
-    connect(home_, &HomePage::navigateTo, this,
+    // 页序与 kNav 一致；2.41.0 起 0=前厅（今日回看+近期入藏）、3=人物馆（一人一展室）
+    lobby_ = new LobbyPage(&lib_->photos(), thumbsDir_, stack_);
+    lobby_->setHidePrivate(!vaultUnlocked_);
+    // 厅心/横条点击 → 凝视档。scope 不在页里算：MainWindow 复跑同一对纯函数
+    // （铁律 20），命中「今日池」才给 Gaze，否则按「近期池」Browse。
+    connect(lobby_, &LobbyPage::openGaze, this, [this](const QString& path) {
+        const QVector<Photo>& all = lib_->photos();
+        const bool hide = !vaultUnlocked_;
+        const QVector<const Photo*> hero =
+            LobbyPage::onThisDay(all, QDate::currentDate(), hide);
+        bool inHero = false;
+        for (const Photo* p : hero) if (p->path == path) { inHero = true; break; }
+        if (inHero) {
+            QStringList scope;
+            for (const Photo* p : hero) scope << p->path;
+            openGaze(path, scope);
+        } else {
+            QStringList scope;
+            for (const Photo* p : LobbyPage::recent(all, hide)) scope << p->path;
+            openLightbox(path, scope);
+        }
+    });
+    connect(lobby_, &LobbyPage::navigateTo, this,
             [this](int row) { onNav(row); });
-    connect(home_, &HomePage::photoActivated, this,
-            [this](const QString& path) { openLightbox(path); });
-    connect(home_, &HomePage::importRequested, this, &MainWindow::startImport);
+    connect(lobby_, &LobbyPage::importRequested, this, &MainWindow::startImport);
     // 2.6.0：空态 iCloud 入口 → 与顶栏菜单同一个 importICloud（唯一实现）
-    connect(home_, &HomePage::icloudImportRequested, this, &MainWindow::importICloud);
-    stack_->addWidget(home_);
-    map_ = new MapPage(&lib_->photos(), thumbsDir, stack_);
+    connect(lobby_, &LobbyPage::icloudImportRequested, this, &MainWindow::importICloud);
+    // 2.41.0 T8：玻璃指令栏点击 → ⌘K 开馆（与顶栏 🔍 / Ctrl+K 同一实现）
+    connect(lobby_, &LobbyPage::commandRequested, this, &MainWindow::openCmdK);
+    stack_->addWidget(lobby_);
+    map_ = new MapPage(&lib_->photos(), thumbsDir_, stack_);
     stack_->addWidget(map_);
-    gallery_ = new GalleryPage(&lib_->photos(), thumbsDir, stack_);
+    gallery_ = new GalleryPage(&lib_->photos(), thumbsDir_, stack_);
     stack_->addWidget(gallery_);
-    cull_ = new CullPage(&lib_->photos(), thumbsDir, stack_);
-    stack_->addWidget(cull_);
-    retouch_ = new RetouchPage(&lib_->photos(), thumbsDir, stack_);
+    people_ = new PeoplePage(&lib_->photos(), thumbsDir_, stack_);
+    people_->setHidePrivate(!vaultUnlocked_);
+    // 展室缩略点击 → 凝视档，翻图作用域 = 那一间的全部路径（看得见什么就走什么）
+    connect(people_, &PeoplePage::openGaze, this,
+            [this](const QString& person, const QString& path) {
+                openGaze(path, people_->roomPaths(person));
+            });
+    // 「在图库中看」→ 图库按姓名筛选并跳页（chips 与人物条同一状态机，非第二份过滤）
+    connect(people_, &PeoplePage::filterGallery, this,
+            [this](const QString& person) {
+                gallery_->applyPersonFilter(person);
+                nav_->setCurrentRow(2);
+            });
+    // 「智能聚类」→ 与图库页按钮同一个 runFaceCluster（唯一实现）
+    connect(people_, &PeoplePage::clusteringRequested, this, [this] { runFaceCluster(); });
+    stack_->addWidget(people_);
+    retouch_ = new RetouchPage(&lib_->photos(), thumbsDir_, stack_);
     stack_->addWidget(retouch_);
     log_ = new LogPage(&lib_->photos(), stack_);
     stack_->addWidget(log_);
     aboutPg_ = makeAbout();
     stack_->addWidget(aboutPg_);
 
-    // 2.22.0：原图缓存由 MainWindow 持有（灯箱惰性创建，故此处先建好待注入）
-    fullCache_ = new FullCache(this);
+    // 2.41.0 spec §2.4：⌘K 面板是 central 的子控件——随整帧重建拿到新灯 QSS，
+    // 不必单独 re-polish。默认隐藏，openCmdK 定位并置顶。
+    cmdk_ = new CmdKPanel(&lib_->photos(), central);
+    cmdk_->setHidePrivate(!vaultUnlocked_);
+    connect(cmdk_, &CmdKPanel::applyFilter, this, [this](const CmdFilter& f) {
+        gallery_->applyCmdFilter(f);
+        closeCmdK();
+        nav_->setCurrentRow(2);
+    });
+    connect(cmdk_, &CmdKPanel::openRoom, this, [this](const QString& name) {
+        people_->focusRoom(name);
+        closeCmdK();
+        nav_->setCurrentRow(3);
+    });
+    // 检索即凝视：过滤袋仍只交给 GalleryModel（唯一筛选真源），取它的可见集当作用域
+    connect(cmdk_, &CmdKPanel::openGazeFiltered, this, [this](const CmdFilter& f) {
+        gallery_->applyCmdFilter(f);
+        closeCmdK();
+        nav_->setCurrentRow(2);
+        const QStringList vis = gallery_->visiblePaths();
+        if (!vis.isEmpty()) openGaze(vis.first(), vis);
+    });
+    connect(cmdk_, &CmdKPanel::lookBackToday, this, [this](const QDate& d) {
+        closeCmdK();
+        nav_->setCurrentRow(0);
+        const QVector<const Photo*> hero =
+            LobbyPage::onThisDay(lib_->photos(), d, !vaultUnlocked_);
+        if (hero.isEmpty()) return;                 // 空态交前厅自己演，不硬开灯箱
+        QStringList scope;
+        for (const Photo* p : hero) scope << p->path;
+        openGaze(scope.first(), scope);
+    });
 
-    // P19：非首页给悬浮顶栏让出 54px 顶部空间（首页自带顶栏不参与）；
+    // P19：非前厅给悬浮顶栏让出 54px 顶部空间（前厅零 chrome，自带让位不参与）；
     // 内容满铺到 right 顶部，顶栏透明悬浮其上，滚动后底色渐显。
-    for (QWidget* pg : QList<QWidget*>{ map_, gallery_, cull_, retouch_, log_, aboutPg_ }) {
+    for (QWidget* pg : QList<QWidget*>{ map_, gallery_, people_, retouch_, log_, aboutPg_ }) {
         QMargins m = pg->contentsMargins();
         m.setTop(qMax(m.top(), 54));
         pg->setContentsMargins(m);
     }
     // P19：滚动渐显 hook——各页所有 QScrollArea 的垂直偏移>12 → 顶栏实底。
-    // 无 QScrollArea 的页（地图/首页）只由 hover 触发。
-    for (QWidget* pg : QList<QWidget*>{ map_, gallery_, cull_, retouch_, log_, aboutPg_ }) {
+    // 无 QScrollArea 的页（地图/前厅）只由 hover 触发。
+    for (QWidget* pg : QList<QWidget*>{ map_, gallery_, people_, retouch_, log_, aboutPg_ }) {
         const auto sas = pg->findChildren<QScrollArea*>();
         for (QScrollArea* sa : sas)
             connect(sa->verticalScrollBar(), &QScrollBar::valueChanged, this,
@@ -411,26 +529,28 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
     setCentralWidget(central);
     connect(nav_, &QListWidget::currentRowChanged, this, &MainWindow::onNav);
     // 2.33 美术升级：导航选中态图标点亮为金色——选中反馈不应只靠底色胶囊，
-    // 图标本体变金才是「这里亮着」的视觉锚点（未选中保持雾灰）。
-    const auto restyleNavIcons = [this](int cur) {
-        for (int i = 0; i < navItems_.size(); ++i) {
-            const QColor c = (i == cur) ? QColor(0xd9, 0xa9, 0x4e)
-                                        : QColor(0x9f, 0xa8, 0xa3);
-            navItems_[i]->setIcon(Icons::make(QString::fromLatin1(kNavIcons[i]), c, 22));
-        }
-    };
-    connect(nav_, &QListWidget::currentRowChanged, this, restyleNavIcons);
+    // 图标本体变金才是「这里亮着」的视觉锚点（未选中回本灯雾灰）。
+    connect(nav_, &QListWidget::currentRowChanged, this, &MainWindow::restyleNavIcons);
     restyleNavIcons(nav_->currentRow());
-    connect(search_, &QLineEdit::textChanged, gallery_, &GalleryPage::applyFilter);
+
+    // 2.41.0 spec §2.6：Ctrl+K 全局开馆（父=this，跨帧存活 → 重建后不会重复挂键）；
+    // Esc 只在面板及其子树内生效，收起面板而不抢走灯箱/对话框的 Esc。
+    auto* kOpen = new QShortcut(QKeySequence(QStringLiteral("Ctrl+K")), this);
+    connect(kOpen, &QShortcut::activated, this, [this] {
+        if (cmdk_ && cmdk_->isVisible()) closeCmdK(); else openCmdK();
+    });
+    auto* kEsc = new QShortcut(Qt::Key_Escape, cmdk_);
+    kEsc->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(kEsc, &QShortcut::activated, this, &MainWindow::closeCmdK);
+    cmdk_->hide();
     // P15：图库卡片点击 → 沉浸式灯箱（无边框）→（可选）跳转修图台
-    thumbsDir_ = thumbsDir;
     // D5b：批量写回接线 —— 视图只发 signal，库写入在此（MainWindow 持 lib_）统一执行，
     // 复用 Library::setRatings/setPrivates 的单事务原子语义（2.2.9）。
     connect(gallery_, &GalleryPage::batchRatingRequested, this,
             [this](const QStringList& paths, int rating) {
                 if (!lib_ || paths.isEmpty()) return;
                 const BatchResult r = lib_->setRatings(paths, rating);
-                gallery_->refresh();
+                refreshExhibits();
                 QMessageBox::information(this, QCoreApplication::translate("LightAlbum", "批量评分"),
                     QCoreApplication::translate("LightAlbum", "请求 %1 张，成功 %2 张。%3")
                         .arg(r.total).arg(r.done)
@@ -442,7 +562,7 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
                 if (!lib_ || paths.isEmpty()) return;
                 const BatchResult r = lib_->setPrivates(paths, priv);
                 gallery_->setHidePrivate(gallery_->hidePrivate()); // 私密标记影响可见性 → 重跑过滤
-                gallery_->refresh();
+                refreshExhibits();   // 前厅/人物馆的 usable 谓词同样吃 hidePrivate
                 QMessageBox::information(this, QCoreApplication::translate("LightAlbum", "批量私密"),
                     QCoreApplication::translate("LightAlbum", "请求 %1 张，成功 %2 张。%3")
                         .arg(r.total).arg(r.done)
@@ -454,7 +574,7 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
             [this](const QStringList& paths, const QString& mark) {
                 if (!lib_ || paths.isEmpty()) return;
                 const BatchResult r = lib_->setMarks(paths, mark);
-                gallery_->refresh();
+                refreshExhibits();
                 Q_UNUSED(r);
             });
     // 方向 C·智能分类：AI 分类按钮 → 异步跑分类（探测与逐张推理都在 worker 线程；视图不持写能力，只发信号）
@@ -467,7 +587,7 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
             [this](const QString& oldName, const QString& newName) {
                 if (!lib_) return;
                 lib_->renamePerson(oldName, newName);
-                gallery_->refresh();   // 重建人物 chips（新名字生效）
+                refreshExhibits();   // 人物 chips + 人物馆展室名 + ⌘K 人物词典同源，一处改名三处要跟
             });
 
     // 2.33.0：图库入口把「当前可见集合」交给灯箱作为翻图作用域 —— 用户正在看某个
@@ -482,10 +602,215 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
     // 地图爆炸卡片点击 → 沉浸式灯箱看大图
     connect(map_, &MapPage::requestLightbox, this,
             [this](const QString& path) { openLightbox(path); });
-    animEnabled_ = uiAnimEnabled();
-    setupBreathing();
+    // 呼吸目标里 seam 发丝线属本帧（rethemeAll 会先清 breathTargets_ 再重建）
     registerBreath(seamEff_, 0.72, 0.28, 1.0);
-    nav_->setCurrentRow(0);   // P17：默认落在沉浸式首页
+}
+
+// 2.41.0 spec §1.3：导航行 → 空间语义键。越界回 Gallery（lampFor 的默认档语义一致）。
+Lumen::Hall MainWindow::currentHall() const
+{
+    const int n = int(sizeof(kNavHall) / sizeof(kNavHall[0]));
+    const int row = stack_ ? stack_->currentIndex() : activeNavRow_;
+    if (row < 0 || row >= n) return Lumen::Hall::Gallery;
+    return kNavHall[row];
+}
+
+// 2.41.0 spec §2.6：激活项转本灯强调色、其余回本灯次文字色。
+// 提为成员是因为这段循环原先在 ctor lambda 与 updateNavActive 各存一份——
+// 切灯要求两处一起变色，重复体必须归一（棘轮之外的一条同源纪律）。
+void MainWindow::restyleNavIcons(int row)
+{
+    const QColor active = Lumen::gold();
+    const QColor idle   = Lumen::muted();
+    const int n = int(sizeof(kNavIcons) / sizeof(kNavIcons[0]));
+    for (int i = 0; i < navItems_.size() && i < n; ++i) {
+        navItems_[i]->setIcon(Icons::make(QString::fromLatin1(kNavIcons[i]),
+                                          i == row ? active : idle, 22));
+    }
+}
+
+// 2.41.0 spec §2.6：一帧的 chrome 归位（激活态 + 顶栏可见性 + 悬浮几何）。
+// onNav 的正常分支与 rethemeAll 共用此函数——rethemeAll 绝不能改走 onNav，
+// 否则灯跟随会自我取消（见 rethemeAll 内的 blockSignals 注释）。
+void MainWindow::applyRowChrome(int row)
+{
+    updateNavActive(row);
+    // P21→2.41.0：前厅保留左侧全局导航（用户要求进门页也显示左栏，不再为沉浸隐藏它）。
+    // 顶栏/发丝线仍按 P19 沉浸逻辑在前厅隐藏；厅心卡自身铺满内容区。
+    const bool home = (row == 0);
+    if (topbar_) topbar_->setVisible(!home);
+    if (winCtl_) winCtl_->setVisible(!home);   // P29-H：前厅零 chrome 纯沉浸 → 隐藏控制簇
+    if (kpis_)   kpis_->hide();                // P19：模块条退役，永远不显示
+    if (!topbar_) return;
+    updateTopSolid();                    // P19：切页后按滚动偏移重算底色
+    syncTopbarFloat();
+}
+
+// 2.41.0 spec §2.6：切灯唯一路径 = 整帧重建。
+// 顺序即安全，四步不可换：
+//   1) 记页位 → 2) 摘旧帧句柄（呼吸定时器每 33ms 解引用 seamEff_/navBar_，旧帧
+//      deleteLater 后就是悬垂指针 → 退出期 0xC0000005 的老判例）→
+//   3) 交出并销毁旧帧 → 4) 建新帧后落回目标页、重算顶栏悬浮态。
+// 调色板（QPalette）在 buildUi 之前换：各页构造期读 QSS 时拿到的已是新灯。
+void MainWindow::rethemeAll(int row)
+{
+    if (row < 0) row = stack_ ? stack_->currentIndex() : 0;
+    breathTargets_.clear();
+    navItems_.clear();
+    nav_ = nullptr; navBox_ = nullptr; navBar_ = nullptr;
+    topbar_ = nullptr; topShade_ = nullptr; seam_ = nullptr; seamEff_ = nullptr;
+    title_ = nullptr; moduleLbl_ = nullptr; kpis_ = nullptr; winCtl_ = nullptr;
+    winMin_ = nullptr; winMax_ = nullptr; winClose_ = nullptr;
+    searchToggle_ = nullptr; vaultBtn_ = nullptr; lampBtn_ = nullptr;
+    lobby_ = nullptr; people_ = nullptr; gallery_ = nullptr; map_ = nullptr;
+    retouch_ = nullptr; log_ = nullptr; aboutPg_ = nullptr; cmdk_ = nullptr;
+
+    QWidget* old = takeCentralWidget();
+    if (old) { old->hide(); old->deleteLater(); }
+    Dark::apply(*qApp, Lumen::activeLamp());
+    buildUi();
+
+    // 落栈 + 归位。此处的 nav 必须静音：setCurrentRow → currentRowChanged → onNav
+    // 会重入灯跟随分支，把 rethemeAll 刚设好的灯再翻回旧页的空间灯——每次跟随导航
+    // 都被自己取消，困死在前厅（LA_UI_SHOT 实测：page-03-人物馆 拍出来是前厅）。
+    // 转场动画同样不在此放：旧帧已被摘走，回调抓的是新帧指针，视觉上是二次入场。
+    stack_->setCurrentIndex(row);
+    nav_->blockSignals(true);
+    nav_->setCurrentRow(row);
+    nav_->blockSignals(false);
+    // 悬浮 chrome 的几何读的是 host（顶栏父件）宽度，而新帧此刻还没被布局过：
+    // host 仍是 Qt 给未布局子件的默认 100×30（LA_UI_SHOT 实测：切灯后进足迹/日志页，
+    // winCtl 簇落在 x=-16 的左上角）。layout()->activate() 唤不动 QMainWindowLayout
+    // 的中央件分配，主窗尺寸又没变、不会有 resizeEvent 补刀——只能等事件循环把布局
+    // 落定后再补一次同步。QPointer + parentWidget 比对：期间若又切了一次灯，
+    // 抓到的旧 host 已不是当前帧的顶栏父件，直接放弃。
+    applyRowChrome(row);
+    QWidget* host = topbar_ ? topbar_->parentWidget() : nullptr;
+    QPointer<QWidget> hostP(host);
+    QTimer::singleShot(0, this, [this, hostP] {
+        if (hostP && topbar_ && hostP == topbar_->parentWidget()) syncTopbarFloat();
+    });
+
+    // spec §2.6：切灯配 slow 640「上光」包络（kLightFirst：glow 先到峰，画后进）。
+    // QPointer 守护：640ms 内若再切一次灯，本帧已被摘走，回调触到旧 widget 即崩。
+    if (animEnabled_ && isVisible()) {
+        QWidget* host = centralWidget();
+        auto* frameEff = new QGraphicsOpacityEffect(host);
+        host->setGraphicsEffect(frameEff);
+        QPointer<QWidget> hostP(host);
+        QPointer<QGraphicsOpacityEffect> effP(frameEff);
+        auto* drv = new Motion::Driver(Motion::kLightFirst, !animEnabled_, this);
+        connect(drv, &Motion::Driver::valueFor, this, [hostP, effP](const QByteArray& prop, double v) {
+            if (!hostP || !effP) return;
+            if (prop == Motion::kPropOpacity) effP->setOpacity(v);   // glow/offsetY 不映射到整帧
+        });
+        connect(drv, &Motion::Driver::finishedSignal, this, [effP, drv] {
+            if (effP) { effP->setOpacity(1.0); effP->setEnabled(false); }   // 静置回无损渲染
+            drv->deleteLater();
+        });
+        drv->start();
+    }
+}
+
+// 2.41.0 spec §2.6：四灯菜单 = 4 个互斥灯项 + 「跟随空间」勾选锁。
+// 勾选项的真值只在 aboutToShow 时从 Lumen 读回（activeLamp/lampFollowSpace 是
+// 唯一状态源），菜单自己不存第二份状态——否则手挑灯与空间跟随会互相漂移。
+QMenu* MainWindow::buildLampMenu()
+{
+    // 父给灯按钮而非 MainWindow：rethemeAll 整帧重建时旧帧 deleteLater 会连带销毁本菜单，
+    // 否则每次切灯泄漏一份（菜单内容随灯变，本就属于这一帧）。
+    auto* m = new QMenu(lampBtn_);
+    m->setStyleSheet(menuCss());
+    auto* grp = new QActionGroup(m);
+    grp->setExclusive(true);
+    struct LampItem { Lumen::Lamp lamp; const char* name; };
+    const LampItem kLamps[] = {
+        { Lumen::Lamp::Nocturne, "L1 夜展" }, { Lumen::Lamp::Jade,   "L2 玉照" },
+        { Lumen::Lamp::Gekkan,   "L3 素印" }, { Lumen::Lamp::Dusk,   "L4 暮金" },
+    };
+    for (const LampItem& it : kLamps) {
+        QAction* a = m->addAction(Icons::make(QStringLiteral("lamp"),
+                                              Lumen::lamp(it.lamp).gold, 16),
+                                  QString::fromUtf8(it.name));
+        a->setCheckable(true);
+        a->setData(int(it.lamp));
+        grp->addAction(a);
+        connect(a, &QAction::triggered, this, [this, l = it.lamp] {
+            if (Lumen::activeLamp() == l && Lumen::lampLocked()) return;   // 已是这盏灯，不重建
+            Lumen::setActiveLamp(l);
+            Lumen::setLampFollowSpace(false);   // 手挑即脱离跟随（锁语义 = manual）
+            rethemeAll();
+        });
+    }
+    m->addSeparator();
+    QAction* follow = m->addAction(QCoreApplication::translate("LightAlbum", "跟随空间"));
+    follow->setCheckable(true);
+    connect(follow, &QAction::triggered, this, [this, follow] {
+        const bool on = follow->isChecked();
+        Lumen::setLampFollowSpace(on);
+        if (on) Lumen::setActiveLamp(Lumen::lampFor(currentHall()));   // 立刻归位本空间灯
+        rethemeAll();
+    });
+    connect(m, &QMenu::aboutToShow, this, [this, m, follow] {
+        const bool on = Lumen::lampFollowSpace();
+        const int cur = int(Lumen::activeLamp());
+        const auto acts = m->actions();
+        for (QAction* a : acts) {
+            if (!a->isCheckable() || !a->data().isValid()) continue;
+            a->setChecked(!on && a->data().toInt() == cur);   // 跟随态下 4 灯全不勾
+        }
+        follow->setChecked(on);
+    });
+    return m;
+}
+
+// 2.41.0 spec §2.4：⌘K 开馆。面板不自己定位（它是 central 的子控件、随帧重建），
+// 由这里按当前窗口给一张居中卡：宽不超过 680，高取内容 sizeHint，落在顶栏带之下。
+void MainWindow::openCmdK()
+{
+    if (!cmdk_) return;
+    cmdk_->setHidePrivate(!vaultUnlocked_);   // 锁定态词典不含私密照人物名（spec §3 红线）
+    cmdk_->openFor(currentHall());
+    const int w = qMin(680, qMax(320, width() - 160));
+    const int h = qMax(160, cmdk_->sizeHint().height());
+    const int x = (width() - w) / 2;
+    const int y = qMax(Lumen::Space::Xxl, (height() - h) / 3);
+    cmdk_->setGeometry(x, y, w, h);
+    cmdk_->show();
+    cmdk_->raise();
+    cmdk_->focusInput();
+}
+
+void MainWindow::closeCmdK()
+{
+    if (cmdk_) cmdk_->hide();
+}
+
+// 2.41.0 spec §2.6：库写回后的统一刷新汇合。评分/私密/mark 落库即同步内存副本
+// （Library::applyBatch 在 COMMIT 之后写 photos_），故各页只需重跑各自的纯函数。
+void MainWindow::refreshExhibits()
+{
+    if (gallery_) gallery_->refresh();
+    if (lobby_)   lobby_->refresh();
+    if (people_)  people_->refresh();
+}
+
+// ---- 2.41.0 §2.6 门禁探针（整帧重建是纯 UI 路径，五道新门都只测纯函数，够不着它）----
+// 断言形态：探针返回**可数的结构事实**，不在门禁里做视觉判断。
+CmdKPanel* MainWindow::qaCmdK() const { return cmdk_; }
+
+int MainWindow::qaLampMenuActions()
+{
+    // 4 灯 + 分隔线 + 「跟随空间」= 6 项。少一项即菜单骨架断链。
+    if (!lampBtn_ || !lampBtn_->menu()) return -1;
+    return lampBtn_->menu()->actions().size();
+}
+
+void MainWindow::qaRetheme()
+{
+    // 直驱一次整帧重建：返回后句柄树应完好（nav_/stack_/lobby_/people_/cmdk_ 非空，
+    // 且呼吸目标重新注册过）。门禁据此调用，再用 qaCmdK() 取换新后的面板指针。
+    rethemeAll();
 }
 
 // P13：LA_* 冒烟/截图场景关闭所有动效，保证截图与冒烟确定性。
@@ -535,11 +860,7 @@ void MainWindow::tickBreath()
 void MainWindow::updateNavActive(int row)
 {
     activeNavRow_ = row;
-    for (int i = 0; i < navItems_.size()
-                    && i < int(sizeof(kNavIcons) / sizeof(kNavIcons[0])); ++i) {
-        navItems_.at(i)->setIcon(Icons::make(QString::fromLatin1(kNavIcons[i]),
-            i == row ? QColor(0xd9, 0xa9, 0x4e) : QColor(0x9f, 0xa8, 0xa3), 22));
-    }
+    restyleNavIcons(row);   // 2.41.0 §2.6：图标色取当前灯（此前三处各写一份 0xd9a94e/0x9fa8a3）
     if (navBar_) {
         if (row >= 0 && row < nav_->count()) {
             const QRect vr = nav_->visualItemRect(nav_->item(row));
@@ -614,12 +935,12 @@ void MainWindow::setTopSolid(bool on)
     topSolidAnim_->start();
 }
 
-// 目标态 = 鼠标在顶栏 || 当前页（非首页）首个 QScrollArea 垂直偏移>12
+// 目标态 = 鼠标在顶栏 || 当前页（非前厅）首个 QScrollArea 垂直偏移>12
 void MainWindow::updateTopSolid()
 {
     if (topForced_) { setTopSolid(true); return; }   // P19：QA 强制态优先
     bool on = topHover_;
-    if (!on && stack_ && stack_->currentWidget() != home_) {
+    if (!on && stack_ && stack_->currentWidget() != lobby_) {
         const auto sas = stack_->currentWidget()->findChildren<QScrollArea*>();
         if (!sas.isEmpty()) {
             QScrollBar* sb = sas.first()->verticalScrollBar();
@@ -737,23 +1058,55 @@ void MainWindow::onVaultButton()
 
 void MainWindow::refreshPrivateState()
 {
-    gallery_->setHidePrivate(!vaultUnlocked_);
-    map_->setHidePrivate(!vaultUnlocked_);
-    log_->setHidePrivate(!vaultUnlocked_);
-    cull_->setHidePrivate(!vaultUnlocked_);   // 2.33.0 补漏：选片页此前从不收到隐私门
+    // 2.41.0 §2.2/§2.3/§2.4：隐私门下发到三处新页面——前厅展陈、人物馆展室、⌘K 人物词典
+    //   都直接吃 hidePrivate 谓词；漏一处就等于把私密照挂进展厅。
+    const bool hide = !vaultUnlocked_;
+    if (gallery_) gallery_->setHidePrivate(hide);
+    if (map_) map_->setHidePrivate(hide);
+    if (log_) log_->setHidePrivate(hide);
+    if (people_) people_->setHidePrivate(hide);   // 2.33.0 补漏原话：选片页此前从不收到隐私门
+    if (lobby_) lobby_->setHidePrivate(hide);
+    if (cmdk_) cmdk_->setHidePrivate(hide);
     if (lightbox_ && lightbox_->isVisible())
         lightbox_->hide();   // 重新上锁时顺手收起灯箱
 }
 
+// 2.41.0 §2.5：灯箱只此一份实例（parent=this → 不随 rethemeAll 整帧重建而销毁）。
+GazeLightbox* MainWindow::ensureLightbox()
+{
+    if (lightbox_) return lightbox_;
+    lightbox_ = new GazeLightbox(lib_, this);
+    lightbox_->setFullCache(fullCache_);   // 2.22.0：注入原图缓存（灯箱不自有）
+    connect(lightbox_, &GazeLightbox::openInRetouch, this, [this](const QString& p) {
+        const bool dirty = lightbox_ && lightbox_->hasChanges();
+        if (lightbox_) { lightbox_->hide(); lightbox_->clearChanges(); }
+        if (dirty) refreshExhibits();
+        retouch_->openPhoto(p);
+        nav_->setCurrentRow(4);
+    });
+    // 2.41.0 §2.5：凝视档 S/A/L 即写库（单张 len=1 语义）；空 mark = 撤销。
+    // 写库即回 —— 不做批量缓冲；刷新走统一汇合（前厅展陈与人物馆展室同样看得见）。
+    connect(lightbox_, &GazeLightbox::markRequested, this,
+            [this](const QString& p, const QString& m) {
+        lib_->setMark(p, m);
+        refreshExhibits();
+    });
+    connect(lightbox_, &GazeLightbox::dismissed, this, [this](bool dirty) {
+        if (lightbox_) { lightbox_->hide(); lightbox_->clearChanges(); }
+        if (dirty) refreshExhibits();
+    });
+    return lightbox_;
+}
+
 // P15：打开沉浸式灯箱（图库点击或探针复用）。P16：灯箱内改评分/私密 → 关闭后刷新图库。
 // 2.33.0：`scope` 传入调用方的可见集合（图库页在有筛选时），←/→ 就只在这个集合里走；
-//   空 = 全库顺序（首页/地图入口保持原语义）。隐私门据 vaultUnlocked_ 下发。
+//   空 = 全库顺序（前厅/地图入口保持原语义）。隐私门据 vaultUnlocked_ 下发。
 void MainWindow::openLightbox(const QString& path, const QStringList& scope)
 {
     const Photo* ph = lib_->find(path);
     if (!ph) return;
     // ★2.30.0 视频走内嵌解码播放器（VideoLightbox）；照片仍走原 GazeLightbox。
-    //   复用同一 openLightbox 入口，故首页/图库/地图三处打开视频都自动生效。
+    //   复用同一 openLightbox 入口，故前厅/图库/地图三处打开视频都自动生效。
     if (ph->mediaType == QLatin1String("video")) {
         if (!videoLightbox_) videoLightbox_ = new VideoLightbox(this);
         const QString poster = ph->thumbFile.isEmpty()
@@ -761,50 +1114,50 @@ void MainWindow::openLightbox(const QString& path, const QStringList& scope)
         videoLightbox_->openVideo(ph->path, poster, ph->durSec);
         return;
     }
-    if (!lightbox_) {
-        lightbox_ = new GazeLightbox(lib_, this);
-        lightbox_->setFullCache(fullCache_);   // 2.22.0：注入原图缓存（灯箱不自有）
-        connect(lightbox_, &GazeLightbox::openInRetouch, this, [this](const QString& p) {
-            const bool dirty = lightbox_ && lightbox_->hasChanges();
-            if (lightbox_) { lightbox_->hide(); lightbox_->clearChanges(); }
-            if (dirty) gallery_->refresh();
-            retouch_->openPhoto(p);
-            nav_->setCurrentRow(4);
-        });
-        // 2.41.0 §2.5：凝视档 S/A/L 即写库（单张 len=1 语义）；空 mark = 撤销。
-        // 写库即回 —— 不做批量缓冲；随后 read 型刷新（T8 汇入统一刷新点）。
-        connect(lightbox_, &GazeLightbox::markRequested, this,
-                [this](const QString& p, const QString& m) {
-            lib_->setMark(p, m);
-            gallery_->refresh();
-        });
-        connect(lightbox_, &GazeLightbox::dismissed, this, [this](bool dirty) {
-            if (lightbox_) { lightbox_->hide(); lightbox_->clearChanges(); }
-            if (dirty) gallery_->refresh();
-        });
-    }
-    lightbox_->setScope(scope);
-    lightbox_->setHidePrivate(!vaultUnlocked_);
-    // 2.41.0 §2.5：T7 只走 Browse 档（凝视入口由 T8 接线）。startPath 留空 →
-    //   照片装载仍走下一行的 setPhoto，故这里是**零行为**的档位归位。
-    lightbox_->enter(GazeLightbox::Mode::Browse, QString());
-    lightbox_->setPhoto(ph, thumbsDir_);
-    lightbox_->show();
-    lightbox_->raise();
+    auto* lb = ensureLightbox();
+    lb->setScope(scope);
+    lb->setHidePrivate(!vaultUnlocked_);
+    // 2.41.0 §2.5：Browse 档零行为。startPath 留空 → 照片装载仍走下一行的 setPhoto，
+    //   故这里是**零行为**的档位归位。
+    lb->enter(GazeLightbox::Mode::Browse, QString());
+    lb->setPhoto(ph, thumbsDir_);
+    lb->show();
+    lb->raise();
+}
+
+// 2.41.0 spec §2.5：凝视档入口。scope = 打开方给的**展陈连续作用域**
+//   （前厅厅心九张 / 人物馆一间展室 / ⌘K 检索结果），←/→ 就在其中走。
+// setPhoto 先于 enter：enter(Gaze) 用已载入的 orig_ 算主色光晕，且 path_ 已等于
+//   startPath → 不会二次装载。视频无凝视档（无主色可取），退回 Browse 入口。
+void MainWindow::openGaze(const QString& path, const QStringList& scope)
+{
+    const Photo* ph = lib_->find(path);
+    if (!ph) return;
+    if (ph->mediaType == QLatin1String("video")) { openLightbox(path, scope); return; }
+    auto* lb = ensureLightbox();
+    lb->setScope(scope);
+    lb->setHidePrivate(!vaultUnlocked_);
+    lb->setPhoto(ph, thumbsDir_);
+    lb->enter(GazeLightbox::Mode::Gaze, path);
+    lb->show();
+    lb->raise();
 }
 
 void MainWindow::onNav(int row)
 {
     if (row < 0 || row >= stack_->count()) return;
-    updateNavActive(row);
-    // P21：首页保留左侧全局导航（用户要求首页也显示左栏，不再为沉浸隐藏它）。
-    // 顶栏/发丝线仍按 P19 沉浸逻辑在首页隐藏；HomePage 自身左章节面板在右侧并排。
-    const bool home = (row == 0);
-    topbar_->setVisible(!home);
-    if (winCtl_) winCtl_->setVisible(!home);   // P29-H：首页零 chrome 纯沉浸 → 隐藏控制簇
-    kpis_->hide();                       // P19：模块条退役，永远不显示
-    updateTopSolid();                    // P19：切页后按滚动偏移重算底色
-    syncTopbarFloat();
+    // 2.41.0 spec §2.6：跟随模式在转场**之前**落灯。切灯 = 整帧重建，旧帧已被摘走，
+    //   此时再挂转场动画会让回调命中已销毁控件，故重建后直接 return。重入的 onNav
+    //   复查时 activeLamp 已等于目标灯 → 自然落入下方正常分支。
+    if (Lumen::lampFollowSpace()) {
+        const Lumen::Lamp want = Lumen::lampFor(kNavHall[row]);
+        if (want != Lumen::activeLamp()) {
+            Lumen::setActiveLamp(want);
+            rethemeAll(row);   // 目标行必须显式带上：此刻栈还在旧页
+            return;
+        }
+    }
+    applyRowChrome(row);
     if (!animEnabled_ || !isVisible() || row == stack_->currentIndex()) {
         stack_->setCurrentIndex(row);
         return;
@@ -816,24 +1169,36 @@ void MainWindow::onNav(int row)
         stack_->setGraphicsEffect(eff);
     }
     eff->setEnabled(true);   // 过渡期间启用
-    // 2.34：转场数值全部出自 MotionKit NavFade 预设（曲线/时长唯一真源）；
+    // 2.34：转场数值全部出自 MotionKit 预设（曲线/时长唯一真源）；
     // 入场位移方向随导航方向 = 视差感（向下切页从下方进，向上切页从上方进）。
+    // 2.41.0 spec §3：预设随空间——进前厅=LightFirst(slow 640)、进人物馆=PushDoor(standard 360)、
+    //   其余=NavFade。位移与否读预设表（不硬编码预设名）：PushDoor 无 offsetY 键 → 不预位移，
+    //   否则收帧后控件停在偏移位回不了家。
+    const QByteArray presetName = row == 0 ? Motion::kLightFirst
+                                  : row == 3 ? Motion::kPushDoor
+                                  : Motion::kNavFade;
+    const Motion::Preset& p = Motion::preset(presetName);
+    bool hasOffsetY = false;
+    for (const auto& k : p.keys) hasOffsetY |= (k.prop == Motion::kPropOffsetY);
     const int prevRow = stack_->currentIndex();
     const double amp = (row > prevRow) ? 14.0 : -14.0;
     auto* fade = new QPropertyAnimation(eff, "opacity");
-    fade->setDuration(int(Motion::preset(Motion::kNavFade).durationMs * 0.35));
+    fade->setDuration(int(p.durationMs * 0.35));
     fade->setStartValue(1.0);
     fade->setEndValue(0.0);
     fade->setEasingCurve(QEasingCurve::InQuad);   // 与预设 exit 键同曲线（引擎表即用 InQuad）
-    connect(fade, &QPropertyAnimation::finished, this, [this, row, eff, amp] {
+    connect(fade, &QPropertyAnimation::finished, this,
+            [this, row, eff, amp, hasOffsetY, presetName] {
         stack_->setCurrentIndex(row);
         QWidget* nxt = stack_->widget(row);
         const QPoint home = nxt->pos();
-        nxt->move(home.x(), home.y() + amp);
-        auto* drv = new Motion::Driver(Motion::kNavFade, !animEnabled_, this);
-        connect(drv, &Motion::Driver::valueFor, this, [nxt, home, eff](const QByteArray& prop, double v) {
-            if (prop == Motion::kPropOffsetY) nxt->move(home.x(), int(home.y() + v));
-            else if (prop == Motion::kPropOpacity) eff->setOpacity(v);
+        if (hasOffsetY) nxt->move(home.x(), home.y() + amp);
+        auto* drv = new Motion::Driver(presetName, !animEnabled_, this);
+        connect(drv, &Motion::Driver::valueFor, this,
+                [nxt, home, eff, hasOffsetY](const QByteArray& prop, double v) {
+            if (prop == Motion::kPropOffsetY) {
+                if (hasOffsetY) nxt->move(home.x(), int(home.y() + v));
+            } else if (prop == Motion::kPropOpacity) eff->setOpacity(v);
         });
         connect(drv, &Motion::Driver::finishedSignal, this, [eff, drv] {
             eff->setEnabled(false);   // 静置恢复无损原生渲染
@@ -936,20 +1301,31 @@ QWidget* MainWindow::makeAbout() const
 int MainWindow::shootPages(const QString& dir)
 {
     QDir().mkpath(dir);
+    // 取证尺寸钉死：offscreen 虚拟屏只有 800x800，开场 showMaximized 后各页会被栈的
+    // 最小宽推到不同尺寸（前厅 800、其余 1369），同一批快照互相不可比，且窄到低于
+    // 布局最小宽时 QHBoxLayout 会压扁定尺寸子件——把「布局不够宽」误读成「新页坏图」。
+    // 最大化态下 resize() 被 WM 几何忽略，必须先 showNormal 再钉尺寸。
+    if (isMaximized()) showNormal();
+    resize(1440, 900);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 120);
     for (int i = 0; i < nav_->count(); ++i) {
         nav_->setCurrentRow(i);
         QCoreApplication::processEvents(QEventLoop::AllEvents, 120);
-        // P27：图库页缩略图为后台线程池异步加载（ThumbCache::LoadTask），
+        // P27：缩略图为后台线程池异步加载（ThumbCache::LoadTask），
         // 120ms 不足以让可见缩略图落盘并重绘；专用长等待让其到位后再 grab
         //（否则 offscreen 直接抓到 96.7% 暗底，误判为黑边问题）。
-        if (QString::fromUtf8(kNav[i].label) == QStringLiteral("图库")) {
+        // 2.41.0 §2.2/§2.3：前厅厅心/近期条与人物馆展室同样吃 ThumbCache，
+        // 不一起等就会把「缩略图还没到」误判成「新页黑屏」。
+        const QString label = QString::fromUtf8(kNav[i].label);
+        if (label == QStringLiteral("图库") || label == QStringLiteral("前厅")
+            || label == QStringLiteral("人物馆")) {
             for (int w = 0; w < 9; ++w)
                 QCoreApplication::processEvents(QEventLoop::AllEvents, 400);
         }
         const QPixmap pm = grab();
         const QString path = QDir(dir).filePath(
             QStringLiteral("page-%1-%2.png").arg(i, 2, 10, QLatin1Char('0'))
-                .arg(QString::fromUtf8(kNav[i].label)));
+                .arg(label));
         pm.save(path);
         std::fprintf(stderr, "LA_UI_SHOT %s %dx%d\n", qPrintable(path),
                      pm.width(), pm.height());
@@ -971,22 +1347,12 @@ MapView* MainWindow::mapView() const
 // iCloud 目录 6778 个 QFileInfo）。若在顶栏构造期同步调用，等于把这笔 IO
 // 压进 UI 启动主线程 —— LA_SCALE_PERF 的 firstMs 会从 ~40 抬到 ~100+。
 // 故构造期只建骨架（零 IO），首次 `aboutToShow`（用户点开菜单、已在等）时才探测。
-QMenu* MainWindow::buildImportMenu()
+QMenu* MainWindow::buildImportMenu(QWidget* owner)
 {
-    QMenu* m = new QMenu(this);
-    // 缺陷②修复：QMenu 是独立顶层弹出窗口，不继承应用级暗色 palette/QSS，
-    // 落在系统浅色原生菜单上会叠加全局浅色文字 → 白底白字。逐实例设置暗色 QSS。
-    // 配色复用暗色弹层色系（GalleryPage::clusterDimBox_），disabled 文案用 Lumen::muted() 插值
-    // 满足 WCAG 对比度（原低对比提示色已在方向 F a11y 整改中替换）。
-    m->setStyleSheet(QString::fromUtf8(   // §1.7 菜单族：0e130f→PANEL、d9e4dc→INK、1d2a22 边/缝→LINE、选中底→CARD_HI（T5 裁定先例）
-        "QMenu{background:%1;color:%2;border:1px solid %3;}"
-        "QMenu::item{background:transparent;color:%2;padding:6px 24px 6px 12px;}"
-        "QMenu::item:selected{background:%4;color:%5;}"
-        "QMenu::item:disabled{color:%6;}"
-        "QMenu::separator{height:1px;background:%3;margin:4px 8px;}")
-        .arg(Lumen::hex(Lumen::panel()), Lumen::hex(Lumen::ink()), Lumen::hex(Lumen::line()),
-             Lumen::hex(Lumen::cardHi()), Lumen::hex(Lumen::emerald()),
-             Lumen::hex(Lumen::muted())));
+    // 父给持有它的按钮而非 MainWindow：rethemeAll 整帧重建时旧帧 deleteLater 连带销毁，
+    // 否则每次切灯泄漏一份（与灯钮菜单同一条纪律）。
+    QMenu* m = new QMenu(owner);
+    m->setStyleSheet(menuCss());   // 2.41.0 T8：菜单皮肤归厂（与灯钮菜单同源）
     QAction* aDir = m->addAction(QCoreApplication::translate("LightAlbum", "导入目录…"));
     connect(aDir, &QAction::triggered, this, &MainWindow::startImport);
 
@@ -1090,8 +1456,9 @@ void MainWindow::runImportInto(const QString& dir, const QString& title)
                 watcher->deleteLater();
                 delete cancelled;
                 if (dlgGuard) dlgGuard->deleteLater();
+                // 2.41.0 §2.2：馆务语感——「新增」是数据库词，进馆的说法是「入藏」。
                 QString msg = QStringLiteral(
-                    "新增 %1 · 更新 %2 · 未变化 %3 · 消失 %4\n总扫描 %5 张 · 用时 %6s")
+                    "%1 幅入藏 · 更新 %2 · 未变化 %3 · 消失 %4\n总扫描 %5 张 · 用时 %6s")
                         .arg(r.added).arg(r.updated).arg(r.unchanged)
                         .arg(r.missing).arg(r.total).arg(r.seconds, 0, 'f', 1);
                 if (r.placeholders > 0)
@@ -1239,8 +1606,9 @@ void MainWindow::runPersonDetect()
             [this, dlg, watcher, cancelled, engineMissing, labeledBefore] {
                 dlg->close();
                 const bool ok = watcher->result();
-                gallery_->refresh();   // 重建人物 chips + 计数（与 runClassify 同款：
+                refreshExhibits();     // 重建人物 chips + 计数（与 runClassify 同款：
                                        // 「中断」也可能已部分写回，chips 必须与盘面一致）
+                                       // 2.41.0 §2.3：person 是人物馆展室的聚合键 → 同源刷新
                 QString msg;
                 if (engineMissing->load()) {
                     // 三态与文案纪律同 runClassify（T12 修复波）：未就绪串不点名脚本/产物，
@@ -1351,7 +1719,7 @@ void MainWindow::runFaceCluster()
                         lib_->applyClusters(out);
                     }
                 }
-                gallery_->refresh();   // 重建人物 chips + 计数（聚类标签生效）
+                refreshExhibits();   // 重建人物 chips + 计数（聚类标签生效；2.41.0 §2.3 展室同步）
                 QString msg;
                 if (engineMissing->load()) {
                     // 三态与文案纪律同 runClassify/runPersonDetect（T12 修复波第 2 轮）：

@@ -115,6 +115,7 @@ set(LA_SOURCES
     src/core/PhotoDedup.cpp
     src/core/BrowseScope.h
     src/core/BrowseScope.cpp
+    src/core/CmdFilter.h
     src/core/Classifier.h
     src/core/Classifier.cpp
     src/core/PersonDetector.h

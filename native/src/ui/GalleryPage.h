@@ -7,6 +7,7 @@
 #include <QLabel>
 #include <QStringList>
 #include <QTimer>
+#include "../core/CmdFilter.h"
 #include "GalleryModel.h"
 #include "ThumbCache.h"
 
@@ -20,6 +21,8 @@ public:
     void applyFilter(const QString& q);
     void applyGeoFilter(const QString& regionId, const QString& provEn); // 地图跳转：大区/省筛选
     void applyCategoryFilter(const QString& cat);                        // P16 分类 chips
+    void applyCmdFilter(const CmdFilter& f);                             // 2.41.0 ⌘K 过滤袋
+    void applyPersonFilter(const QString& name);                         // 2.41.0 T8：人物馆「在图库中看」
     void setHidePrivate(bool hide);                                      // P16 隐私门（重建 chips 计数）
     void refresh();                                                      // 灯箱改评分/私密后刷新
     int  qaShootE(const QString& png);   // P23 E 像素/几何 + 缺陷① reflow 自测（offscreen），返回 0=绿
@@ -86,6 +89,7 @@ private:
     int          clusterDim_ = 0;             // 对应 PhotoCluster::Dim（默认 ByProvince）
     QString      activeClusterKey_;           // 当前簇键（空=全部）
     QString      searchText_;                 // 搜索框状态（计数注记用）
+    QString      cmdNote_;                    // 2.41.0 ⌘K：过滤袋人话注记（空=未启用）
     bool         hidePrivate_ = true;
     // ---- D5b：批量工具条（选中非空才显示；★1-5 / 🔒私密 / 取消选择）----
     QWidget*     batchBar_ = nullptr;

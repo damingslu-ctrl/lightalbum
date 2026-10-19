@@ -224,6 +224,15 @@ GalleryPage::GalleryPage(const QVector<Photo>* photos, const QString& thumbsDir,
     lay->addWidget(searchBar);
     connect(searchLe, &QLineEdit::textChanged, this, &GalleryPage::applyFilter);
 
+    // 2.41.0 spec §2.2：图库页落到「馆」的语感——标题在计数之上，计数继续做筛选真源。
+    auto* heading = new QLabel(QCoreApplication::translate("LightAlbum", "全部藏品"), this);
+    heading->setStyleSheet(QString::fromUtf8("color:%1;background:transparent;border:none;"
+        "padding:%2px 20px 0;%3")
+        .arg(Lumen::hex(Lumen::ink()))
+        .arg(Lumen::Space::L)
+        .arg(Lumen::Type::css(Lumen::Type::Tier::Head)));   // T8：字号走字阶，padding 走间距格
+    lay->addWidget(heading);
+
     count_ = new QLabel(this);
     count_->setStyleSheet(QString::fromUtf8("color:%1;padding:12px 20px 8px;")
         .arg(Lumen::hex(Lumen::muted())));   // token 值字面量归引用（色不变）
@@ -615,6 +624,16 @@ void GalleryPage::applyCategoryFilter(const QString& cat)
     updateCount();
 }
 
+// 2.41.0 T8：人物馆「在图库中看这一间」→ 图库按姓名筛选。
+// 与 chips 同一状态机（activePerson_），故走同一条重建链，切换回来仍可见选中态。
+void GalleryPage::applyPersonFilter(const QString& name)
+{
+    activePerson_ = name;
+    model_.setPersonFilter(activePerson_);
+    buildChips();
+    updateCount();
+}
+
 void GalleryPage::setHidePrivate(bool hide)
 {
     hidePrivate_ = hide;
@@ -636,6 +655,7 @@ void GalleryPage::updateCount()
     const int total = photos_ ? photos_->size() : n;
     QStringList notes;
     if (!searchText_.trimmed().isEmpty()) notes << QCoreApplication::translate("LightAlbum", "已筛");
+    if (!cmdNote_.isEmpty()) notes << cmdNote_;   // 2.41.0 ⌘K 过滤袋注记
     if (!activeCat_.isEmpty())
         notes << (activeCat_ == GalleryModel::kNoCategory
                       ? QCoreApplication::translate("LightAlbum", "未分类")
@@ -661,6 +681,25 @@ void GalleryPage::applyFilter(const QString& q)
 {
     searchText_ = q;
     model_.setFilter(q);
+    updateCount();
+}
+
+// 2.41.0 spec §2.4：⌘K 过滤袋通道。 MainWindow 直接调用（不新增 signal，
+// CmdK::applyFilter 的去重由调用侧负责）；与页内 chips/搜索框并存叠加。
+void GalleryPage::applyCmdFilter(const CmdFilter& f)
+{
+    model_.setCmdFilter(f);
+    QStringList parts;
+    if (f.yearMin) parts << QString::number(f.yearMin);
+    if (f.month)   parts << QString::number(f.month);
+    if (f.day)     parts << QString::number(f.day);
+    if (!f.season.isEmpty())     parts << f.season;
+    if (!f.person.isEmpty())     parts << f.person;
+    if (!f.tokenPlace.isEmpty()) parts << f.tokenPlace;
+    if (!f.category.isEmpty())   parts << f.category;
+    if (!f.text.isEmpty())       parts << f.text;
+    cmdNote_ = parts.isEmpty() ? QString()
+        : QCoreApplication::translate("LightAlbum", "检索：%1").arg(parts.join(QStringLiteral(" · ")));
     updateCount();
 }
 

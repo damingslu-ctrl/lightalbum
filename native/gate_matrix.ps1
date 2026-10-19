@@ -142,16 +142,13 @@ $GateTable = @(
   @{n="LA_SCALE_REAL_PERF_QA"; png=$false; need=@("LA_SCALE_REAL_DB"); measuredMs=8000},
   @{n="LA_EXIT_QA";         png=$false; measuredMs=5700},
   @{n="LA_RW_SMOKE";        png=$false; measuredMs=1017},
-  @{n="LA_CULL_SMOKE";      png=$false; measuredMs=3210},
-  # P25 duel arbitration (implemented in CullPage::runDuelQa, dispatched by the
-  # CullPage ctor when the env var holds a png path). It existed but was NOT in
-  # the matrix, and it had no verdict at all: it printed raw numbers and called
-  # requestExit(0), while the runner's greenPat substring "OK" matched the
-  # lowercase "ok" of markOk=0 -> the gate could never go RED (E34). Now it
-  # prints PASS/FAIL over groups/members0/skipDelta/markOk/gold. Proven
-  # non-vacuous through the shipped hook: LA_CULL_DUEL_QA_FORCE_BROKEN=1 makes
-  # the duel verdict never write a mark -> "FAIL ... skipDelta=0 markOk=0".
-  @{n="LA_CULL_DUEL_QA";    png=$true; measuredMs=1910},
+  # LA_CULL_SMOKE / LA_CULL_DUEL_QA retired here in 2.41.0 wave12 T8 (was rows 145/154).
+  # Both were driven from inside the CullPage ctor, and T8 detached CullPage from
+  # MainWindow: the page is never constructed again, so the two gates hang and get
+  # killed by the watchdog (reason=no-exit-request) instead of reporting a verdict.
+  # CullPage.cpp itself is deleted in T9. CullEngine/cull-mark coverage stays alive
+  # through LA_CULL_EXEMPT_QA and LA_CULL_VIDEO_QA, whose dispatch returns before
+  # MainWindow is built and therefore never depended on the nav wiring.
   # Geo data structural smoke (MapView::loadGeoJson). Also pre-existing but
   # unregistered, and doubly broken: no verdict (greenPat matched its "rings="
   # so rings=0 passed) and no self-exit (it kept running into app.exec() and was

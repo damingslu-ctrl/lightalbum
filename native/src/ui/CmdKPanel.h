@@ -13,18 +13,11 @@
 #include <QHash>
 #include <QVector>
 #include <QDate>
+#include "../core/CmdFilter.h"
 #include "../core/Library.h"
 #include "Theme.h"
 
 class QLineEdit;
-
-struct CmdFilter {
-    int yearMin = 0, yearMax = 0;          // 0=未指定（含相等：2019 年查询 ⇒ min=max=2019）
-    int month = 0, day = 0;                // 1..12 / 1..31；0=未指定
-    QString season, person, tokenPlace, category;   // 空=未指定
-    QString text;                          // 计划裁决 1：兜底 contains 词（剩余内容）
-    bool empty() const;
-};
 
 class CmdKPanel : public QWidget {
     Q_OBJECT
@@ -34,6 +27,7 @@ public:
     // 开馆层：记录空间语义键（灯/回放用）；E4 金描边由构造期皮肤承担。
     void openFor(Lumen::Hall s);
     void setHidePrivate(bool hide);        // 锁定态：人物词典派生自 hidePrivate 集合
+    void focusInput();                     // 2.41.0 T8：开馆即落光标（面板本身不可聚焦）
 
 signals:
     void applyFilter(const CmdFilter& f);

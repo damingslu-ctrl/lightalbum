@@ -10,6 +10,7 @@
 #include <QVector>
 #include <QColor>
 #include <QString>
+#include <QStringList>
 #include "../core/Library.h"
 
 class ThumbCache;
@@ -29,6 +30,10 @@ public:
 
     void setHidePrivate(bool hide);
     void refresh();
+
+    // 2.41.0 T8：⌘K/外部按姓名聚焦展室（展开那一间并重建）；房内路径 = 凝视档翻图作用域。
+    void focusRoom(const QString& name);
+    QStringList roomPaths(const QString& name) const;
 
     // 单次扫库聚合：每照 person.split(',') 入对应房（同人多照片 / 一照多人）。
     // usable 谓词同前厅（missing / 空 thumbFile / 私密且要求隐藏 → 不入展）+ person 非空；

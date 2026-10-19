@@ -37,6 +37,8 @@ void GalleryModel::rebuild()
         const bool hasStory  = !storyFilter_.isEmpty();
         // 方向 C：聚类筛选与其它筛选并存叠加
         const bool hasCluster = !clusterKey_.isEmpty() && clusterDim_ >= 0;
+        // 2.41.0 ⌘K：自然语言过滤袋（同样并存叠加；empty=不启用，零成本短路）
+        const bool hasCmd = !cmd_.empty();
         const QString region = regionFilter_.toLower();
         const QString prov   = provFilter_.toLower();
         for (int i = 0; i < all_->size(); ++i) {
@@ -58,6 +60,35 @@ void GalleryModel::rebuild()
                 continue;
             if (hasCluster) {   // 方向 C：簇键比较（真源在 core/PhotoCluster）
                 if (PhotoCluster::clusterKey(p, static_cast<PhotoCluster::Dim>(clusterDim_)) != clusterKey_)
+                    continue;
+            }
+            if (hasCmd) {   // 2.41.0 ⌘K：年/月/日/季/人/地/风格/兜底词，逐条 AND
+                if (cmd_.yearMin != 0
+                    && !(p.year >= cmd_.yearMin && p.year <= cmd_.yearMax))
+                    continue;
+                if (cmd_.month != 0 || cmd_.day != 0 || !cmd_.season.isEmpty()) {
+                    // 时间谓词需要真日期：解不出日期的照片在有时间条件时一律落选
+                    const QDate d = photoDateOf(p.date);
+                    if (!d.isValid()) continue;
+                    if (cmd_.month != 0 && d.month() != cmd_.month) continue;
+                    if (cmd_.day   != 0 && d.day()   != cmd_.day)   continue;
+                    if (!cmd_.season.isEmpty() && seasonNameOf(d.month()) != cmd_.season)
+                        continue;
+                }
+                if (!cmd_.person.isEmpty()
+                    && !p.person.contains(cmd_.person, Qt::CaseInsensitive))
+                    continue;
+                if (!cmd_.tokenPlace.isEmpty()
+                    && !p.city.contains(cmd_.tokenPlace, Qt::CaseInsensitive)
+                    && !p.prov.contains(cmd_.tokenPlace, Qt::CaseInsensitive)
+                    && !p.region.contains(cmd_.tokenPlace, Qt::CaseInsensitive))
+                    continue;
+                if (!cmd_.category.isEmpty() && p.category != cmd_.category)
+                    continue;
+                if (!cmd_.text.isEmpty()
+                    && !p.title.contains(cmd_.text, Qt::CaseInsensitive)
+                    && !p.rel.contains(cmd_.text, Qt::CaseInsensitive)
+                    && !p.cam.contains(cmd_.text, Qt::CaseInsensitive))
                     continue;
             }
             if (!needle.isEmpty()) {
@@ -97,6 +128,9 @@ void GalleryModel::setClusterFilter(int dim, const QString& key)
     rebuild();
 }
 void GalleryModel::clearClusterFilter() { clusterDim_ = -1; clusterKey_.clear(); rebuild(); }
+// 2.41.0 ⌘K：filter 空 = 清除（与其余 setter 口径一致）
+void GalleryModel::setCmdFilter(const CmdFilter& f) { cmd_ = f;    rebuild(); }
+void GalleryModel::clearCmdFilter()                 { cmd_ = CmdFilter(); rebuild(); }
 void GalleryModel::setHidePrivate(bool hide)       { hidePrivate_ = hide; rebuild(); }
 
 const Photo* GalleryModel::photoAt(int row) const

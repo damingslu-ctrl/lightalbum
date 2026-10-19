@@ -77,6 +77,28 @@ inline QIcon make(const QString& kind, const QColor& color, int size = 22)
             const qreal h = r.height() * (i == 1 ? 0.78 : (i == 0 ? 0.45 : 0.6));
             p.drawLine(QPointF(x + bw / 2, r.bottom()), QPointF(x + bw / 2, r.bottom() - h));
         }
+    } else if (kind == QLatin1String("lobby")) {   // 2.41.0 前厅：拱门
+        p.drawArc(QRectF(r.left(), r.top() + r.height() * 0.3,
+                         r.width(), r.height() * 0.9), 0, 180 * 16);
+        p.drawLine(QPointF(r.center().x(), r.center().y()), QPointF(r.center().x(), r.bottom()));
+    } else if (kind == QLatin1String("people")) {  // 2.41.0 人物馆：双人像
+        p.drawEllipse(QPointF(r.left() + r.width() * 0.32, r.top() + r.height() * 0.3),
+                      r.width() * 0.16, r.width() * 0.16);
+        p.drawArc(QRectF(r.left(), r.top() + r.height() * 0.45, r.width() * 0.62, r.height() * 0.7),
+                  0, 180 * 16);
+        p.drawEllipse(QPointF(r.right() - r.width() * 0.28, r.top() + r.height() * 0.34),
+                      r.width() * 0.13, r.width() * 0.13);
+        p.drawArc(QRectF(r.right() - r.width() * 0.56, r.top() + r.height() * 0.52,
+                         r.width() * 0.56, r.height() * 0.6), 0, 180 * 16);
+    } else if (kind == QLatin1String("lamp")) {    // 2.41.0 切灯钮：台灯
+        p.drawArc(QRectF(r.center().x() - r.width() * 0.32, r.top(),
+                         r.width() * 0.64, r.height() * 0.6), 0, 180 * 16);
+        p.drawLine(QPointF(r.left() + r.width() * 0.12, r.top() + r.height() * 0.3),
+                   QPointF(r.right() - r.width() * 0.12, r.top() + r.height() * 0.3));
+        p.drawLine(QPointF(r.center().x(), r.top() + r.height() * 0.3),
+                   QPointF(r.center().x(), r.bottom() - r.height() * 0.18));
+        p.drawLine(QPointF(r.center().x() - r.width() * 0.18, r.bottom() - r.height() * 0.18),
+                   QPointF(r.center().x() + r.width() * 0.18, r.bottom() - r.height() * 0.18));
     } else {                                     // about：人像
         p.drawEllipse(QPointF(r.center().x(), r.top() + r.height() * 0.32), r.width() * 0.24, r.width() * 0.24);
         p.drawArc(QRectF(r.left(), r.top() + r.height() * 0.5, r.width(), r.height() * 0.9),

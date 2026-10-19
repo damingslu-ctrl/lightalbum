@@ -306,13 +306,6 @@ Parsed parseImpl(const QString& sentence, const QStringList& personDict,
 
 } // namespace
 
-bool CmdFilter::empty() const
-{
-    return yearMin == 0 && yearMax == 0 && month == 0 && day == 0
-        && season.isEmpty() && person.isEmpty() && tokenPlace.isEmpty()
-        && category.isEmpty() && text.isEmpty();
-}
-
 CmdFilter CmdKPanel::parse(const QString& sentence, const QStringList& personDict,
                            const QStringList& placeDict)
 {
@@ -423,6 +416,13 @@ void CmdKPanel::setHidePrivate(bool hide)
     hidePrivate_ = hide;
     rebuildHints();
     refreshChips();
+}
+
+// 2.41.0 T8：开馆即落光标。QWidget 容器 setFocus 不会下传给子控件，
+// 故由面板自己把焦点交给输入框（调用方不必知道内部结构）。
+void CmdKPanel::focusInput()
+{
+    if (input_) input_->setFocus();
 }
 
 QStringList CmdKPanel::personDict() const
