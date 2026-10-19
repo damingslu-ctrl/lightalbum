@@ -2020,6 +2020,101 @@ int runCurateQa()
         report("B2_bucket_indices_in_range", idxOk);
     }
 
+    // —— C：新鲜感单调 + 确定性（T4，spec §3）——
+    {
+        const Curate::Weights w;
+        Curate::Theme t;
+        t.id = Curate::TemplateId::OnThisDay;
+        t.topicKeys = QStringList{QStringLiteral("tmpl:OnThisDay")};
+        const Curate::Now now{1760000000, 2026, 10, 19};
+        Curate::ExhibitHistory hOld, hNew;
+        hOld.lastShownByKey.insert(QStringLiteral("tmpl:OnThisDay"), now.epochSec - 730LL * 86400);
+        hNew.lastShownByKey.insert(QStringLiteral("tmpl:OnThisDay"), now.epochSec - 1LL * 86400);
+        const double s1 = Curate::score(t, w, hOld, now);
+        const double s2 = Curate::score(t, w, hNew, now);
+        report("C_fresh_monotone", s1 > s2);
+        report("C_deterministic", qFuzzyCompare(Curate::score(t, w, hOld, now), s1));
+        Curate::ExhibitHistory hNone;
+        report("C_never_shown_max", Curate::score(t, w, hNone, now) > s1);
+    }
+
+    // —— D：重复惩罚（同人同题 60 天冷却，T4，spec §3）——
+    {
+        Curate::Theme t;
+        t.id = Curate::TemplateId::PersonAnniv;
+        t.topicKeys = QStringList{QStringLiteral("tmpl:PersonAnniv"), QStringLiteral("person:Alice")};
+        const Curate::Now now{1760000000, 2026, 10, 19};
+        const Curate::MuteState m;
+        Curate::ExhibitHistory h;                       // 周检通过、人冷却命中
+        h.lastExhibitAt = now.epochSec - 30LL * 86400;
+        h.lastShownByKey.insert(QStringLiteral("person:Alice"), now.epochSec - 40LL * 86400);
+        report("D_person_cooldown_blocks", Curate::frequencyAllows(t, h, m, now) == false);
+        Curate::ExhibitHistory h2;                      // 人冷却过期
+        h2.lastExhibitAt = now.epochSec - 30LL * 86400;
+        h2.lastShownByKey.insert(QStringLiteral("person:Alice"), now.epochSec - 70LL * 86400);
+        report("D_person_cooldown_allows", Curate::frequencyAllows(t, h2, m, now) == true);
+    }
+
+    // —— E：无偏好学习（R2）——
+    {
+        Curate::Weights w;
+        if (broken) w.pref = 1.0;   // FORCE_BROKEN 反例臂：伪装「偏好权重非 0」→ E_pref_zero 必红
+        report("E_pref_zero", w.pref == 0.0);
+        Curate::Theme t;
+        t.id = Curate::TemplateId::OnThisDay;
+        t.topicKeys = QStringList{QStringLiteral("tmpl:OnThisDay")};
+        const Curate::Now now{1760000000, 2026, 10, 19};
+        Curate::ExhibitHistory hA, hB;
+        hA.lastShownByKey.insert(QStringLiteral("tmpl:OnThisDay"), now.epochSec - 100LL * 86400);
+        hB.lastShownByKey.insert(QStringLiteral("tmpl:OnThisDay"), now.epochSec - 100LL * 86400);
+        // 两套「收藏/偏好历史」不同，但不入打分式 → 结果必须逐字节相同（防偷偷接上偏好）。
+        hA.shownPaths = QStringList{QStringLiteral("a")};
+        hB.shownPaths = QStringList{QStringLiteral("b"), QStringLiteral("c"), QStringLiteral("d")};
+        report("E_hist_independent",
+               qFuzzyCompare(Curate::score(t, w, hA, now), Curate::score(t, w, hB, now)));
+    }
+
+    // —— F：频控（每周 ≤1；静音 → 全不放行）——
+    {
+        Curate::Theme t;
+        t.id = Curate::TemplateId::OnThisDay;
+        t.topicKeys = QStringList{QStringLiteral("tmpl:OnThisDay")};
+        const Curate::Now now{1760000000, 2026, 10, 19};
+        const Curate::MuteState m;
+        Curate::ExhibitHistory h;
+        h.lastExhibitAt = now.epochSec - 2LL * 86400;   // 2 天前展过 → 本周已用
+        report("F_weekly_blocks", Curate::frequencyAllows(t, h, m, now) == false);
+        Curate::ExhibitHistory h2;
+        h2.lastExhibitAt = now.epochSec - 8LL * 86400;  // 8 天前 → 放行
+        report("F_weekly_allows", Curate::frequencyAllows(t, h2, m, now) == true);
+        Curate::MuteState m2;
+        m2.globallyMuted = true;
+        report("F_muted_blocks", Curate::frequencyAllows(t, h2, m2, now) == false);
+    }
+
+    // —— G：冷启动（入库 <50 → 无展；<200 → 仅 NewIntake/HiddenReunion）——
+    {
+        report("G_cold_lt50_skip", Curate::coldStartTemplates(49).isEmpty());
+        const auto ts = Curate::coldStartTemplates(150);
+        report("G_cold_lt200_two_tmpl",
+               ts.size() == 2 && ts.contains(Curate::TemplateId::NewIntake)
+               && ts.contains(Curate::TemplateId::HiddenReunion));
+        report("G_cold_full_12", Curate::coldStartTemplates(500).size() == 12);
+    }
+
+    // —— K：缺源诚实（池内无 city → CitySlice 不产生任何有帧的展）——
+    {
+        QVector<Photo> all = makeSyntheticPhotos(30);
+        for (Photo& p : all) p.city.clear();
+        const Curate::Now now{1760000000, 2026, 10, 19};
+        const auto pool = Curate::candidatePool(all, true, QStringList(), now);
+        const Curate::Buckets bk = Curate::bucket(pool);
+        const auto themes = Curate::propose(Curate::TemplateId::CitySlice, bk, pool, now);
+        bool allEmpty = true;
+        for (const auto& th : themes) if (!th.paths.isEmpty()) allEmpty = false;
+        report("K_missing_source_skips", allEmpty);
+    }
+
     const bool pass = (checks > 0) && (fails == 0);
     std::fprintf(stderr, "LA_CURATE_QA %s checks=%d failed=%d broken=%d\n",
                  pass ? "PASS" : "FAIL", checks, fails, broken ? 1 : 0);

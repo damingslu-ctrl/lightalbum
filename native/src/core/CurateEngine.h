@@ -33,4 +33,24 @@ QVector<const Photo*> candidatePool(const QVector<Photo>& all, bool hidePrivate,
 // 桶内值为 pool 下标（与调用方列表绑定）。
 Buckets bucket(const QVector<const Photo*>& pool);
 
+// 模板 id 的稳定 token（键空间与 i18n 映射用），如 "OnThisDay"。
+const char* templateIdToken(TemplateId id);
+
+// 冷启动策略（G，spec §3）：入库 <50 → 无展；<200 → 仅 NewIntake/HiddenReunion；否则全 12。
+QVector<TemplateId> coldStartTemplates(int totalCount);
+
+// 选题器：每个模板各产 0..1 个候选主题。缺数据源 → 返回空（调用方据此置 skipReason，R7）。
+// 计划裁决 R-T4：spec §2.2 的 bucket(pool)→pool 下标 与 propose(...,all,...) 无法复合
+// （下标是 pool 相对、propose 无 pool）；故 propose 第 3 参取 pool（const Photo* 视图，
+// 所需字段全在 Photo 上；all 不额外提供信息）。
+QVector<Theme> propose(TemplateId id, const Buckets& bk, const QVector<const Photo*>& pool,
+                       const Now& now);
+
+// 全局选题分：score = w.fresh·新鲜感 + w.pref·偏好(恒0) − w.repeat·重复惩罚。
+// ★ 画质不在此式（只在展内排序/主图选择，见 compose）。
+double score(const Theme& t, const Weights& w, const ExhibitHistory& h, const Now& now);
+
+// 频控：每周 ≤1 · 同人同题 60 天冷却 · 静音（全局或模板级）→ 返回是否放行。
+bool frequencyAllows(const Theme& t, const ExhibitHistory& h, const MuteState& m, const Now& now);
+
 }   // namespace Curate

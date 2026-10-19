@@ -29,6 +29,10 @@ struct Theme {
   QString title; QString blurb;              // 展名 + 小记（模板文案，非 LLM）
   QVector<QString> paths;                    // 主图在最前，随后 4–8 陪展
   QString primaryPath;                       // 主图（展内画质分最高）
+  // 主题身份键（打分新鲜感/频控冷却的键空间）；如 {"tmpl:PersonAnniv","person:Alice"}。
+  // 计划裁决 R-T4b：spec §2.1 的 Theme 无此字段，但 score/frequencyAllows 需据键查历史，
+  // 而二者形参不含 pool/all —— 故把键随主题携带（值型，无副作用）。
+  QStringList topicKeys;
   double score = 0.0; QVector<QString> reasons;   // 打分可解释（门禁断言用）
 };
 
@@ -56,6 +60,9 @@ struct ExhibitHistory {
   QStringList shownPaths;
   QHash<QString, qint64> lastShownByKey;
   QHash<QString, qint64> cooldownUntil;
+  // 最近一次任意展出时间（频控「每周 ≤1」用）。计划裁决 R-T4b：spec §2.1 无此字段，
+  // 但周频控需要全库级「上次展出」口径，故显式携带（由 Library::lastExhibitAt 填充）。
+  qint64 lastExhibitAt = 0;
 };
 
 // 静音状态（模板级静音 + 全局静音开关）。
