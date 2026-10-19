@@ -75,12 +75,10 @@
 #include "ui/GalleryPage.h"
 #include "ui/GalleryModel.h"
 #include "ui/GalleryCardPainter.h"
-#include "ui/CullPage.h"
 #include "ui/DedupDialog.h"   // 2.33.0 隐私门：去重对话框私密照隔离（LA_DEDUP_PRIVACY_QA 直调）
 #include "ui/VideoLightbox.h" // T11：LA_UI_SHOT_POPUP 弹层打开态取证
 #include "core/CullEngine.h"
 #include "ui/RetouchPage.h"
-#include "ui/HomePage.h"
 #include "ui/LobbyPage.h"   // 2.41.0 前厅页（LA_LOBBY_QA 直调 onThisDay/recent 纯函数）
 #include "ui/PeoplePage.h"  // 2.41.0 人物馆（LA_PEOPLE_QA 直调 buildRooms 纯函数）
 #include "ui/CmdKPanel.h"   // 2.41.0 ⌘K v1（LA_CMDK_QA 直调 parse/parseChips 纯函数）
@@ -1040,13 +1038,13 @@ namespace {
 // 选片豁免契约门禁（LA_CULL_EXEMPT_QA，2.29.0）。
 //
 // 背景：2.28.0 接入 RAW/视频后，选片链路仍按「纯 JPEG 照片」判格式，且
-// **另立了一份扩展名表**（CullPage::isRawSuffix 16 种 vs RawDecode 24 种，漂移 8 种：
+// **另立了一份扩展名表**（2.41.0 退役的选片页私表 isRawSuffix 16 种 vs RawDecode 24 种，漂移 8 种：
 // fff/iiq/k25/kdc/mos/ptx/srf/srw）。后果不是理论问题 —— RAW 豁免存在的理由正是
 // 「缩略图是 JPEG、暗部 Laplacian 系统性失真」，故这些 RAW **必然被误杀**。
 //
 // 断言：
 //   A1 exemptFromQualityCull：isRaw / isVideo 各自与组合均为真；普通照片为假
-//   A2 ★ 8 种漂移扩展名必须被 isRawExt 认（钉死 CullPage 删表后的行为）
+//   A2 ★ 8 种漂移扩展名必须被 isRawExt 认（钉死选片页退役、其私表随之消失后的行为）
 //   A3 非 RAW/非视频必须为假（含此前 ICloud 内联表漏掉的 10 种视频）
 //   B  真实引擎行为：构造 RAW/视频输入 → 断言**只查分辨率**、不因模糊/曝光被淘汰
 // 反例 LA_CULL_EXEMPT_QA_FORCE_BROKEN=1：令 exemptFromQualityCull 恒返回 false
@@ -1873,143 +1871,6 @@ int runGazeQa()
 }
 
 } // namespace（凝视门禁）
-
-namespace {
-
-// 2.31.0 选片页视频适配门禁（LA_CULL_VIDEO_QA）。
-//
-// 断言：
-//   A 数据贯通：CullEngine 透传 isVideo/mediaType/durSec 到 CullItem
-//   B 模型角色：CullModel 正确暴露 IsVideoRole / DurRole / MediaTypeRole
-//   C 代理过滤：CullProxy::setVideoOnly(true) 只保留视频
-//   D 像素门：CullCardDelegate 为视频项绘制播放徽标 + 时长
-//   反例 LA_CULL_VIDEO_QA_FORCE_BROKEN=1：关闭徽标绘制 → 徽标像素消失
-static int runCullVideoQa()
-{
-    const bool broken = !qEnvironmentVariableIsEmpty("LA_CULL_VIDEO_QA_FORCE_BROKEN");
-    int checks = 0, fails = 0;
-    QStringList failed;
-    auto chk = [&](bool cond, const char* tag) {
-        ++checks;
-        if (!cond) {
-            ++fails;
-            failed << QString::fromLatin1(tag);
-            std::fprintf(stderr, "  LA_CULL_VIDEO_QA FAIL %s\n", tag);
-        }
-    };
-
-    // A. 数据贯通：构造一个视频输入与一个照片输入
-    QTemporaryDir td;
-    if (!td.isValid()) {
-        std::fprintf(stderr, "LA_CULL_VIDEO_QA SKIP (tmpdir)\n");
-        std::fflush(stderr);
-        return 0;
-    }
-    const QString photoPath = td.filePath(QStringLiteral("photo.jpg"));
-    const QString videoPath = td.filePath(QStringLiteral("video.jpg"));
-    {
-        QImage photo(200, 150, QImage::Format_RGB32);
-        photo.fill(QColor(0x4f, 0xc0, 0x8a)); // 绿
-        photo.save(photoPath);
-        QImage video(200, 150, QImage::Format_RGB32);
-        video.fill(QColor(0xd9, 0xa9, 0x4e)); // 金
-        video.save(videoPath);
-    }
-
-    CullInput inPhoto, inVideo;
-    inPhoto.thumbPath = photoPath;
-    inPhoto.origW = 4000; inPhoto.origH = 3000;
-    inPhoto.isVideo = false;
-    inPhoto.durSec = 0;
-
-    inVideo.thumbPath = videoPath;
-    inVideo.origW = 1920; inVideo.origH = 1080;
-    inVideo.isVideo = true;
-    inVideo.durSec = 125.0; // 2:05
-
-    const CullReport rep = CullEngine::analyze(QVector<CullInput>{inPhoto, inVideo}, CullOptions());
-    // 两张都应成为候选（视频豁免质量淘汰）
-    int videoItemIdx = -1;
-    for (int i = 0; i < rep.topItems.size(); ++i) {
-        if (rep.topItems[i].thumbPath == videoPath) { videoItemIdx = i; break; }
-    }
-    chk(videoItemIdx >= 0, "A1_video_in_candidates");
-    if (videoItemIdx >= 0) {
-        const CullItem& vit = rep.topItems[videoItemIdx];
-        chk(vit.isVideo == true, "A2_item_isVideo");
-        chk(vit.mediaType == QLatin1String("video"), "A3_item_mediaType");
-        chk(qFuzzyCompare(vit.durSec, 125.0), "A4_item_durSec");
-    }
-
-    // B. 模型角色
-    CullModel model;
-    model.setItems(rep.topItems, td.path());
-    const QModelIndex vidIx = model.index(videoItemIdx >= 0 ? videoItemIdx : 0, 0);
-    chk(model.data(vidIx, CullModel::IsVideoRole).toBool() == true, "B1_model_isVideo");
-    chk(model.data(vidIx, CullModel::MediaTypeRole).toString() == QLatin1String("video"), "B2_model_mediaType");
-    chk(qFuzzyCompare(model.data(vidIx, CullModel::DurRole).toDouble(), 125.0), "B3_model_durSec");
-
-    // C. 代理过滤
-    CullProxy proxy;
-    proxy.setSourceModel(&model);
-    proxy.setVideoOnly(true);
-    chk(proxy.rowCount() == 1, "C1_videoOnly_one_row");
-    if (proxy.rowCount() == 1) {
-        const QModelIndex mapped = proxy.mapToSource(proxy.index(0, 0));
-        chk(model.data(mapped, CullModel::IsVideoRole).toBool() == true, "C2_videoOnly_is_video");
-    }
-    proxy.setVideoOnly(false);
-    chk(proxy.rowCount() == model.rowCount(), "C3_videoOnly_off_restores");
-
-    // D. 像素门：用 CullCardDelegate 直接绘制到 QPixmap，避免 QWidget show 依赖
-    CullPage::qaSetVideoBadgeDisabled(broken);
-    QPixmap pm(232, 268);
-    pm.fill(Qt::transparent);
-    {
-        QPainter painter(&pm);
-        QStyleOptionViewItem opt;
-        opt.rect = QRect(0, 0, 232, 268);
-        opt.state = QStyle::State_Enabled;
-        CullCardDelegate delegate;
-        delegate.paint(&painter, opt, vidIx);
-    }
-    CullPage::qaSetVideoBadgeDisabled(false);
-    const QImage img = pm.toImage().convertToFormat(QImage::Format_RGB32);
-    long whiteBadge = 0;
-    // 播放三角与时长文字为 #f4f7f4（高亮）；统计左上角区域（徽标大致位置）
-    for (int y = 12; y < 50 && y < img.height(); ++y) {
-        const QRgb* row = reinterpret_cast<const QRgb*>(img.constScanLine(y));
-        for (int x = 12; x < 90 && x < img.width(); ++x) {
-            const QRgb px = row[x];
-            if (qRed(px) > 230 && qGreen(px) > 230 && qBlue(px) > 230) ++whiteBadge;
-        }
-    }
-    chk(whiteBadge > 5, broken ? "D1_badge_pixels_absent_in_broken" : "D1_badge_pixels_present");
-
-    // 时长文案 "2:05" 中有 '2'、':'、'0'、'5'，至少应有一部分白色像素落在右侧
-    if (!broken) {
-        bool hasTextPixel = false;
-        for (int y = 14; y < 36 && y < img.height(); ++y) {
-            const QRgb* row = reinterpret_cast<const QRgb*>(img.constScanLine(y));
-            for (int x = 36; x < 80 && x < img.width(); ++x) {
-                const QRgb px = row[x];
-                if (qRed(px) > 230 && qGreen(px) > 230 && qBlue(px) > 230) { hasTextPixel = true; break; }
-            }
-            if (hasTextPixel) break;
-        }
-        chk(hasTextPixel, "D2_duration_text_visible");
-    }
-
-    const bool pass = (checks > 0) && (fails == 0);
-    std::fprintf(stderr, "LA_CULL_VIDEO_QA %s checks=%d failed=%d broken=%d badge=%ld\n",
-                 pass ? "PASS" : "FAIL", checks, fails, broken ? 1 : 0, whiteBadge);
-    if (!pass)
-        std::fprintf(stderr, "LA_CULL_VIDEO_QA failed: %s\n", qPrintable(failed.join(',')));
-    std::fflush(stderr);
-    return pass ? 0 : 1;
-}
-
-} // namespace（选片视频适配门禁）
 
 namespace {
 
@@ -3084,13 +2945,16 @@ int runDedupQa()
     return pass ? 0 : 1;
 }
 
-// 2.33.0 隐私门门禁（LA_PRIVACY_QA）：vault 锁态必须贯穿三个此前漏网的入口。
+// 2.33.0 隐私门门禁（LA_PRIVACY_QA）：vault 锁态必须贯穿此前漏网的入口。
 //   A 灯箱翻图（BrowseScope::nextVisible 纯函数，与 PhotoLightbox::navigate 同源）
-//   B 选片页（CullModel/CullProxy：chips 计数、锁定区、结果网格、标记列表）
 //   C 相似照片去重对话框（DedupDialog：私密照必须在「注入点」就不进分析输入集，
 //     否则不分组、不渲染、还会被「标记其余为待删」误伤）
+// 2.41.0 T9：原 B 组（选片页 CullModel/CullProxy 的 chips 计数/锁定区/结果网格/标记列表）
+//   随选片页退役。该组测的是页面内聚合视图，而 CullPage 删除后 CullModel/CullProxy 再无任何
+//   生产调用方 —— 留着只会是一道「绿的但不是生产路径」的空心门（铁律 29）。隐私不变量本身
+//   由 A（活的 BrowseScope 翻图路径）与 C（活的去重注入点）继续覆盖，两组均保留成对锁/解断言。
 // ★每条都成对断言「锁定态排除 + 解锁态照常」：只断言前者会退化成人人皆空的假绿
-//   （铁律34：不可失败的断言即缺陷）。正因这对角断言互相制衡，A/B 两段无需注入钩子；
+//   （铁律34：不可失败的断言即缺陷）。正因这对角断言互相制衡，A 段无需注入钩子；
 //   C 段另备真缺陷钩子，反例 LA_PRIVACY_QA_FORCE_BROKEN=1 令注入点过滤失效 → RED。
 // C 段同时守护去重后台化改造：分析必须能在超时内落地（qaWaitFinished 为真）。
 int runPrivacyQa()
@@ -3128,45 +2992,6 @@ int runPrivacyQa()
         const QVector<BrowseSlot> allPriv = { slot("a", true), slot("b", true) };
         chk(BrowseScope::nextVisible(allPriv, 0, +1, true) == -1, "A12_allPrivHidden");
         chk(BrowseScope::nextVisible(allPriv, 0, +1, false) == 1, "A13_allPrivShown");
-    }
-
-    // ================= B 选片页：模型 + 代理 =================
-    {
-        auto item = [](const char* thumb, const char* cat, bool priv) {
-            CullItem it;
-            it.thumbPath = QString::fromLatin1(thumb);
-            it.category  = QString::fromLatin1(cat);
-            it.priv      = priv;
-            it.status    = QStringLiteral("candidate");
-            return it;
-        };
-        CullModel model;
-        model.setItems(QVector<CullItem>{
-            item("b0.jpg", "person", false), item("b1.jpg", "person", true),
-            item("b2.jpg", "travel", false), item("b3.jpg", "travel", true) },
-            QStringLiteral("."));
-        // 角色如实透传（隐私门的前提是数据本身诚实）
-        chk(model.data(model.index(1, 0), CullModel::PrivRole).toBool(), "B1_privRole");
-        chk(!model.data(model.index(0, 0), CullModel::PrivRole).toBool(), "B2_pubRole");
-        // ★默认锁：新构造的模型/代理不经任何 set 也必须排除私密（fail-safe）
-        model.setMark(0, QStringLiteral("like"));
-        model.setMark(1, QStringLiteral("like"));
-        const QStringList lockedMarks = model.markedThumbs(QStringLiteral("like"));
-        chk(lockedMarks == QStringList{ QStringLiteral("b0.jpg") }, "B3_markedLocked");
-        const QMap<QString,int> lockedCounts = model.categoryCounts();
-        chk(lockedCounts.value(QStringLiteral("person")) == 1
-            && lockedCounts.value(QStringLiteral("travel")) == 1, "B4_chipsLocked");
-        CullProxy proxy;
-        proxy.setSourceModel(&model);
-        chk(proxy.rowCount() == 2, "B5_proxyLocked");
-        // —— 解锁态：同一份数据必须全数回来（证明上面的 2 不是空集合）——
-        model.setHidePrivate(false);
-        proxy.setHidePrivate(false);
-        chk(model.markedThumbs(QStringLiteral("like")).size() == 2, "B6_markedUnlocked");
-        const QMap<QString,int> freeCounts = model.categoryCounts();
-        chk(freeCounts.value(QStringLiteral("person")) == 2
-            && freeCounts.value(QStringLiteral("travel")) == 2, "B7_chipsUnlocked");
-        chk(proxy.rowCount() == 4, "B8_proxyUnlocked");
     }
 
     // ================= C 去重对话框：注入点隔离 + 后台落地 =================
@@ -9339,10 +9164,6 @@ int main(int argc, char *argv[])
     if (qEnvironmentVariableIsSet("LA_CULL_EXEMPT_QA"))
         return runCullExemptQa();
 
-    // 2.31.0 选片页视频适配门禁（须排在 animOk 之前，见门禁铁律）
-    if (qEnvironmentVariableIsSet("LA_CULL_VIDEO_QA"))
-        return runCullVideoQa();
-
     // 2.29.0 RAW/视频修图链路门禁（须排在 animOk 之前，见门禁铁律）
     if (qEnvironmentVariableIsSet("LA_EDIT_RAW_QA"))
         return runEditRawQa();
@@ -9572,37 +9393,6 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    // P17 首页章节分组冒烟（纯逻辑，无 GUI）：章节数>0、章内非空、按数量降序、
-    // 展示字段非空、关键词 ⊆ 真实分类；打印定位覆盖率后按结果退出。
-    if (qEnvironmentVariableIsSet("LA_HOME_SMOKE")) {
-        const auto& phs = lib.photos();
-        const auto chs = HomePage::buildChapters(phs, 12);
-        int located = 0, usable = 0;
-        for (const Photo& p : phs) {
-            if (p.priv || p.missing || p.thumbFile.isEmpty()) continue;
-            ++usable;
-            if (!p.city.isEmpty() || !p.prov.isEmpty() || !p.region.isEmpty()) ++located;
-        }
-        bool ok = !chs.isEmpty() && located > 0;
-        int prevCount = 1 << 30;
-        for (const auto& c : chs) {
-            if (c.photos.isEmpty() || c.title.isEmpty()
-                || c.capsLine.isEmpty() || c.subtitle.isEmpty()
-                || (int)c.photos.size() > prevCount)
-                ok = false;
-            prevCount = int(c.photos.size());
-        }
-        std::fprintf(stderr, "LA_HOME_SMOKE_%s chapters=%d located=%d usable=%d "
-                             "first=\"%s\"(%d 幅) kw=%d\n",
-                     ok ? "OK" : "FAIL", chs.size(), located, usable,
-                     chs.isEmpty() ? qPrintable(QString())
-                                   : qPrintable(chs.first().title),
-                     chs.isEmpty() ? 0 : chs.first().photos.size(),
-                     chs.isEmpty() ? 0 : chs.first().keywords.size());
-        std::fflush(stderr);
-        return ok ? 0 : 1;
-    }
-
     // P16 写回链路自测：LA_RW_SMOKE=1（必须指向临时库副本，绝不碰真库）。
     // 评分写→内存同步→SQL 读回；私密标记往返；meta KV 往返；vault 口令哈希/校验。
     if (qEnvironmentVariableIsSet("LA_RW_SMOKE")) {
@@ -9642,7 +9432,6 @@ int main(int argc, char *argv[])
     const bool animOk = !qEnvironmentVariableIsSet("LA_SMOKE")
         && !qEnvironmentVariableIsSet("LA_UI_SHOT")
         && !qEnvironmentVariableIsSet("LA_LIGHTBOX_SHOT")
-        && !qEnvironmentVariableIsSet("LA_CULL_SMOKE")
         && !qEnvironmentVariableIsSet("LA_RETOUCH_SMOKE")
         && !qEnvironmentVariableIsSet("LA_RETOUCH_A_QA")
         && !qEnvironmentVariableIsSet("LA_MAP_A_QA")
@@ -9661,7 +9450,6 @@ int main(int argc, char *argv[])
         && !qEnvironmentVariableIsSet("LA_MAP_COUNTRY_ALBUM_QA")
         && !qEnvironmentVariableIsSet("LA_MAP_HEAT_TIER_QA")
         && !qEnvironmentVariableIsSet("LA_GALLERY_E_QA")
-        && !qEnvironmentVariableIsSet("LA_CULL_DUEL_QA")
         && !qEnvironmentVariableIsSet("LA_GALLERY_FILL_QA")
         && !qEnvironmentVariableIsSet("LA_SCALE_PERF")
         && !qEnvironmentVariableIsSet("LA_THUMB_CACHE_QA")
@@ -9669,7 +9457,6 @@ int main(int argc, char *argv[])
         && !qEnvironmentVariableIsSet("LA_RAW_QA")
         && !qEnvironmentVariableIsSet("LA_VIDEO_QA")
         && !qEnvironmentVariableIsSet("LA_CULL_EXEMPT_QA")
-        && !qEnvironmentVariableIsSet("LA_CULL_VIDEO_QA")
         && !qEnvironmentVariableIsSet("LA_EDIT_RAW_QA")
         && !qEnvironmentVariableIsSet("LA_GALLERY_BATCH_QA")
         ;
@@ -10034,7 +9821,7 @@ int main(int argc, char *argv[])
         return ok ? 0 : 5;
     }
 
-    // P30-C / P29-H 诊断：离屏渲染日志页/首页到 PNG（QWidget::render 直绘 QImage，
+    // P30-C / P29-H 诊断：离屏渲染日志页到 PNG（QWidget::render 直绘 QImage，
     // 避开 shootPages 的 grab 挂起族）。仅供目视诊断，不进正式回归门。
     if (!qEnvironmentVariableIsEmpty("LA_LOG_SHOT")) {
         const QString p = qEnvironmentVariable("LA_LOG_SHOT");
@@ -10050,22 +9837,6 @@ int main(int argc, char *argv[])
         painter.end();
         img.save(p);
         std::fprintf(stderr, "LA_LOG_SHOT_DONE %s\n", qPrintable(p));
-        std::fflush(stderr);
-        return 0;
-    }
-    if (!qEnvironmentVariableIsEmpty("LA_HOME_SHOT")) {
-        const QString p = qEnvironmentVariable("LA_HOME_SHOT");
-        QDir().mkpath(QFileInfo(p).absolutePath());
-        win.setGeometry(80, 80, 1440, 940);
-        win.show();
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 600);
-        QImage img(win.size(), QImage::Format_ARGB32);
-        img.fill(Qt::transparent);
-        QPainter painter(&img);
-        win.render(&painter);
-        painter.end();
-        img.save(p);
-        std::fprintf(stderr, "LA_HOME_SHOT_DONE %s\n", qPrintable(p));
         std::fflush(stderr);
         return 0;
     }
@@ -10151,9 +9922,8 @@ int main(int argc, char *argv[])
     }
 
     // 冒烟探针门控：载入真库 + 页面栈就位后自动退出（offscreen/CI 可用）。
-    // 选片自测（LA_CULL_SMOKE）/ 修图自测（LA_RETOUCH_SMOKE）
-    // 由各自页面自行驱动退出，这里不抢跑。
-    if (qEnvironmentVariableIsSet("LA_SMOKE") && qEnvironmentVariableIsEmpty("LA_CULL_SMOKE")
+    // 修图自测（LA_RETOUCH_SMOKE）由该页自行驱动退出，这里不抢跑。
+    if (qEnvironmentVariableIsSet("LA_SMOKE")
         && qEnvironmentVariableIsEmpty("LA_RETOUCH_SMOKE")) {
         // P29-H：首页（零 chrome 纯沉浸）应隐藏窗口控制簇——同步打印，避开 600ms 自退定时器可能的挂起
         const bool winCtlHiddenOnHome = !win.isWinCtlVisible();
@@ -10190,6 +9960,5 @@ int main(int argc, char *argv[])
     //   ② LA_A11Y_CONTRAST_QA：菜单 3 组配色过 WCAG 4.5:1（pairs 15→18）
     // 「QSS 是否真能盖过 Windows 原生浅色菜单」这一残余问题 offscreen 无法回答，
     // 只能在真实屏幕上目视确认——修复本身复用已上线的 clusterDimBox_ 暗色弹层色系，路径与之一致。
-    // P25 对决 QA 由 CullPage 内 QTimer::singleShot(600) 在事件循环内完成并 quit
     return app.exec();
 }

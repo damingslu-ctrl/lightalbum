@@ -61,7 +61,6 @@ $GateTable = @(
   @{n="LA_GEO_SMOKE";       png=$false; tier="fast"; measuredMs=106},
   @{n="LA_ICLOUD_QA";       png=$false; tier="fast"; measuredMs=194},
   @{n="LA_LOG_SMOKE";       png=$false; tier="fast"; measuredMs=120},
-  @{n="LA_HOME_SMOKE";      png=$false; tier="fast"; measuredMs=194},
   @{n="LA_RETOUCH_UNDO_QA"; png=$false; tier="fast"; measuredMs=71},
   # Direction B deepening (2.24.0): per-operator direction pixel assertions for all
   # 12 RetouchEngine operators. Pure pixel math on a 128x96 synthetic image, no UI and
@@ -142,13 +141,15 @@ $GateTable = @(
   @{n="LA_SCALE_REAL_PERF_QA"; png=$false; need=@("LA_SCALE_REAL_DB"); measuredMs=8000},
   @{n="LA_EXIT_QA";         png=$false; measuredMs=5700},
   @{n="LA_RW_SMOKE";        png=$false; measuredMs=1017},
-  # LA_CULL_SMOKE / LA_CULL_DUEL_QA retired here in 2.41.0 wave12 T8 (was rows 145/154).
-  # Both were driven from inside the CullPage ctor, and T8 detached CullPage from
-  # MainWindow: the page is never constructed again, so the two gates hang and get
+  # Four gates retired here in 2.41.0 wave12. LA_CULL_SMOKE / LA_CULL_DUEL_QA (T8, was
+  # rows 145/154) were driven from inside the CullPage ctor, and T8 detached CullPage
+  # from MainWindow: the page is never constructed again, so the two gates hang and get
   # killed by the watchdog (reason=no-exit-request) instead of reporting a verdict.
-  # CullPage.cpp itself is deleted in T9. CullEngine/cull-mark coverage stays alive
-  # through LA_CULL_EXEMPT_QA and LA_CULL_VIDEO_QA, whose dispatch returns before
-  # MainWindow is built and therefore never depended on the nav wiring.
+  # LA_HOME_SMOKE (HomePage::buildChapters) and LA_CULL_VIDEO_QA (CullModel / CullProxy /
+  # CullCardDelegate) went away in T9 with the pages and the model classes they exercised;
+  # both file pairs (ui/HomePage.*, ui/CullPage.*) were deleted in that task.
+  # CullEngine coverage stays alive through LA_CULL_EXEMPT_QA, whose dispatch returns
+  # before MainWindow is built and therefore never depended on the nav wiring.
   # Geo data structural smoke (MapView::loadGeoJson). Also pre-existing but
   # unregistered, and doubly broken: no verdict (greenPat matched its "rings="
   # so rings=0 passed) and no self-exit (it kept running into app.exec() and was
@@ -344,13 +345,6 @@ $GateTable = @(
   # tautology (rule 16). Counter-example LA_CULL_EXEMPT_QA_FORCE_BROKEN=1 disables the RAW
   # exemption -> B1 goes RED while group A stays green.
   @{n="LA_CULL_EXEMPT_QA"; png=$false; tier="fast"; measuredMs=74},
-  # 2.31.0 cull page video adaptation gate (LA_CULL_VIDEO_QA). Verifies that CullEngine passes
-  # isVideo/durSec through, CullModel exposes the roles, CullProxy's "video only" filter works
-  # and CullCardDelegate paints the play badge plus the duration. Pure synthetic thumbnails,
-  # zero external dependencies, fast layer (measured in ms).
-  # Counter-example LA_CULL_VIDEO_QA_FORCE_BROKEN=1 disables badge painting -> D1/D2 go RED
-  # while A/B/C stay green.
-  @{n="LA_CULL_VIDEO_QA"; png=$false; tier="fast"; measuredMs=84},
   # 2.29.0 RAW/video retouch pipeline gate (LA_EDIT_RAW_QA). The retouch page used to read the
   # original straight through QImage(ph.path), which measured 0x0 null=1 for RAW -> RAW could
   # never reach the retouch page at all (2.28.0 missed this entry point). Photo, RAW and video
@@ -403,12 +397,14 @@ $GateTable = @(
   # group 0 re-added into group 1's dupPaths) and must go RED on noDouble/dupTotal.
   # Measured 159-162ms (x3, 2026-10-05) -> fast tier.
   @{n="LA_DEDUP_QA";       png=$false; tier="fast"; measuredMs=160},
-  # 2.33.0 privacy gate: vault lock state must reach the three entries that
-  # previously ignored it - lightbox paging (BrowseScope::nextVisible, the same
-  # pure function PhotoLightbox::navigate calls), the cull page (CullModel chips
-  # counts / lock area / marked list + CullProxy grid), and the dedup dialog
-  # (private photos must not even enter the injection-point input set, or they
-  # get grouped, rendered and "mark rest as delete"-ed).
+  # 2.33.0 privacy gate: vault lock state must reach the entries that previously
+  # ignored it - lightbox paging (BrowseScope::nextVisible, the same pure function
+  # PhotoLightbox::navigate calls) and the dedup dialog (private photos must not
+  # even enter the injection-point input set, or they get grouped, rendered and
+  # "mark rest as delete"-ed). The cull-page block (CullModel chips counts / lock
+  # area / marked list + CullProxy grid) was retired in 2.41.0 T9 together with the
+  # page: CullPage was its only caller, so keeping that block green would have
+  # tested retired code instead of a live path.
   # Every check is a LOCKED/UNLOCKED pair, so a filter that never runs fails the
   # locked half and a filter that always runs fails the unlocked half - the two
   # halves make each block self-checking, no extra hook needed. The dialog block

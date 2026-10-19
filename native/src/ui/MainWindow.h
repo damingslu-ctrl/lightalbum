@@ -21,8 +21,8 @@ class QMenu;
 class QToolButton;
 class GalleryPage;
 class MapPage;
-class LobbyPage;       // 2.41.0 spec §2.2：前厅（接替 HomePage）
-class PeoplePage;      // 2.41.0 spec §2.3：人物馆（接替 CullPage 的导航位）
+class LobbyPage;       // 2.41.0 spec §2.2：前厅（接替已退役的 HomePage 导航位）
+class PeoplePage;      // 2.41.0 spec §2.3：人物馆（接替已退役的 CullPage 导航位）
 class CmdKPanel;       // 2.41.0 spec §2.4：⌘K 检索面板
 class RetouchPage;
 class LogPage;

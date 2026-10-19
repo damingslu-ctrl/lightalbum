@@ -41,9 +41,9 @@ static QString storyAvatarColor(const QString& name)
 }
 
 // design-language-v2 T6：chip 族单源（分类/聚类/故事三条共用一份配方，终结 3 处克隆漂移）。
-// Theme.h 无 chip() 工厂（spec §4.1 称「chip 已有」系失实，缺口已记报告）。与 CullPage.cullChipCss
-// （T5 本地单源）能否并为一个签名？——不能诚实统一：本页 checked = accent 实心反转 + PANEL
-// 深色字（强激活态），Cull checked = CARD_HI 底 + accent 描边/文字（spec §3.4 选中态条例）；
+// Theme.h 无 chip() 工厂（spec §4.1 称「chip 已有」系失实，缺口已记报告）。本页与已退役选片页
+// 的 chip 配方能否并为一个签名？——不能诚实统一：本页 checked = accent 实心反转 + PANEL
+// 深色字（强激活态），选片页 checked = CARD_HI 底 + accent 描边/文字（spec §3.4 选中态条例）；
 // 结构不同、padding 不同（4x12 vs 5x14），单签名 = 一厂藏两配方，属强扭，裁定维持各自本地单源。
 // 色值全走 Lumen token（§1.7：克隆盘 101710/232d26 → CARD/LINE 回家；token 值字面量归引用）。
 // 圆角/内距/字阶原值保留（归格属 T9/T10）。

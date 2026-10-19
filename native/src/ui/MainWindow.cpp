@@ -2,7 +2,7 @@
 #include "Icons.h"
 #include "Theme.h"
 #include "DarkPalette.h"
-#include "LobbyPage.h"      // 2.41.0 spec §2.2：前厅（接替 HomePage）
+#include "LobbyPage.h"      // 2.41.0 spec §2.2：前厅（接替已退役的 HomePage）
 #include "GalleryPage.h"
 #include "MapPage.h"
 #include "LogPage.h"
@@ -109,7 +109,7 @@ public:
     }
 };
 struct NavItem { const char* label; const char* phase; };
-// 2.41.0 spec §2.6：前厅/人物馆接管 0/3 两行（HomePage/CullPage 退役见 T9）。
+// 2.41.0 spec §2.6：前厅/人物馆接管 0/3 两行（HomePage/CullPage 已于 T9 退役）。
 // 分组：浏览(前厅/足迹/图库) | 人物·修图 | 工具(日志/关于)。
 const NavItem kNav[] = {
     {"前厅", "P1"}, {"足迹", "P2"}, {"图库", "P1"},
@@ -818,7 +818,6 @@ bool MainWindow::uiAnimEnabled() const
 {
     return !qEnvironmentVariableIsSet("LA_SMOKE")
         && !qEnvironmentVariableIsSet("LA_UI_SHOT")
-        && !qEnvironmentVariableIsSet("LA_CULL_SMOKE")
         && !qEnvironmentVariableIsSet("LA_RETOUCH_SMOKE")
         && !Lumen::systemReducedMotion();   // P15：系统「减弱动效」→ 关动效
 }

@@ -75,8 +75,6 @@ set(LA_SOURCES
     src/ui/MapPage.cpp
     src/ui/LogPage.h
     src/ui/LogPage.cpp
-    src/ui/CullPage.h
-    src/ui/CullPage.cpp
     src/ui/RetouchPage.h
     src/ui/RetouchPage.cpp
     src/ui/MaskCanvas.h
@@ -87,8 +85,6 @@ set(LA_SOURCES
     src/ui/CompareWidget.cpp
     src/ui/MainWindow.h
     src/ui/MainWindow.cpp
-    src/ui/HomePage.h
-    src/ui/HomePage.cpp
     src/ui/LobbyPage.h
     src/ui/LobbyPage.cpp
     src/ui/PeoplePage.h
