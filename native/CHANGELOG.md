@@ -3,6 +3,125 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.41.0] - 2026-10-19
+
+体验升级第五轮（波 1+波 2「可信 + 可达」）：把 LightAlbum 从「AI 相册工具」推向
+「私人记忆美术馆」——新增前厅 / 四灯 / 凝视 / ⌘K / 人物馆五件套，退掉两张旧页。
+零新运行时依赖、零新动效时长、零云端；既有 AI 索引与修图能力**零改动**。
+
+### 四灯系统与字阶（spec §2.1）
+- `Theme.h` 升格为**唯一运行时可变 token 源**：`enum class Lamp { Nocturne=1, Jade=2, Gekkan=3, Dusk=4 }`
+  （L1 夜展 / L2 玉照 / L3 素印 / L4 暮金），`lamp(Lamp)` 只读表 + `DarkPalette` 泛化 `Lamp::apply`。
+  **L1 逐字节等于旧 `Dark::apply`** ⇒ 默认外观零回归；非法灯值回退 L1（表只读，不抛）。
+- 布局常量（字阶 7 档、几何、间距、圆角）刻意**不进灯表**：换灯不该挪版式；lamp-aware 只覆盖
+  表面 / 文字 / 描边 / 强调 / 阴影五组。
+- 顶栏 💡 灯钮（`Icons` 自绘 `kind=lamp`，`InstantPopup`）＝ 4 灯 +「跟随空间」勾选；切灯即
+  `rethemeAll()` 整帧重刷 + slow 640ms 包络。「跟随空间」＝灯随当前页签自动切，勾选后手动
+  切灯立即脱锁（无隐性模式、无隐藏状态机）。
+
+### 前厅 LobbyPage（spec §2.2）
+- 新增 `src/ui/LobbyPage.{h,cpp}`：开馆首屏。`onThisDay()` / `recent()` 是**纯静态函数**
+  （可门禁直测，不建窗口）——前者取「月-日相同」候选并按 `|year−today.year|` 升序，不足 3 张
+  逐级回退（同月 → 同季 → 静默空态「今日无展 · 明日再会」），**绝不画假数据**；后者按拍摄
+  日期倒序取头 N 条，文案「最新到馆」——措辞对齐数据真相（`photos` 表**没有**入库时间戳列，
+  故不虚称「新入库」）。
+- 私密过滤是**函数参数而非视图开关**：`hidePrivate` 直接进纯函数签名，因此门禁能在无 UI 的
+  条件下断言「隐私人物的照片根本不出现在候选集里」，而不是断言某个 UI 旗标被设过。
+
+### 人物馆 PeoplePage（spec §2.3）
+- 新增 `src/ui/PeoplePage.{h,cpp}`：`buildRooms()` 单次扫库聚合 `person.split(',')`（同一人的
+  照片进多人房，房与房之间不互斥）；`Room{name,count,yearMin,yearMax,ring,photos}`，色环哈希
+  沿用 `GalleryPage`。
+- 展签卡 ＝ `--mat` 装裱（12px 白卡 + 2px 投影 + 金 hover）；展室视图按 year 分桶横向串。
+  空态「馆内布展中」→ `clusteringRequested()` 复用既有识别人物链路（术语「识别人物」未改）。
+- **本轮不含**：周年展开关、合并/拆分新入口（留在图库 chips 右键现状，页脚一行跳转防双入口）。
+
+### ⌘K v1 CmdKPanel（spec §2.4）
+- 新增 `src/ui/CmdKPanel.{h,cpp}` + `core/CmdFilter.h`：顶栏 `search_` 输入框删除，🔍 改指 ⌘K
+  面板（Ctrl+K 全局 `QShortcut`；`onNav` 维护 `currentSpace`）。四级**全本机零网络**词典：
+  ① 时间词法表（去年/前年/今年/XXXX年/春夏秋冬/月份/昨天/今天/「去年秋天」组合）→
+  `year/month/season/day`；② 人物 ＝ `buildRooms(hidePrivate=true)` 派生名单（**锁定态词典
+  不含私密照人物名**）；③ 地点 ＝ region/prov/city distinct 集合；④ 风格 ＝ `clipinfer`
+  `normalizeLabel` 8 类中文字面。兜底保留标题/文件名/器材 `contains`（**老搜索能力零丢失**）。
+- chips 可见即可纠：点 chip 循环切候选、× 移除；Enter 执行 / C「暂存为合集」（v1 **禁用占位**
+  + tooltip「下轮上线」——不假装能用）。
+
+### 凝视模式 GazeLightbox（spec §2.5）
+- 现 `PhotoLightbox` **零行为迁出**为 `GazeLightbox`（独立提交：先搬家、后加功能，让回归面与
+  功能面分离）；新增 `Mode::Gaze` 叠加档 —— 无边框 + hover 雾条 + 环境光晕。
+- 环境主色 ＝ 缩略 64px 中心加权中位数饱和色；**低饱和回退 lamp 辅助色**；**实时算、不落库**
+  （不污染 `dominantColor` 的字面语义）。翻页即换展：旧画淡出 120ms / 新画 360ms 携光入位，
+  同屏并发 ≤2，可被任何输入打断。
+- 键位隐喻（**是键位不是摄像头**）：`S`＝like（点头收藏）/ `Delete`或`A`＝skip（摇头待淘汰）/
+  `L`＝lock（锁定防误删）。**每次按键即 `Library::setMarks(len=1)` 单事务写库**（mark 列语义
+  "like"/"skip"/"lock" 与图库、去重一致），toast 3s 可撤销 —— 撤销 ＝ 同键再按回写空串，
+  走 API 原生语义而非补丁式「反向撤销」。
+
+### 退役与接线（spec §1.2/§2.6）
+- `HomePage` / `CullPage` 退役，其专属门体一并摘除；`LA_CULL_EXEMPT_QA` / `PhotoDedup` /
+  `CullEngine` 等**仍在生产路径上被使用**的部件存活（只摘页面与页面专属门，不摘能力）。
+- `MainWindow` 重接线：导航栈 7 行骨架不动（行号 1:1 对应 `stack_` 索引），前厅/人物馆接骨，
+  `rethemeAll()` 整帧切灯，⌘K 与凝视入口挂上；`refresh` 汇合点（导入完成 / 凝视 dismissed /
+  vault 解锁）扩到 `lobby_` / `people_`。
+
+### 动效（spec §3）
+- MotionKit 预设表 5+3：新增 `kLightFirst` 640（前厅/凝视入场，光先行）、`kPushDoor` 360
+  （进人物馆）、`kLightsDown` 360（**预留**：凝视退场键，本轮不接 UI —— 表里有、UI 未用，
+  如实标注不充数）。**零新时长档位**，全部落既有 quick/standard/slow 三档。
+
+### 门禁与名册（spec §5）
+- 名册 **74 → 79**（+5，**全落 fast 层**）：`LA_LOBBY_QA`（17 断言）/ `LA_PEOPLE_QA`（18）/
+  `LA_CMDK_QA`（32）/ `LA_GAZE_QA`（24）/ `LA_LAMP_QA`（66）。套件内 `-Timing` 实测墙钟
+  **55 / 53 / 52 / 56 / 60 ms**（纯逻辑门，`main()` 早期 return，不建 MainWindow），远在 500ms
+  快门预算内。`-SelfTest` 实测 `gates=79 fast=22 full=57 errs=0`。
+- **★两套读数要分清（方法决定数字）**：名册 `measuredMs` 字段里写的是 **281 / 387 / 385 /
+  331 / 281 ms** —— 那是用 `(& $exe 2>&1 | Out-String)` 的 PowerShell 管道口测出来的**保守上界**
+  （管道每门自带 ~200 ms 开销）；`qa_runner` 自己的 `-Timing` 走 `[Diagnostics.Process]` 直连，
+  同门只报 52–60 ms。E6 预算检查吃的是名册字段 ⇒ 留保守值（更严的一侧），但**引用数字时必须
+  说是哪一套**，否则「281ms 的快门」与「60ms 的快门」会被当成同一个数。
+- **★「78 → 79」是过期数字**：spec §5 写于 T9 退役四门**之前**；T9 摘掉 `HomePage`/`CullPage`
+  的四道门后基数是 74，+5 才是 79。名册计数**只认 `-SelfTest` 输出**（铁律 37 同族的第四次
+  复发），本行按实测校正。
+- 五门各有**自己的** `FORCE_BROKEN` 反例臂，实测全红 —— 即每门都存在会咬红它的变异，不是
+  空心断言：`LA_LOBBY_QA` 去掉隐私过滤、`LA_PEOPLE_QA` 忽略 `hidePrivate`、`LA_CMDK_QA`
+  对调月/季词表、`LA_GAZE_QA` 绕过低饱和回退、`LA_LAMP_QA` 对调 L1/L2 灯表。
+
+### i18n
+- 新页面核心词入册：`i18n/LightAlbum_en.ts` +37 条（`lrelease` 后 **347 translations / 0
+  unfinished**），`.qm` 与 `.ts` **同批提交** —— 本仓 `.qm` 是 tracked 产物且无 CMake
+  `lrelease` 钩子，必须手动重编，否则 `LA_I18N_QA` 读到的仍是旧 `.qm`。
+- `LA_I18N_QA` 新增 9 条断言（前厅 / 人物馆 / 今日展 / 最新到馆 / 全部藏品 / 检索馆藏 /
+  展厅灯光 / 跟随空间 / 已标记…再按同键撤销），每条都在源码里真实存在；缺译时 Qt 回落源码串，
+  三态判别同时咬红。
+- **踩坑留档（两条叠加）**：批量比对时 3 条 `显示 <b>%1</b> / %2 幅*` 被误报「缺译」——`.ts`
+  里存的是 XML 实体 `&lt;b&gt;` 而 C++ 源码里是 `<b>`，**比对前必须先反 XML 转义**；另有 3 条
+  多行串在 `.ts` 里是**真换行**而非 `\n` 字面量。两者叠加造出 3 个重复 `<message>`，靠
+  `lrelease` 的「dropping duplicate messages」警告才发现并清掉（故净 +37 而非 +40）。
+
+### 诚实记录 —— 本波三处「计划假设没活过实测」
+- **T10-A · 疑似破预算，实为测法伪读数**：`LA_LAMP_QA` 首测读到 1514ms。根因是 PowerShell 下
+  `& $exe 2>&1` 对 **GUI 子系统 exe 不等它退出**，实测 24ms 空输出是伪读数；改
+  `(& $exe 2>&1 | Out-String)` 后暖跑 281ms。**该门保持 fast 层**，未因伪读数放宽预算；也记下
+  「真的 >500ms 会被 E6 预算检查自己咬住」。
+- **T10-B · 基线图没有对象**：spec 预期给 `LA_UI_SHOT` 建基线映射 —— 实测**根本不存在该 diff
+  门 / 基线**，它只是手动取证钩子（`win.shootPages(dir)`，输出落 gitignored 的 `build/`）。
+  无对象可重定基，如实记「不建」。R-06 不变：**用户的真实照片永不进仓**，本轮 7 张走查截图
+  留在 `build/_ui_shot_wave12/`，只作本地证据。
+- **T10-C · 棘轮基线只该收不该放**：spec 预期重生成棘轮基线 —— 实测
+  `qa_palette_ratchet.ps1` **没有 `-Update` 路径**，且当前 `C1..C4 = 0 / C5 = 28 ≤ ceiling 30`
+  已是干净态；重生成只会**放松**棘轮，故不做。
+
+### 回归
+- 全量套件 **79 门**：`SUMMARY: PASS=65 FAIL=0 CHECK=0 SKIP=14 KILL=0`，墙钟 **77481 ms**
+  （两跑一致：首跑 101575 ms 与本次 77481 ms，差异系首跑与文档写入并发）。
+- `SKIP=14` **全部是既有 `need=` 外部素材门**（`LA_SCAN_SMOKE` / `LA_SCALE_REAL_QA` ·
+  `LA_SCALE_REAL_PERF_QA` / `LA_RAW_QA` / `LA_VIDEO_*` 5 门 / `LA_AUDIO_QA` / `LA_EDIT_RAW_QA`
+  / `LA_ERASE_MODEL_QA` / `LA_FACE_MODEL_QA` / `LA_CLIP_MODEL_QA`）——本版**新增 0 SKIP**，
+  缺席即 `[SKIP]` 不冒充绿。
+- `gate_matrix.ps1 -SelfTest`：`E1 gates=79 fast=22 full=57 errs=0`、`E6 budget=500ms
+  overBudget=0`、`E8 missingMeasuredMs=0`、`E11 nonAsciiBytes=0`、`E12 textual=79 parsed=79`、
+  `fails=0`。`LA_RELEASE_QA` 契约数维持 **C10**（本轮不新增发布契约）。
+
 ## [2.40.0] - 2026-10-16
 
 引擎升级第四轮（路线 4 AI-index 去外部化）：人脸/场景两条 AI 链路从「外部 Python HTTP 服务」净替换为
