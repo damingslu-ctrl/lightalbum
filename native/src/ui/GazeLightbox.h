@@ -16,6 +16,7 @@
 #include "Theme.h"
 #include "../core/Library.h"
 #include "../core/BrowseScope.h"
+#include "../core/CurateState.h"
 
 class QLabel;
 class QFrame;
@@ -27,6 +28,25 @@ class QLayout;
 class Library;
 class FullCache;
 namespace Motion { class Driver; }
+
+// 2.42.0 波3 T10：策展序列游标（纯状态机，LA_GAZE_QA F 组直调同一类型）。
+// 零副作用：paused()/advance() 返回新值，绝不自变 —— 「回绕」「暂停位」这两个
+// 规则只有做成纯函数才可被门禁脱离控件验证。frozen = 自动逐帧被抑制
+// （S/A/L 的 3s 撤销窗口内不换帧：帧滑走了，撤销也就没了对象）。
+struct SeqState {
+    int n = 0;
+    int idx = 0;
+    bool frozen = false;
+
+    SeqState paused(bool on) const { SeqState t = *this; t.frozen = on; return t; }
+    SeqState advance() const
+    {
+        if (n <= 0) return *this;
+        SeqState t = *this;
+        if (!t.frozen) t.idx = (t.idx + 1) % n;   // 末帧回绕到首帧（整展循环）
+        return t;
+    }
+};
 
 // ============================================================================
 // P15 图片灯箱（沉浸式，无边框）：直接铺满显示大图，EXIF 等信息在图片正下方。
@@ -71,6 +91,19 @@ public:
     //   （灯箱只在全库序列上走，从不看 vaultUnlocked_）。
     void navigate(int delta);
 
+    // 2.42.0 波3 T10 策展序列（spec R1 / §2.4）：整展帧序自动逐帧 + 呼吸驻足 + 展名小记字幕。
+    //   帧序取自 exhibit（主图恒为第 0 帧，其余按展内顺序），不是库序；
+    //   驻足时长取自 Motion 预设 kExhibitBreath（UI 不写死毫秒）；
+    //   导航键（←/→/Esc）与画面点击即打断（自动播放永不夺权），打断后字幕交还照片自身元信息。
+    //   S/A/L 标注键**不**打断 —— 它们是序列内的既定手势（裁决 R-T10a）。
+    void setCuration(const Curate::Exhibit& e, const QString& thumbsDir);
+    // 推进一帧。未在展 = 直接返回；在展但处于撤销窗口（frozen）= 原地不动，
+    // 于是「迟到的 timer tick」既推不动帧、也不会重建信息层。
+    void stepCuration();
+    // 是否载入了一次展（撤销窗口的暂停不改变本答案，只改变是否换帧）。
+    bool curationActive() const;
+    int  curationDwellMs() const;
+
     // 2.41.0 §2.5 主色纯函数（铁律 20：产品环境光晕与 LA_GAZE_QA 直调同一实现）。
     //   缩略图缩到 64px → 中心 1/2 半径内全采 + 外圈每 2px 采 → RGB 转 HSL 取
     //   饱和度 >0.25 的样本中位数；无达标样本 → 回退 emerald 亮度 -10%。
@@ -93,6 +126,7 @@ protected:
     void resizeEvent(QResizeEvent* e) override;
     bool eventFilter(QObject* obj, QEvent* ev) override;
     void closeEvent(QCloseEvent* e) override;
+    void mousePressEvent(QMouseEvent* e) override;
 
 private:
     static void clearLayout(QLayout* lay);
@@ -119,6 +153,15 @@ private:
     void handleGazeMark(const QString& mark);
     // 底部 toast（3s 自动收起；收起时清掉撤销窗口）。
     void showToast(const QString& text);
+
+    // —— 2.42.0 波3 T10 策展序列私有面 ——
+    // 退展（停自动逐帧 + 清字幕归属）；用户任意键/点击即触发。
+    void interruptCuration();
+    // 底栏小字唯一写入口：在展且字幕非空 → 「展名 · 小记」；否则 → 照片自身元信息。
+    // setPhoto 与换帧/打断都只经此一处，杜绝「字幕被 setPhoto 覆盖」的两套真相。
+    void refreshMetaLine();
+    // 跳到展内第 idx 帧（走既有 setPhoto，故换帧自动带 LightboxSlide）。
+    void showCurationFrame(int idx);
 
     Library* lib_ = nullptr;
     QLabel* img_  = nullptr;
@@ -150,4 +193,10 @@ private:
     QString  pendingMark_;        // 撤销窗口内的「已发过的 mark」
     QString  pendingPath_;        // 撤销窗口内的目标照片
     QVector<Motion::Driver*> drivers_;   // 活跃换展 Driver（≤2）
+
+    // —— 2.42.0 波3 T10 策展序列状态 ——
+    SeqState seq_;                // 纯游标（n = 实际可播帧数）
+    QTimer*  seqTimer_ = nullptr; // 自动逐帧（interval = 引擎驻足档）
+    bool     curation_ = false;   // 载入了一次展（与 seq_.frozen 分工：此为「在不在展」）
+    QString  caption_;            // 「展名 · 小记」；非空即字幕归属策展
 };

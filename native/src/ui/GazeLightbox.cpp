@@ -21,6 +21,7 @@
 #include <QCloseEvent>
 #include <QShowEvent>
 #include <QKeyEvent>
+#include <QMouseEvent>
 #include <QResizeEvent>
 #include <QEvent>
 #include <QLayout>
@@ -110,8 +111,11 @@ GazeLightbox::GazeLightbox(Library* lib, QWidget* parent)
     // 常态黑幕半透明（opacity .38）让画面不被信息压住，鼠标入幕 200ms
     // 渐显至 1.0（QVariantAnimation，中途进出平滑折返）。
     img_ = new QLabel(this);
+    img_->setObjectName(QStringLiteral("lbImage"));
     img_->setAlignment(Qt::AlignCenter);
     img_->setStyleSheet(QStringLiteral("background:transparent;"));
+    // T10 打断面：画面本体吃掉鼠标按下，故点击须经事件过滤器才看得见（QLabel 不转发父类）。
+    img_->installEventFilter(this);
 
 
     bottom_ = new QFrame(this);
@@ -125,6 +129,7 @@ GazeLightbox::GazeLightbox(Library* lib, QWidget* parent)
     auto* textCol = new QVBoxLayout;
     textCol->setSpacing(Lumen::Space::Xs);
     title_ = new QLabel(bottom_);
+    title_->setObjectName(QStringLiteral("lbTitle"));
     title_->setStyleSheet((QString::fromUtf8(
         "font-family:'Noto Serif SC','STSong','SimSun',serif;")
         + Lumen::Type::css(Lumen::Type::Tier::Title)   // T8：18px 衬线标题归 T2(20px)；衬线=编辑特权 §2.3
@@ -132,6 +137,7 @@ GazeLightbox::GazeLightbox(Library* lib, QWidget* parent)
         "font-weight:bold;color:%1;"))                 // T8 §2.4：600 归一 bold 三档
         .arg(Lumen::hex(Lumen::ink())));
     meta_ = new QLabel(bottom_);
+    meta_->setObjectName(QStringLiteral("lbMeta"));
     meta_->setStyleSheet(QString::fromUtf8("color:%1;")
         .arg(Lumen::hex(Lumen::muted()))   // §1.7：9db2a5→MUTED（次文字归级）
         + Lumen::Type::css(Lumen::Type::Tier::Small)   // T8：11.5px→T5(12px)
@@ -191,16 +197,11 @@ void GazeLightbox::setPhoto(const Photo* ph, const QString& thumbsDir)
     }
 
     // ---- 影院黑幕信息层：衬线标题 + 一行式元信息（地点·日期·器材）----
+    // T10：小字一行的归属权可能属于策展字幕，故写入口收敛到 refreshMetaLine() 一处
+    //（此处若还自己拼一遍，换帧/打断就会被 setPhoto 覆盖回去 —— 两套真相）。
     title_->setText(ph->title.isEmpty()
                     ? QFileInfo(ph->path).fileName() : ph->title);
-    QStringList metaBits;
-    const QString place = ph->city.isEmpty() ? ph->prov : ph->city;
-    if (!place.isEmpty())    metaBits << place;
-    if (!ph->date.isEmpty()) metaBits << ph->date;
-    if (!ph->cam.isEmpty())  metaBits << ph->cam;
-    if (!ph->lens.isEmpty()) metaBits << ph->lens;
-    if (!ph->dim.isEmpty())  metaBits << ph->dim;
-    meta_->setText(metaBits.join(QStringLiteral("　·　")));
+    refreshMetaLine();
 
     // ---- P16 可点星级：1-5 星写库；点当前最高星 = 清除评分 ----
     clearLayout(starRow_->layout());
@@ -266,6 +267,8 @@ void GazeLightbox::enter(Mode m, const QString& startPath)
     // QA 取证通道（与 LA_LIGHTBOX_HOVER 同一既有先例）：offscreen 截图探针没有快捷键，
     //   让 LA_LIGHTBOX_GAZE 把入馆档位直接抬到「凝视」，好让光晕/雾条形态可被 grab 取证。
     if (qEnvironmentVariableIsSet("LA_LIGHTBOX_GAZE")) m = Mode::Gaze;
+    // T10：入馆即退展 —— 上一次会话的自动逐帧不得跨 enter 残留（调用方须先 enter 再 setCuration）。
+    interruptCuration();
     const bool wasGaze = (mode_ == Mode::Gaze);
     mode_ = m;
     if (m == Mode::Gaze && !wasGaze) {
@@ -288,6 +291,13 @@ void GazeLightbox::showEvent(QShowEvent* e) {
 }
 
 void GazeLightbox::keyPressEvent(QKeyEvent* e) {
+    // T10 打断面（裁决 R-T10a）：标注键 S/A/L 之外的一切按键都等于「用户把控制权拿回来」
+    // → 退展，此后 ←/→ 回到手动翻图语义、字幕交还照片自身元信息。标注键**不**打断：
+    // 它们是序列内的既定手势（边看边标），若把它们也算作打断，策展序列就根本没法标注。
+    const bool markKey = (mode_ == Mode::Gaze)
+        && (e->key() == Qt::Key_S || e->key() == Qt::Key_A
+            || e->key() == Qt::Key_Delete || e->key() == Qt::Key_L);
+    if (!markKey) interruptCuration();
     if (e->key() == Qt::Key_Escape) { e->accept(); close(); }
     else if (e->key() == Qt::Key_Left)  { navigate(-1); e->accept(); }
     else if (e->key() == Qt::Key_Right) { navigate( 1); e->accept(); }
@@ -321,6 +331,8 @@ void GazeLightbox::handleGazeMark(const QString& mark)
                                                               : QCoreApplication::translate("LightAlbum", "封存");
         showToast(QCoreApplication::translate("LightAlbum", "已标记 %1 · 再按同键撤销").arg(label));
     }
+    // T10：撤销窗口开着的 3s 内冻结自动逐帧 —— 帧一滑走，「再按同键撤销」就没了对象。
+    if (curation_) seq_ = seq_.paused(true);
 }
 
 // 2.41.0 §2.5：底部 toast（3s 自动收起；收起时关掉撤销窗口）。
@@ -342,6 +354,7 @@ void GazeLightbox::showToast(const QString& text)
         connect(toastTimer_, &QTimer::timeout, this, [this] {
             pendingMark_.clear();
             pendingPath_.clear();
+            seq_ = seq_.paused(false);   // T10：撤销窗口关闭 → 自动逐帧解冻（计时器本就没停）
             if (toast_) toast_->hide();
         });
     }
@@ -408,6 +421,11 @@ void GazeLightbox::resizeEvent(QResizeEvent* e) {
 
 // P20：鼠标入幕显形 / 离幕收暗（从当前透明度出发，中途反向平滑折返）
 bool GazeLightbox::eventFilter(QObject* obj, QEvent* ev) {
+    // T10：画面本体（img_）吃掉鼠标按下，点击打断须在此拦截。
+    if (obj == img_ && ev->type() == QEvent::MouseButtonPress) {
+        interruptCuration();
+        return false;          // 不打断灯箱自身的鼠标语义
+    }
     if (obj == bottom_) {
         if (ev->type() == QEvent::Enter || ev->type() == QEvent::Leave) {
             fade_->stop();
@@ -420,6 +438,7 @@ bool GazeLightbox::eventFilter(QObject* obj, QEvent* ev) {
 }
 
 void GazeLightbox::closeEvent(QCloseEvent* e) {
+    interruptCuration();   // T10：关灯即退展 —— 别让逐帧 timer 在隐身后继续抽帧解原图
     QWidget::closeEvent(e);
     // 2.41.0 §2.5：dirty 随关灯上报（凝视档 S/A/L 已即写库，故此处只管评分/私密）。
     emit dismissed(changed_);
@@ -464,6 +483,94 @@ void GazeLightbox::setScope(const QStringList& paths)
 
 // P16 隐私门：由 MainWindow 依 vaultUnlocked_ 下发（锁定态翻图须跳过私密照）
 void GazeLightbox::setHidePrivate(bool hide) { hidePrivate_ = hide; }
+
+// —— 2.42.0 波3 T10 策展序列（spec R1 / §2.4）——
+
+// 开展：帧序 = 展帧序（不是库序），首帧恒主图，驻足取自引擎预设，随后自动逐帧。
+void GazeLightbox::setCuration(const Curate::Exhibit& e, const QString& thumbsDir)
+{
+    if (!e.valid || e.theme.paths.isEmpty() || !lib_) return;
+    int playable = 0;
+    for (const QString& p : e.theme.paths) if (lib_->find(p)) ++playable;
+    if (playable == 0) return;   // 展内无一张真在库里 → 不接管作用域、不假装开展（铁律 21）
+    setScope(e.theme.paths);   // 帧序 = 展帧序（compose 侧已定「主图在最前」，播放侧不再重排）
+    thumbsDir_ = thumbsDir;
+    seq_ = SeqState{ int(slots_.size()), 0, false };
+    caption_ = e.theme.blurb.isEmpty()
+               ? e.theme.title
+               : e.theme.title + QStringLiteral(" · ") + e.theme.blurb;
+    curation_ = true;
+    showCurationFrame(0);   // 首帧即主图（字幕与换展动画都在 setPhoto 这条既有路上）
+
+    if (!seqTimer_) {
+        seqTimer_ = new QTimer(this);
+        connect(seqTimer_, &QTimer::timeout, this, &GazeLightbox::stepCuration);
+    }
+    seqTimer_->start(int(Motion::preset(Motion::kExhibitBreath).durationMs));   // 驻足档取自引擎
+}
+
+// 推进一帧。未在展直接返回；在展但被冻结（撤销窗口）时 advance() 原地不动，
+// 于是「迟到的 timer tick」既推不动帧、也不重播动画。
+void GazeLightbox::stepCuration()
+{
+    if (!curation_) return;
+    const SeqState next = seq_.advance();
+    if (next.idx == seq_.idx) return;
+    seq_ = next;
+    showCurationFrame(seq_.idx);
+}
+
+void GazeLightbox::showCurationFrame(int idx)
+{
+    if (idx < 0 || idx >= slots_.size() || !lib_) return;
+    const Photo* ph = lib_->find(slots_[idx].path);
+    if (!ph) return;
+    setPhoto(ph, thumbsDir_);   // 走既有路：Gaze 档自动带 LightboxSlide 换展
+}
+
+void GazeLightbox::interruptCuration()
+{
+    curation_ = false;
+    caption_.clear();
+    seq_ = seq_.paused(false);
+    if (seqTimer_) seqTimer_->stop();
+    refreshMetaLine();   // 字幕交还照片自身元信息（退展不留展名残影）
+}
+
+bool GazeLightbox::curationActive() const
+{
+    return curation_;
+}
+
+// 此刻真在自动逐帧时每帧驻足多少毫秒；未在展 = 0（门禁据此抓「没停/停错档」）。
+int GazeLightbox::curationDwellMs() const
+{
+    if (!curationActive() || !seqTimer_ || !seqTimer_->isActive()) return 0;
+    return seqTimer_->interval();
+}
+
+// 底栏小字唯一写入口：在展 → 「展名 · 小记」；否则 → 照片自己的地点·日期·器材。
+void GazeLightbox::refreshMetaLine()
+{
+    if (curation_ && !caption_.isEmpty()) { meta_->setText(caption_); return; }
+    const Photo* ph = lib_ ? lib_->find(path_) : nullptr;
+    if (!ph) { meta_->clear(); return; }
+    QStringList metaBits;
+    const QString place = ph->city.isEmpty() ? ph->prov : ph->city;
+    if (!place.isEmpty())    metaBits << place;
+    if (!ph->date.isEmpty()) metaBits << ph->date;
+    if (!ph->cam.isEmpty())  metaBits << ph->cam;
+    if (!ph->lens.isEmpty()) metaBits << ph->lens;
+    if (!ph->dim.isEmpty())  metaBits << ph->dim;
+    meta_->setText(metaBits.join(QStringLiteral("　·　")));
+}
+
+// T10：落在灯箱本体上的点击同样退展（画面上的点击由 eventFilter 接）。
+void GazeLightbox::mousePressEvent(QMouseEvent* e)
+{
+    interruptCuration();
+    QWidget::mousePressEvent(e);
+}
 
 void GazeLightbox::navigate(int delta) {
     if (!lib_) return;

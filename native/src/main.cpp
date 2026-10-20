@@ -2020,6 +2020,151 @@ int runGazeQa()
         chk(g1.contains(QStringLiteral("qradialgradient(")), "E4_glow_is_radial");
     }
 
+    // —— F 组：策展序列（2.42.0 波3 T10，spec R1 / §2.4）——
+    // 三条纪律：① 游标是纯状态机（回绕 / 暂停位）；② 帧序 = 展帧序（不是库序），
+    // 驻足时长出自引擎预设 kExhibitBreath（不在 UI 写死毫秒）；③ 任意键/点击可打断，
+    // 且打断后连「迟到的计时器 tick」也推不动帧（D3 禁则：自动播放永不夺权）。
+    {
+        chk(SeqState{3, 2}.advance().idx == 0, "seq_advance_wraps");
+        chk(SeqState{3, 1}.paused(true).advance().idx == 1, "seq_respects_pause");
+        chk(SeqState{0, 0}.advance().idx == 0 && SeqState{0, 5}.advance().n == 0,
+            "seq_zero_frames_safe");
+        {
+            const SeqState s{3, 1, false};
+            const SeqState t = s.paused(true);
+            chk(!s.frozen && t.frozen && s.idx == 1 && t.idx == 1, "seq_pure_no_side_effect");
+        }
+
+        const QString dir = QDir::tempPath() + QStringLiteral("/la_gaze_qa_t10");
+        QDir().mkpath(dir);
+        const QString dbp = dir + QStringLiteral("/lib.sqlite");
+        QFile::remove(dbp);
+        QVector<Library::SynthRow> rows;
+        QStringList order;
+        for (int i = 0; i < 4; ++i) {
+            const QString p = dir + QStringLiteral("/curate_f%1.jpg").arg(i);
+            Library::SynthRow r;
+            r.path = p;
+            r.date = QStringLiteral("2026-10-%1").arg(10 + i);
+            r.year = 2026;
+            rows << r;
+            order << p;
+        }
+        QString err;
+        const bool built = Library::makeSyntheticDb(dbp, rows, &err);
+        Library lib;
+        const bool opened = lib.open(dbp, &err);
+        chk(built && opened && lib.photos().size() == 4, "seq_fixture_db");
+
+        GazeLightbox lb(&lib);
+        lb.resize(900, 600);
+        lb.show();
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 200);
+        chk(!lb.curationActive() && lb.curationDwellMs() == 0, "seq_browse_zero_behavior");
+
+        lb.enter(GazeLightbox::Mode::Gaze, QString());
+        // 展帧序刻意打乱库序：主图 = f2，随后 f0 → f3 → f1。
+        Curate::Exhibit e;
+        e.valid = true;
+        e.theme.id = Curate::TemplateId::HiddenReunion;
+        e.theme.title = QStringLiteral("Three Winters");
+        e.theme.blurb = QStringLiteral("Never hung once");
+        e.theme.primaryPath = order.at(2);
+        e.theme.paths << order.at(2) << order.at(0) << order.at(3) << order.at(1);
+        e.generatedAt = 1730000000;
+        const QString caption = QStringLiteral("Three Winters · Never hung once");
+
+        auto titleOf = [&lb]() {
+            auto* t = lb.findChild<QLabel*>(QStringLiteral("lbTitle"));
+            return t ? t->text() : QString();
+        };
+        auto metaOf = [&lb]() {
+            auto* m = lb.findChild<QLabel*>(QStringLiteral("lbMeta"));
+            return m ? m->text() : QString();
+        };
+
+        lb.setCuration(e, QString());
+        chk(lb.curationActive(), "seq_curation_on");
+        // 首帧必须是主图（若照库序播则为 f0 —— 本腿正是抓这个）
+        chk(titleOf() == QStringLiteral("curate_f2.jpg"), "seq_frame0_is_primary");
+        chk(metaOf() == caption, "seq_caption_is_theme");
+        chk(lb.curationDwellMs() > 0
+            && lb.curationDwellMs() == int(Motion::preset(Motion::kExhibitBreath).durationMs),
+            "seq_dwell_from_engine");
+
+        lb.stepCuration();
+        chk(titleOf() == QStringLiteral("curate_f0.jpg"), "seq_step_fwd");
+        lb.stepCuration();   // → f3
+        lb.stepCuration();   // → f1
+        lb.stepCuration();   // → 回绕 f2
+        chk(titleOf() == QStringLiteral("curate_f2.jpg") && metaOf() == caption,
+            "seq_step_wraps");
+
+        // 任意键打断：停自动、字幕交还照片本身，且用户接管后仍能翻图
+        QKeyEvent key(QEvent::KeyPress, Qt::Key_Right, Qt::NoModifier);
+        QApplication::sendEvent(&lb, &key);
+        chk(!lb.curationActive() && lb.curationDwellMs() == 0
+            && titleOf() == QStringLiteral("curate_f0.jpg") && metaOf() != caption,
+            "seq_broken_by_key");
+        // 迟到的 tick（打断事件已入队、计时器尚未真停的竞态形态）必须推不动帧
+        lb.stepCuration();
+        chk(titleOf() == QStringLiteral("curate_f0.jpg") && !lb.curationActive(),
+            "seq_stray_tick_inert");
+
+        // 点击打断（重新入展后点画面本体）
+        lb.setCuration(e, QString());
+        chk(lb.curationActive() && titleOf() == QStringLiteral("curate_f2.jpg"),
+            "seq_reenter_curation");
+        // R-T10a：标注键不算打断（序列就是拿来边看边标的），且撤销窗口开着时冻结换帧
+        //（帧一滑走，「再按同键撤销」就没了对象）。这两条合起来才让冻结位不是摆设。
+        QKeyEvent sKey(QEvent::KeyPress, Qt::Key_S, Qt::NoModifier);
+        QApplication::sendEvent(&lb, &sKey);
+        chk(lb.curationActive() && titleOf() == QStringLiteral("curate_f2.jpg")
+            && metaOf() == caption, "seq_mark_key_holds_show");
+        lb.stepCuration();   // 冻结中的 tick 被吞：到点也不换帧
+        chk(titleOf() == QStringLiteral("curate_f2.jpg") && lb.curationActive(),
+            "seq_undo_window_freezes_frame");
+        if (QWidget* img = lb.findChild<QWidget*>(QStringLiteral("lbImage"))) {
+            QMouseEvent press(QEvent::MouseButtonPress, QPointF(8, 8), QPointF(8, 8),
+                              Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(img, &press);
+        }
+        chk(!lb.curationActive() && lb.curationDwellMs() == 0, "seq_broken_by_click");
+
+        // 未成展 / 展内无一张真在库里 → 一帧都不播，也不把翻图作用域换掉（R7 诚实：不伪装有效）。
+        {
+            Curate::Exhibit ghost;
+            ghost.valid = false;
+            ghost.theme.title = QStringLiteral("Ghost");
+            ghost.theme.paths << order.at(0);
+            lb.setCuration(ghost, QString());
+            chk(!lb.curationActive() && lb.curationDwellMs() == 0, "seq_invalid_stays_shut");
+
+            Curate::Exhibit phantom;
+            phantom.valid = true;
+            phantom.theme.title = QStringLiteral("Phantom");
+            phantom.theme.paths << QStringLiteral("/la_gaze_qa_t10/not_in_library.jpg");
+            lb.setCuration(phantom, QString());
+            chk(!lb.curationActive() && lb.curationDwellMs() == 0, "seq_empty_show_stays_shut");
+        }
+
+        // 「驻足取自预设」是接线事实，不是数字巧合：函数体里必须出现该预设常量恰一次
+        //（写死 2400 的实现对数值腿完全免疫 —— 反例见台账）。
+        QString src;
+        {
+            QFile f(QCoreApplication::applicationDirPath()
+                    + QStringLiteral("/../src/ui/GazeLightbox.cpp"));
+            if (f.open(QIODevice::ReadOnly)) src = QString::fromUtf8(f.readAll());
+        }
+        const int at = src.indexOf(QStringLiteral("void GazeLightbox::setCuration("));
+        const int end = at < 0 ? -1 : src.indexOf(QStringLiteral("\n}"), at);
+        const QString body = (at >= 0 && end > at) ? src.mid(at, end - at) : QString();
+        chk(!body.isEmpty(), "seq_source_scanned");
+        chk(body.count(QStringLiteral("Motion::kExhibitBreath")) == 1
+            && !body.contains(QRegularExpression(QStringLiteral("start\\(\\s*2400"))),
+            "seq_dwell_wired_to_preset");
+    }
+
     const bool pass = (checks > 0) && (fails == 0);
     std::fprintf(stderr, "LA_GAZE_QA %s checks=%d failed=%d broken=%d\n",
                  pass ? "PASS" : "FAIL", checks, fails, broken ? 1 : 0);
