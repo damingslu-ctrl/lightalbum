@@ -46,6 +46,7 @@
 #include "core/StoryGen.h"        // 人物故事方向·B：自动故事相册纯函数（LA_STORY_QA 直调）
 #include "core/CurateState.h"     // 2.42.0 波3 策展系统领域类型（LA_CURATE_QA 直调）
 #include "core/CurateEngine.h"    // 2.42.0 波3 策展引擎纯函数（LA_CURATE_QA 直调，铁律 20 同源）
+#include "core/CurateScheduler.h" // 2.42.0 波3 策展编排（LA_CURATE_QA R 组：节流 + 后台算 + GUI 单写者）
 #include "ui/GalleryCardPainter.h"  // 2.22.0 骨架屏纯函数（QA 门直调，铁律 20 同源）
 #include "ui/FullCache.h"           // 2.22.0 灯箱原图 LRU（QA 门直调）
 #include "core/MotionKit.h"         // 2.34.0 动效引擎纯函数（LA_MOTION_QA 直调，铁律 20 同源）
@@ -2354,6 +2355,172 @@ int runCurateQa()
               if (!f || !f->mark.isEmpty()) undone = false;
           } }
         report("I_undo_restores", undone);
+    }
+
+    // —— R：编排层（T7，spec R3：7 天节流 + 后台纯计算 + GUI 单写者回写）——
+    //   纯函数腿（shouldGenerate / pickExhibit / historyFrom / recentShownPaths）直测；
+    //   异步腿沿用 LA_GUI_THREAD_QA 的取证形状（main.cpp:4717）：`waitForFinished()` 后
+    //   **先**验磁盘仍无行（写被投递而非当场执行），`processEvents` 后验落库且线程号==GUI。
+    //   反例臂 LA_CURATE_QA_FORCE_BROKEN_R=1 → worker 当场落库（修复前形态）：
+    //   R3_defer/R3_generated_on_gui/R3_write_on_gui 恰红，其余腿（含纯函数腿与落库腿）仍绿。
+    const Curate::Now nowR{1760000000, 2026, 10, 19};
+    const quintptr guiTidR = reinterpret_cast<quintptr>(QThread::currentThread());
+    CurateScheduler::setForceInlineForQa(!qEnvironmentVariableIsEmpty("LA_CURATE_QA_FORCE_BROKEN_R"));
+
+    auto exhibitCount = [](const QString& path) -> int {
+        QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"),
+                                                   QStringLiteral("la_curate_r_read"));
+        db.setDatabaseName(path);
+        int n = -1;
+        if (db.open()) {
+            QSqlQuery q(db);
+            if (q.exec(QStringLiteral("SELECT count(*) FROM exhibits")) && q.next())
+                n = q.value(0).toInt();
+            db.close();
+        }
+        QSqlDatabase::removeDatabase(QStringLiteral("la_curate_r_read"));
+        return n;
+    };
+
+    // R1 节流口径（纯函数；边界取严格「逾 7 天」）。
+    report("R3_throttle_never_true", CurateScheduler::shouldGenerate(0, nowR));
+    report("R3_throttle_6d_false", !CurateScheduler::shouldGenerate(nowR.epochSec - 6LL * 86400, nowR));
+    report("R3_throttle_7d_exact_false",
+           !CurateScheduler::shouldGenerate(nowR.epochSec - 7LL * 86400, nowR));
+    report("R3_throttle_8d_true", CurateScheduler::shouldGenerate(nowR.epochSec - 8LL * 86400, nowR));
+
+    // R2 历史重建 + 「近 4 周」窗口（纯映射；窗长写错即红）。
+    {
+        QVector<ExhibitRow> rows;
+        { ExhibitRow r; r.tmpl = QStringLiteral("PersonAnniv");
+          r.paths = QStringLiteral("/syn/001.jpg,/syn/002.jpg");
+          r.shownAt = nowR.epochSec - 20LL * 86400; rows << r; }
+        { ExhibitRow r; r.tmpl = QStringLiteral("CitySlice"); r.paths = QStringLiteral("/syn/003.jpg");
+          r.shownAt = nowR.epochSec - 40LL * 86400; rows << r; }
+        { ExhibitRow r; r.tmpl = QStringLiteral("MonoHour"); r.shownAt = 0; rows << r; }
+        const Curate::ExhibitHistory hist =
+            CurateScheduler::historyFrom(rows, nowR.epochSec - 20LL * 86400);
+        report("R3_history_keys",
+               hist.lastShownByKey.value(QStringLiteral("tmpl:PersonAnniv"))
+                   == nowR.epochSec - 20LL * 86400
+                   && !hist.lastShownByKey.contains(QStringLiteral("tmpl:MonoHour")));
+        report("R3_history_shownPaths_all",
+               hist.shownPaths.size() == 3
+                   && hist.shownPaths.contains(QStringLiteral("/syn/003.jpg")));
+        report("R3_history_lastExhibitAt", hist.lastExhibitAt == nowR.epochSec - 20LL * 86400);
+        const QStringList recent = CurateScheduler::recentShownPaths(rows, nowR);
+        report("R3_recent_4week_window",
+               recent == QStringList{QStringLiteral("/syn/001.jpg"), QStringLiteral("/syn/002.jpg")});
+    }
+
+    // R3 pickExhibit（纯函数编排：冷库/热库/静音/确定性/4 周减项接线）。
+    {
+        const QVector<Photo> cold = makeSyntheticPhotos(30);
+        const QVector<Photo> hot  = makeSyntheticPhotos(200);
+        const Curate::ExhibitHistory h0;
+        const Curate::MuteState m0;
+        const Curate::Exhibit eCold = CurateScheduler::pickExhibit(cold, true, h0, m0, nowR);
+        report("R3_pick_cold_skip",
+               !eCold.valid && eCold.skipReason == QLatin1String("cold-start"));
+
+        const Curate::Exhibit eHot = CurateScheduler::pickExhibit(hot, true, h0, m0, nowR);
+        report("R3_pick_hot_valid",
+               eHot.valid && eHot.theme.paths.size() >= 5 && eHot.theme.paths.size() <= 9
+                   && eHot.theme.primaryPath == eHot.theme.paths.constFirst()
+                   && eHot.generatedAt == nowR.epochSec && !eHot.theme.title.isEmpty());
+        const Curate::Exhibit eHot2 = CurateScheduler::pickExhibit(hot, true, h0, m0, nowR);
+        report("R3_pick_deterministic",
+               eHot2.theme.paths == eHot.theme.paths
+                   && eHot2.theme.primaryPath == eHot.theme.primaryPath
+                   && eHot2.theme.id == eHot.theme.id);
+
+        Curate::MuteState mg; mg.globallyMuted = true;
+        const Curate::Exhibit eMute = CurateScheduler::pickExhibit(hot, true, h0, mg, nowR);
+        report("R3_pick_muted_skip", !eMute.valid && eMute.skipReason == QLatin1String("muted"));
+
+        // B 组「近 4 周已展出不入池」在编排里的接线证明：把上一展的帧喂回 → 新一展必须不相交。
+        QStringList recentP;
+        for (const QString& p : eHot.theme.paths) recentP << p;
+        const Curate::Exhibit eNext = CurateScheduler::pickExhibit(hot, true, h0, m0, nowR, recentP);
+        bool disjoint = eNext.valid && !eNext.theme.paths.isEmpty();
+        for (const QString& p : eNext.theme.paths) if (recentP.contains(p)) disjoint = false;
+        report("R3_pick_excludes_recent", disjoint);
+    }
+
+    // R4 异步编排：真起 worker —— 算在后台、写在 GUI、节流不重复成展。
+    {
+        const QString dir = QDir::tempPath() + QStringLiteral("/la_curate_qa_t7");
+        QDir(dir).removeRecursively();
+        QDir().mkpath(dir);
+        const QString dbp = dir + QStringLiteral("/lib.sqlite");
+        const QVector<Photo> hot = makeSyntheticPhotos(200);
+        QVector<Library::SynthRow> rows;
+        for (const Photo& p : hot) {
+            Library::SynthRow r;
+            r.path = p.path; r.date = p.date; r.year = p.year; r.category = p.category;
+            r.person = p.person; r.city = p.city; r.seenAt = double(p.seenAt);
+            r.priv = p.priv; r.hasGps = p.hasGps; r.la = p.la; r.lo = p.lo;
+            r.mediaType = p.mediaType;
+            rows << r;
+        }
+        QString err;
+        report("R3_fixture_db", Library::makeSyntheticDb(dbp, rows, &err));
+        Library lib;
+        const bool opened = lib.open(dbp, &err);
+        report("R3_fixture_photos", opened && lib.photos().size() == 200 && lib.lastExhibitAt() == 0);
+
+        std::atomic<bool> firedR{false};
+        std::atomic<qint64> idR{0};
+        std::atomic<quintptr> tidR{0};
+        CurateScheduler sched(&lib);
+        const auto conn = QObject::connect(&sched, &CurateScheduler::generated,
+            [&](qint64 id) {
+                idR.store(id);
+                tidR.store(reinterpret_cast<quintptr>(QThread::currentThread()));
+                firedR.store(true);
+            });
+
+        QFuture<void> fut = sched.maybeGenerate(lib.photos(), true, QString(), nowR);
+        fut.waitForFinished();
+        report("R3_defer_write_until_eventloop", exhibitCount(dbp) == 0);
+
+        for (int i = 0; i < 50 && !firedR.load(); ++i) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+            QThread::msleep(10);
+        }
+        const int after = exhibitCount(dbp);
+        report("R3_gen_persists",
+               firedR.load() && idR.load() > 0 && after == 1 && lib.lastExhibitAt() == nowR.epochSec);
+        report("R3_generated_on_gui", firedR.load() && tidR.load() == guiTidR);
+        report("R3_write_on_gui", lib.lastWriteThreadId() == guiTidR);
+        {   // 落库行形状：模板 token / paths 逗号串 / generated_at 与 shown_at 同刻。
+            QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"),
+                                                        QStringLiteral("la_curate_r_row"));
+            db.setDatabaseName(dbp);
+            QString tmpl; QString paths; qint64 genAt = 0, shownAt = 0;
+            if (db.open()) {
+                QSqlQuery q(db);
+                if (q.exec(QStringLiteral("SELECT template,paths,generated_at,shown_at FROM exhibits"))
+                    && q.next()) {
+                    tmpl = q.value(0).toString(); paths = q.value(1).toString();
+                    genAt = qint64(q.value(2).toDouble()); shownAt = qint64(q.value(3).toDouble());
+                }
+                db.close();
+            }
+            QSqlDatabase::removeDatabase(QStringLiteral("la_curate_r_row"));
+            const QStringList stored = paths.split(QLatin1Char(','), Qt::SkipEmptyParts);
+            report("R3_row_shape",
+                   !tmpl.isEmpty() && stored.size() >= 5 && genAt == nowR.epochSec
+                       && shownAt == genAt);
+        }
+
+        // 节流腿：上一行已把 lastExhibitAt 推到 now → 再生成必须被拒（id=0，行数不变）。
+        firedR.store(false); idR.store(-1); tidR.store(0);
+        sched.maybeGenerate(lib.photos(), true, QString(), nowR).waitForFinished();
+        report("R3_gen_throttled",
+               firedR.load() && idR.load() == 0 && tidR.load() == guiTidR && exhibitCount(dbp) == 1);
+        QObject::disconnect(conn);
+        CurateScheduler::setForceInlineForQa(false);
     }
 
     const bool pass = (checks > 0) && (fails == 0);

@@ -110,6 +110,8 @@ set(LA_SOURCES
     src/core/CurateState.h
     src/core/CurateEngine.h
     src/core/CurateEngine.cpp
+    src/core/CurateScheduler.h
+    src/core/CurateScheduler.cpp
     src/core/PhotoDedup.h
     src/core/PhotoDedup.cpp
     src/core/BrowseScope.h
