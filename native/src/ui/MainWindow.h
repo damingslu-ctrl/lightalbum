@@ -32,6 +32,7 @@ class VideoLightbox;    // 2.30.0 视频灯箱（内嵌解码播放器）
 class QPushButton;
 class QVariantAnimation;
 class FullCache;
+class CurateScheduler;  // 2.42.0 波3 T11：策展编排（三手势落库真源；MainWindow 只接线）
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -50,6 +51,11 @@ public:
     // 2.41.0 spec §2.5：凝视档入口（前厅今日/人物馆展室/⌘K 检索结果都走这里）。
     // gaze=false 等价 openLightbox；true 时 Lightbox 进 Mode::Gaze（光晕 + S/A/L 标）。
     void openGaze(const QString& path, const QStringList& scope);
+
+    // 2.42.0 波3 T11：「开展」入口——把今日一展当作**整展帧序**播（不是单张）。
+    // 顺序契约：灯箱的 enter() 会先退展，故必须 enter(Gaze) 在前、setCuration 在后，
+    // 颠倒即空展（T10 裁决；LA_CURATE_QA 的 M_enter_before_setcuration 切片守此序）。
+    void openCuration(const QStringList& paths, const QString& title, const QString& blurb);
 
     // P13：导航切换联动动效（淡出→换页→淡入+轻微上滑）
     void onNav(int row);
@@ -86,6 +92,10 @@ private:
 
     // 2.41.0 spec §2.6：库写回后的统一刷新汇合（图库/前厅/人物馆三处同一真源）
     void refreshExhibits();
+
+    // 2.42.0 波3 T11：三手势的回执（底部浮字，3s 自动收起；文案来自 CurateScheduler::*Ack，
+    // 不在 UI 里另写一份 = 双真源）。
+    void showAck(const QString& text);
 
     // 2.41.0 spec §2.5：灯箱惰性建 + 一次性接线。Browse 与 Gaze 共用同一实例，
     // 故接线只此一份；两档各自 enter() 归位档位。
@@ -154,6 +164,14 @@ private:
     QWidget*        kpis_ = nullptr;
     QLabel*         moduleLbl_ = nullptr;   // P15.2：顶栏模块名称（随导航切换）
     LobbyPage*      lobby_ = nullptr;       // 2.41.0：前厅（今日回看 + 近期入藏）
+    // 2.42.0 波3 T11：策展编排器。跨帧只造一次（同 topSolidAnim_/fullCache_ 纪律）——
+    // rethemeAll 重建整帧时若跟着重造，会有两个后台 pickExhibit 同时排队回写。
+    CurateScheduler* curator_ = nullptr;
+    QLabel*         ack_ = nullptr;         // 三手势回执（浮字，非模态）
+    QTimer*         ackTimer_ = nullptr;
+    // 「换一展」的回执必须等异步结果：force 生成可能被如实拒绝（无放行候选）。
+    // 按下时先举旗，generated(id) 回来才把「已换一展 / 暂无更多」说出口（不提前许愿）。
+    bool            swapPending_ = false;
 
     // P13 呼吸感受控元素
     QFrame*                  seam_ = nullptr;       // 顶栏发丝线

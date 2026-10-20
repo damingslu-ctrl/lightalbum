@@ -2509,6 +2509,69 @@ int runCurateQa()
         report("H_teeth_quality_observable", wiredBlur != wiredSharp);  // 证明本测量能咬红
     }
 
+    // —— W：compose 解码成本红线（spec R7「O(5–9)」+ §5.2「O(展内张数)，不得对全库」）——
+    //   组装 40 候选主题时，画质分与 pHash 只许在**已选出的展帧**（≤9）上调用；主题候选
+    //   再多（大库单人 2000+ 帧）也不许放大成全库逐张解码（T5 曾按候选帧全量解码，
+    //   2090 帧 ≈ 5.3 s 启动成本）。探测口径由 qaResetScanProbe/qaQualityCalls/qaHashCalls
+    //   提供（真实解码计数，缓存命中不计）。反例臂 LA_CURATE_QA_FORCE_BROKEN_Q=1 →
+    //   旧形态（对全候选先算画质再裁展）→ W_quality_bounded 必红 —— 期望值不随臂切换。
+    {
+        const QString td = QDir::tempPath() + QStringLiteral("/la_curate_qa_w_thumbs");
+        QDir().mkpath(td);
+        QVector<Photo> photos;
+        Curate::Theme t;
+        t.id = Curate::TemplateId::OnThisDay;
+        for (int i = 0; i < 40; ++i) {
+            QImage im(64, 64, QImage::Format_Grayscale8);
+            const int v = 60 + (i * 47) % 120;              // 逐帧灰度差 → phash 互异
+            for (int y = 0; y < 64; ++y) {
+                uchar* ln = im.scanLine(y);
+                for (int x = 0; x < 64; ++x)
+                    ln[x] = uchar(v + ((x + y + i) % 2) * 40);  // 带纹理（非均匀 → hash 非 0）
+            }
+            const QString name = QStringLiteral("w_%1.png").arg(i, 2, 10, QLatin1Char('0'));
+            im.save(QDir(td).filePath(name));
+            Photo p;
+            p.path = QDir(td).filePath(name);
+            p.thumbFile = name;
+            p.category = QStringLiteral("风景");
+            p.date = QStringLiteral("2026-10-%1").arg(QString::number((i % 3) + 1)
+                                                      .rightJustified(2, QLatin1Char('0')));
+            photos.push_back(p);
+            t.paths.push_back(p.path);
+        }
+        // 反例臂（LA_CURATE_QA_FORCE_BROKEN_Q=1）：复现 T5 误读旧形态 —— 对全候选先算
+        //   画质再裁展，W_quality_bounded 必红（40 次 > 9）—— 期望值不随臂切换。
+        Curate::qaSetForceFullScan(!qEnvironmentVariableIsEmpty("LA_CURATE_QA_FORCE_BROKEN_Q"));
+        Curate::qaResetScanProbe();
+        const Curate::Theme composed = Curate::compose(t, photos, td);
+        const int qCalls = Curate::qaQualityCalls();
+        const int hCalls = Curate::qaHashCalls();
+        report("W_quality_bounded", qCalls >= 1 && qCalls <= 9);   // 非空 + O(展内张数)
+        report("W_hash_bounded", hCalls >= 1 && hCalls <= 18);     // 去冗余解码预算 2n 封顶
+        report("W_size_5to9", composed.paths.size() >= 5 && composed.paths.size() <= 9);
+        // 大候选集上契约依旧：主图 = 展内画质最高（门禁侧同一 qualityScore 独立重算 argmax）。
+        double wBestQ = -1e9;
+        QString wBestPath;
+        for (const QString& path : composed.paths) {
+            const Photo* found = nullptr;
+            for (const Photo& p : photos) if (p.path == path) { found = &p; break; }
+            if (!found) continue;
+            const double q = Curate::qualityScore(*found, td);
+            if (q > wBestQ) { wBestQ = q; wBestPath = path; }
+        }
+        report("W_primary_best", !wBestPath.isEmpty() && composed.primaryPath == wBestPath);
+        // 确定性：乱序喂库 → 输出展帧序逐字节相同（禁依赖 all 的容器迭代序）。
+        QVector<Photo> shuffled = photos;
+        std::swap(shuffled[0], shuffled[17]);
+        std::swap(shuffled[3], shuffled[29]);
+        std::swap(shuffled[11], shuffled[22]);
+        const Curate::Theme composed2 = Curate::compose(t, shuffled, td);
+        report("W_order_independent",
+               composed.paths.join(QLatin1Char(',')) == composed2.paths.join(QLatin1Char(','))
+                   && composed.primaryPath == composed2.primaryPath);
+    }
+
     // —— I：废片巡检（T6，spec 红线3：只打包不删除 + 整批反悔可回原态）——
     //   红线 3 的编译期保障是签名只收 `const QVector<Photo>&`；运行期臂再加一道：
     //   巡检前后**磁盘库行数逐行不变**（若日后有人给巡检接上删除，必红）。
@@ -2823,6 +2886,7 @@ int runCurateQa()
                firedR.load() && idR.load() == 0 && tidR.load() == guiTidR && exhibitCount(dbp) == 1);
         QObject::disconnect(conn);
         CurateScheduler::setForceInlineForQa(false);
+        Curate::qaSetForceFullScan(false);
     }
 
     // —— V：视觉语言层（T8，spec §2.4 + §0.1 R4 裁决）——
@@ -3059,6 +3123,248 @@ int runCurateQa()
             report("V_motion_breath_one_swell",
                    qAbs(lo - 0.25) < 0.01 && qAbs(hi - 1.0) < 0.01 && turns == 1);
         }
+    }
+
+    // —— M：生产接线（T11，spec §3）——
+    //   三条纪律：① 手势的**落库真源**在 CurateScheduler（GUI 单写者），MainWindow 只接线
+    //     ——门禁直调同一批生产方法（铁律 20），不复刻第二份逻辑；② 连接本身是「接线事实」，
+    //     用源扫腿证（同 T10 seq_dwell_wired_to_preset / T8 图标分发型）；③ 载荷→播放请求是
+    //     纯映射，`asExhibit` 必须保序（帧序=展帧序，R-T10b 的播放侧契约）。
+    const Curate::Now nowM{1760000000, 2026, 10, 19};
+
+    // M1 注入式时间的映射（月/日取**不同值**才有牙：写反即红）。
+    {
+        const Curate::Now n = CurateScheduler::makeNow(1760000000, QDate(2025, 10, 8));
+        report("M_now_maps_fields",
+               n.epochSec == 1760000000 && n.y == 2025 && n.m == 10 && n.d == 8);
+    }
+
+    // M2 手势载荷 → 播放请求（纯函数；顺序与主图位置是契约，不是巧合）。
+    {
+        const QStringList ps{QStringLiteral("/syn/007.jpg"), QStringLiteral("/syn/003.jpg"),
+                             QStringLiteral("/syn/011.jpg")};
+        const Curate::Exhibit ex =
+            CurateScheduler::asExhibit(ps, QStringLiteral("Three Winters"),
+                                       QStringLiteral("Never hung once"), 1730000000);
+        report("M_payload_frames",
+               ex.valid && ex.theme.paths == ps && ex.generatedAt == 1730000000);
+        report("M_payload_primary",
+               ex.theme.primaryPath == ps.constFirst()
+                   && ex.theme.title == QStringLiteral("Three Winters")
+                   && ex.theme.blurb == QStringLiteral("Never hung once"));
+        report("M_payload_empty_invalid",
+               !CurateScheduler::asExhibit(QStringList(), QStringLiteral("Ghost"),
+                                           QString(), 1).valid);
+    }
+
+    // M3..M8 三手势落库（真库真行；读回一律另开 Library，证的是磁盘事实）。
+    {
+        const QString dir = QDir::tempPath() + QStringLiteral("/la_curate_qa_t11");
+        QDir(dir).removeRecursively();
+        QDir().mkpath(dir);
+        const QString dbp = dir + QStringLiteral("/lib.sqlite");
+        const QVector<Photo> hot = makeSyntheticPhotos(200);
+        QVector<Library::SynthRow> rows;
+        for (const Photo& p : hot) {
+            Library::SynthRow r;
+            r.path = p.path; r.date = p.date; r.year = p.year; r.category = p.category;
+            r.person = p.person; r.city = p.city; r.seenAt = double(p.seenAt);
+            r.priv = p.priv; r.hasGps = p.hasGps; r.la = p.la; r.lo = p.lo;
+            r.mediaType = p.mediaType;
+            rows << r;
+        }
+        QString err;
+        report("M_fixture_db", Library::makeSyntheticDb(dbp, rows, &err));
+        Library lib;
+        report("M_fixture_open", lib.open(dbp, &err) && lib.photos().size() == 200);
+
+        CurateScheduler sched(&lib);
+        // 空态诚实：库里还没有展 → currentExhibit 无效、restoreLast 不编造。
+        report("M_restore_empty_invalid",
+               (sched.restoreLast(), !sched.currentExhibit().valid
+                && sched.currentExhibitId() == 0));
+
+        // 先有一场「常设展」：手势必须作用在**它**身上（id 口径可核）。
+        sched.maybeGenerate(lib.photos(), true, QString(), nowM).waitForFinished();
+        for (int i = 0; i < 50 && !sched.currentExhibitId(); ++i)
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+        const Curate::Exhibit first = sched.currentExhibit();
+        report("M_show_now_live", first.valid && sched.currentExhibitId() > 0);
+
+        // keep：收藏此展 → 永久合集（source='curate'）+ 该展 feedback='kept'。
+        const qint64 albumId = sched.keepExhibit(first.theme.paths, first.theme.title);
+        {
+            Library rb; rb.open(dbp, &err);
+            const QVector<AlbumRow> albums = rb.listAlbums();
+            report("M_keep_creates_album",
+                   albumId > 0 && albums.size() == 1 && albums[0].source == QLatin1String("curate")
+                       && albums[0].name == first.theme.title
+                       && albums[0].count == first.theme.paths.size());
+            bool kept = false;
+            for (const ExhibitRow& r : rb.loadExhibitHistory())
+                if (r.id == sched.currentExhibitId()) kept = (r.feedback == QLatin1String("kept"));
+            report("M_keep_records_feedback", kept);
+        }
+        // 空载荷拒绝：不建空合集、不写库（铁律 21 数据诚实）。
+        report("M_keep_empty_refuses",
+               sched.keepExhibit(QStringList(), QStringLiteral("Ghost")) == 0
+                   && [ &lib ]() { return lib.listAlbums().size() == 1; }());
+
+        // swap：只记 feedback（隐式降权留波5）；**不**新建合集。
+        report("M_swap_records_feedback",
+               sched.markSwapped()
+                   && [ &lib, &sched ]() {
+                          for (const ExhibitRow& r : lib.loadExhibitHistory())
+                              if (r.id == sched.currentExhibitId())
+                                  return r.feedback == QLatin1String("swapped");
+                          return false;
+                      }()
+                   && lib.listAlbums().size() == 1);
+
+        // mute：只落模板级冷却；展级 feedback 不被改写（两处写同一事实 = 双真源）。
+        const QString tokM = QString::fromLatin1(Curate::templateIdToken(first.theme.id));
+        report("M_mute_writes_cooldown",
+               sched.muteExhibit(tokM) && lib.loadMuteState(nowM.epochSec).contains(tokM));
+        report("M_mute_keeps_feedback",
+               [ &lib, &sched ]() {
+                   for (const ExhibitRow& r : lib.loadExhibitHistory())
+                       if (r.id == sched.currentExhibitId())
+                           return r.feedback == QLatin1String("swapped");
+                   return false;
+               }());
+
+        // 频控的两条腿必须分开：自动（节流）不加新展；用户主动「换一展」加新展。
+        //   周频控（每周 ≤1）管的是**自动推送**，显式手势不受它约束（裁决 R-T11b）。
+        const int before = exhibitCount(dbp);
+        sched.maybeGenerate(lib.photos(), true, QString(), nowM).waitForFinished();
+        for (int i = 0; i < 50; ++i) QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+        report("M_throttled_no_new_show", exhibitCount(dbp) == before);
+        sched.maybeGenerate(lib.photos(), true, QString(), nowM, /*force=*/true).waitForFinished();
+        for (int i = 0; i < 50; ++i) QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+        report("M_forced_new_show", exhibitCount(dbp) == before + 1);
+        {
+            // 两版的 generated_at **相同**（同一注入 now）→ 历史按 generated_at 排序时次序不定。
+            // 故一律按 id 定位，绝不吃 `.first()` 的位置巧合（这也是 restoreLast 的实现口径）。
+            const QVector<ExhibitRow> hs = lib.loadExhibitHistory();
+            ExhibitRow cur;
+            for (const ExhibitRow& r : hs) if (r.id == sched.currentExhibitId()) cur = r;
+            const QStringList curPaths = cur.paths.split(QChar(','));
+            bool disjoint = !curPaths.isEmpty();
+            for (const QString& p : curPaths)
+                if (first.theme.paths.contains(p)) disjoint = false;
+            report("M_forced_show_is_another",
+                   disjoint && sched.currentExhibit().valid
+                       && sched.currentExhibit().theme.paths == curPaths);
+            // 静音生效于下一选：被 mute 的模板不得再成展。
+            report("M_mute_next_pick_not_muted",
+                   QString::fromLatin1(Curate::templateIdToken(sched.currentExhibit().theme.id))
+                       != tokM);
+        }
+
+        // 跨重启：新 Library + 新 scheduler 仅靠 DB 就能把「今日一展」原样接回来。
+        {
+            Library again;
+            report("M_restore_reopen", again.open(dbp, &err));
+            CurateScheduler s2(&again);
+            s2.restoreLast();
+            qint64 topId = 0;
+            ExhibitRow top;
+            for (const ExhibitRow& r : again.loadExhibitHistory())
+                if (r.id > topId) { topId = r.id; top = r; }
+            report("M_restore_rebuilds_current",
+                   s2.currentExhibit().valid
+                       && s2.currentExhibitId() == topId
+                       && s2.currentExhibit().theme.paths == top.paths.split(QChar(','))
+                       && s2.currentExhibit().theme.title == top.title
+                       && s2.currentExhibit().theme.blurb == top.blurb);
+        }
+    }
+
+    // M9 文案诚实（v1 无设置页反悔入口 —— 如实标注，不假装可用）。
+    {
+        const QString m = CurateScheduler::muteAck();
+        report("M_ack_mute_honest",
+               m.contains(QStringLiteral("反悔")) && m.contains(QStringLiteral("下轮")));
+        const QString k = CurateScheduler::keepAck(QStringLiteral("Three Winters"), 7);
+        report("M_ack_keep_names_show",
+               k.contains(QStringLiteral("Three Winters")) && k.contains(QLatin1String("7")));
+        // 建合集失败支路也要有牙：不许把「没能」写成「已收进」（铁律 21 的文案侧镜像）。
+        report("M_ack_keep_denied_differs",
+               CurateScheduler::keepAck(QStringLiteral("Three Winters"), 7, false) != k
+                   && CurateScheduler::keepAck(QStringLiteral("Three Winters"), 7, false)
+                          .contains(QStringLiteral("没能")));
+        report("M_ack_swap_differs_by_result",
+               CurateScheduler::swapAck(true) != CurateScheduler::swapAck(false)
+                   && CurateScheduler::swapAck(false).contains(QStringLiteral("暂无")));
+    }
+
+    // M10 MainWindow 接线源扫：五处必须真接（wiring 事实由接线腿证，同 T8/T10）。
+    {
+        QString root;
+        for (const QString& cand : { QCoreApplication::applicationDirPath() + QStringLiteral("/../src/ui"),
+                                     QCoreApplication::applicationDirPath() + QStringLiteral("/src/ui"),
+                                     QStringLiteral("src/ui") }) {
+            if (QFileInfo(cand).isDir()) { root = cand; break; }
+        }
+        QString raw;
+        if (!root.isEmpty()) {
+            QFile f(QDir(root).filePath(QStringLiteral("MainWindow.cpp")));
+            if (f.open(QIODevice::ReadOnly)) raw = QString::fromUtf8(f.readAll());
+        }
+        QString text = raw;
+        text.remove(QRegularExpression(QStringLiteral("/\\*.*?\\*/"),
+            QRegularExpression::DotMatchesEverythingOption));
+        text.remove(QRegularExpression(QStringLiteral("//[^\n]*")));
+        // 行内 `/*force=*/` 是**调用点标记**不是注释：只能在「只去 // 行注释」的副本上数，
+        // 否则块注释剥离先把它吃掉，这条腿永远 0（证伪器比断言先瞎 = 假绿）。
+        QString code = raw;
+        code.remove(QRegularExpression(QStringLiteral("//[^\n]*")));
+        report("M_source_scanned", text.size() > 4000);   // fail-open 守卫：空扫描不算绿
+        report("M_wires_three_gestures",
+               text.contains(QStringLiteral("&LobbyPage::keepExhibit"))
+                   && text.contains(QStringLiteral("&LobbyPage::swapExhibit"))
+                   && text.contains(QStringLiteral("&LobbyPage::muteTemplate")));
+        report("M_wires_keep_swap_mute_calls",
+               text.contains(QStringLiteral("keepExhibit("))
+                   && text.contains(QStringLiteral("markSwapped("))
+                   && text.contains(QStringLiteral("muteExhibit(")));
+        report("M_hero_opens_curation",
+               text.contains(QStringLiteral("&LobbyPage::openCuration"))
+                   && text.contains(QStringLiteral("setCuration(")));
+        {   // 顺序事实：enter() 会 interruptCuration()，故 openCuration 体内必须先 enter 再
+            // setCuration。切片到**定义体**比较（锚 "void MainWindow::openCuration" 只在定义处
+            // 出现，connect 里是 &MainWindow::openCuration），绝不吃全文件首个 ->enter( 的位置巧合。
+            const int h = text.indexOf(QStringLiteral("void MainWindow::openCuration"));
+            const int end = h >= 0 ? text.indexOf(QStringLiteral("\n}"), h) : -1;
+            const QString body = (h >= 0 && end > h) ? text.mid(h, end - h) : QString();
+            const int a = body.indexOf(QStringLiteral("->enter("));
+            const int b = body.indexOf(QStringLiteral("->setCuration("));
+            report("M_enter_before_setcuration", !body.isEmpty() && a >= 0 && b >= 0 && a < b);
+        }
+        report("M_forced_swap_regenerates",
+               code.contains(QStringLiteral("markSwapped("))
+                   && code.count(QStringLiteral("/*force=*/true")) == 2);   // 换一展 + 别再这类 各一次
+        // 后两条同样切片到各自函数体：buildUi 里也有一行 `lobby_->setExhibit(curator_->...)`
+        // 与两处 `curator_->maybeGenerate(`，全文件 contains 会让「摘掉接线」照样绿。
+        {
+            auto fnBody = [&text](const QString& anchor) {
+                const int h = text.indexOf(anchor);
+                const int end = h >= 0 ? text.indexOf(QStringLiteral("\n}"), h) : -1;
+                return (h >= 0 && end > h) ? text.mid(h, end - h) : QString();
+            };
+            const QString refresh = fnBody(QStringLiteral("void MainWindow::refreshExhibits"));
+            report("M_refresh_feeds_lobby",
+                   refresh.contains(QStringLiteral("lobby_->setExhibit("))
+                       && refresh.contains(QStringLiteral("curator_->currentExhibit()")));
+            const QString ctor = fnBody(QStringLiteral("MainWindow::MainWindow"));
+            report("M_ctor_generates_once",
+                   ctor.contains(QStringLiteral("curator_->maybeGenerate("))
+                       && ctor.contains(QStringLiteral("curator_->restoreLast(")));
+        }
+        report("M_no_direct_window_writes",
+               !text.contains(QStringLiteral("lib_->createAlbum("))
+                   && !text.contains(QStringLiteral("lib_->muteTemplate("))
+                   && !text.contains(QStringLiteral("lib_->updateExhibitFeedback(")));
     }
 
     const bool pass = (checks > 0) && (fails == 0);

@@ -2,6 +2,8 @@
 // SPDX-FileCopyrightText: 2026 LightAlbum Contributors
 #include "CurateScheduler.h"
 #include <QtConcurrent/QtConcurrentRun>
+#include <QCoreApplication>
+#include <QDateTime>
 #include <QMetaObject>
 #include <QStringList>
 #include <algorithm>
@@ -10,6 +12,9 @@
 namespace {
 constexpr qint64 kWeekSec = 7LL * 86400;      // 节流窗（spec R3：>7 天才再生成）
 constexpr qint64 kFourWeeksSec = 28LL * 86400; // 候选池减项窗（spec §2.2「近 4 周已展出」）
+// 「别再这类」= 永久静音（spec R5）。loadMuteState 的口径是 until > now，故取一个远大于
+// 任何可预见 epoch 的哨兵值；它是哨兵不是时长（不做「N 天冷却」的误读）。
+constexpr qint64 kPermanentMuteUntil = Q_INT64_C(9999999999999);
 std::atomic<bool> g_forceInlineForQa{false};
 }
 
@@ -97,16 +102,19 @@ Curate::Exhibit CurateScheduler::pickExhibit(const QVector<Photo>& photos, bool 
 }
 
 QFuture<void> CurateScheduler::maybeGenerate(const QVector<Photo>& photos, bool hidePrivate,
-                                             const QString& thumbsDir, const Curate::Now& now)
+                                             const QString& thumbsDir, const Curate::Now& now,
+                                             bool force)
 {
     if (!lib_) { emit generated(0); return QFuture<void>(); }
     // 节流：未到期 → 不生成（懒生成，spec R3）。读全在调用线程（GUI），worker 只见快照。
-    if (!shouldGenerate(lib_->lastExhibitAt(), now)) { emit generated(0); return QFuture<void>(); }
+    //   force 只放开这一条腿：它是用户显式按下的「换一展」，不是自动推送（裁决 R-T11b）。
+    if (!force && !shouldGenerate(lib_->lastExhibitAt(), now)) { emit generated(0); return QFuture<void>(); }
 
     // 快照（值拷贝）：后台只看到纯数据，**绝不**触 lib_（铁律 ai-single-writer-gui-thread）。
     const QVector<Photo> snap = photos;
     const QVector<ExhibitRow> rows = lib_->loadExhibitHistory();
-    const Curate::ExhibitHistory hist = historyFrom(rows, lib_->lastExhibitAt());
+    Curate::ExhibitHistory hist = historyFrom(rows, lib_->lastExhibitAt());
+    if (force) hist.lastExhibitAt = 0;   // 同上：只摘掉「本周已展过一条」，其余频控照旧
     const QStringList recent = recentShownPaths(rows, now);
     Curate::MuteState mute;
     mute.mutedTemplates = lib_->loadMuteState(now.epochSec);
@@ -130,5 +138,97 @@ void CurateScheduler::persist(const Curate::Exhibit& ex, const Curate::Now& now)
     const qint64 id = lib_->addExhibit(QString::fromLatin1(Curate::templateIdToken(t.id)),
                                        t.title, t.blurb, t.primaryPath, t.paths,
                                        ex.generatedAt, QString());
+    // 手势必须作用在**这一版**身上，故落库同处记下 current_/currentId_（唯一真源）。
+    current_ = ex;
+    currentId_ = id;
     emit generated(id);
+}
+
+Curate::Now CurateScheduler::makeNow(qint64 epochSec, const QDate& d)
+{
+    Curate::Now n;
+    n.epochSec = epochSec;
+    n.y = d.year();
+    n.m = d.month();
+    n.d = d.day();
+    return n;
+}
+
+Curate::Now CurateScheduler::wallNow()
+{
+    return makeNow(qint64(QDateTime::currentSecsSinceEpoch()), QDate::currentDate());
+}
+
+Curate::Exhibit CurateScheduler::asExhibit(const QStringList& paths, const QString& title,
+                                           const QString& blurb, qint64 generatedAt)
+{
+    Curate::Exhibit ex;
+    ex.generatedAt = generatedAt;
+    if (paths.isEmpty()) { ex.skipReason = QStringLiteral("empty-payload"); return ex; }
+    QVector<QString> ps;
+    ps.reserve(paths.size());
+    for (const QString& p : paths) ps.append(p);
+    ex.theme.paths = ps;
+    ex.theme.primaryPath = paths.constFirst();   // 主图恒在首位：帧序 = 展帧序，播放侧不再重排
+    ex.theme.title = title;
+    ex.theme.blurb = blurb;
+    ex.valid = true;
+    return ex;
+}
+
+void CurateScheduler::restoreLast()
+{
+    current_ = Curate::Exhibit();
+    currentId_ = 0;
+    if (!lib_) return;
+    const QVector<ExhibitRow> rows = lib_->loadExhibitHistory();
+    const ExhibitRow* top = nullptr;
+    for (const ExhibitRow& r : rows)
+        if (!top || r.id > top->id) top = &r;   // 按 id 取顶行：generated_at 可以相同（同批注入 now）
+    if (!top) return;                           // 库里没有展 → 如实空态，不编造（铁律 21）
+    current_ = asExhibit(top->paths.split(QLatin1Char(',')), top->title, top->blurb,
+                         top->generatedAt);
+    currentId_ = top->id;
+}
+
+qint64 CurateScheduler::keepExhibit(const QStringList& paths, const QString& title)
+{
+    if (!lib_ || paths.isEmpty() || title.trimmed().isEmpty()) return 0;   // 空载荷 → 不建空壳
+    const qint64 albumId = lib_->createAlbum(title, paths, QStringLiteral("curate"));
+    if (albumId > 0 && currentId_ > 0)
+        lib_->updateExhibitFeedback(currentId_, QStringLiteral("kept"));
+    return albumId;
+}
+
+bool CurateScheduler::markSwapped()
+{
+    if (!lib_ || currentId_ <= 0) return false;
+    return lib_->updateExhibitFeedback(currentId_, QStringLiteral("swapped"));
+}
+
+bool CurateScheduler::muteExhibit(const QString& templateToken)
+{
+    if (!lib_ || templateToken.isEmpty()) return false;
+    return lib_->muteTemplate(templateToken, kPermanentMuteUntil);
+}
+
+QString CurateScheduler::keepAck(const QString& title, int n, bool ok)
+{
+    return ok
+        ? QCoreApplication::translate("CurateScheduler", "已把《%1》的 %2 张收进合集，随时能再看。")
+              .arg(title).arg(n)
+        : QCoreApplication::translate("CurateScheduler", "没能收进合集，库里没多出一份空壳。");
+}
+
+QString CurateScheduler::muteAck()
+{
+    return QCoreApplication::translate("CurateScheduler",
+                                       "这类展已安静下来。反悔入口下轮上线。");
+}
+
+QString CurateScheduler::swapAck(bool swapped)
+{
+    return swapped
+        ? QCoreApplication::translate("CurateScheduler", "已换一展。")
+        : QCoreApplication::translate("CurateScheduler", "暂无更多可展的照片，先补几张进来。");
 }

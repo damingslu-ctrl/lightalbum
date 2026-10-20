@@ -8,8 +8,15 @@
 #include <QDir>
 #include <QFileInfo>
 #include <algorithm>
+#include <atomic>
 
 namespace {
+
+// 门禁探针（LA_CURATE_QA W 组读）：解码成本红线可测化。计数成本可忽略于解码本身。
+std::atomic<int>  g_probeQCalls{0};
+std::atomic<int>  g_probeHCalls{0};
+std::atomic<bool> g_qaForceFullScan{false};
+
 
 // 键空间辅助：取某前缀下字典序最小的键（确定性——QHash 迭代序不定，故显式取 min）。
 QString firstKeyWithPrefix(const Curate::Buckets& bk, const QString& prefix)
@@ -63,6 +70,7 @@ quint64 thumbPhash(const Photo& p, const QString& thumbsDir, QHash<QString, quin
     if (it != cache.constEnd()) return it.value();
     const QImage img(tp);
     const quint64 h = img.isNull() ? 0 : CullEngine::computePhash(img, 8);
+    g_probeHCalls.fetch_add(1, std::memory_order_relaxed);   // 仅真实解码计数；命中缓存不计
     cache.insert(tp, h);
     return h;
 }
@@ -346,6 +354,7 @@ bool frequencyAllows(const Theme& t, const ExhibitHistory& h, const MuteState& m
 
 double qualityScore(const Photo& p, const QString& thumbsDir)
 {
+    g_probeQCalls.fetch_add(1, std::memory_order_relaxed);
     // 复用 CullEngine 的同一对本地维度算子（唯一真源，R7），归一到 [0,1]：
     //   清晰 = min(blur / blurThreshold, 1)（80 = CullOptions::blurThreshold 同锚）；
     //   光影 = 1 − min(max(欠曝比, 过曝比) / 0.45, 1)。
@@ -374,48 +383,89 @@ double qualityScore(const Photo& p, const QString& thumbsDir)
 
 Theme compose(const Theme& t, const QVector<Photo>& all, const QString& thumbsDir)
 {
-    // ★ R7：qualityScore 只在本主题的候选帧（= t.paths）上调用，绝不进入全局打分。
+    // ★ 成本红线（spec R7「O(5–9)」+ §5.2「O(展内张数)，不得对全库」）：**先廉价选展帧**
+    //   （零解码，只用 Photo 内存字段），画质分与 pHash 只在**已选出的展帧**上算 ——
+    //   主题候选再多（大库一人 2000+ 帧）也不允许放大成全库逐张解码（T5 曾按候选帧
+    //   全量解码，2090 帧 ≈ 5.3 s，本红线门 W 组守此界）。廉价序 = 拍摄日期新→旧、
+    //   path 升序收尾（确定性，禁依赖容器迭代序）；类内多样 = pHash 邻域去冗余，
+    //   解码封顶 2n —— 超顶后停解码、余位按廉价序补齐（可能含近邻帧，如实记）。
     Theme out = t;
     QHash<QString, const Photo*> ix;
     ix.reserve(all.size());
     for (const Photo& p : all) ix.insert(p.path, &p);
 
-    struct Cand { const Photo* p; double q; };
-    QVector<Cand> cands;
-    cands.reserve(t.paths.size());
-    for (const QString& path : t.paths) {
-        const Photo* p = ix.value(path, nullptr);
-        if (p) cands.push_back({p, qualityScore(*p, thumbsDir)});
+    QVector<const Photo*> avail;
+    avail.reserve(t.paths.size());
+    {
+        QSet<QString> seenPath;
+        for (const QString& path : t.paths) {
+            if (seenPath.contains(path)) continue;
+            seenPath.insert(path);
+            const Photo* p = ix.value(path, nullptr);
+            if (p) avail.push_back(p);
+        }
     }
+
+    out.paths.clear();
+    out.primaryPath.clear();
+    if (avail.isEmpty()) return out;           // 无可用帧 → 空（不伪造主图）
+
+    // 反例臂（LA_CURATE_QA_FORCE_BROKEN_Q=1）：复现 T5 误读的旧形态 —— 对**全候选**先算
+    //   画质再裁展（超 R7 成本红线），W_quality_bounded 必红（40 候选 → 40 次调用 > 9）。
+    if (g_qaForceFullScan.load())
+        for (const Photo* p : avail)
+            qualityScore(*p, thumbsDir);
+
+    std::sort(avail.begin(), avail.end(), [](const Photo* a, const Photo* b) {
+        if (a->date != b->date) return a->date > b->date;   // 新片先看（date 升序串 = 时序）
+        return a->path < b->path;
+    });
+
+    const int n = qBound(5, avail.size(), 9);   // 展内总量裁到 5..9
+    QHash<QString, quint64> hcache;
+    QVector<const Photo*> kept;
+    QVector<quint64> hashes;
+    int decoded = 0;
+    const int cap = 2 * n;                      // 去冗余解码预算（红线：邻域封顶，非全候选）
+    for (const Photo* p : avail) {
+        if (kept.size() >= n) break;
+        quint64 h = 0;
+        if (decoded < cap) {
+            h = thumbPhash(*p, thumbsDir, hcache);
+            ++decoded;
+        }
+        bool dup = false;
+        for (quint64 k : hashes)                 // h==0（不可读/均匀图）不参与去重；0 也不入表
+            if (k != 0 && h != 0 && CullEngine::hamming(h, k) <= 8) { dup = true; break; }
+        if (dup) continue;
+        kept.push_back(p);
+        if (h != 0) hashes.push_back(h);
+    }
+    {   // 去冗余后不足 → 按廉价序回填（≥5 保底语义与去重前一致）
+        QSet<QString> keptSet;
+        keptSet.reserve(kept.size());
+        for (const Photo* p : kept) keptSet.insert(p->path);
+        for (const Photo* p : avail) {
+            if (kept.size() >= n) break;
+            if (keptSet.contains(p->path)) continue;
+            keptSet.insert(p->path);
+            kept.push_back(p);
+        }
+    }
+
+    // 展内排序 = w3·画质（唯一消费 quality 的地方，R7）：仅对**已选出的 ≤9 帧**算分。
+    struct Scored { const Photo* p; double q; };
+    QVector<Scored> scored;
+    scored.reserve(kept.size());
+    for (const Photo* p : kept) scored.push_back({p, qualityScore(*p, thumbsDir)});
     // 画质降序；同分按 path 升序（确定性，禁依赖容器序）。
-    std::sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) {
+    std::sort(scored.begin(), scored.end(), [](const Scored& a, const Scored& b) {
         if (a.q != b.q) return a.q > b.q;
         return a.p->path < b.p->path;
     });
 
-    out.paths.clear();
-    out.primaryPath.clear();
-    if (cands.isEmpty()) return out;           // 无可用帧 → 空（不伪造主图）
-
-    const int n = qBound(5, cands.size(), 9);   // 展内总量裁到 5..9
-    QVector<Cand> chosen;
-    chosen.push_back(cands[0]);                 // 主图：展内画质最高
-    QHash<QString, quint64> hcache;
-    QVector<quint64> hashes{ thumbPhash(*cands[0].p, thumbsDir, hcache) };
-    for (int i = 1; i < cands.size() && chosen.size() < n; ++i) {
-        const quint64 h = thumbPhash(*cands[i].p, thumbsDir, hcache);
-        bool dup = false;
-        for (quint64 k : hashes) if (k != 0 && h != 0 && CullEngine::hamming(h, k) <= 8) { dup = true; break; }
-        if (!dup) { chosen.push_back(cands[i]); hashes.push_back(h); }
-    }
-    for (int i = 1; i < cands.size() && chosen.size() < n; ++i) {   // 去冗余后不足 → 按画质回填（≥5 保底）
-        bool has = false;
-        for (const Cand& c : chosen) if (c.p->path == cands[i].p->path) { has = true; break; }
-        if (!has) chosen.push_back(cands[i]);
-    }
-
-    for (const Cand& c : chosen) out.paths.push_back(c.p->path);
-    out.primaryPath = chosen[0].p->path;
+    for (const Scored& s : scored) out.paths.push_back(s.p->path);
+    out.primaryPath = scored.constFirst().p->path;
     return out;
 }
 
@@ -488,5 +538,10 @@ QStringList badShotWhy(const BadShotBatch& batch)
     for (const BadShotRecord& r : batch.items) out << r.why;
     return out;
 }
+
+void qaResetScanProbe() { g_probeQCalls.store(0); g_probeHCalls.store(0); }
+int  qaQualityCalls()   { return g_probeQCalls.load(); }
+int  qaHashCalls()      { return g_probeHCalls.load(); }
+void qaSetForceFullScan(bool on) { g_qaForceFullScan.store(on); }
 
 }   // namespace Curate

@@ -18,6 +18,7 @@
 #include "../core/Classifier.h"   // 方向 C·智能分类：CLIP 子进程门面（T8 净替换外部服务桥）
 #include "../core/PersonDetector.h"  // 方向 C·人脸识别（方案A）：faceinfer 子进程编排层
 #include "../core/FaceCluster.h"     // 方向 C·人物自动聚类：阈值余弦聚类纯函数
+#include "../core/CurateScheduler.h" // 2.42.0 波3 T11：策展编排（三手势落库真源，本窗只接线）
 #include "FullCache.h"                // 2.22.0：原图字节预算 LRU（后台解码）
 #include "../core/MotionPref.h"
 #include "../core/MotionKit.h"        // 2.34.0 动效引擎：预设表/曲线唯一真源
@@ -198,6 +199,21 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
     fullCache_ = new FullCache(this);
     animEnabled_ = uiAnimEnabled();
     setupBreathing();
+
+    // 2.42.0 波3 T11：策展编排器（跨帧只造一次，同上面三件的纪律）。开馆两拍：
+    //   restoreLast 先把库里最后一版接回墙面（冷启动不空墙），再让节流决定要不要新开一版
+    //   （>7 天才真跑，spec R3 懒生成）。生成在后台，落库经 QueuedConnection 回到这里。
+    curator_ = new CurateScheduler(lib_, this);
+    curator_->restoreLast();
+    curator_->maybeGenerate(lib_->photos(), !vaultUnlocked_, thumbsDir_,
+                            CurateScheduler::wallNow());
+    connect(curator_, &CurateScheduler::generated, this, [this](qint64 id) {
+        refreshExhibits();   // 新展落地 → 墙面重挂（invalid 时整卡不出现，不渲染空壳）
+        if (swapPending_) {
+            swapPending_ = false;
+            showAck(CurateScheduler::swapAck(id > 0));   // 结果到了才说出口（不提前许愿）
+        }
+    });
 
     buildUi();
     nav_->setCurrentRow(0);   // 默认落在前厅
@@ -447,6 +463,31 @@ void MainWindow::buildUi()
     connect(lobby_, &LobbyPage::icloudImportRequested, this, &MainWindow::importICloud);
     // 2.41.0 T8：玻璃指令栏点击 → ⌘K 开馆（与顶栏 🔍 / Ctrl+K 同一实现）
     connect(lobby_, &LobbyPage::commandRequested, this, &MainWindow::openCmdK);
+    // ---- 2.42.0 波3 T11：今日一展的四条接线 ----
+    //   本窗**不碰** Library 的写 API：手势的落库全在 curator_（GUI 单写者，铁律 20 同源）。
+    //   这里只做三件事：把意图转成一次调用、把回执说出口、把新展唤到墙上。
+    connect(lobby_, &LobbyPage::keepExhibit, this,
+            [this](const QStringList& paths, const QString& title) {
+        const qint64 albumId = curator_->keepExhibit(paths, title);
+        showAck(CurateScheduler::keepAck(title, paths.size(), albumId > 0));
+        if (albumId > 0) refreshExhibits();   // 合集计数落在侧栏/图库，同一汇合刷新
+    });
+    connect(lobby_, &LobbyPage::swapExhibit, this, [this] {
+        curator_->markSwapped();      // 只记意图（连续 3 次隐式降权留波 5）
+        swapPending_ = true;          // 回执等 generated 带来（异步结果不许提前宣布）
+        // 用户按下的「换一展」不受周节流约束（裁决 R-T11b）：节流管自动推送。
+        curator_->maybeGenerate(lib_->photos(), !vaultUnlocked_, thumbsDir_,
+                                CurateScheduler::wallNow(), /*force=*/true);
+    });
+    connect(lobby_, &LobbyPage::muteTemplate, this, [this](const QString& token) {
+        if (!curator_->muteExhibit(token)) return;   // 没落成就不许报「已安静」
+        showAck(CurateScheduler::muteAck());
+        // 「别再这类」当场撤下这一展：立刻换一版，且新选必不含被静音的模板。
+        curator_->maybeGenerate(lib_->photos(), !vaultUnlocked_, thumbsDir_,
+                                CurateScheduler::wallNow(), /*force=*/true);
+    });
+    connect(lobby_, &LobbyPage::openCuration, this, &MainWindow::openCuration);
+    lobby_->setExhibit(curator_->currentExhibit());   // 冷启动接回的展，本帧就挂上墙
     stack_->addWidget(lobby_);
     map_ = new MapPage(&lib_->photos(), thumbsDir_, stack_);
     stack_->addWidget(map_);
@@ -791,7 +832,11 @@ void MainWindow::closeCmdK()
 void MainWindow::refreshExhibits()
 {
     if (gallery_) gallery_->refresh();
-    if (lobby_)   lobby_->refresh();
+    if (lobby_) {
+        // 2.42.0 波3 T11：墙上这一版只由 curator_ 说（手势的作用对象 = 当前展）。
+        if (curator_) lobby_->setExhibit(curator_->currentExhibit());
+        lobby_->refresh();
+    }
     if (people_)  people_->refresh();
 }
 
@@ -1140,6 +1185,50 @@ void MainWindow::openGaze(const QString& path, const QStringList& scope)
     lb->enter(GazeLightbox::Mode::Gaze, path);
     lb->show();
     lb->raise();
+}
+
+// 2.42.0 波3 T11：「开展」——把今日一展当作整展帧序播（←/→ 就在展内走，不是全库）。
+// 顺序不可换：enter() 入馆即退展（T10 设计），setCuration 必须在它之后，否则刚载入的
+//   展被自己抹掉 = 空展。载荷→请求的映射也走 CurateScheduler::asExhibit（唯一真源）。
+void MainWindow::openCuration(const QStringList& paths, const QString& title, const QString& blurb)
+{
+    const Curate::Exhibit ex = CurateScheduler::asExhibit(
+        paths, title, blurb, curator_ ? curator_->currentExhibit().generatedAt : 0);
+    if (!ex.valid) return;   // 空载荷不开灯（铁律 21：不演一场不存在的展）
+    auto* lb = ensureLightbox();
+    lb->setHidePrivate(!vaultUnlocked_);
+    lb->enter(GazeLightbox::Mode::Gaze, ex.theme.primaryPath);
+    lb->setCuration(ex, thumbsDir_);
+    lb->show();
+    lb->raise();
+}
+
+// 2.42.0 波3 T11：手势回执浮字（3s 自收）。文案一律出自 CurateScheduler::*Ack，UI 不另写
+//   一份（否则回执与落库各说各话）；配色全走 Lumen 访问器，与灯箱 toast 同一支 pill。
+void MainWindow::showAck(const QString& text)
+{
+    if (!ack_) {
+        ack_ = new QLabel(this);
+        ack_->setObjectName(QStringLiteral("mainAck"));
+        ack_->setAlignment(Qt::AlignCenter);
+        ack_->setAttribute(Qt::WA_TransparentForMouseEvents);
+        ack_->setStyleSheet(QString::fromUtf8(
+            "QLabel#mainAck{background:rgba(6,8,6,0.86);"
+            "border:1px solid %1;color:%2;border-radius:%3;padding:8px 16px;}")
+            .arg(Lumen::hex(Lumen::line()))
+            .arg(Lumen::hex(Lumen::ink()))
+            .arg(Lumen::Radius::Pill)
+            + Lumen::Type::css(Lumen::Type::Tier::Small));
+        ackTimer_ = new QTimer(this);
+        ackTimer_->setSingleShot(true);
+        connect(ackTimer_, &QTimer::timeout, this, [this] { if (ack_) ack_->hide(); });
+    }
+    ack_->setText(text);
+    ack_->adjustSize();
+    ack_->move((width() - ack_->width()) / 2, height() - 96);
+    ack_->show();
+    ack_->raise();
+    ackTimer_->start(3000);
 }
 
 void MainWindow::onNav(int row)

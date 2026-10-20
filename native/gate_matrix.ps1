@@ -360,10 +360,27 @@ $GateTable = @(
   @{n="LA_GAZE_QA";   png=$false; tier="fast"; measuredMs=331},
   @{n="LA_LAMP_QA";   png=$false; tier="fast"; measuredMs=281},
   # 2.42.0 wave3 curation engine (LA_CURATE_QA). Pure-function contract gate (R-06: no
-  # user photos; synthetic library built in a temp dir). Counter-example
-  # LA_CURATE_QA_FORCE_BROKEN=1 flips the matching group RED. measuredMs is backfilled
-  # in T11 from the -Timing measurement.
-  @{n="LA_CURATE_QA"; png=$false; tier="fast"; measuredMs=300},
+  # user photos; synthetic libraries built in temp dirs). 127 legs, groups A..M.
+  # Counter-example arms, each reddens only its own group (rule 22: expectations never
+  # switch with the arm):
+  #   LA_CURATE_QA_FORCE_BROKEN=1    -> E  (preference weight must stay 0)
+  #   LA_CURATE_QA_FORCE_BROKEN_H=1  -> H  (quality must not enter the dedup signature)
+  #   LA_CURATE_QA_FORCE_BROKEN_I=1  -> I  (bad-shot inspect must never delete)
+  #   LA_CURATE_QA_FORCE_BROKEN_R=1  -> R  (persist must not run inline in the worker)
+  # Group M (MainWindow wiring) has no env arm: a gate cannot construct MainWindow, so
+  # its 33 legs (24 DB/pure + 9 source-scan) are falsified by manual tamper builds
+  # A/B/B'+C -- every tamper reddened exactly its own named leg (ledger T11 table).
+  # Tier: FULL. Spec/plan said "fast layer", but that was a cost guess and E6 decides
+  # membership by measured cost, not taste: -Timing x15 warm samples (ms) 1508 1521 1543
+  # 1562 1571 1576 1590 1592 1614 1614 1620 1631 1643 1674 1800, plus one cold outlier
+  # 9983 (still under the 25 s global -Timeout, so no timeoutSec override). With the M
+  # group stubbed out the A..V part alone measures 971/1196/1329 ms: the gate pays full
+  # QApplication startup plus three synthetic SQLite fixtures, so the 500 ms fast budget
+  # was never reachable and the previous measuredMs=300 was an unmeasured placeholder that
+  # a first honest backfill would have rejected. LA_CLUSTER_QA (pure data work, 1424 ms,
+  # fast tier rejected by E6) is the isomorphic precedent; fail-safe rule "absent tier =
+  # full" applies. measuredMs=1900 = max-of-warm (1800) + headroom.
+  @{n="LA_CURATE_QA"; png=$false; measuredMs=1900},
   # 2.29.0 RAW/video retouch pipeline gate (LA_EDIT_RAW_QA). The retouch page used to read the
   # original straight through QImage(ph.path), which measured 0x0 null=1 for RAW -> RAW could
   # never reach the retouch page at all (2.28.0 missed this entry point). Photo, RAW and video

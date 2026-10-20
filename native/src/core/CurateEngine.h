@@ -62,6 +62,15 @@ Theme compose(const Theme& t, const QVector<Photo>& all, const QString& thumbsDi
 //   缩略图不可读 → 返回 -1（失败即未知，绝不编造）。
 double qualityScore(const Photo& p, const QString& thumbsDir);
 
+// 门禁探针（spec §5.2 解码成本红线「O(展内张数)，不得对全库」的可测化）：
+//   qaResetScanProbe() 归零后，qaQualityCalls()/qaHashCalls() 读自上次归零以来
+//   qualityScore 的调用数 / pHash 的实际解码数（缓存命中不计）。qaSetForceFullScan
+//   仅供门禁反例臂复现 T5 误读的旧形态（对全候选先算画质再裁展）。
+void qaResetScanProbe();
+int  qaQualityCalls();
+int  qaHashCalls();
+void qaSetForceFullScan(bool on);
+
 // 废片巡检（spec §2.2 / 红线 3）：连拍冗余 · 糊图 · 截图过期 三条规则**并集**，
 //   逐条记为 `BadShotRecord{path, why}`（why ∈ {burst, blurry, stale-shot}）。
 //   ★ 只打包，永不删除 —— 本函数**无任何删除/写库调用**（编译期签名只收 const）。
