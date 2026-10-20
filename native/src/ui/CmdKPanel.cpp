@@ -329,14 +329,13 @@ CmdKPanel::CmdKPanel(const QVector<Photo>* photos, QWidget* parent)
                              Lumen::Space::Xl, Lumen::Space::L);
     root->setSpacing(Lumen::Space::M);
 
-    // --mat 装裱单元（card() 面 + E2 投影）；E4 开馆层 = 金描边（仅本面板与前厅厅心卡）。
+    // --mat 装裱单元：E4「开馆」层由 Lumen::Elev 唯一真源给出（1px 金描边 + 内发光径向）。
+    // 本控件只声明自己的圆角；描边与底色一律不手写，否则与 Elev 追加的规则双写、日后必漂移。
     auto* mat = new QFrame(this);
     mat->setObjectName(QStringLiteral("cmdkMat"));
-    mat->setStyleSheet(QStringLiteral(
-        "QFrame#cmdkMat{background:%1;border:1px solid %2;border-radius:%3;}")
-        .arg(Lumen::hex(Lumen::card()), Lumen::hex(Lumen::gold()))
-        .arg(Lumen::Radius::Feature));
-    Lumen::Elev::apply(mat, Lumen::Elev::E2);
+    mat->setStyleSheet(QStringLiteral("QFrame#cmdkMat{border-radius:%1;}")
+                           .arg(Lumen::Radius::Feature));
+    Lumen::Elev::apply(mat, Lumen::Elev::E4);
     root->addWidget(mat);
 
     auto* mv = new QVBoxLayout(mat);

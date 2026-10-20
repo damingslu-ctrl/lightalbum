@@ -11,7 +11,10 @@
 #include <QVector>
 #include <QDate>
 #include <QString>
+#include <QStringList>
+#include <functional>
 #include "../core/Library.h"
+#include "../core/CurateState.h"
 
 class ThumbCache;
 
@@ -23,8 +26,17 @@ public:
     void setHidePrivate(bool hide);
     void refresh();
 
+    // 2.42.0 波3 T9：今日一展卡的数据入口（spec §2.4）。`Exhibit::valid==false`
+    // （冷启动 <50 / 缺源 / 被频控）时**整卡不出现**，不渲染空壳、不编造文案。
+    void setExhibit(const Curate::Exhibit& e);
+
     // —— 纯函数（LA_LOBBY_QA 直调；确定性、不读写任何全局状态）——
     //
+    // 卡片文案（展名 + 小记）**只由 Curate 模板产出的 theme 字段拼接**（spec §3 J：
+    // 文案非 LLM、无外部调用、不掺时间戳）。产品侧作为整卡的 accessibleName 暴露，
+    // 门禁 J 组直调本函数——同一份，绝不复刻第二份拼接。
+    static QString buildCardText(const Curate::Exhibit& e);
+
     // onThisDay：往年「今日」——回退链
     //   ① 同月同日（含闰日并入：today 为 2-28 时并入 2-29）
     //   ② 不足 3 张 → 同月全库
@@ -45,11 +57,21 @@ signals:
     void icloudImportRequested();
     void commandRequested();   // 2.41.0 T8：玻璃指令栏点击 → ⌘K 开馆
 
+    // 2.42.0 波3 T9 三手势 + 开展入口（spec §2.1「三手势是意图，落库由 GUI 线程做」）。
+    // 本类**不写库**：只把意图发出去，落库/合集/静音由 MainWindow 接线（T11）。
+    void keepExhibit(const QStringList& paths, const QString& title);      // 收进合集
+    void swapExhibit();                                                   // 换一展
+    void muteTemplate(const QString& templateId);                          // 永久静音该模板
+    void openCuration(const QStringList& paths, const QString& title,
+                      const QString& blurb);                              // 进凝视序列
+
 private:
     void rebuild();
     QWidget* makeHeroCard();
+    QWidget* makeCurateCard();
     QWidget* makeThumbStrip();
-    QWidget* makeThumbCard(const Photo& p, int sidePx, bool feature);
+    QWidget* makeThumbCard(const Photo& p, int sidePx, bool feature,
+                           std::function<void()> onActivated = nullptr);
     QWidget* makeCommandBar();
     QWidget* makeEmptyGuide();
 
@@ -62,4 +84,6 @@ private:
     QWidget* heroCard_ = nullptr;
     QWidget* recentStrip_ = nullptr;
     QWidget* emptyGuide_ = nullptr;
+    QWidget* curateCard_ = nullptr;
+    Curate::Exhibit exhibit_;
 };

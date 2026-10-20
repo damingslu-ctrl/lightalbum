@@ -1,7 +1,12 @@
 #include "LobbyPage.h"
 #include "ThumbCache.h"
 #include "Theme.h"
+#include "Icons.h"
 #include "../core/CmdFilter.h"   // seasonIndexOf：四季表唯一真源
+#include "../core/CurateEngine.h"  // templateIdToken：静音意图的模板 token 唯一真源
+#include "../core/MotionDriver.h"  // kExhibitBreath 的唯一 Qt 驱动器
+#include "../core/MotionKit.h"
+#include "../core/MotionPref.h"    // Lumen::systemReducedMotion
 
 #include <QCoreApplication>
 #include <QFrame>
@@ -78,6 +83,39 @@ private:
     std::function<void()> onActivated_;
 };
 
+// 今日一展卡：E4 开馆层的底与 1px 金描边由 Lumen::Elev 的 QSS 给出（本类先落基类
+// paintEvent），这里只叠「呼吸微光」那一层——α 上限引用 Elev::kInnerGlowMax（V4 §五
+// 光晕纪律 ≤10%），数值由 Motion::Driver(kExhibitBreath) 推入，本类不含任何曲线/时长知识。
+class ExhibitCard : public QFrame {
+public:
+    explicit ExhibitCard(QWidget* parent = nullptr) : QFrame(parent) {}
+
+    void setBreath(double v)
+    {
+        breath_ = qBound(0.0, v, 1.0);
+        setProperty("laBreath", breath_);   // 落点即门禁读数：不为测试另设探针
+        update();
+    }
+
+protected:
+    void paintEvent(QPaintEvent* e) override
+    {
+        QFrame::paintEvent(e);
+        if (breath_ <= 0.0) return;
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        QColor g = Lumen::gold();
+        g.setAlpha(int(255.0 * Lumen::Elev::kInnerGlowMax * breath_));
+        p.setPen(QPen(g, 1.0));
+        p.setBrush(Qt::NoBrush);
+        p.drawRoundedRect(QRectF(1.0, 1.0, width() - 2.0, height() - 2.0),
+                          Lumen::Radius::Feature, Lumen::Radius::Feature);
+    }
+
+private:
+    double breath_ = 0.0;
+};
+
 } // namespace
 
 namespace {
@@ -129,6 +167,28 @@ void LobbyPage::setHidePrivate(bool hide)
 }
 
 void LobbyPage::refresh() { rebuild(); }
+
+QString LobbyPage::buildCardText(const Curate::Exhibit& e)
+{
+    if (!e.valid) return QString();
+    const QString title = e.theme.title.trimmed();
+    if (title.isEmpty()) return QString();          // 缺源不编造（R7）：无展名即无文案
+    const QString blurb = e.theme.blurb.trimmed();
+    return blurb.isEmpty() ? title : title + QStringLiteral(" · ") + blurb;
+}
+
+void LobbyPage::setExhibit(const Curate::Exhibit& e)
+{
+    // 同展不重建：换一次展就重放一遍呼吸、重排一次缩略图请求，refresh 汇合时会抖。
+    // 身份 = 有效位 + 模板 + 文案 + 帧序 + 主图（任一项变了都必须重建）。
+    const bool sameExhibit = e.valid == exhibit_.valid
+                             && e.theme.id == exhibit_.theme.id
+                             && e.theme.primaryPath == exhibit_.theme.primaryPath
+                             && e.theme.paths == exhibit_.theme.paths
+                             && buildCardText(e) == buildCardText(exhibit_);
+    exhibit_ = e;
+    if (!sameExhibit) refresh();
+}
 
 QVector<const Photo*> LobbyPage::onThisDay(const QVector<Photo>& in, const QDate& today,
                                            bool hidePrivate, int maxN)
@@ -219,6 +279,8 @@ void LobbyPage::rebuild()
     col->setSpacing(Lumen::Space::Xl);
 
     if (photos_ && !photos_->isEmpty()) {
+        curateCard_ = makeCurateCard();      // 无展（冷启动/缺源/频控）→ 整卡不出现
+        if (curateCard_) col->addWidget(curateCard_);
         heroCard_ = makeHeroCard();
         col->addWidget(heroCard_);
         recentStrip_ = makeThumbStrip();
@@ -230,6 +292,116 @@ void LobbyPage::rebuild()
     col->addWidget(makeCommandBar());
     col->addStretch(1);
     content_->show();
+}
+
+QWidget* LobbyPage::makeCurateCard()
+{
+    // 三重「不出现」门槛（spec §2.4 / 铁律 21）：无效展、文案拼不出、主图不在库——
+    // 任一条成立就返回 nullptr，rebuild() 不 addWidget，厅里就不会立起一块空壳。
+    if (!exhibit_.valid) return nullptr;
+    const QString copy = buildCardText(exhibit_);
+    if (copy.isEmpty()) return nullptr;
+
+    const Curate::Theme& th = exhibit_.theme;
+    const Photo* primary = nullptr;
+    if (photos_) {
+        for (const Photo& p : *photos_) {
+            if (p.path == th.primaryPath) { primary = &p; break; }
+        }
+    }
+    if (!primary) return nullptr;
+
+    auto* card = new ExhibitCard(content_);
+    card->setObjectName(QStringLiteral("curateCard"));
+    card->setAccessibleName(copy);        // 读屏与门禁读同一句（buildCardText 唯一真源）
+    card->setAttribute(Qt::WA_StyledBackground, true);
+    card->setStyleSheet(QStringLiteral("QWidget#curateCard{border-radius:%1px;}")
+                            .arg(Lumen::Radius::Feature));
+    Lumen::Elev::apply(card, Lumen::Elev::E4);   // 全项目第一张 E4「开馆」卡：金描边 + 内发光
+
+    auto* h = new QHBoxLayout(card);
+    h->setContentsMargins(Lumen::Space::Xl, Lumen::Space::Xl,
+                          Lumen::Space::Xl, Lumen::Space::Xl);
+    h->setSpacing(Lumen::Space::Xl);
+
+    auto* v = new QVBoxLayout();
+    v->setSpacing(Lumen::Space::S);
+
+    auto* kicker = new QLabel(
+        QCoreApplication::translate("LightAlbum", "今日一展 · 馆长选题"), card);
+    kicker->setFont(Lumen::Type::label());
+    kicker->setStyleSheet(QStringLiteral("color:%1;background:transparent;")
+                              .arg(Lumen::hex(Lumen::gold())));
+    v->addWidget(kicker);
+
+    auto* title = new QLabel(th.title, card);
+    title->setObjectName(QStringLiteral("curateTitle"));
+    title->setFont(Lumen::Type::display());
+    title->setWordWrap(true);
+    title->setStyleSheet(QStringLiteral("color:%1;background:transparent;")
+                              .arg(Lumen::hex(Lumen::ink())));
+    v->addWidget(title);
+
+    if (!th.blurb.trimmed().isEmpty()) {
+        auto* blurb = new QLabel(th.blurb, card);
+        blurb->setObjectName(QStringLiteral("curateBlurb"));
+        blurb->setFont(Lumen::Type::body());
+        blurb->setWordWrap(true);
+        blurb->setStyleSheet(QStringLiteral("color:%1;background:transparent;")
+                                  .arg(Lumen::hex(Lumen::muted())));
+        v->addWidget(blurb);
+    }
+
+    // 三手势 = 三个「意图」，本类绝不写库；落库由 MainWindow 接线（spec §2.1）。
+    auto gesture = [card](const char* name, const char* iconKind, const char* text) {
+        auto* b = new QPushButton(QCoreApplication::translate("LightAlbum", text), card);
+        b->setObjectName(QString::fromLatin1(name));
+        b->setIcon(Icons::make(QLatin1String(iconKind), Lumen::gold(), 24));
+        b->setStyleSheet(Lumen::btnGhost(Lumen::gold()));
+        b->setCursor(Qt::PointingHandCursor);
+        return b;
+    };
+    auto* acts = new QHBoxLayout();
+    acts->setSpacing(Lumen::Space::M);
+    auto* keep = gesture("curateKeep", "star", "收进合集");
+    auto* swap = gesture("curateSwap", "swap", "换一展");
+    auto* mute = gesture("curateMute", "reject", "别再这类");
+    acts->addWidget(keep);
+    acts->addWidget(swap);
+    acts->addWidget(mute);
+    acts->addStretch(1);
+    v->addSpacing(Lumen::Space::S);
+    v->addLayout(acts);
+    connect(keep, &QPushButton::clicked, this, [this, th]() {
+        emit keepExhibit(th.paths, exhibit_.theme.title);
+    });
+    connect(swap, &QPushButton::clicked, this, &LobbyPage::swapExhibit);
+    connect(mute, &QPushButton::clicked, this, [this, th]() {
+        emit muteTemplate(QString::fromLatin1(Curate::templateIdToken(th.id)));
+    });
+
+    v->addStretch(1);
+    h->addLayout(v, 1);
+
+    // 主图即「开展」入口：点它进凝视策展序列（整展帧序，不是单张）。
+    QWidget* hero = makeThumbCard(
+        *primary, 168, true, [this, th]() {
+            emit openCuration(th.paths, exhibit_.theme.title, exhibit_.theme.blurb);
+        });
+    hero->setObjectName(QStringLiteral("curateHero"));
+    h->addWidget(hero, 0, Qt::AlignTop);
+
+    // 呼吸微光一次成展只播一遍（不是常驻循环）：数值全出自引擎预设，UI 零曲线知识。
+    // LA_GATE / 截图 / 系统减动效 → Driver 走终帧支路，卡片静置即终值态，像素门确定性。
+    const bool anim = qEnvironmentVariableIsEmpty("LA_GATE")
+                      && qEnvironmentVariableIsEmpty("LA_UI_SHOT")
+                      && !Lumen::systemReducedMotion();
+    auto* drv = new Motion::Driver(Motion::kExhibitBreath, !anim, card);
+    connect(drv, &Motion::Driver::valueFor, card, [card](const QByteArray& prop, double v) {
+        if (prop == Motion::kPropGlow) card->setBreath(v);
+    });
+    drv->start();
+    return card;
 }
 
 QWidget* LobbyPage::makeHeroCard()
@@ -307,17 +479,20 @@ QWidget* LobbyPage::makeThumbStrip()
     return wrap;
 }
 
-QWidget* LobbyPage::makeThumbCard(const Photo& p, int sidePx, bool feature)
+QWidget* LobbyPage::makeThumbCard(const Photo& p, int sidePx, bool feature,
+                                  std::function<void()> onActivated)
 {
     const QString path = p.path;
     const QString caption = p.date.left(10);
     const QString thumb = p.thumbFile;
     const int lv = feature ? ThumbCache::kFeature : ThumbCache::kTile;
 
+    // 默认意图 = 单点开凝视；今日一展卡传入自己的回调（整展序列），不再另造一套缩略卡。
+    if (!onActivated) onActivated = [this, path]() { emit openGaze(path); };
+
     // 命中即同步给图；未命中由后台加载完成后回调填充（ctx=this 生命周期守卫）。
     QPixmap pm = cache_->cached(thumb, lv);
-    auto* card = new ThumbCard(pm, caption, sidePx,
-        [this, path]() { emit openGaze(path); }, content_);
+    auto* card = new ThumbCard(pm, caption, sidePx, std::move(onActivated), content_);
     cache_->request(thumb, this, [card](const QPixmap& loaded) {
         if (!loaded.isNull()) card->setPixmap(loaded);
     }, lv);

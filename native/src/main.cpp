@@ -98,6 +98,9 @@
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QMouseEvent>            // 方向 C·联动：LA_GEO_LINK_QA 离屏合成鼠标事件
+#include <QLabel>                 // 2.42.0 T9：LA_LOBBY_QA J 组读展卡文案标签
+#include <QPushButton>            // 2.42.0 T9：LA_LOBBY_QA J 组点三手势
+#include <QGraphicsDropShadowEffect>  // 2.42.0 T9：LA_LOBBY_QA J 组读回 E4 压舱阴影
 #include <QPixmap>
 #include <QElapsedTimer>
 #include <QByteArray>
@@ -1459,6 +1462,139 @@ int runLobbyQa()
         chk(anyPriv(LobbyPage::onThisDay(in, QDate(2026, 10, 18), false, 9)), "E_priv_shown_when_visible");
     }
 
+    // —— J 组：今日一展卡（spec §2.4 视觉 + §3 J 文案非 LLM）——
+    // 三条纪律各有独立判别：① 文案只由模板字段拼接（换主题必换文案 / 换时间戳不换文案）；
+    // ② Exhibit::valid==false → 整卡不出现（冷启动 <50 不渲染空壳，铁律 21 数据诚实）；
+    // ③ 卡片开馆层=E4、呼吸=引擎 kExhibitBreath 终帧、三手势与主图各自发意图信号（本类不写库）。
+    {
+        QVector<Photo> lib;
+        lib << mk("2026-10-01") << mk("2026-09-02");
+        const QString lib0 = lib.at(0).path;      // 卡主图必须是库里真存在的藏品
+        auto mkExhibit = [&lib0](const char* title, const char* blurb, bool valid) {
+            Curate::Exhibit e;
+            e.valid = valid;
+            e.theme.id = Curate::TemplateId::HiddenReunion;
+            e.theme.title = QString::fromLatin1(title);
+            e.theme.blurb = QString::fromLatin1(blurb);
+            e.theme.primaryPath = lib0;
+            e.theme.paths << lib0 << QStringLiteral("syn_2");
+            e.generatedAt = 1730000000;
+            return e;
+        };
+        const Curate::Exhibit e1 = mkExhibit("Three Winters", "Never hung once", true);
+        const QString t1 = LobbyPage::buildCardText(e1);
+        chk(t1.contains(e1.theme.title) && t1.contains(e1.theme.blurb), "J_copy_title_blurb");
+
+        const Curate::Exhibit e2 = mkExhibit("Coastline", "Two days in June", true);
+        chk(LobbyPage::buildCardText(e2) != t1, "J_copy_varies_with_theme");
+
+        // 文案不掺钟：generatedAt 位移一整天 → 串必逐字节相同（isEmpty 前置防「空==空」白过）。
+        Curate::Exhibit e3 = e1; e3.generatedAt = e1.generatedAt + 86400;
+        const QString t3 = LobbyPage::buildCardText(e3);
+        chk(!t1.isEmpty() && t1 == t3, "J_copy_no_clock");
+
+        chk(LobbyPage::buildCardText(mkExhibit("X", "Y", false)).isEmpty(), "J_invalid_copy_empty");
+
+        // —— 卡片实体（widget 级：真实产品构造路径，非复刻的第二份逻辑）——
+        LobbyPage lobby(&lib, QString());
+        lobby.resize(1280, 860);
+        lobby.show();
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 200);
+
+        lobby.setExhibit(mkExhibit("Invalid", "Should not show", false));
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 200);
+        chk(lobby.findChild<QWidget*>(QStringLiteral("curateCard")) == nullptr,
+            "J_invalid_no_card");
+
+        // 主图不在库中 → 同样不建卡（展卡不得指向不存在的藏品）
+        {
+            Curate::Exhibit ghost = mkExhibit("Ghost", "Primary missing", true);
+            ghost.theme.primaryPath = QStringLiteral("no_such_photo");
+            lobby.setExhibit(ghost);
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 200);
+            chk(lobby.findChild<QWidget*>(QStringLiteral("curateCard")) == nullptr,
+                "J_missing_primary_no_card");
+        }
+
+        const Curate::Exhibit ok = mkExhibit("Three Winters", "Never hung once", true);
+        lobby.setExhibit(ok);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 200);
+        QWidget* card = lobby.findChild<QWidget*>(QStringLiteral("curateCard"));
+        chk(card != nullptr, "J_valid_card_built");
+
+        if (card) {
+            auto* nameLbl = card->findChild<QLabel*>(QStringLiteral("curateTitle"));
+            auto* blurbLbl = card->findChild<QLabel*>(QStringLiteral("curateBlurb"));
+            chk(nameLbl && blurbLbl && nameLbl->text() == ok.theme.title
+                && blurbLbl->text() == ok.theme.blurb, "J_card_labels_from_theme");
+
+            auto* eff = static_cast<QGraphicsDropShadowEffect*>(card->graphicsEffect());
+            chk(eff && eff->blurRadius() == Lumen::Elev::shadowBlur(Lumen::Elev::E4)
+                && eff->color().alpha() == Lumen::Elev::shadowAlpha(Lumen::Elev::E4)
+                && card->styleSheet().contains(QStringLiteral("qradialgradient"))
+                && card->styleSheet().contains(
+                       QStringLiteral("border:1px solid ") + Lumen::hex(Lumen::gold())),
+                "J_card_e4_open");
+
+            // 呼吸微光：终值必须等于引擎对该预设终帧的算法值（本门不设 LA_MOTION 钩子，
+            // LA_GATE → reduceMotion 支路 → evaluate(preset,1.0)；期望值取自同一纯函数，不写死 0.25）。
+            const double term = Motion::evaluate(Motion::preset(Motion::kExhibitBreath), 1.0).value(0);
+            chk(card->property("laBreath").toDouble() == term, "J_breath_engine_terminal");
+
+            auto* keep = card->findChild<QPushButton*>(QStringLiteral("curateKeep"));
+            auto* swap = card->findChild<QPushButton*>(QStringLiteral("curateSwap"));
+            auto* mute = card->findChild<QPushButton*>(QStringLiteral("curateMute"));
+            chk(keep && swap && mute, "J_card_three_gestures");
+
+            QStringList keepPaths; QString keepTitle; int swapHits = 0; QStringList muteTok;
+            QObject::connect(&lobby, &LobbyPage::keepExhibit,
+                             [&](const QStringList& p, const QString& t) { keepPaths = p; keepTitle = t; });
+            QObject::connect(&lobby, &LobbyPage::swapExhibit, [&]() { ++swapHits; });
+            QObject::connect(&lobby, &LobbyPage::muteTemplate, [&](const QString& id) { muteTok << id; });
+            if (keep) keep->click();
+            chk(keepPaths == ok.theme.paths && keepTitle == ok.theme.title, "J_gesture_keep_paths");
+            if (swap) swap->click();
+            chk(swapHits == 1, "J_gesture_swap_once");
+            if (mute) mute->click();
+            chk(muteTok == QStringList{QString::fromLatin1(Curate::templateIdToken(ok.theme.id))},
+                "J_gesture_mute_token");
+
+            // 主图点击 → 进凝视序列（离屏合成鼠标事件；与 GalleryBatch 门同一手法）
+            QStringList openPaths; QString openTitle, openBlurb;
+            QObject::connect(&lobby, &LobbyPage::openCuration,
+                             [&](const QStringList& p, const QString& t, const QString& b) {
+                openPaths = p; openTitle = t; openBlurb = b;
+            });
+            if (QWidget* hero = card->findChild<QWidget*>(QStringLiteral("curateHero"))) {
+                const QPointF at(6, 6);
+                QMouseEvent press(QEvent::MouseButtonPress, at, at,
+                                  Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+                QMouseEvent release(QEvent::MouseButtonRelease, at, at,
+                                    Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+                QApplication::sendEvent(hero, &press);
+                QApplication::sendEvent(hero, &release);
+            }
+            chk(openPaths == ok.theme.paths && openTitle == ok.theme.title
+                && openBlurb == ok.theme.blurb, "J_hero_opens_curation");
+
+            // 呼吸预设名只能出自引擎常量：比像素/比数值都看不出「接错预设」，
+            // 故对 makeCurateCard 函数体做 token 计数（与 CURATE V 组分发扫描同一手法）。
+            QString src;
+            {
+                QFile f(QCoreApplication::applicationDirPath()
+                        + QStringLiteral("/../src/ui/LobbyPage.cpp"));
+                if (f.open(QIODevice::ReadOnly)) src = QString::fromUtf8(f.readAll());
+            }
+            const int at = src.indexOf(QStringLiteral("QWidget* LobbyPage::makeCurateCard("));
+            const int end = at < 0 ? -1 : src.indexOf(QStringLiteral("\n}"), at);
+            const QString body = (at >= 0 && end > at) ? src.mid(at, end - at) : QString();
+            chk(!body.isEmpty(), "J_card_source_scanned");     // fail-open：源没读到就红
+            chk(body.count(QStringLiteral("Motion::kExhibitBreath")) == 1
+                && body.count(QStringLiteral("Lumen::Elev::E4")) == 1,
+                "J_breath_and_e4_preset_named");
+        }
+    }
+
     const bool pass = (checks > 0) && (fails == 0);
     std::fprintf(stderr, "LA_LOBBY_QA %s checks=%d failed=%d broken=%d\n",
                  pass ? "PASS" : "FAIL", checks, fails, broken ? 1 : 0);
@@ -1707,6 +1843,25 @@ int runCmdkQa()
         chk(c1.size() == 4 && !c1.isEmpty()
             && c1.first() == QString::fromUtf8("去年秋天")
             && c1.contains(kXiaoYu) && c1.contains(kBW), "E_chip_merge");
+    }
+
+    // —— F 组：装裱单元开馆层（2.42.0 spec §2.4：E4 = 金描边 + 内发光，单一真源）——
+    // 此前本面板手抄一份 gold 描边 QSS + E2 阴影；E4 落地后描边必须由 Elev 给出，
+    // 判别读回的是**控件实况**（改回 E2 或删掉 E4 接线都咬红）。
+    {
+        CmdKPanel panel(nullptr);
+        panel.resize(760, 420);
+        panel.show();
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 200);
+        QWidget* mat = panel.findChild<QWidget*>(QStringLiteral("cmdkMat"));
+        auto* eff = mat ? static_cast<QGraphicsDropShadowEffect*>(mat->graphicsEffect()) : nullptr;
+        chk(mat && eff
+            && eff->blurRadius() == Lumen::Elev::shadowBlur(Lumen::Elev::E4)
+            && eff->color().alpha() == Lumen::Elev::shadowAlpha(Lumen::Elev::E4)
+            && mat->styleSheet().contains(QStringLiteral("qradialgradient"))
+            && mat->styleSheet().contains(
+                   QStringLiteral("border:1px solid ") + Lumen::hex(Lumen::gold())),
+            "F_panel_e4_open");
     }
 
     const bool pass = (checks > 0) && (fails == 0);
