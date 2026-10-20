@@ -71,6 +71,7 @@ inline const QByteArray kHeartBurst { "HeartBurst" };   // 喜欢标记心形粒
 inline const QByteArray kLightFirst { "LightFirst" };   // slow 640 进前厅/凝视入场（光先行）
 inline const QByteArray kPushDoor   { "PushDoor" };     // standard 360 进人物馆
 inline const QByteArray kLightsDown { "LightsDown" };   // standard 360 预留（凝视退场键，本轮不接 UI）
+inline const QByteArray kExhibitBreath { "ExhibitBreath" }; // 2400ms 呼吸微光（展卡 + 逐帧驻足同一档位）
 
 // ---- 属性名（evaluate 回调与 UI 约定）----
 inline const QByteArray kPropOpacity { "opacity" };

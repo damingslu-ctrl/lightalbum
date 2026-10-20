@@ -9,13 +9,22 @@
 
 namespace Icons {
 
-inline QIcon make(const QString& kind, const QColor& color, int size = 22)
+// 描边宽度体系（V4 §四）：旧控件组 1.8；2.42.0 馆长图标组 1.5 —— 更细的线，
+// 才压得住 E4 开馆层那 1px 金描边（两层同时粗就成「框里有框」）。唯一真源，
+// makePixmap 只按这张表取宽度（门禁 V_icons_stroke_curator_1_5 断两组不互串）。
+inline qreal strokeWidth(const QString& kind)
+{
+    return (kind == QLatin1String("curate") || kind == QLatin1String("star")
+            || kind == QLatin1String("reject") || kind == QLatin1String("swap")) ? 1.5 : 1.8;
+}
+
+inline QPixmap makePixmap(const QString& kind, const QColor& color, int size = 22)
 {
     QPixmap pm(size, size);
     pm.fill(Qt::transparent);
     QPainter p(&pm);
     p.setRenderHint(QPainter::Antialiasing, true);
-    QPen pen(color, 1.8);
+    QPen pen(color, strokeWidth(kind));
     pen.setCapStyle(Qt::RoundCap);
     pen.setJoinStyle(Qt::RoundJoin);
     p.setPen(pen);
@@ -99,12 +108,57 @@ inline QIcon make(const QString& kind, const QColor& color, int size = 22)
                    QPointF(r.center().x(), r.bottom() - r.height() * 0.18));
         p.drawLine(QPointF(r.center().x() - r.width() * 0.18, r.bottom() - r.height() * 0.18),
                    QPointF(r.center().x() + r.width() * 0.18, r.bottom() - r.height() * 0.18));
+    } else if (kind == QLatin1String("curate")) {   // 2.42.0 馆长：展台上的装裱画（策展入口）
+        const qreal fw = r.width() * 0.60, fh = r.height() * 0.56;
+        const QRectF frame(r.center().x() - fw / 2, r.top(), fw, fh);
+        p.drawRoundedRect(frame, 2, 2);
+        p.drawPolyline(QPolygonF{{frame.left() + fw * 0.14, frame.bottom() - fh * 0.18},
+                                 {frame.left() + fw * 0.40, frame.top() + fh * 0.42},
+                                 {frame.left() + fw * 0.62, frame.bottom() - fh * 0.30},
+                                 {frame.right() - fw * 0.12, frame.top() + fh * 0.26}});
+        p.drawLine(QPointF(r.left(), r.bottom()), QPointF(r.right(), r.bottom()));
+        p.drawLine(QPointF(frame.left() + fw * 0.10, r.bottom()),
+                   QPointF(frame.center().x() - fw * 0.14, frame.bottom()));
+        p.drawLine(QPointF(frame.right() - fw * 0.10, r.bottom()),
+                   QPointF(frame.center().x() + fw * 0.14, frame.bottom()));
+    } else if (kind == QLatin1String("star")) {      // 馆长组：收藏此展（闭合五角星轮廓）
+        QPointF c(r.center());
+        const qreal R = qMin(r.width(), r.height()) * 0.5, ri = R * 0.42;
+        QPolygonF st;
+        for (int i = 0; i < 10; ++i) {
+            const qreal ang = -M_PI_2 + i * (M_PI / 5.0);   // 五角星 10 顶点，相邻 36°
+            const qreal rad = (i % 2 == 0) ? R : ri;
+            st << QPointF(c.x() + rad * std::cos(ang), c.y() + rad * std::sin(ang));
+        }
+        st << st.first();
+        p.drawPolyline(st);
+    } else if (kind == QLatin1String("reject")) {    // 馆长组：别再这类 / 退藏（圆内斜杠）
+        const qreal rad = qMin(r.width(), r.height()) * 0.46;
+        const qreal k = rad * 0.7071;
+        p.drawEllipse(r.center(), rad, rad);
+        p.drawLine(QPointF(r.center().x() - k, r.center().y() - k),
+                   QPointF(r.center().x() + k, r.center().y() + k));
+    } else if (kind == QLatin1String("swap")) {      // 馆长组：换一展（上下反向双箭头）
+        const qreal up = r.center().y() - r.height() * 0.22;
+        const qreal dn = r.center().y() + r.height() * 0.22;
+        const qreal hs = r.height() * 0.20, hl = r.width() * 0.20;
+        p.drawLine(QPointF(r.left(), up), QPointF(r.right(), up));
+        p.drawPolyline(QPolygonF{{r.right() - hl, up - hs}, {r.right(), up}, {r.right() - hl, up + hs}});
+        p.drawLine(QPointF(r.left(), dn), QPointF(r.right(), dn));
+        p.drawPolyline(QPolygonF{{r.left() + hl, dn - hs}, {r.left(), dn}, {r.left() + hl, dn + hs}});
     } else {                                     // about：人像
         p.drawEllipse(QPointF(r.center().x(), r.top() + r.height() * 0.32), r.width() * 0.24, r.width() * 0.24);
         p.drawArc(QRectF(r.left(), r.top() + r.height() * 0.5, r.width(), r.height() * 0.9),
                   180 * 16, 180 * 16);
     }
-    return QIcon(pm);
+    return pm;
+}
+
+// 金色变体纪律（V4 §四）：**仅**馆长图标组（curate/star/reject/swap）允许以
+// Lumen::gold() 着色；其余图标跟控件墨色，金只在「开馆」语义处出现。
+inline QIcon make(const QString& kind, const QColor& color, int size = 22)
+{
+    return QIcon(makePixmap(kind, color, size));
 }
 
 } // namespace Icons

@@ -195,6 +195,16 @@ static QVector<Preset> makeTable()
         };
         t.append(p);
     }
+    // ExhibitBreath 2400：策展呼吸（展卡微光 + 凝视逐帧驻足同一档位）。
+    // 曲线复用既有 Pulse（spec §2.4「不新造曲线」）：0.25→1→0.25 一整周期，
+    // Pulse 自带周期归一 ⇒ f(0)==f(1) 恒等，循环无接缝。
+    {
+        Preset p; p.name = kExhibitBreath; p.durationMs = 2400;
+        p.keys = {
+            { kPropGlow, 0.0, 1.0, Pulse, 0.0, 1.0, false, false, 0.0 },
+        };
+        t.append(p);
+    }
     return t;
 }
 

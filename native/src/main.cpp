@@ -88,6 +88,7 @@
 #include "ui/GazeLightbox.h"   // 2.41.0 §2.5 凝视灯箱（LA_GAZE_QA 直调 dominantColor 纯函数）
 #include "ui/DarkPalette.h"
 #include "ui/Theme.h"
+#include "ui/Icons.h"   // 2.42.0 波3 T8：馆长图标组（LA_CURATE_QA V 组像素判别直调）
 #include "ui/Splash.h"
 #include "ui/LogPage.h"
 #include "core/MotionPref.h"
@@ -1883,6 +1884,7 @@ namespace {
 // 反例 LA_CURATE_QA_FORCE_BROKEN=1：各对应组红（见各组注）。
 // 组：A 模板表/确定  B 候选池  C 新鲜感  D 重复惩罚  E 无偏好学习  F 频控
 //     G 冷启动  H 画质不越界  I 废片巡检  J 文案非 LLM  K 缺源诚实  L 反例矩阵
+//     R 编排层（T7）  V 视觉语言层（T8：Elev E3/E4 + 馆长图标组 + kExhibitBreath）
 // 合成照片工厂（LA_CURATE_QA 专用；R-06：仓库零真实照片，全部内存构造）。
 // 确定性：同 n 恒同结果。i%15==7 → 2 张私密（n=30 时 i=7,22）；首 3 张约定为「近展」。
 // 覆盖桶维度：category(8 类) / person(Alice,Bob) / year / city / mark。
@@ -2521,6 +2523,242 @@ int runCurateQa()
                firedR.load() && idR.load() == 0 && tidR.load() == guiTidR && exhibitCount(dbp) == 1);
         QObject::disconnect(conn);
         CurateScheduler::setForceInlineForQa(false);
+    }
+
+    // —— V：视觉语言层（T8，spec §2.4 + §0.1 R4 裁决）——
+    //   E4 不是「再叠一层阴影」：四层必须逐层可判别（E3 塌回 E2 即红）、开馆层只在 E4
+    //   追加（宿主 QSS 不得被覆盖；选择器必须限定，否则 Qt 把无选择器声明下发给后代控件）、
+    //   金描边必须走 token（写死 hex 在切灯后两次同值 → 红）、内发光贡献率硬顶 10%
+    //   （与凝视光晕 E 组同一「反解量化」口径）。
+    //   馆长图标组证明的是**四个互不相同的真形状**：非空 ≠ 内容，掉进 about 兜底也非空，
+    //   故与兜底签名逐一对比 + 组内两两对比 + 24 格包围盒撑开度。
+    //   呼吸预设必须复用既有 Pulse（不新造曲线）且首尾同值（循环无接缝）。
+    //   本组不占 env 钩子：判别腿自带反例形态（层级塌缩 / 图标回退 / 曲线替换 / 灯写死），
+    //   反例已由临时手改跑红证明，记录在 SDD 台账 T8 行。
+    {
+        using Lev = Lumen::Elev::Level;
+        report("Elev_E4_exists", int(Lumen::Elev::E4) == 4);
+        report("V_elev_levels_enumerated",
+               int(Lumen::Elev::E1) == 1 && int(Lumen::Elev::E2) == 2 && int(Lumen::Elev::E3) == 3);
+
+        bool mono = true;
+        for (int lv = 2; lv <= 4; ++lv) {
+            const Lev L = Lev(lv), P = Lev(lv - 1);
+            if (!(Lumen::Elev::shadowAlpha(L) > Lumen::Elev::shadowAlpha(P)
+                  && Lumen::Elev::shadowDy(L) > Lumen::Elev::shadowDy(P)
+                  && Lumen::Elev::shadowBlur(L) > Lumen::Elev::shadowBlur(P))) mono = false;
+        }
+        report("V_elev_shadow_monotone", mono);
+
+        const QString sel = QStringLiteral("QWidget#laQaCard");
+        const QColor base = Lumen::card();
+        report("V_elev_open_layer_e4_only",
+               Lumen::Elev::openCss(Lumen::Elev::E1, sel, base).isEmpty()
+                   && Lumen::Elev::openCss(Lumen::Elev::E2, sel, base).isEmpty()
+                   && Lumen::Elev::openCss(Lumen::Elev::E3, sel, base).isEmpty()
+                   && !Lumen::Elev::openCss(Lumen::Elev::E4, sel, base).isEmpty());
+
+        const QString open4 = Lumen::Elev::openCss(Lumen::Elev::E4, sel, base);
+        report("V_elev_gold_border_is_token",
+               open4.contains(QStringLiteral("border:1px solid ") + Lumen::hex(Lumen::gold())));
+
+        {   // 描边/内发光必须**随灯**：换一盏再取一次，写死 hex 则两次同值 → 红。
+            // 探针灯必须与当前灯在 surface 与 gold 两列都不同（L2/L3 的 surface+gold 全同，
+            // 故不能盲取 Jade）；prev 恰为 Dusk 时改取 Nocturne。setActiveLamp 即写
+            // QSettings，末尾复原 → 持久值零变化。
+            const Lumen::Lamp prev = Lumen::activeLamp();
+            const Lumen::Lamp probe =
+                (prev == Lumen::Lamp::Dusk) ? Lumen::Lamp::Nocturne : Lumen::Lamp::Dusk;
+            Lumen::setActiveLamp(probe);
+            const QString alt = Lumen::Elev::openCss(Lumen::Elev::E4, sel, Lumen::card());
+            Lumen::setActiveLamp(prev);
+            report("V_elev_open_layer_tracks_lamp",
+                   alt != open4
+                       && Lumen::Elev::innerGlow(QColor(0x11, 0x22, 0x33)) != base);
+        }
+
+        {   // 内发光量化：外圈色 = 底色向金合成，贡献率必须 ∈(0, 10%]（照 stop:1 反解）。
+            static const QRegularExpression kStopRe(QStringLiteral("stop:1 #([0-9a-fA-F]{6})"));
+            const QRegularExpressionMatch m = kStopRe.match(open4);
+            bool ok = m.hasMatch();
+            const QColor edge = ok ? QColor(QLatin1Char('#') + m.captured(1)) : QColor();
+            ok = ok && edge.isValid();   // 反解失败不得伪装成「黑色」参与比值（本轮实测踩过）
+            const QColor gt = Lumen::gold();
+            bool degenerate = true;
+            auto rate = [&edge, &base, &gt, &degenerate](int (QColor::*get)() const) -> double {
+                const double e = double((edge.*get)()), b = double((base.*get)()),
+                           g = double((gt.*get)());
+                if (qAbs(g - b) < 1.0) { if (qAbs(e - b) > 1.0) degenerate = false; return 0.0; }
+                return (e - b) / (g - b);
+            };
+            const double tr = rate(&QColor::red), tg = rate(&QColor::green), tb = rate(&QColor::blue);
+            const double ratio = qMax(tr, qMax(tg, tb));
+            report("V_elev_inner_glow_le_10pct",
+                   ok && degenerate && ratio > 0.0 && ratio <= Lumen::Elev::kInnerGlowMax + 0.01);
+            report("V_elev_inner_glow_is_radial",
+                   ok && open4.contains(QStringLiteral("qradialgradient("))
+                       && open4.startsWith(sel + QLatin1Char('{')));
+        }
+
+        auto wired = [](QWidget* w, Lev lv) {
+            auto* e = static_cast<QGraphicsDropShadowEffect*>(w->graphicsEffect());
+            return e && e->color().alpha() == Lumen::Elev::shadowAlpha(lv)
+                && qAbs(e->offset().y() - Lumen::Elev::shadowDy(lv)) < 1e-9
+                && qAbs(e->blurRadius() - Lumen::Elev::shadowBlur(lv)) < 1e-9;
+        };
+        {   // E1/E2 零回归：参数来自同一真源，且**绝不动宿主 QSS**。
+            QWidget a, b;
+            Lumen::Elev::apply(&a, Lumen::Elev::E1);
+            Lumen::Elev::apply(&b, Lumen::Elev::E2);
+            report("V_elev_apply_E1_E2_unregressed",
+                   wired(&a, Lumen::Elev::E1) && wired(&b, Lumen::Elev::E2)
+                       && a.styleSheet().isEmpty() && b.styleSheet().isEmpty());
+        }
+        {   // E3 聚光：阴影走到 E3 值域，但仍不开馆（无 border 追加）。
+            QWidget w;
+            w.setObjectName(QStringLiteral("laQaSpot"));
+            Lumen::Elev::apply(&w, Lumen::Elev::E3);
+            report("V_elev_apply_E3_wired",
+                   wired(&w, Lumen::Elev::E3) && !w.styleSheet().contains(QStringLiteral("border:")));
+        }
+        {   // E4 开馆：阴影 + 追加片段（限定选择器 / 宿主声明保留 / 二次调用幂等）。
+            QWidget w;
+            w.setObjectName(QStringLiteral("laQaCard"));
+            w.setStyleSheet(QStringLiteral("background:#101010;"));
+            Lumen::Elev::apply(&w, Lumen::Elev::E4);
+            const QString after = w.styleSheet();
+            Lumen::Elev::apply(&w, Lumen::Elev::E4);
+            report("V_elev_apply_E4_open",
+                   wired(&w, Lumen::Elev::E4)
+                       && after.contains(QStringLiteral("QWidget#laQaCard{border:1px solid "))
+                       && after.startsWith(QStringLiteral("background:#101010;"))
+                       && w.styleSheet().count(QStringLiteral("border:1px solid")) == 1);
+        }
+
+        {   // 源断言（计划 Step 1 的 grep 计数腿）：E3/E4 在 Elev::apply 里各占一支。
+            QString root;
+            for (const QString& cand : { QCoreApplication::applicationDirPath() + QStringLiteral("/../src/ui"),
+                                         QCoreApplication::applicationDirPath() + QStringLiteral("/src/ui"),
+                                         QStringLiteral("src/ui") }) {
+                if (QFileInfo(cand).isDir()) { root = cand; break; }
+            }
+            QString text;
+            if (!root.isEmpty()) {
+                QFile f(QDir(root).filePath(QStringLiteral("Theme.h")));
+                if (f.open(QIODevice::ReadOnly)) text = QString::fromUtf8(f.readAll());
+            }
+            text.remove(QRegularExpression(QStringLiteral("/\\*.*?\\*/"),
+                QRegularExpression::DotMatchesEverythingOption));
+            text.remove(QRegularExpression(QStringLiteral("//[^\\n]*")));
+            const int at = text.indexOf(QStringLiteral("inline void apply(QWidget* w, Level lv)"));
+            const int end = at < 0 ? -1 : text.indexOf(QStringLiteral("\n    }"), at);
+            const QString body = (at >= 0 && end > at) ? text.mid(at, end - at) : QString();
+            report("V_elev_source_scanned", !body.isEmpty());          // fail-open：源没读到就红
+            report("V_elev_apply_E3_branch", body.count(QStringLiteral("case E3:")) == 1);
+            report("V_elev_apply_E4_branch", body.count(QStringLiteral("case E4:")) == 1);
+        }
+    }
+
+    {   // 馆长图标组（curate/star/reject/swap）：1.5px 描边体系 + 24 格 + 四形各异。
+        struct Sig {
+            int px = 0, sum = 0, x0 = 999, y0 = 999, x1 = -1, y1 = -1;
+            QString key() const {
+                return QStringLiteral("%1;%2;%3;%4;%5;%6").arg(px).arg(sum).arg(x0).arg(y0)
+                             .arg(x1).arg(y1);
+            }
+        };
+        auto sigOf = [](const QString& kind, int size, Sig& out) {
+            const QImage im = Icons::makePixmap(kind, QColor(255, 255, 255), size)
+                                  .toImage().convertToFormat(QImage::Format_ARGB32);
+            out = Sig();
+            for (int y = 0; y < im.height(); ++y) {
+                for (int x = 0; x < im.width(); ++x) {
+                    const int a = qAlpha(im.pixel(x, y));
+                    if (a <= 8) continue;                     // 抗锯齿最外淡缘不算形状
+                    ++out.px; out.sum += a;
+                    out.x0 = qMin(out.x0, x); out.y0 = qMin(out.y0, y);
+                    out.x1 = qMax(out.x1, x); out.y1 = qMax(out.y1, y);
+                }
+            }
+        };
+        static const char* const kCur[4] = { "curate", "star", "reject", "swap" };
+        QVector<Sig> sigs;
+        bool painted = true, grid = true;
+        for (const char* k : kCur) {
+            Sig s;
+            sigOf(QLatin1String(k), 24, s);
+            sigs << s;
+            if (s.px < 40) painted = false;
+            // 24 格：Icons 边距比例 0.14 → 内缩 3.36px；描边+圆头端点外溢 ~0.8px 计入容差。
+            if (s.x0 < 2 || s.y0 < 2 || s.x1 > 22 || s.y1 > 22) grid = false;
+            if (s.x1 - s.x0 < 12 || s.y1 - s.y0 < 12) grid = false;   // 必须真撑开画面
+        }
+        report("V_icons_curate_group_paints", painted);
+        report("V_icons_curate_group_on_24_grid", grid);
+        bool distinct = true;
+        for (int i = 0; i < 4; ++i)
+            for (int j = i + 1; j < 4; ++j)
+                if (sigs[i].key() == sigs[j].key()) distinct = false;
+        report("V_icons_curate_group_distinct", distinct);
+        // 兜底塌缩判别**只能查分发**，不能比像素：about 走 1.8px 描边、馆长组走 1.5px，
+        // 且圆头端点让抗锯齿包围盒浮动 ±1px —— 像素腿（全签名/纯包围盒）实测都抓不到
+        // 「kind 改名 → 掉进 else」这种形态（本轮反例 V_icons_curate_group_not_fallback 跑绿证明）。
+        // 故改为对 makePixmap 函数体做分支计数：每个馆长 kind 必须恰有一支显式分发。
+        QString root;
+        for (const QString& cand : { QCoreApplication::applicationDirPath() + QStringLiteral("/../src/ui"),
+                                     QCoreApplication::applicationDirPath() + QStringLiteral("/src/ui"),
+                                     QStringLiteral("src/ui") }) {
+            if (QFileInfo(cand).isDir()) { root = cand; break; }
+        }
+        QString text;
+        if (!root.isEmpty()) {
+            QFile f(QDir(root).filePath(QStringLiteral("Icons.h")));
+            if (f.open(QIODevice::ReadOnly)) text = QString::fromUtf8(f.readAll());
+        }
+        text.remove(QRegularExpression(QStringLiteral("/\\*.*?\\*/"),
+            QRegularExpression::DotMatchesEverythingOption));
+        text.remove(QRegularExpression(QStringLiteral("//[^\\n]*")));
+        const int at = text.indexOf(QStringLiteral("inline QPixmap makePixmap("));
+        const int end = at < 0 ? -1 : text.indexOf(QStringLiteral("\n}"), at);
+        const QString body = (at >= 0 && end > at) ? text.mid(at, end - at) : QString();
+        report("V_icons_source_scanned", !body.isEmpty());             // fail-open：源没读到就红
+        bool dispatched = !body.isEmpty();
+        for (const char* k : kCur)
+            if (body.count(QStringLiteral("QLatin1String(\"%1\")").arg(QLatin1String(k))) != 1)
+                dispatched = false;
+        report("V_icons_curate_group_dispatched", dispatched);
+        report("V_icons_stroke_curator_1_5",
+               qAbs(Icons::strokeWidth(QStringLiteral("curate")) - 1.5) < 1e-9
+                   && qAbs(Icons::strokeWidth(QStringLiteral("star")) - 1.5) < 1e-9
+                   && qAbs(Icons::strokeWidth(QStringLiteral("reject")) - 1.5) < 1e-9
+                   && qAbs(Icons::strokeWidth(QStringLiteral("swap")) - 1.5) < 1e-9
+                   && qAbs(Icons::strokeWidth(QStringLiteral("home")) - 1.8) < 1e-9);   // 旧组零回归
+    }
+
+    {   // 呼吸微光：2400ms（D3 既有档位）+ 复用 Pulse（不新造曲线）+ 循环无接缝。
+        const Motion::Preset& br = Motion::preset(Motion::kExhibitBreath);
+        report("V_motion_breath_registered", Motion::presetNames().contains(Motion::kExhibitBreath));
+        report("V_motion_breath_2400", br.durationMs == 2400);
+        report("V_motion_breath_reuses_pulse",
+               br.keys.size() == 1 && br.keys[0].curve == Motion::Pulse
+                   && br.keys[0].prop == Motion::kPropGlow);
+        const QVector<double> v0 = Motion::evaluate(br, 0.0), v1 = Motion::evaluate(br, 1.0);
+        report("V_motion_breath_seamless",
+               v0.size() == 1 && v1.size() == 1 && qAbs(v0[0] - v1[0]) < 1e-9);
+        {
+            double lo = 9.0, hi = -9.0, prev = v0.value(0, 0.0);
+            int turns = 0, dir = 0;
+            for (int i = 1; i <= 100; ++i) {
+                const double v = Motion::evaluate(br, i / 100.0).value(0, 0.0);
+                lo = qMin(lo, v); hi = qMax(hi, v);
+                const int d = v > prev + 1e-9 ? 1 : (v < prev - 1e-9 ? -1 : dir);
+                if (d != 0 && dir != 0 && d != dir) ++turns;
+                if (d != 0) dir = d;
+                prev = v;
+            }
+            report("V_motion_breath_one_swell",
+                   qAbs(lo - 0.25) < 0.01 && qAbs(hi - 1.0) < 0.01 && turns == 1);
+        }
     }
 
     const bool pass = (checks > 0) && (fails == 0);

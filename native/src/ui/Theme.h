@@ -288,13 +288,69 @@ namespace Type {
     }
 }
 namespace Elev {
-    enum Level { E1, E2 };
+    // 四层高度（2.42.0 spec §0.1 R4：在 v2 阴影基座上再加一层「光」）。
+    // 显式取 1..4 —— 0 留作「未设层」，且层级值本身可判别（门禁 Elev_E4_exists）。
+    enum Level { E1 = 1, E2 = 2, E3 = 3, E4 = 4 };
+
+    // 阴影三列唯一真源（纯函数；apply 只做接线，门禁逐层读回比对）。
+    // 逐层严格递增：任何一层塌回上一层，V_elev_shadow_monotone / _apply_* 即红。
+    inline int shadowAlpha(Level lv) { return lv == E1 ? 128 : lv == E2 ? 158 : lv == E3 ? 176 : 190; }
+    inline qreal shadowDy(Level lv)  { return lv == E1 ? 6 : lv == E2 ? 14 : lv == E3 ? 22 : 30; }
+    inline qreal shadowBlur(Level lv){ return lv == E1 ? 20 : lv == E2 ? 36 : lv == E3 ? 54 : 72; }
+
+    // V4 §五「光晕 α≤10%」的落地形式：金按 ≤10% 合成进宿主底色后**不透明**输出。
+    // 不用透明外圈 —— Qt QSS 只有一层 background，透明外圈会露出父层（卡片边缘发黑）。
+    inline constexpr double kInnerGlowMax = 0.10;
+    inline QColor innerGlow(const QColor& base, double ratio = kInnerGlowMax)
+    {
+        const QColor g = gold();
+        const double t = qBound(0.0, ratio, kInnerGlowMax);
+        auto mix = [t](int b, int hi) { return qRound(b + (hi - b) * t); };
+        return QColor(mix(base.red(), g.red()), mix(base.green(), g.green()),
+                      mix(base.blue(), g.blue()));
+    }
+
+    // E4 开馆层 = 1px 金描边（走活跃灯 token）+ 内发光径向。E1..E3 返回空串 = 不开馆。
+    // selector 必须限定到宿主自己：Qt 会把无选择器的声明下发给全部后代控件。
+    inline QString openCss(Level lv, const QString& selector, const QColor& base)
+    {
+        if (lv != E4) return QString();
+        return QStringLiteral("%1{border:1px solid %2;"
+                              "background:qradialgradient("
+                              "cx:0.5,cy:0.5,radius:1.0,fx:0.5,fy:0.5,"
+                              "stop:0 %3,stop:0.58 %3,stop:1 %4);}")
+            .arg(selector, hex(gold()), hex(base), hex(innerGlow(base)));
+    }
+
+    inline QString selectorFor(const QWidget* w)
+    {
+        const QString name = w->objectName();
+        return name.isEmpty()
+            ? QStringLiteral("*")            // 裸控件（无子树）才允许退化形式
+            : QString::fromLatin1(w->metaObject()->className()) + QStringLiteral("#") + name;
+    }
+
     inline void apply(QWidget* w, Level lv) {
         auto* sh = new QGraphicsDropShadowEffect(w);
-        sh->setColor(QColor(0, 0, 0, lv == E1 ? 128 : 158));
-        sh->setOffset(QPointF(0, lv == E1 ? 6 : 14));
-        sh->setBlurRadius(lv == E1 ? 20 : 36);
+        sh->setColor(QColor(0, 0, 0, shadowAlpha(lv)));
+        sh->setOffset(QPointF(0, shadowDy(lv)));
+        sh->setBlurRadius(shadowBlur(lv));
         w->setGraphicsEffect(sh);
+        switch (lv) {
+        case E1: case E2: case E3:
+            break;                              // 只加压舱阴影；E3 聚光不开馆，不动宿主 QSS
+        case E4: {                              // 开馆：追加（不覆盖）宿主自己的样式表
+            const QString css = openCss(lv, selectorFor(w), card());
+            if (css.isEmpty() || w->property("laElevOpen").toString() == css) break;   // 幂等
+            const QString own = w->styleSheet();
+            w->setStyleSheet(own.isEmpty()
+                                 ? css
+                                 : own + (own.endsWith(QLatin1Char(';')) ? QString()
+                                                                         : QStringLiteral(";")) + css);
+            w->setProperty("laElevOpen", css);
+            break;
+        }
+        }
     }
 }
 
