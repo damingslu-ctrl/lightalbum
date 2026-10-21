@@ -35,7 +35,7 @@ namespace Lumen {
 // 不存在热刷；表面角色一律走下方 11 个访问器（读活跃灯表）。
 enum class Lamp : int { Nocturne = 1, Jade = 2, Gekkan = 3, Dusk = 4 };   // L1..L4
 // 空间枚举取名 Hall：Space 已被 4px 间距命名空间占用（Lumen::Space::M 等 139 处引用）。
-enum class Hall : int { Lobby, Gallery, People, Studio, Vault, Common };
+enum class Hall : int { Lobby, Gallery, People, Studio, Vault, Common, Collection };
 
 struct LampTokens { QColor bg, surface, inset, ink, muted, line, gold, emerald; };
 
@@ -71,13 +71,15 @@ inline const LampTokens& lamp(Lamp l)   // 表只读；非法值回退 L1
 }
 
 // 跟随空间的默认灯：前厅走夜展，画廊/人物馆/修图/暗箱走玉照；
-// Common（日志/关于等未定义页）留在夜展基调，不跳亮底。
+// Common（日志/关于等未定义页）留在夜展基调，不跳亮底；典藏页跟画廊同语汇。
 inline Lamp lampFor(Hall h)
 {
-    static const Lamp follow[6] = { Lamp::Nocturne, Lamp::Jade, Lamp::Jade,
-                                    Lamp::Jade,     Lamp::Jade, Lamp::Nocturne };
+    static const Lamp follow[7] = { Lamp::Nocturne, Lamp::Jade, Lamp::Jade,
+                                    Lamp::Jade,     Lamp::Jade, Lamp::Nocturne,
+                                    Lamp::Jade };   // Collection：亮底画廊语汇
     const int i = int(h);
-    return (i >= 0 && i < 6) ? follow[i] : Lamp::Nocturne;
+    return (i >= 0 && i < int(sizeof(follow) / sizeof(follow[0]))) ? follow[i]
+                                                                  : Lamp::Nocturne;
 }
 
 // QSettings 持久化：lamp/active（int 1..4）、lamp/mode（"follow"/"manual"）。

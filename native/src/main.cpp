@@ -88,6 +88,7 @@
 #include "ui/GazeLightbox.h"   // 2.41.0 §2.5 凝视灯箱（LA_GAZE_QA 直调 dominantColor 纯函数）
 #include "ui/DarkPalette.h"
 #include "ui/Theme.h"
+#include "ui/Layout.h"  // 2.43.0 波4 §3.3：网格列数纯函数（LA_COLLECTION_QA G 组直调）
 #include "ui/Icons.h"   // 2.42.0 波3 T8：馆长图标组（LA_CURATE_QA V 组像素判别直调）
 #include "ui/Splash.h"
 #include "ui/LogPage.h"
@@ -3638,6 +3639,21 @@ int runCollectionQa()
         chk("B2_source_scanned", mw.size() > 4000);   // fail-open 守卫：空扫描不算绿
         chk("B3_mainwindow_no_direct_unmute",
             !mw.contains(QStringLiteral("lib_->unmuteTemplate(")));
+    }
+
+    // ---- C 组：导航完整性（典藏页接入后 C2/C3 由 T4 启用）----
+    {
+        chk("C1_collection_jade", Lumen::lampFor(Lumen::Hall::Collection) == Lumen::Lamp::Jade);
+        chk("C4_oob_fallback", Lumen::lampFor(Lumen::Hall(99)) == Lumen::Lamp::Nocturne);
+    }
+
+    // ---- G 组：网格算术（纯函数，spec §3.3 + R11）----
+    {
+        chk("G1_grid_960", gridCols(960) == 3);
+        chk("G2_grid_1440", gridCols(1440) == 5);
+        chk("G3_grid_2560", gridCols(2560) == 5);
+        chk("G4_grid_target_fallback", gridCols(960, 0) == gridCols(960));
+        chk("G5_grid_narrow_clamped", gridCols(320) == 3);
     }
 
     const bool pass = (checks > 0) && (fails == 0);

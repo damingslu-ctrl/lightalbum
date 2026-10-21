@@ -69,6 +69,7 @@ set(LA_SOURCES
     src/ui/GazeLightbox.cpp
     src/ui/EditorialView.h
     src/ui/EditorialView.cpp
+    src/ui/Layout.h
     src/ui/MapView.h
     src/ui/MapView.cpp
     src/ui/MapPage.h
