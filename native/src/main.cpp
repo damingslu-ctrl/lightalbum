@@ -102,6 +102,7 @@
 #include <QMouseEvent>            // 方向 C·联动：LA_GEO_LINK_QA 离屏合成鼠标事件
 #include <QLabel>                 // 2.42.0 T9：LA_LOBBY_QA J 组读展卡文案标签
 #include <QPushButton>            // 2.42.0 T9：LA_LOBBY_QA J 组点三手势
+#include <QLineEdit>              // 波4 T6：LA_CMDK_QA G 组按回车实测空解析说明
 #include <QGraphicsDropShadowEffect>  // 2.42.0 T9：LA_LOBBY_QA J 组读回 E4 压舱阴影
 #include <QPixmap>
 #include <QElapsedTimer>
@@ -1954,6 +1955,107 @@ int runCmdkQa()
             && mat->styleSheet().contains(
                    QStringLiteral("border:1px solid ") + Lumen::hex(Lumen::gold())),
             "F_panel_e4_open");
+    }
+
+    // —— G 组：R7 暂存的可用性 + §2.6 空解析说明（行为腿：真按回车，不只读源码）——
+    {
+        CmdKPanel panel(nullptr);
+        panel.resize(760, 420);
+        panel.show();
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 200);
+
+        QPushButton* stash = nullptr;
+        for (QPushButton* b : panel.findChildren<QPushButton*>())
+            if (b->text() == QString::fromUtf8("暂存为合集")) stash = b;
+
+        // 默认（图库未勾选）：禁用 + tooltip 说明缺什么。界面上写出来的就是承诺。
+        chk(stash && !stash->isEnabled()
+            && stash->toolTip().contains(QString::fromUtf8("勾选")), "G1_stash_off_honest");
+
+        panel.setStashAvailable(true);
+        chk(stash && stash->isEnabled()
+            && stash->toolTip().contains(QString::fromUtf8("典藏")), "G2_stash_on_points_collection");
+
+        panel.setStashAvailable(false);
+        chk(stash && !stash->isEnabled(), "G3_stash_back_off");
+
+        auto visibleNote = [&]() -> QLabel* {
+            for (QLabel* l : panel.findChildren<QLabel*>())
+                if (l->isVisible() && l->text().contains(QString::fromUtf8("没听懂"))) return l;
+            return nullptr;
+        };
+        auto* input = panel.findChild<QLineEdit*>();
+        chk(input != nullptr, "G4a_input_found");
+        if (input) {
+            // 「和」只含连接词 → 解析为空：这是唯一会走「空解析」分支的真输入（兜底 contains 仍保留）。
+            input->setText(QString::fromUtf8("和"));
+            QMetaObject::invokeMethod(input, "returnPressed");
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+        }
+        QLabel* note = visibleNote();
+        chk(note && note->text().contains(QStringLiteral("2019"))
+            && note->text().contains(QString::fromUtf8("夏天"))
+            && note->text().contains(QString::fromUtf8("去年")), "G4_empty_parse_note");
+
+        // 解析成功的一问必须把说明收回去（否则「没听懂」会挂在成功的结果上）。
+        if (input) {
+            input->setText(QStringLiteral("2019"));
+            QMetaObject::invokeMethod(input, "returnPressed");
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+        }
+        chk(!visibleNote(), "G5_valid_query_hides_note");
+    }
+
+    // —— H 组：承诺清零（波4 R7：界面不许再留「下轮」）——
+    // 只数**面向用户的串**：行内同时出现「下轮」与 translate(/QStringLiteral(/setToolTip(
+    // 才计；门禁断言自己的反例字面量（`!x.contains("下轮")`）整行跳过——它们是证伪器的一部分，
+    // 不是产品承诺。空扫描不算绿（H0 自检）。
+    {
+        // 源码根按 cwd 解析：pre-commit 从仓库根跑（native/src），直接跑 exe 时在 native（src）。
+        // 解析不到就不是绿——H0 会把「空扫描」判红，绝不让路径漂移把门训成恒真。
+        QString srcRoot;
+        for (const QString& c : {QStringLiteral("src"), QStringLiteral("../src"),
+                                 QStringLiteral("native/src")}) {
+            const QDir d(c);
+            if (d.exists() && !d.entryList({QStringLiteral("*.cpp")}, QDir::Files).isEmpty()) {
+                srcRoot = c;
+                break;
+            }
+        }
+        int filesSeen = 0, hits = 0;
+        QDirIterator it(srcRoot, {QStringLiteral("*.cpp"), QStringLiteral("*.h")},
+                        QDir::Files, QDirIterator::Subdirectories);
+        while (it.hasNext()) {
+            QFile f(it.next());
+            if (!f.open(QIODevice::ReadOnly)) continue;
+            ++filesSeen;
+            const QStringList lines = QString::fromUtf8(f.readAll()).split(QLatin1Char('\n'));
+            for (const QString& ln : lines) {
+                if (!ln.contains(QStringLiteral("下轮"))) continue;
+                // 纯注释行不是产品承诺；代码行上的尾注释即使被放过，也因同一行必有真串而不会漏报。
+                if (ln.trimmed().startsWith(QStringLiteral("//"))) continue;
+                if (ln.contains(QStringLiteral("contains(")) || ln.contains(QStringLiteral("indexOf("))
+                    || ln.contains(QStringLiteral("report(")) || ln.contains(QStringLiteral("chk(")))
+                    continue;
+                if (ln.contains(QStringLiteral("translate(")) || ln.contains(QStringLiteral("QStringLiteral("))
+                    || ln.contains(QStringLiteral("setToolTip(")))
+                    ++hits;
+            }
+        }
+        chk(!srcRoot.isEmpty() && filesSeen > 0, "H0_scanned_nonzero");
+        chk(hits == 0, "H1_no_next_round_promise");
+
+        QFile ckf(QDir(srcRoot).absoluteFilePath(QStringLiteral("ui/CmdKPanel.cpp")));
+        const QString ck = ckf.open(QIODevice::ReadOnly) ? QString::fromUtf8(ckf.readAll()) : QString();
+        const int a = ck.indexOf(QStringLiteral("stash_ = new QPushButton"));
+        const QString seg = a < 0 ? QString() : ck.mid(a, 600);
+        chk(!seg.isEmpty() && !seg.contains(QStringLiteral("下轮")), "H2_stash_tooltip_honest");
+    }
+
+    // 波4 §2.6：空解析说明里的三个样例必须真的能解析（界面上的每句话都是承诺）。
+    for (const char* sample : {"2019", "夏天", "去年"}) {
+        const CmdFilter f = CmdKPanel::parse(QString::fromUtf8(sample));
+        chk(!f.empty(), (QByteArray("S_sample_") + sample).constData());
     }
 
     const bool pass = (checks > 0) && (fails == 0);

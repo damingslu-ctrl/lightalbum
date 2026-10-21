@@ -572,6 +572,14 @@ void MainWindow::buildUi()
         const QStringList vis = gallery_->visiblePaths();
         if (!vis.isEmpty()) openGaze(vis.first(), vis);
     });
+    // 波4 R7：暂存的载荷 = 图库当前勾选集（点击时才取，避免开馆时的旧快照）；
+    // 落库仍只经 curator_，本窗只负责说回执与让典藏页看见。
+    connect(cmdk_, &CmdKPanel::stashRequested, this, [this](const QString& name) {
+        const QStringList paths = gallery_->selectedPaths();
+        const qint64 id = curator_->keepSelection(name, paths);
+        showAck(CurateScheduler::keepAck(name, paths.size(), id > 0));
+        if (id > 0) collection_->refresh();
+    });
     connect(cmdk_, &CmdKPanel::lookBackToday, this, [this](const QDate& d) {
         closeCmdK();
         nav_->setCurrentRow(kRowLobby);
@@ -847,6 +855,8 @@ void MainWindow::openCmdK()
     if (!cmdk_) return;
     cmdk_->setHidePrivate(!vaultUnlocked_);   // 锁定态词典不含私密照人物名（spec §3 红线）
     cmdk_->openFor(currentHall());
+    // 波4 R7：开馆即按当前选择集定「暂存为合集」的可用性（图库空选 = 禁用 + 诚实 tooltip）。
+    cmdk_->setStashAvailable(gallery_ && !gallery_->selectedPaths().isEmpty());
     const int w = qMin(680, qMax(320, width() - 160));
     const int h = qMax(160, cmdk_->sizeHint().height());
     const int x = (width() - w) / 2;

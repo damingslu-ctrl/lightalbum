@@ -18,6 +18,8 @@
 #include "Theme.h"
 
 class QLineEdit;
+class QPushButton;
+class QLabel;
 
 class CmdKPanel : public QWidget {
     Q_OBJECT
@@ -28,12 +30,14 @@ public:
     void openFor(Lumen::Hall s);
     void setHidePrivate(bool hide);        // 锁定态：人物词典派生自 hidePrivate 集合
     void focusInput();                     // 2.41.0 T8：开馆即落光标（面板本身不可聚焦）
+    void setStashAvailable(bool on);       // 2.43.0 波4 R7：图库有勾选 → 暂存可点
 
 signals:
     void applyFilter(const CmdFilter& f);
     void openRoom(const QString& person);
     void openGazeFiltered(const CmdFilter& f);
     void lookBackToday(const QDate& d);
+    void stashRequested(const QString& name);   // 标题 = 输入框原文；载荷由调用方取选择集
 
 public:
     static CmdFilter parse(const QString& sentence, const QStringList& personDict = {},
@@ -54,6 +58,8 @@ private:
     bool hidePrivate_ = true;
     Lumen::Hall space_ = Lumen::Hall::Gallery;
     QLineEdit* input_ = nullptr;
+    QPushButton* stash_ = nullptr;
+    QLabel* note_ = nullptr;               // 空解析说明（默认隐藏）
     QWidget* hintRow_ = nullptr;
     QWidget* chipRow_ = nullptr;
     QStringList removedChips_;             // 纯 UI 态：被 × 移除的 chip

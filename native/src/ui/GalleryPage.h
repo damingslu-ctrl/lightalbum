@@ -30,6 +30,8 @@ public:
     bool hidePrivate() const { return hidePrivate_; }   // D5b：批量私密后据此重跑隐私过滤
     // 隐私门（2.33.0）：当前网格可见（含全部筛选后）的路径集，供灯箱限定 ←/→ 范围
     QStringList visiblePaths() const { return model_.visiblePaths(); }
+    // 波4 R7：⌘K「暂存为合集」的载荷源——与批量条同一条选择集。
+    QStringList selectedPaths() const { return qaSelectedPaths(); }
     // ---- D5b QA 入口（批量多选门用；等价于用户 Ctrl/Shift 点击）----
     QStringList qaSelectedPaths() const;
     int  qaSelectCount() const;

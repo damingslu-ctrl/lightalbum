@@ -365,6 +365,16 @@ CmdKPanel::CmdKPanel(const QVector<Photo>* photos, QWidget* parent)
     }
     mv->addWidget(hintRow_);
 
+    // 波4 §2.6：解析不到东西时给可解析的样例（每一句都是承诺 ⇒ 样例必须真能解析，
+    // LA_CMDK_QA 的 S_sample_* 腿逐词实测）。
+    note_ = new QLabel(mat);
+    note_->setFont(Lumen::Type::smallText());
+    note_->setStyleSheet(QStringLiteral("color:%1;background:transparent;border:none;")
+                             .arg(Lumen::hex(Lumen::muted())));
+    note_->setWordWrap(true);
+    note_->hide();
+    mv->insertWidget(mv->indexOf(hintRow_), note_);
+
     chipRow_ = new QWidget(mat);
     {
         auto* h = new QHBoxLayout(chipRow_);
@@ -382,12 +392,15 @@ CmdKPanel::CmdKPanel(const QVector<Photo>* photos, QWidget* parent)
     run->setStyleSheet(Lumen::btnGold());
     run->setCursor(Qt::PointingHandCursor);
     ah->addWidget(run);
-    auto* stash = new QPushButton(QCoreApplication::translate("LightAlbum", "暂存为合集"), actions);
-    stash->setFont(Lumen::Type::body());
-    stash->setStyleSheet(Lumen::btnGhost());
-    stash->setEnabled(false);
-    stash->setToolTip(QCoreApplication::translate("LightAlbum", "下轮上线"));
-    ah->addWidget(stash);
+    stash_ = new QPushButton(QCoreApplication::translate("LightAlbum", "暂存为合集"), actions);
+    stash_->setFont(Lumen::Type::body());
+    stash_->setStyleSheet(Lumen::btnGhost());
+    stash_->setEnabled(false);
+    stash_->setToolTip(QCoreApplication::translate("LightAlbum", "先在结果里勾选照片"));
+    connect(stash_, &QPushButton::clicked, this, [this] {
+        emit stashRequested(input_ ? input_->text().trimmed() : QString());
+    });
+    ah->addWidget(stash_);
     ah->addStretch(1);
     auto* key = new QLabel(QStringLiteral("Ctrl+K"), actions);
     key->setFont(Lumen::Type::monoMeta());
@@ -415,6 +428,17 @@ void CmdKPanel::setHidePrivate(bool hide)
     hidePrivate_ = hide;
     rebuildHints();
     refreshChips();
+}
+
+// 2.43.0 波4 R7：按钮是否可用只由「图库有没有勾选」决定；载荷在点击时再取
+// （选择集可能从开馆到点按之间变化，拿旧快照落库会存错照片）。
+void CmdKPanel::setStashAvailable(bool on)
+{
+    if (!stash_) return;
+    stash_->setEnabled(on);
+    stash_->setToolTip(on
+        ? QCoreApplication::translate("LightAlbum", "把勾选的照片存进典藏")
+        : QCoreApplication::translate("LightAlbum", "先在结果里勾选照片"));
 }
 
 // 2.41.0 T8：开馆即落光标。QWidget 容器 setFocus 不会下传给子控件，
@@ -551,7 +575,15 @@ void CmdKPanel::onSubmit()
         else if (c == f.category) f.category.clear();
         else if (c == f.text) f.text.clear();
     }
-    if (f.empty()) return;
+    if (f.empty()) {
+        if (note_) {
+            note_->setText(QCoreApplication::translate(
+                "LightAlbum", "没听懂这个词。可以试：2019 / 夏天 / 去年"));
+            note_->show();
+        }
+        return;
+    }
+    if (note_) note_->hide();
 
     // 路由（互斥）：纯人物 → 开房；纯风格 → 直达凝视；其余 → 应用筛选。
     const bool personOnly = !f.person.isEmpty() && f.category.isEmpty()
