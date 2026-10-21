@@ -130,6 +130,14 @@ const Lumen::Hall kNavHall[] = {
 // P24 A 抛光图标轨：激活态在 updateNavActive 用金色重绘同一图标。
 const char* kNavIcons[] = { "lobby", "map", "gallery", "people", "retouch", "enhance", "log" };
 
+// 波4 §9：导航行序单点真源。kNav 增删行时只改这里；static_assert 拦住「改了表忘了改常量」。
+enum NavRow {
+    kRowLobby = 0, kRowMap, kRowGallery, kRowPeople,
+    kRowStudio, kRowLog, kRowAbout, kRowCount
+};
+static_assert(int(kRowCount) == int(sizeof(kNav) / sizeof(kNav[0])),
+              "kNav rows and NavRow constants drifted");
+
 // P29 无标题栏：判定某点下的控件是否「交互型」（按钮/输入/列表/滚动等）→
 // 命中交互控件时不抢作窗口拖拽区（WM_NCHITTEST 用）。
 static bool isInteractiveAt(QWidget* w)
@@ -216,7 +224,7 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
     });
 
     buildUi();
-    nav_->setCurrentRow(0);   // 默认落在前厅
+    nav_->setCurrentRow(kRowLobby);   // 默认落在前厅
 }
 
 // 2.41.0 spec §2.6：整帧建 UI。灯色在构造期就烘进各控件的 QSS（不是运行期可改的
@@ -504,7 +512,7 @@ void MainWindow::buildUi()
     connect(people_, &PeoplePage::filterGallery, this,
             [this](const QString& person) {
                 gallery_->applyPersonFilter(person);
-                nav_->setCurrentRow(2);
+                nav_->setCurrentRow(kRowGallery);
             });
     // 「智能聚类」→ 与图库页按钮同一个 runFaceCluster（唯一实现）
     connect(people_, &PeoplePage::clusteringRequested, this, [this] { runFaceCluster(); });
@@ -523,24 +531,24 @@ void MainWindow::buildUi()
     connect(cmdk_, &CmdKPanel::applyFilter, this, [this](const CmdFilter& f) {
         gallery_->applyCmdFilter(f);
         closeCmdK();
-        nav_->setCurrentRow(2);
+        nav_->setCurrentRow(kRowGallery);
     });
     connect(cmdk_, &CmdKPanel::openRoom, this, [this](const QString& name) {
         people_->focusRoom(name);
         closeCmdK();
-        nav_->setCurrentRow(3);
+        nav_->setCurrentRow(kRowPeople);
     });
     // 检索即凝视：过滤袋仍只交给 GalleryModel（唯一筛选真源），取它的可见集当作用域
     connect(cmdk_, &CmdKPanel::openGazeFiltered, this, [this](const CmdFilter& f) {
         gallery_->applyCmdFilter(f);
         closeCmdK();
-        nav_->setCurrentRow(2);
+        nav_->setCurrentRow(kRowGallery);
         const QStringList vis = gallery_->visiblePaths();
         if (!vis.isEmpty()) openGaze(vis.first(), vis);
     });
     connect(cmdk_, &CmdKPanel::lookBackToday, this, [this](const QDate& d) {
         closeCmdK();
-        nav_->setCurrentRow(0);
+        nav_->setCurrentRow(kRowLobby);
         const QVector<const Photo*> hero =
             LobbyPage::onThisDay(lib_->photos(), d, !vaultUnlocked_);
         if (hero.isEmpty()) return;                 // 空态交前厅自己演，不硬开灯箱
@@ -638,7 +646,7 @@ void MainWindow::buildUi()
     connect(map_, &MapPage::requestGallery, this,
             [this](const QString& regionId, const QString& provEn) {
                 gallery_->applyGeoFilter(regionId, provEn);
-                nav_->setCurrentRow(2);
+                nav_->setCurrentRow(kRowGallery);
             });
     // 地图爆炸卡片点击 → 沉浸式灯箱看大图
     connect(map_, &MapPage::requestLightbox, this,
@@ -678,7 +686,7 @@ void MainWindow::applyRowChrome(int row)
     updateNavActive(row);
     // P21→2.41.0：前厅保留左侧全局导航（用户要求进门页也显示左栏，不再为沉浸隐藏它）。
     // 顶栏/发丝线仍按 P19 沉浸逻辑在前厅隐藏；厅心卡自身铺满内容区。
-    const bool home = (row == 0);
+    const bool home = (row == kRowLobby);
     if (topbar_) topbar_->setVisible(!home);
     if (winCtl_) winCtl_->setVisible(!home);   // P29-H：前厅零 chrome 纯沉浸 → 隐藏控制簇
     if (kpis_)   kpis_->hide();                // P19：模块条退役，永远不显示
@@ -1126,7 +1134,7 @@ GazeLightbox* MainWindow::ensureLightbox()
         if (lightbox_) { lightbox_->hide(); lightbox_->clearChanges(); }
         if (dirty) refreshExhibits();
         retouch_->openPhoto(p);
-        nav_->setCurrentRow(4);
+        nav_->setCurrentRow(kRowStudio);
     });
     // 2.41.0 §2.5：凝视档 S/A/L 即写库（单张 len=1 语义）；空 mark = 撤销。
     // 写库即回 —— 不做批量缓冲；刷新走统一汇合（前厅展陈与人物馆展室同样看得见）。
@@ -1262,9 +1270,11 @@ void MainWindow::onNav(int row)
     // 2.41.0 spec §3：预设随空间——进前厅=LightFirst(slow 640)、进人物馆=PushDoor(standard 360)、
     //   其余=NavFade。位移与否读预设表（不硬编码预设名）：PushDoor 无 offsetY 键 → 不预位移，
     //   否则收帧后控件停在偏移位回不了家。
-    const QByteArray presetName = row == 0 ? Motion::kLightFirst
-                                  : row == 3 ? Motion::kPushDoor
-                                  : Motion::kNavFade;
+    // 波4 §9：行号 → 动效的隐式耦合换成「空间语义 → 动效」。
+    const Lumen::Hall hall = kNavHall[row];
+    const QByteArray presetName = hall == Lumen::Hall::Lobby  ? Motion::kLightFirst
+                                : hall == Lumen::Hall::People ? Motion::kPushDoor
+                                                              : Motion::kNavFade;
     const Motion::Preset& p = Motion::preset(presetName);
     bool hasOffsetY = false;
     for (const auto& k : p.keys) hasOffsetY |= (k.prop == Motion::kPropOffsetY);
