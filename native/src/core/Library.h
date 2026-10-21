@@ -173,6 +173,12 @@ public:
     qint64 createAlbum(const QString& name, const QStringList& paths, const QString& source);
     QVector<AlbumRow> listAlbums() const;
 
+    // ---- 波4 A 轨：合集取路径 + 静音清单/唤醒（GUI 线程；读走 la_lib，写走 la_rw）----
+    QStringList albumPaths(qint64 albumId) const;      // ORDER BY ord（收藏顺序 = 回放顺序）
+    struct MuteRow { QString tmpl; qint64 until = 0; }; // until = 绝对秒
+    QVector<MuteRow> listMutes(qint64 now) const;       // WHERE until > ? ORDER BY until DESC
+    bool unmuteTemplate(const QString& tmpl);           // 删行；未静音 token 返回 false（不假 true）
+
     // ---- QA 合成库辅助（仅门禁用；生产零调用）----
     // 建最小 schema（photos 含全列 + meta）并插入合成行，供 LA_CURATE_QA 等在临时目录
     // 构造确定性库（R-06：仓库零真实照片）。date/year/GPS 经 exif_json 还原，与真实扫描同格式。

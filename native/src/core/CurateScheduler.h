@@ -77,6 +77,11 @@ public:
     //   ——同一事实两处落库 = 双真源（裁决 R-T11c）。
     bool muteExhibit(const QString& templateToken);
 
+    // 波4 R7：⌘K 暂存为合集 —— 与 keepExhibit 同一写入路径，来源记 'cmdk'。
+    qint64 keepSelection(const QString& name, const QStringList& paths);
+    // 波4 B2：唤醒被静音的模板（典藏 tab3）。GUI 线程写；未静音 → false。
+    bool unmuteExhibit(const QString& token);
+
     // 三手势的回执文案（v1 无设置页反悔入口 → 如实标注「下轮」，不假装可用）。
     //   keepAck 的 ok=false 支路 = 建合集失败：此时**不能**报「已收进」（铁律 21）。
     static QString keepAck(const QString& title, int n, bool ok = true);

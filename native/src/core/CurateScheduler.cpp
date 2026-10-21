@@ -213,6 +213,18 @@ bool CurateScheduler::muteExhibit(const QString& templateToken)
     return lib_->muteTemplate(templateToken, kPermanentMuteUntil);
 }
 
+qint64 CurateScheduler::keepSelection(const QString& name, const QStringList& paths)
+{
+    if (!lib_ || paths.isEmpty() || name.trimmed().isEmpty()) return 0;
+    return lib_->createAlbum(name, paths, QStringLiteral("cmdk"));
+}
+
+bool CurateScheduler::unmuteExhibit(const QString& token)
+{
+    if (!lib_ || token.isEmpty()) return false;
+    return lib_->unmuteTemplate(token);
+}
+
 QString CurateScheduler::keepAck(const QString& title, int n, bool ok)
 {
     return ok

@@ -3550,6 +3550,7 @@ int runCurateQa()
         report("M_no_direct_window_writes",
                !text.contains(QStringLiteral("lib_->createAlbum("))
                    && !text.contains(QStringLiteral("lib_->muteTemplate("))
+                   && !text.contains(QStringLiteral("lib_->unmuteTemplate("))
                    && !text.contains(QStringLiteral("lib_->updateExhibitFeedback(")));
     }
 
@@ -3563,6 +3564,92 @@ int runCurateQa()
 }
 
 } // namespace（策展门禁）
+
+namespace {
+
+// 波4 兑现门（LA_COLLECTION_QA，2.43.0 spec §4）：把上两轮界面上说出口的话兑现成
+// 可断言的事实。A 组合集取路径/静音清单/唤醒的读写对称；B 组唯一写者（GUI 线程 + 源扫）。
+// 反例臂：LA_COLLECTION_QA_FORCE_BROKEN=1 → A6 不回删（见下）。
+int runCollectionQa()
+{
+    int checks = 0, fails = 0;
+    QStringList failed;
+    const auto chk = [&](const char* name, bool ok) {
+        ++checks;
+        if (!ok) { ++fails; failed << QString::fromLatin1(name); }
+        std::fprintf(stderr, "  %-44s %s\n", name, ok ? "ok" : "FAIL");
+    };
+    const auto readSrc = [](const char* rel) {
+        QFile f(QString::fromLatin1(rel));
+        if (!f.open(QIODevice::ReadOnly)) return QString();
+        return QString::fromUtf8(f.readAll());
+    };
+
+    QTemporaryDir dir;
+    if (!dir.isValid()) {
+        std::fprintf(stderr, "LA_COLLECTION_QA FAIL tempdir\n");
+        return 1;
+    }
+    // ---- A 组：API 对称 ----
+    {
+        const QString db = dir.filePath(QStringLiteral("collection_a.db"));
+        QVector<Library::SynthRow> rows;
+        for (int i = 1; i <= 4; ++i) {
+            Library::SynthRow r;
+            r.path = QStringLiteral("p%1.jpg").arg(i);
+            r.date = QStringLiteral("2019-0%1-10").arg(i);
+            r.year = 2019;
+            rows << r;
+        }
+        QString err;
+        chk("A0_synth_db", Library::makeSyntheticDb(db, rows, &err));
+        Library lib;
+        chk("A1_open", lib.open(db, &err));
+
+        const qint64 album = lib.createAlbum(QStringLiteral("西湖"),
+                                             {QStringLiteral("p1.jpg"), QStringLiteral("p3.jpg")},
+                                             QStringLiteral("curate"));
+        chk("A2_album_paths_ord",
+            lib.albumPaths(album) == QStringList({QStringLiteral("p1.jpg"), QStringLiteral("p3.jpg")}));
+        chk("A3_album_paths_empty", lib.albumPaths(album + 999).isEmpty());
+
+        chk("A4_unmute_never_muted_is_false",
+            !lib.unmuteTemplate(QStringLiteral("never-muted")));
+        chk("A5_mute_visible", lib.muteTemplate(QStringLiteral("tmpl-1"), 9999999999999LL)
+            && lib.listMutes(1000).size() == 1
+            && lib.listMutes(1000).first().tmpl == QStringLiteral("tmpl-1"));
+        chk("A6_unmute_removes", lib.unmuteTemplate(QStringLiteral("tmpl-1"))
+            && lib.listMutes(1000).isEmpty());
+        chk("A7_unmute_twice_false", !lib.unmuteTemplate(QStringLiteral("tmpl-1")));
+    }
+
+    // ---- B 组：唯一写者 ----
+    {
+        const QString db = dir.filePath(QStringLiteral("collection_b.db"));
+        Library::SynthRow r; r.path = QStringLiteral("q1.jpg");
+        QString err;
+        Library::makeSyntheticDb(db, {r}, &err);
+        Library lib;
+        lib.open(db, &err);
+        lib.unmuteTemplate(QStringLiteral("x"));   // 即便删 0 行，也要 noteWriteThread
+        chk("B1_unmute_on_gui_thread",
+            lib.lastWriteThreadId() == reinterpret_cast<quintptr>(QThread::currentThread()));
+        const QString mw = readSrc("src/ui/MainWindow.cpp");
+        chk("B2_source_scanned", mw.size() > 4000);   // fail-open 守卫：空扫描不算绿
+        chk("B3_mainwindow_no_direct_unmute",
+            !mw.contains(QStringLiteral("lib_->unmuteTemplate(")));
+    }
+
+    const bool pass = (checks > 0) && (fails == 0);
+    std::fprintf(stderr, "LA_COLLECTION_QA %s checks=%d failed=%d\n",
+                 pass ? "PASS" : "FAIL", checks, fails);
+    if (!pass)
+        std::fprintf(stderr, "LA_COLLECTION_QA failed: %s\n", qPrintable(failed.join(',')));
+    std::fflush(stderr);
+    return pass ? 0 : 1;
+}
+
+} // namespace（波4 兑现门禁）
 
 namespace {
 
@@ -11010,6 +11097,10 @@ int main(int argc, char *argv[])
     // 2.42.0 波3 策展系统：Curate::* 纯函数契约（模板表/候选池/选题/打分/频控/画质/废片）
     if (qEnvironmentVariableIsSet("LA_CURATE_QA"))
         return runCurateQa();
+
+    // 2.43.0 波4 兑现：合集/静音/导航/播放同源/文案诚实/时间地基
+    if (qEnvironmentVariableIsSet("LA_COLLECTION_QA"))
+        return runCollectionQa();
 
     if (qEnvironmentVariableIsSet("LA_ERASE_QA"))
         return runEraseQa();

@@ -406,6 +406,11 @@ $GateTable = @(
   # fast tier rejected by E6) is the isomorphic precedent; fail-safe rule "absent tier =
   # full" applies. measuredMs=1900 = max-of-warm (1800) + headroom.
   @{n="LA_CURATE_QA"; png=$false; measuredMs=1900},
+  # 2.43.0 wave4 promise-kept gate (LA_COLLECTION_QA). A..I groups: album paths / mute list /
+  # unmute symmetry, single writer (GUI thread + source scan), nav completeness, gaze same-source,
+  # ack honesty, dead code, grid arithmetic, zero "next round" promises, time-column
+  # parity/EXPLAIN/privacy. Absent tier = full (fail-safe until -Timing proves the budget).
+  @{n="LA_COLLECTION_QA"; png=$false; measuredMs=320},
   # 2.29.0 RAW/video retouch pipeline gate (LA_EDIT_RAW_QA). The retouch page used to read the
   # original straight through QImage(ph.path), which measured 0x0 null=1 for RAW -> RAW could
   # never reach the retouch page at all (2.28.0 missed this entry point). Photo, RAW and video

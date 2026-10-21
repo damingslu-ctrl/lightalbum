@@ -780,6 +780,42 @@ QVector<AlbumRow> Library::listAlbums() const
     return out;
 }
 
+QStringList Library::albumPaths(qint64 albumId) const
+{
+    QStringList out;
+    if (albumId <= 0 || !QSqlDatabase::contains(QStringLiteral("la_lib"))) return out;
+    QSqlQuery q(QSqlDatabase::database(QStringLiteral("la_lib")));
+    q.prepare(QStringLiteral("SELECT path FROM album_items WHERE album_id=? ORDER BY ord"));
+    q.addBindValue(albumId);
+    if (!q.exec()) return out;
+    while (q.next()) out << q.value(0).toString();
+    return out;
+}
+
+QVector<Library::MuteRow> Library::listMutes(qint64 now) const
+{
+    QVector<MuteRow> out;
+    if (!QSqlDatabase::contains(QStringLiteral("la_lib"))) return out;
+    QSqlQuery q(QSqlDatabase::database(QStringLiteral("la_lib")));
+    q.prepare(QStringLiteral(
+        "SELECT template, until FROM template_mutes WHERE until > ? ORDER BY until DESC"));
+    q.addBindValue(double(now));
+    if (!q.exec()) return out;
+    while (q.next()) out.append({q.value(0).toString(), qint64(q.value(1).toDouble())});
+    return out;
+}
+
+bool Library::unmuteTemplate(const QString& tmpl)
+{
+    if (tmpl.isEmpty()) return false;
+    noteWriteThread();
+    QSqlQuery q(rw());
+    q.prepare(QStringLiteral("DELETE FROM template_mutes WHERE template = ?"));
+    q.addBindValue(tmpl);
+    if (!q.exec()) return false;
+    return q.numRowsAffected() > 0;   // 0 行 = 本来就没静音：如实 false
+}
+
 // ---- QA 合成库辅助（仅门禁用；生产零调用）----
 bool Library::makeSyntheticDb(const QString& dbPath, const QVector<SynthRow>& rows, QString* err)
 {
