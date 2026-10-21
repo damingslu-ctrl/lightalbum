@@ -2369,7 +2369,7 @@ int runCurateQa()
         report("A_ids_unique", ids.size() == 12);
         // 每条声明非空数据源（R7 缺源判定的前提）。
         bool anyEmpty = false;
-        for (const auto& s : tt) if (s.sourceId.isEmpty() || s.nameKey.isEmpty()) anyEmpty = true;
+        for (const auto& s : tt) if (s.sourceId.isEmpty() || s.nameTmpl.isEmpty()) anyEmpty = true;
         report("A_source_nonempty", !anyEmpty);
     }
 
@@ -2506,6 +2506,93 @@ int runCurateQa()
         bool allEmpty = true;
         for (const auto& th : themes) if (!th.paths.isEmpty()) allEmpty = false;
         report("K_missing_source_skips", allEmpty);
+    }
+
+    // —— N：展签上必须是「人话」，不是 i18n 裸键（spec §3 J「文案串在 .ts 内」的另一半）——
+    //   缺陷形态实测过：T7 把 title 落成 `curate.tmpl.*` 键（DB 存键、指望渲染点翻译），而
+    //   中文界面根本不装翻译器 → Qt 回落 source，前厅卡与凝视字幕就显示点分键。修复口径：
+    //   中文模板作 `.ts` 的 source，compose 帧数定稿后 translate().arg(n)（先查目录再填数，
+    //   填了数的串不再是 source，英文永远查不到条目）。三条腿各咬一种复发形态：
+    //   ① 表里仍是键 ② 张数拿候选数夸大（propose 填数 → 12 ≠ 展出 9，铁律 21）
+    //   ③ 英文用户拿不到英文（.ts/.qm 缺译 → 回落中文 source）。
+    {
+        const auto& tt = Curate::templateTable();
+        bool keyResidue = false, allNamed = true, distinct = true;
+        QStringList names;
+        for (const auto& s : tt) {
+            if (s.nameTmpl.contains(QLatin1String("curate.tmpl."))) keyResidue = true;
+            if (s.nameTmpl.trimmed().isEmpty()) allNamed = false;
+            // 人话至少得含 CJK：纯 ASCII 点分串/拼音都算没落地。
+            bool hasCjk = false;
+            for (const QChar& c : s.nameTmpl) if (c.unicode() >= 0x4E00 && c.unicode() <= 0x9FFF) { hasCjk = true; break; }
+            if (!hasCjk) allNamed = false;
+            if (names.contains(s.nameTmpl)) distinct = false;
+            names << s.nameTmpl;
+        }
+        report("N_table_no_key_residue", !keyResidue && allNamed && distinct && names.size() == 12);
+
+        // 12 个候选（HiddenReunion：seenAt = now−400 天）→ compose 裁到 9 张。
+        //   展名须报 9（真展出张数）且不得出现 12 —— 在 propose 里填数就报 12（夸大）。
+        const Curate::Now now{1760000000, 2026, 10, 19};
+        QVector<Photo> holder;
+        for (int i = 0; i < 12; ++i) {
+            Photo p;
+            p.path = QStringLiteral("syn_n_%1").arg(i, 2, 10, QLatin1Char('0'));
+            p.date = QStringLiteral("2025-06-%1").arg(i + 1, 2, 10, QLatin1Char('0'));
+            p.seenAt = now.epochSec - qint64(400) * 86400;    // 一年零一个多月
+            holder.push_back(p);
+        }
+        QVector<const Photo*> pool;
+        for (const Photo& p : holder) pool << &p;
+        const Curate::Buckets bk = Curate::bucket(pool);
+        const auto themes = Curate::propose(Curate::TemplateId::HiddenReunion, bk, pool, now);
+        const bool one = themes.size() == 1;
+        // propose 阶段不得有展名（帧数未定）——这条单独立着，防「title 又变回两义字段」。
+        report("N_candidate_has_no_title_yet", one && !themes.at(0).title.contains(QLatin1Char('%'))
+                   && !themes.at(0).title.contains(QLatin1String("curate.tmpl."))
+                   && (themes.at(0).title.isEmpty() || themes.at(0).title.contains(QLatin1Char('张'))));
+        const QString tdN = QDir::tempPath() + QStringLiteral("/la_curate_qa_t_n");
+        QDir().mkpath(tdN);                       // 空目录 = 缩略图不可读 = 画质未知，不影响裁展定稿
+        const Curate::Theme shown = one ? Curate::compose(themes.at(0), holder, tdN) : Curate::Theme();
+        const QString zhTitle = shown.title;
+        report("N_title_honest_count",
+               one && shown.paths.size() == 9 && zhTitle.contains(QLatin1Char('9'))
+                   && !zhTitle.contains(QLatin1String("12"))
+                   && !zhTitle.contains(QLatin1String("curate.tmpl."))
+                   && !zhTitle.contains(QLatin1Char('%')));
+
+        // 英文界面：装 :/i18n/LightAlbum_en.qm 后重跑成展 → 展名须是英文条目（无 CJK）、
+        //   仍带张数、且不等于中文串。装载成功先单独断言：否则「没装成 → 回落 source」会让这条白跑。
+        {
+            QTranslator en;
+            const bool loaded = en.load(QStringLiteral(":/i18n/LightAlbum_en.qm"));
+            report("N_en_catalog_loads", loaded);
+            QString enTitle;
+            int enTotal = 0, enOk = 0;
+            if (loaded) {
+                QCoreApplication *core = QCoreApplication::instance();
+                core->installTranslator(&en);
+                enTitle = one ? Curate::compose(themes.at(0), holder, tdN).title : QString();
+                // 12 枚展名逐条查目录：条目缺译时 Qt 回落 source（中文），英文用户就拿中文 → 记不通过。
+                for (const Curate::TemplateSpec& s : Curate::templateTable()) {
+                    ++enTotal;
+                    const QString t = QCoreApplication::translate("LightAlbum",
+                                                                  s.nameTmpl.toUtf8().constData());
+                    bool cjk = false;
+                    for (const QChar& c : t) if (c.unicode() >= 0x4E00 && c.unicode() <= 0x9FFF) { cjk = true; break; }
+                    if (!cjk && t.contains(QLatin1String("%1"))
+                        && !t.contains(QLatin1String("curate.tmpl."))) ++enOk;
+                }
+                core->removeTranslator(&en);      // 立即摘：后续腿与产品口径一样按中文 source 跑
+            }
+            bool enHasCjk = false;
+            for (const QChar& c : enTitle) if (c.unicode() >= 0x4E00 && c.unicode() <= 0x9FFF) { enHasCjk = true; break; }
+            report("N_en_title_localized",
+                   loaded && !enTitle.isEmpty() && !enHasCjk && enTitle.contains(QLatin1Char('9'))
+                       && !enTitle.contains(QLatin1String("curate.tmpl."))
+                       && !enTitle.contains(QLatin1Char('%')) && enTitle != zhTitle);
+            report("N_all_12_english_entries", loaded && enTotal == 12 && enOk == 12);
+        }
     }
 
     // —— H：画质不越界（全局选题不含画质）+ compose 腿（T5，spec R7）——
@@ -3370,7 +3457,7 @@ int runCurateQa()
         }
     }
 
-    // M9 文案诚实（v1 无设置页反悔入口 —— 如实标注，不假装可用）。
+    // M9 文案诚实（回执里每一句都是承诺：v1 没有的入口，一律如实标「下轮」，不假装可用）。
     {
         const QString m = CurateScheduler::muteAck();
         report("M_ack_mute_honest",
@@ -3378,6 +3465,12 @@ int runCurateQa()
         const QString k = CurateScheduler::keepAck(QStringLiteral("Three Winters"), 7);
         report("M_ack_keep_names_show",
                k.contains(QStringLiteral("Three Winters")) && k.contains(QLatin1String("7")));
+        // ★同一把尺子量 keep：合集**数据**本版已落库，但**页面没有**（`listAlbums()` 只有
+        //   门禁在调 ⇒ 「随时能再看」是空头承诺）。牙齿 = 必须自带未上线披露，且不许出现
+        //   可回看字样。变异证明：把文案改回旧句 → 本腿红（ledger T12 电池 R6）。
+        report("M_ack_keep_honest",
+               k.contains(QStringLiteral("下轮")) && !k.contains(QStringLiteral("随时"))
+                   && !k.contains(QStringLiteral("再看")));
         // 建合集失败支路也要有牙：不许把「没能」写成「已收进」（铁律 21 的文案侧镜像）。
         report("M_ack_keep_denied_differs",
                CurateScheduler::keepAck(QStringLiteral("Three Winters"), 7, false) != k
@@ -10564,6 +10657,31 @@ int main(int argc, char *argv[])
         i18nCheck("跟随空间", QStringLiteral("Follow Space"));
         i18nCheck("已标记 %1 · 再按同键撤销",
                   QStringLiteral("Marked %1 · press the same key to undo"));
+        // 2.42.0 波3 T12：今日一展卡 + 三手势入册。回执四串走 **CurateScheduler** context
+        //   （整个 context 此前不存在 = 缺译时 Qt 回落源码，英文界面直接漏中文），
+        //   故第二个判别器带 context 形参，三态口径与上面逐字同构。
+        const auto ctxCheck = [&](const char* ctx, const char* src, const QString& expect) {
+            ++checked;
+            const QString got = QCoreApplication::translate(ctx, src);
+            if (got != expect || got == QString::fromUtf8(src)) {
+                ok = false;
+                fails << QStringLiteral("%1/%2 got=%3 expect=%4")
+                         .arg(QString::fromLatin1(ctx), QString::fromUtf8(src), got, expect);
+            }
+        };
+        i18nCheck("今日一展 · 馆长选题", QStringLiteral("Today's Exhibit · Curator's Pick"));
+        i18nCheck("收进合集", QStringLiteral("Add to Album"));
+        i18nCheck("换一展", QStringLiteral("Next Exhibit"));
+        i18nCheck("别再这类", QStringLiteral("Mute This Kind"));
+        ctxCheck("CurateScheduler", "已把《%1》的 %2 张存为永久合集，合集浏览下轮上线。",
+                 QStringLiteral("Kept %2 photos from \"%1\" as a permanent album — the album browser arrives next round."));
+        ctxCheck("CurateScheduler", "没能收进合集，库里没多出一份空壳。",
+                 QStringLiteral("Not kept: the library gained no empty album."));
+        ctxCheck("CurateScheduler", "这类展已安静下来。反悔入口下轮上线。",
+                 QStringLiteral("This kind of exhibit has gone quiet. An undo entry arrives next round."));
+        ctxCheck("CurateScheduler", "已换一展。", QStringLiteral("A new exhibit is up."));
+        ctxCheck("CurateScheduler", "暂无更多可展的照片，先补几张进来。",
+                 QStringLiteral("No more photos left to exhibit — add a few first."));
         // 默认路径语言决策断言（2.11.1）：构造 locale 跨机确定性——
         // zh 系显示语言必须不加载 en（本事故根因）；en 系必须加载；forced 覆盖优先。
         struct I18nDecisionCase { const char* forced; const char* locName; bool expectLoad; };

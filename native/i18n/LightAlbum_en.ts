@@ -1703,5 +1703,94 @@ Errors: %1 — %2</translation>
         <source>检索：%1</source>
         <translation>Search: %1</translation>
     </message>
+    <message>
+        <source>今日一展 · 馆长选题</source>
+        <translation>Today&apos;s Exhibit · Curator&apos;s Pick</translation>
+    </message>
+    <message>
+        <source>收进合集</source>
+        <translation>Add to Album</translation>
+    </message>
+    <message>
+        <source>换一展</source>
+        <translation>Next Exhibit</translation>
+    </message>
+    <message>
+        <source>别再这类</source>
+        <translation>Mute This Kind</translation>
+    </message>
+    <!-- 2.42.0 波3 展名（T12）：source = CurateEngine 模板表的中文模板，`%1` = 展出张数。
+         引擎先取本表译文再填数，故译文必须保留 `%1` 且不出现 CJK。 -->
+    <message>
+        <source>今年 · %1 张</source>
+        <translation>This Year · %1 photos</translation>
+    </message>
+    <message>
+        <source>旧识 · %1 张</source>
+        <translation>An Old Face · %1 photos</translation>
+    </message>
+    <message>
+        <source>搁了一年多 · %1 张</source>
+        <translation>Shelved Over a Year · %1 photos</translation>
+    </message>
+    <message>
+        <source>一城 · %1 张</source>
+        <translation>One City · %1 photos</translation>
+    </message>
+    <message>
+        <source>同一门类 · %1 张</source>
+        <translation>One Genre · %1 photos</translation>
+    </message>
+    <message>
+        <source>黑白之间 · %1 张</source>
+        <translation>Between Black and White · %1 photos</translation>
+    </message>
+    <message>
+        <source>连拍那天 · %1 张</source>
+        <translation>The Burst Day · %1 photos</translation>
+    </message>
+    <message>
+        <source>在路上 · %1 张</source>
+        <translation>On the Road · %1 photos</translation>
+    </message>
+    <message>
+        <source>那年今日 · %1 张</source>
+        <translation>That Year, This Day · %1 photos</translation>
+    </message>
+    <message>
+        <source>新入藏 · %1 张</source>
+        <translation>Recently Acquired · %1 photos</translation>
+    </message>
+    <message>
+        <source>夜色与远山 · %1 张</source>
+        <translation>Night and Distant Hills · %1 photos</translation>
+    </message>
+    <message>
+        <source>搁下两年 · %1 张</source>
+        <translation>Shelved Two Years · %1 photos</translation>
+    </message>
+</context>
+<context>
+    <name>CurateScheduler</name>
+    <message>
+        <source>已把《%1》的 %2 张存为永久合集，合集浏览下轮上线。</source>
+        <translation>Kept %2 photos from &quot;%1&quot; as a permanent album — the album browser arrives next round.</translation>
+    </message>
+    <message>
+        <source>没能收进合集，库里没多出一份空壳。</source>
+        <translation>Not kept: the library gained no empty album.</translation>
+    </message>
+    <message>
+        <source>这类展已安静下来。反悔入口下轮上线。</source>
+        <translation>This kind of exhibit has gone quiet. An undo entry arrives next round.</translation>
+    </message>
+    <message>
+        <source>已换一展。</source>
+        <translation>A new exhibit is up.</translation>
+    </message>
+    <message>
+        <source>暂无更多可展的照片，先补几张进来。</source>
+        <translation>No more photos left to exhibit — add a few first.</translation>
+    </message>
 </context>
 </TS>

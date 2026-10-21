@@ -2,6 +2,7 @@
 #include "CurateEngine.h"
 #include "CullEngine.h"   // blurScore/exposureStats/computePhash/hamming（画质唯一真源）
 #include "RawDecode.h"     // isRawExt（RAW 判定的唯一真源，禁另立扩展名表，铁律 6）
+#include <QCoreApplication>
 #include <QSet>
 #include <QHash>
 #include <QImage>
@@ -45,12 +46,25 @@ void collectIndices(const Curate::Buckets& bk, const QStringList& keys, QVector<
     }
 }
 
-// 展名 i18n key（引擎层只产出**键**；本地化是 UI 职责，见 spec §3 J 组「文案串在 .ts 内」）。
-QString nameKeyFor(Curate::TemplateId id)
+// 展名模板（`.ts` 的 source = 中文模板，`%1` = 展内张数）。
+QString nameTmplFor(Curate::TemplateId id)
 {
     for (const Curate::TemplateSpec& s : Curate::templateTable())
-        if (s.id == id) return s.nameKey;
+        if (s.id == id) return s.nameTmpl;
     return QString();
+}
+
+// 展名模板 → 展签成品文案。**先查目录再填数**：`%1` 一旦先被替换，source 就变了，
+//   英文目录里永远查不到这一条（这是 T9/T10 展签漏出裸键之后定下的顺序）。
+//   张数只有到 compose 定稿才等于「真展出的张数」，所以本函数只由 compose 调用，
+//   propose 阶段 title 留空（见 Curate::propose / Curate::compose 注释）。
+QString displayTitleFor(Curate::TemplateId id, int n)
+{
+    const QString tmpl = nameTmplFor(id);
+    if (tmpl.isEmpty()) return tmpl;        // 表里没这行 → 空串，不编一个名字（铁律 21）
+    // 线程口径：翻译器在 main() 启动时一次性 install，此后运行期不再增删；
+    //   Qt 的目录查询走读写锁，策展 worker 上的只读查询与 GUI 线程不冲突。
+    return QCoreApplication::translate("LightAlbum", tmpl.toUtf8().constData()).arg(n);
 }
 
 // v1 固定公历节日表（spec §5.6：农历节日不做，如实记）。
@@ -81,21 +95,25 @@ namespace Curate {
 
 const QVector<TemplateSpec>& templateTable()
 {
-    // 静态只读；序即 spec §2.3 表序（= V6 §三）。nameKey 为 .ts 展名 key 字面量，
-    // sourceId 为数据源 token（非空；缺源即 skip 的判定前提）。方向仅 BadShotSweep 为 Down。
+    // 静态只读；序即 spec §2.3 表序（= V6 §三）。nameTmpl 是 `.ts` 的 source（中文展名模板，
+    // `%1` = 展内张数，由 compose 先 translate 再 arg 填数），sourceId 为数据源 token
+    // （非空；缺源即 skip 的判定前提）。方向仅 BadShotSweep 为 Down。
+    // ★ 展名一律**只说这一版真选出来的东西**：v1 降级的模板（OnThisDay 取当年桶、
+    //   HuePilgrimage 取最大 category 桶、BadShotSweep 取 >2 年陈帧）不写 spec 原名的
+    //   「那年今天 / 满墙皆青 / 可以退藏」——那是数据源尚未接满时的夸大（铁律 21）。
     static const QVector<TemplateSpec> kTable = {
-        { TemplateId::OnThisDay,     QStringLiteral("curate.tmpl.onThisDay"),     QStringLiteral("year+date"),              Direction::Up },
-        { TemplateId::PersonAnniv,   QStringLiteral("curate.tmpl.personAnniv"),   QStringLiteral("person*year"),            Direction::Up },
-        { TemplateId::HiddenReunion, QStringLiteral("curate.tmpl.hiddenReunion"), QStringLiteral("exhibitHist&seenAt"),     Direction::Up },
-        { TemplateId::CitySlice,     QStringLiteral("curate.tmpl.citySlice"),     QStringLiteral("city&seenAt"),            Direction::Up },
-        { TemplateId::HuePilgrimage, QStringLiteral("curate.tmpl.huePilgrimage"), QStringLiteral("category"),               Direction::Up },
-        { TemplateId::MonoHour,      QStringLiteral("curate.tmpl.monoHour"),      QStringLiteral("cat:mono"),               Direction::Up },
-        { TemplateId::BeyondBurst,   QStringLiteral("curate.tmpl.beyondBurst"),   QStringLiteral("phash&quality"),          Direction::Up },
-        { TemplateId::TravelReel,    QStringLiteral("curate.tmpl.travelReel"),    QStringLiteral("gpsSameCityMultiDay"),    Direction::Up },
-        { TemplateId::FestivalEcho,  QStringLiteral("curate.tmpl.festivalEcho"),  QStringLiteral("festivalCal&history"),    Direction::Up },
-        { TemplateId::NewIntake,     QStringLiteral("curate.tmpl.newIntake"),     QStringLiteral("seenAt"),                 Direction::Up },
-        { TemplateId::LightArchive,  QStringLiteral("curate.tmpl.lightArchive"),  QStringLiteral("catUexposure"),           Direction::Up },
-        { TemplateId::BadShotSweep,  QStringLiteral("curate.tmpl.badShotSweep"),  QStringLiteral("burst&blur&stale"),       Direction::Down },
+        { TemplateId::OnThisDay,     QStringLiteral("今年 · %1 张"),        QStringLiteral("year+date"),              Direction::Up },
+        { TemplateId::PersonAnniv,   QStringLiteral("旧识 · %1 张"),        QStringLiteral("person*year"),            Direction::Up },
+        { TemplateId::HiddenReunion, QStringLiteral("搁了一年多 · %1 张"),  QStringLiteral("exhibitHist&seenAt"),     Direction::Up },
+        { TemplateId::CitySlice,     QStringLiteral("一城 · %1 张"),        QStringLiteral("city&seenAt"),            Direction::Up },
+        { TemplateId::HuePilgrimage, QStringLiteral("同一门类 · %1 张"),    QStringLiteral("category"),               Direction::Up },
+        { TemplateId::MonoHour,      QStringLiteral("黑白之间 · %1 张"),    QStringLiteral("cat:mono"),               Direction::Up },
+        { TemplateId::BeyondBurst,   QStringLiteral("连拍那天 · %1 张"),    QStringLiteral("phash&quality"),          Direction::Up },
+        { TemplateId::TravelReel,    QStringLiteral("在路上 · %1 张"),      QStringLiteral("gpsSameCityMultiDay"),    Direction::Up },
+        { TemplateId::FestivalEcho,  QStringLiteral("那年今日 · %1 张"),    QStringLiteral("festivalCal&history"),    Direction::Up },
+        { TemplateId::NewIntake,     QStringLiteral("新入藏 · %1 张"),      QStringLiteral("seenAt"),                 Direction::Up },
+        { TemplateId::LightArchive,  QStringLiteral("夜色与远山 · %1 张"),  QStringLiteral("catUexposure"),           Direction::Up },
+        { TemplateId::BadShotSweep,  QStringLiteral("搁下两年 · %1 张"),    QStringLiteral("burst&blur&stale"),       Direction::Down },
     };
     return kTable;
 }
@@ -301,7 +319,8 @@ QVector<Theme> propose(TemplateId id, const Buckets& bk, const QVector<const Pho
     for (int i : ix)
         if (i >= 0 && i < pool.size() && pool[i]) t.paths.push_back(pool[i]->path);
     if (t.paths.isEmpty()) return out;
-    t.title = nameKeyFor(id);                            // 展名 key（UI 经 .ts 本地化）
+    // title **不在此处填**：候选帧数不等于展出帧数（compose 还要裁到 5..9 并去冗余），
+    //   拿候选数当展名张数 = 夸大（铁律 21）。展名由 compose 在定稿后产出。
     t.reasons << QStringLiteral("n=") + QString::number(t.paths.size());   // 模板拼接参数（T9 消费）
     out.push_back(t);
     return out;
@@ -466,6 +485,8 @@ Theme compose(const Theme& t, const QVector<Photo>& all, const QString& thumbsDi
 
     for (const Scored& s : scored) out.paths.push_back(s.p->path);
     out.primaryPath = scored.constFirst().p->path;
+    // 定稿帧数已知 → 此处才产展名（本地化 + 填数；见 displayTitleFor）。
+    out.title = displayTitleFor(t.id, out.paths.size());
     return out;
 }
 

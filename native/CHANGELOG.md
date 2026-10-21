@@ -3,6 +3,99 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.42.0] - 2026-10-21
+
+体验升级第六轮（波 3「主动」）：**智能策展系统 v1「常设展」+ 废片巡检**。把第四轮落地的全本机 AI
+（clipinfer 场景分类 / faceinfer 人物 / EXIF / pHash / 模糊度）从「被动检索」翻转为「主动开讲」——
+每周由本机产出一版 5–9 帧的常设展提案（展名 + 一句话小记），用户只用**收进合集 / 换一展 / 别再这类**
+三种手势回应。零新运行时依赖、零新动效时长档位、零云端；既有 AI 索引与修图能力**零改动**。
+
+spec：`docs/superpowers/specs/2026-10-19-wave3-curation-engine-design.md`；计划：`.../plans/2026-10-19-wave3-curation-engine.md`。
+
+### 七条 spec 裁决（§0.1 R1–R7，逐条落到了代码）
+- **R1 逐帧换展归波3**：凝视模式内新增**策展序列**——自动逐帧 + `MotionKit::kExhibitBreath` 2400ms
+  呼吸停 + 展名/小记字幕。用的是**既有档位**，未新造曲线或时长。
+- **R2 无偏好学习**：打分式 `w.fresh*fresh + 0.0 - w.repeat*repeat`——偏好项**字面恒 0**，
+  且 `Q_UNUSED(h.shownPaths)` 显式声明「收藏/展出明细不得影响全局选题分」；门禁 E 组带
+  `LA_CURATE_QA_FORCE_BROKEN=1` 反例臂（偏好权重一旦被接上就红）。
+- **R3 不做真实定时器**：改「懒生成 + 7 天节流」——启动 / 前厅 refresh 时若距上次成功生成 >7 天才生成一次，
+  文案与注释**如实写明非定时**。
+- **R4 高度层补建**：`Theme.h` 实测只有 `Elev::E1/E2`，本波补 **E3（聚光）+ E4（开馆）**；
+  E4 首批两点应用 = 今日一展卡（新）+ ⌘K 面板（retro），与 V5 逐字对齐。
+- **R5 状态面是缺口不是现成**：V6 称「数据面现成」**仅对 AI 三源成立**——展出历史 / 冷却 / 静音 / 合集
+  四项**实测全无**（`CmdKPanel.cpp` 的「暂存为合集」当时是 `setEnabled(false)` 占位）。本波新建
+  `exhibits` / `albums` / `album_items` / `template_mutes` 四表 + 7 个 Library API。
+- **R6 `seen_at` 补读**：列**存在但 `Library::open` 从不 SELECT** ⇒ `Photo::seenAt` 是「扫描/入库时间」
+  而非拍摄时间，文案侧不许说成「拍摄于」（门禁断言）。
+- **R7 12 模板全量入册、缺源即 skip**：12 条全部进纯函数表；数据源缺失时返回**空集 + `skipReason`**，
+  绝不伪造照片。两处按 v1 实际数据口径**降级并如实记**：HuePilgrimage 只按 `category` 出题（主色聚类留后）、
+  TravelReel 只做「同城跨日 ≥2 天」（轨迹连续段留后）。
+
+### 展名：从 i18n 裸键到「计数诚实」的展示名（本波内修）
+- T1–T11 期间模板表里的展名**是一枚 i18n 裸键**（`curate.tmpl.*`），界面上会直接露出键名。
+  收口时（T12）修掉：**12 条展名改为含 `%1` 张数的中文模板串**，由 `displayTitleFor()` 在
+  `compose()` 阶段本地化并填数（`.ts` 手编 + `lrelease`，`.ts`/`.qm` 同批提交）。
+- **命名跟着数据口径改**：spec 的文学化展名（「满墙皆青」「无彩之日」「沿着海岸线走的那天」）
+  与 v1 实际能证的口径不符——v1 只按门类出题、按同城跨日出题，故落地为
+  「同一门类 · %1 张」「黑白之间 · %1 张」「在路上 · %1 张」。**名字不许承诺数据没做的事。**
+- **张数诚实（铁律 21）**：`propose()` **不填展名**，只有 `compose()` 裁完帧（`qBound(5, n, 9)` + pHash 去重）
+  才产标签——否则会出现「展名说 12 张、屏上 9 张」的夸大。
+
+### 前厅今日一展卡 + 三手势
+- `LobbyPage` 新增「今日一展 · 馆长选题」卡（E4 开馆层 + 馆长图标组），三个手势按钮
+  「收进合集 / 换一展 / 别再这类」；卡上的主图即展内主帧，点卡进凝视序列。
+- 三手势的**落库真源**在 `CurateScheduler`（`keepExhibit` / `markSwapped` / `muteExhibit`），
+  MainWindow 只接线不写库——门禁直调同一批方法，不存在第二份落库逻辑。
+- 「换一展」是**用户显式动作**：绕开 7 天节流，且只放开「本周 ≤1」这一条频控腿（模板静音、同人 60 天
+  冷却照旧）。把用户按下的按钮做成死键不是本意；周口径管的是**自动推送**。
+- 「别再这类」写的是 `template_mutes`（**永久**静音该模板），**不**另写 `exhibits.feedback`——
+  同一事实两处落库 = 双真源。反悔入口本版没有，回执里**如实标「下轮上线」**。
+
+### 编排与线程纪律
+- `pickExhibit()` 是**纯函数**（photos + state + now → Exhibit），可在任意线程跑、门禁可直测；
+  `maybeGenerate()` 只做「读节流 → 快照 photos → `QtConcurrent::run` → `Qt::QueuedConnection` 投回 GUI 落库」。
+  后台线程**绝不**触 Library / SQLite（承既有 AI 单写者铁律），`generated(id)` 恒在 GUI 线程发射。
+- **收口时抓到的成本越界**：`compose()` 曾对**整个候选集**（最多 12 张，且候选池可更大）逐张解码算画质分，
+  与 spec §5.2「画质只在展内」的成本红线冲突。改为**展帧廉价预选**——解码次数上界 = 展内帧数（≤9），
+  门禁加 `qualityCalls<=9` 探针腿；`LA_CURATE_QA_FORCE_BROKEN_Q=1` 是这一条的反例臂。
+
+### 废片巡检（红线 3：永不自动删除）
+- `inspectBadShots()`：连拍冗余 ∩ 模糊低分 ∩ 截图过期，打包成**待点头**的批次；引擎本身**无删除路径**，
+  门禁 I 组用 `FORCE_BROKEN_I` 断言「巡检函数里绝不允许出现 DELETE」。
+- **本版只到引擎**：批次生成与回读 API 齐了，**没有任何页面上它**——界面上看不到、也点不到，
+  手册与回执都不宣称可用。
+
+### 收口时抓到的两个非策展缺陷
+1. `keepAck` 回执写的是「…随时能再看」，但 `Library::listAlbums()` **本版只有门禁在调**（合集数据真落库、
+   页面没有）。改为「已把《…》的 N 张存为永久合集，**合集浏览下轮上线**」并新增 `M_ack_keep_honest` 腿
+   （必须自带未上线披露、不许出现「随时」「再看」）。**界面上写出来的每一句都是承诺。**
+2. `ThumbCache` 0xC0000005（已单独提交 `3cdf1d6`）：待决缩略回调只守卫 `ctx`，而 **2.41.0 交付的
+   LobbyPage / PeoplePage 把 ctx 传成了宿主页面**——页面 `rebuild()` 同步删卡时请求还挂在 `pending_` 上，
+   回灌即给已释放的 `QWidget` 赋图。本波跑全量套件时它咬红 LA_SMOKE / LA_RETOUCH_SMOKE /
+   LA_RETOUCH_A_QA / LA_GALLERY_E_QA 四门，是**上一波遗留缺陷被本波的接线暴露**，不是本波新引入。
+   修复 = ctx 改为回调真正解引用的控件本身，并把契约写进 `ThumbCache.h`；同时补 LA_LOBBY_QA K 组
+   （真解码 + 同事件轮重建）与 LA_PEOPLE_QA F 组（两处 ctx 源扫）两条会红它的腿。
+
+### 工程
+- 门禁名册 **79 → 80**：新增 `LA_CURATE_QA`（**139 腿**，组 A..N + R3/V/W）。五个 `FORCE_BROKEN*`
+  env 臂各只红自己那组；M 组（接线，34 腿 = 25 纯逻辑/DB + 9 源扫）与 N 组（展名本地化，6 腿）
+  造不出 env 臂，改用**变异构建（tamper）电池**证牙：展名轨 5 轮（键回表 / propose 填名 / 展名清空 /
+  报候选数 / `.ts` 写成中文）+ 回执轨 2 轮（中文旧句 / 英文旧句），**每轮只红它点名的那条腿**，
+  还原后 numstat 与基线逐字段相同。全量套件 **80 门 PASS=66 FAIL=0 CHECK=0 SKIP=14 KILL=0**
+  （77.8s；14 道 SKIP 全是既有 `need=` 外部素材门，**本版新增 0 道 SKIP**）；快门层 PASS=22 FAIL=0。
+- **计划口径被实测否掉一处**：计划写「新门进 fast 层、名册 23 fast / 57 full」。E6 是按**实测成本**
+  判层的不是按意愿——`-Timing` x15 暖样本 1508–1800ms（另有一次 9983ms 冷离群），500ms 预算不可达，
+  故 `LA_CURATE_QA` 落 **full 层**（同形先例 `LA_CLUSTER_QA`，1424ms、fast 被 E6 否）。真实名册 =
+  **fast=22 / full=58**，`measuredMs=1900`（暖样本最大值 + 余量）；此前那个 `measuredMs=300` 是**没测过的占位值**。
+- 英文目录 **347 → 368 条**（368 finished / 0 unfinished，`LA_I18N_QA` 逐条校验编译后的 `.qm`）。
+- 零新运行时依赖：策展只用 Qt 自带的 `QtConcurrent` / `QSqlDatabase`。
+
+### 依赖与许可
+
+- 依赖与 2.41.0 **完全一致**（LibRaw 0.22.2 / LGPL-2.1·CDDL-1.0，FFmpeg / GPL-3.0，ONNX Runtime v1.19.2 / MIT，
+  LaMa 权重 / Apache-2.0，CLIP ViT-B/32 权重 / MIT 代码 + CC-BY-4.0 权重，SCRFD 与 ArcFace 权重 / 库 MIT +
+  预训练权重限非商业研究用途，stb_image / MIT·Unlicense）。本程序源代码仍为 MIT。
+
 ## [2.41.0] - 2026-10-19
 
 体验升级第五轮（波 1+波 2「可信 + 可达」）：把 LightAlbum 从「AI 相册工具」推向

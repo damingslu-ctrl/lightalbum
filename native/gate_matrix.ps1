@@ -371,16 +371,30 @@ $GateTable = @(
   @{n="LA_GAZE_QA";   png=$false; tier="fast"; measuredMs=331},
   @{n="LA_LAMP_QA";   png=$false; tier="fast"; measuredMs=281},
   # 2.42.0 wave3 curation engine (LA_CURATE_QA). Pure-function contract gate (R-06: no
-  # user photos; synthetic libraries built in temp dirs). 132 legs, groups A..M.
+  # user photos; synthetic libraries built in temp dirs). 139 legs, groups A..N + R3/V/W.
   # Counter-example arms, each reddens only its own group (rule 22: expectations never
   # switch with the arm):
   #   LA_CURATE_QA_FORCE_BROKEN=1    -> E  (preference weight must stay 0)
   #   LA_CURATE_QA_FORCE_BROKEN_H=1  -> H  (quality must not enter the dedup signature)
+  #   LA_CURATE_QA_FORCE_BROKEN_Q=1  -> V  (compose must not decode the whole candidate set)
   #   LA_CURATE_QA_FORCE_BROKEN_I=1  -> I  (bad-shot inspect must never delete)
   #   LA_CURATE_QA_FORCE_BROKEN_R=1  -> R  (persist must not run inline in the worker)
   # Group M (MainWindow wiring) has no env arm: a gate cannot construct MainWindow, so
-  # its 33 legs (24 DB/pure + 9 source-scan) are falsified by manual tamper builds
-  # A/B/B'+C -- every tamper reddened exactly its own named leg (ledger T11 table).
+  # its 34 legs (25 DB/pure + 9 source-scan) are falsified by manual tamper builds
+  # (rename muteTemplate / rename openCuration / flip enter+setCuration / first force
+  # flag -> false). Each of those four reddened exactly one named leg; the RED baseline
+  # before wiring landed was 6 legs. The rename arms initially stayed GREEN -- a prefix
+  # substring hole in contains("muteTemplate"), fixed by pinning the whole
+  # connect(lobby_, &LobbyPage::<sig>, this shape plus comma boundaries (ledger T11).
+  # Group N (exhibit-name localization, T12) also has no env arm: it installs the real
+  # compiled catalog inside the gate, so its 6 legs were falsified by 5 tamper rounds.
+  # Observed red sets, verbatim: key-in-table -> 2 legs; title-in-propose -> 1; candidate
+  # count instead of final count -> 2; missing .ts entry -> 1; removing compose's title
+  # line -> 7 (title is load-bearing: valid + keep/swap receipts all read it, so that arm
+  # legitimately cascades -- not a clean single-leg bite, recorded as-is). See ledger T12.
+  # The two receipt-honesty legs added at closure (zh ack -> M_ack_keep_honest, en ack ->
+  # LA_I18N_QA ctxCheck) were falsified by 2 further rounds (1 red / gate FAIL), restoring
+  # to a byte-identical numstat afterwards -- ledger T12 rows R6/R7.
   # Tier: FULL. Spec/plan said "fast layer", but that was a cost guess and E6 decides
   # membership by measured cost, not taste: -Timing x15 warm samples (ms) 1508 1521 1543
   # 1562 1571 1576 1590 1592 1614 1614 1620 1631 1643 1674 1800, plus one cold outlier

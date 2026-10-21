@@ -12,10 +12,10 @@
 
 namespace Curate {
 
-// 模板规格：id（枚举序即 V6 §三表序）/ i18n 展名 key / 数据源 token / 方向。
+// 模板规格：id（枚举序即 V6 §三表序）/ 展名模板 / 数据源 token / 方向。
 struct TemplateSpec {
     TemplateId id = TemplateId::OnThisDay;
-    QString    nameKey;                          // .ts 展名 key 字面量
+    QString    nameTmpl;                         // `.ts` source = 中文展名模板，`%1` = 展内张数
     QString    sourceId;                         // 数据源 token（非空；缺源即 skip 的前提）
     Direction  direction = Direction::Up;
 };
@@ -43,6 +43,8 @@ QVector<TemplateId> coldStartTemplates(int totalCount);
 // 计划裁决 R-T4：spec §2.2 的 bucket(pool)→pool 下标 与 propose(...,all,...) 无法复合
 // （下标是 pool 相对、propose 无 pool）；故 propose 第 3 参取 pool（const Photo* 视图，
 // 所需字段全在 Photo 上；all 不额外提供信息）。
+// ★ 返回的 Theme::title 恒空：候选帧数不等于展出帧数（compose 还要裁 5..9 + 去冗余），
+//   此处填名会夸大张数（铁律 21）。展名只在 compose 产出。
 QVector<Theme> propose(TemplateId id, const Buckets& bk, const QVector<const Photo*>& pool,
                        const Now& now);
 
@@ -56,6 +58,7 @@ bool frequencyAllows(const Theme& t, const ExhibitHistory& h, const MuteState& m
 // 成展器：展内排序 = w3·画质（**唯一消费 quality 的地方**，R7）；
 //   主图 = 展内画质分最高；陪展 = 类内多样（phash 邻域去冗余）；总量裁到 5..9。
 //   ★ 只对本主题的候选帧算画质（不碰全库）；thumbsDir 与 Photo::thumbFile 拼接取图。
+//   ★ 展名在此产出：帧数定稿后先查 .ts 目录再填 `%1`，返回的 Theme::title 即展签文案。
 Theme compose(const Theme& t, const QVector<Photo>& all, const QString& thumbsDir);
 
 // 画质分（V6「凝视分」本波定义）：CullEngine::blurScore+exposureStats 合成归一化到 [0,1]。

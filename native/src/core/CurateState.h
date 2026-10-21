@@ -26,7 +26,7 @@ struct Weights { double fresh = 0.55, pref = 0.0, quality = 0.30, repeat = 0.15;
 // 一个候选主题（展名 + 一句话小记 + 主图/陪展帧序 + 可解释打分）。
 struct Theme {
   TemplateId id = TemplateId::OnThisDay;
-  QString title; QString blurb;              // 展名 + 小记（模板文案，非 LLM）
+  QString title; QString blurb;              // 展名 + 小记（模板文案，非 LLM；展名由 compose 填数）
   QVector<QString> paths;                    // 主图在最前，随后 4–8 陪展
   QString primaryPath;                       // 主图（展内画质分最高）
   // 主题身份键（打分新鲜感/频控冷却的键空间）；如 {"tmpl:PersonAnniv","person:Alice"}。

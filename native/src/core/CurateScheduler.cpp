@@ -134,7 +134,8 @@ void CurateScheduler::persist(const Curate::Exhibit& ex, const Curate::Now& now)
     Q_UNUSED(now);
     if (!lib_ || !ex.valid) { emit generated(0); return; }
     const Curate::Theme& t = ex.theme;
-    // title/blurb 存 .ts **键**（本地化是 UI 职责，spec §3 J 组：「文案串在 .ts 内」）。
+    // title/blurb 存**成品文案**（展名在 compose 里已过 .ts 目录 + 填数，见 CurateEngine
+    // displayTitleFor）；DB 不再存键 —— 存键时中文界面不装翻译器就直接漏裸键（2.42.0 实测）。
     const qint64 id = lib_->addExhibit(QString::fromLatin1(Curate::templateIdToken(t.id)),
                                        t.title, t.blurb, t.primaryPath, t.paths,
                                        ex.generatedAt, QString());
@@ -215,7 +216,10 @@ bool CurateScheduler::muteExhibit(const QString& templateToken)
 QString CurateScheduler::keepAck(const QString& title, int n, bool ok)
 {
     return ok
-        ? QCoreApplication::translate("CurateScheduler", "已把《%1》的 %2 张收进合集，随时能再看。")
+        // ★文案纪律：界面上写出来的每一句都是承诺。合集**数据**本版已真落库（`albums`/
+        //   `album_items`，跨重启可回读），但**没有任何页面列它**（`Library::listAlbums()`
+        //   本版只有门禁在调）——故此处只报已成立的事实 + 如实标未上线，不许承诺可回看。
+        ? QCoreApplication::translate("CurateScheduler", "已把《%1》的 %2 张存为永久合集，合集浏览下轮上线。")
               .arg(title).arg(n)
         : QCoreApplication::translate("CurateScheduler", "没能收进合集，库里没多出一份空壳。");
 }
