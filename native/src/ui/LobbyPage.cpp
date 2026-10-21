@@ -490,10 +490,13 @@ QWidget* LobbyPage::makeThumbCard(const Photo& p, int sidePx, bool feature,
     // 默认意图 = 单点开凝视；今日一展卡传入自己的回调（整展序列），不再另造一套缩略卡。
     if (!onActivated) onActivated = [this, path]() { emit openGaze(path); };
 
-    // 命中即同步给图；未命中由后台加载完成后回调填充（ctx=this 生命周期守卫）。
+    // 命中即同步给图；未命中由后台加载完成后回调填充。
+    // 守卫必须是 **card**（回调真正解引用的那个对象），不能是页面：rebuild() 用
+    // `delete content_` 同步删卡，而请求还挂在 cache 的 pending_ 上——守卫恒真的话
+    // finish() 会把像素赋给已释放的 QWidget（LA_SMOKE 四门 0xC0000005 的真实来源）。
     QPixmap pm = cache_->cached(thumb, lv);
     auto* card = new ThumbCard(pm, caption, sidePx, std::move(onActivated), content_);
-    cache_->request(thumb, this, [card](const QPixmap& loaded) {
+    cache_->request(thumb, card, [card](const QPixmap& loaded) {
         if (!loaded.isNull()) card->setPixmap(loaded);
     }, lv);
     return card;

@@ -159,7 +159,7 @@ $GateTable = @(
   # non-vacuous through the shipped hook: LA_MAP_SMOKE_FORCE_BROKEN=1 drops one
   # zh key (the real shape of an untranslated province) ->
   # "FAIL ... zhKeys=232 zhComplete=0"; qa_runner reports [FAIL] for it.
-  @{n="LA_MAP_SMOKE";       png=$false; measuredMs=930},
+  @{n="LA_MAP_SMOKE";       png=$false; measuredMs=802},
   @{n="LA_RETOUCH_SMOKE";   png=$false; measuredMs=2567},
   @{n="LA_SMOKE";           png=$false; measuredMs=3171},
   @{n="LA_MAP_A_QA";        png=$true; measuredMs=3640},
@@ -354,13 +354,24 @@ $GateTable = @(
   # month/season lexicon (14 asserts RED incl. D_month_table / D_season_table);
   # LA_GAZE_QA bypasses the low-saturation fallback (B1/B2/B3/B5 + C1 RED);
   # LA_LAMP_QA swaps the L1/L2 tables (A_L1_* and A_L2_*, 16 asserts RED).
+  # 2.42.0 fix wave added two lifecycle groups for the ThumbCache guard contract (the
+  # callback guard MUST be the object the callback dereferences, not the host page):
+  # LA_LOBBY_QA K (7 asserts) drives the real crash timing -- build cards, re-run
+  # setExhibit in the same event turn so rebuild() deletes them while the request is
+  # still pending, then drain. Pre-fix this SEGFAULTS the gate (gdb frame:
+  # ThumbCache::finish -> makeThumbCard lambda -> QPixmap::operator=, the same stack as
+  # LA_SMOKE). Tamper proofs, each reddens only its own leg: page guard instead of the
+  # card (no rebuild needed) -> K_request_ctx_is_widget RED, runtime legs stay green;
+  # fixture colour written != expected colour -> K_live_card_painted RED (proves the
+  # pixel assert reads the delivered bitmap, not merely "some image"). LA_PEOPLE_QA F
+  # (2 asserts) pins the same shape for both PeoplePage sites (cover / film button).
   @{n="LA_LOBBY_QA";  png=$false; tier="fast"; measuredMs=281},
-  @{n="LA_PEOPLE_QA"; png=$false; tier="fast"; measuredMs=387},
+  @{n="LA_PEOPLE_QA"; png=$false; tier="fast"; measuredMs=132},
   @{n="LA_CMDK_QA";   png=$false; tier="fast"; measuredMs=385},
   @{n="LA_GAZE_QA";   png=$false; tier="fast"; measuredMs=331},
   @{n="LA_LAMP_QA";   png=$false; tier="fast"; measuredMs=281},
   # 2.42.0 wave3 curation engine (LA_CURATE_QA). Pure-function contract gate (R-06: no
-  # user photos; synthetic libraries built in temp dirs). 127 legs, groups A..M.
+  # user photos; synthetic libraries built in temp dirs). 132 legs, groups A..M.
   # Counter-example arms, each reddens only its own group (rule 22: expectations never
   # switch with the arm):
   #   LA_CURATE_QA_FORCE_BROKEN=1    -> E  (preference weight must stay 0)

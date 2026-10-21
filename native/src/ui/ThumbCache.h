@@ -15,7 +15,9 @@
 // ① 负缓存：加载失败（文件不存在/解码失败）记入 negative_，跨两级共享，
 //    防重试风暴（原实现用「空 QPixmap 存进 QCache」表达同一语义）。
 // ② pending_ 按文件名去重，worker 完成经 finish() 回主线程。
-// ③ 生命周期守卫：cb 携带 QPointer<const QObject>，ctx 死亡则跳过回调。
+// ③ 生命周期守卫：cb 携带 QPointer<const QObject>，ctx 死亡则跳过回调。**ctx 必须是回调
+//    真正解引用的那个对象**，不能图省事传宿主页面——页面重建时子控件先死、请求还在 pending_，
+//    守卫恒真的回灌就是给已释放控件赋 QPixmap（2.42.0 修复：LobbyPage / PeoplePage 三处）。
 // ④ 某一级因预算被淘汰时 cached() 回落另一级（宁可给大图也不给空图），
 //    且不会重复触发后台加载。
 #include <QObject>
@@ -41,7 +43,8 @@ public:
 
     explicit ThumbCache(QString dir, QObject* parent = nullptr);
 
-    // 未命中则后台加载；cb 在主线程回调。ctx 用于生命周期守卫（QPointer）。
+    // 未命中则后台加载；cb 在主线程回调。ctx 用于生命周期守卫（QPointer），
+    // 且必须就是 cb 内部解引用的对象（传宿主页面 = 子控件先死时回灌打在释放内存上）。
     // lv 缺省 kTile（既有调用零改动）。
     void request(const QString& thumbFile, const QObject* ctx,
                  std::function<void(const QPixmap&)> cb, int lv = kTile);

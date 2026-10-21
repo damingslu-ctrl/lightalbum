@@ -213,7 +213,9 @@ QWidget* PeoplePage::makeRoomBlock(int idx)
         if (!pm.isNull())
             cover->setPixmap(pm.scaled(72, 72, Qt::KeepAspectRatioByExpanding,
                                        Qt::SmoothTransformation));
-        cache_->request(tf, this, [cover](const QPixmap& p) {
+        // 守卫 = cover 本身（回调解引用的就是它），不是页面：重建人物卡时 cover 先死，
+        // 守卫恒真的回灌等于对已释放 QLabel 赋像素。
+        cache_->request(tf, cover, [cover](const QPixmap& p) {
             if (!p.isNull())
                 cover->setPixmap(p.scaled(72, 72, Qt::KeepAspectRatioByExpanding,
                                           Qt::SmoothTransformation));
@@ -291,7 +293,7 @@ QWidget* PeoplePage::makeThumbRow(const Room& r)
         const QString tf = p->thumbFile;
         const QPixmap pm = cache_->cached(tf, ThumbCache::kTile);
         if (!pm.isNull()) btn->setIcon(QIcon(pm));
-        cache_->request(tf, this, [btn](const QPixmap& loaded) {
+        cache_->request(tf, btn, [btn](const QPixmap& loaded) {
             if (!loaded.isNull()) btn->setIcon(QIcon(loaded));
         }, ThumbCache::kTile);
         connect(btn, &QToolButton::clicked, this, [this, person, path]() {

@@ -1595,6 +1595,81 @@ int runLobbyQa()
         }
     }
 
+    // —— K 组：待决缩略回调 × 卡片销毁（ThumbCache 生命周期守卫口径）——
+    // 缺陷形状：request(file, ctx, cb) 只守卫 ctx，可 cb 里解引用的是**另一个**对象（卡片）。
+    // 波 3 起 setExhibit → refresh → rebuild() 会 `delete content_` **同步**删掉整批缩略卡，
+    // 于是「请求还挂在 pending_ 上、卡已经没了」成了换展时的常态时序；finish() 见 ctx（页面）
+    // 仍存活就照旧回灌 → 给已释放的 QWidget 赋 QPixmap → 0xC0000005（LA_SMOKE 四门实测）。
+    // 三条腿各管一件事，缺一条就漏：
+    //   K_dead_card_no_crash     真跑该时序，进程活着即绿（崩溃判别器）。
+    //   K_live_card_painted      反空转：同一次 finish() 必须把存活卡的像素真填上——否则
+    //                            「没崩」可能只是「根本没加载」。
+    //   K_request_ctx_is_widget  源扫钉死守卫口径（ctx 实参 = 回调捕获的那张卡）。
+    //                            UAF 不保证每一轮都段错误，这条才是确定性的红。
+    {
+        QTemporaryDir td;
+        chk(td.isValid(), "K_thumbs_dir_ready");
+        const QString dir = td.path();
+        const QColor mark(255, 0, 255);          // 页面底色取不到的辨识色
+        QVector<Photo> lib;
+        lib << mk("2026-10-01") << mk("2026-09-02");
+        for (const Photo& p : lib) {
+            QImage im(64, 64, QImage::Format_RGB32);
+            im.fill(mark);
+            im.save(QDir(dir).filePath(p.thumbFile), "PNG");
+        }
+        auto mkShow = [&lib](const char* title) {
+            Curate::Exhibit e;
+            e.valid = true;
+            e.theme.id = Curate::TemplateId::HiddenReunion;
+            e.theme.title = QString::fromLatin1(title);
+            e.theme.primaryPath = lib.at(0).path;
+            e.theme.paths << lib.at(0).path << lib.at(1).path;
+            e.generatedAt = 1730000000;
+            return e;
+        };
+
+        // 目录必须**有**可解码缩略图：空 thumbsDir → 负缓存 → 回调拿到空图被 isNull 短路，
+        // 于是 J 组那种构造永远碰不到这条路径（这就是它在 LA_LOBBY_QA 长期隐身的原因）。
+        LobbyPage lobby(&lib, dir);
+        lobby.resize(1280, 860);
+        lobby.show();
+        lobby.setExhibit(mkShow("First"));       // 建卡 + 请求入队（本轮不处理事件 → 必在 pending_）
+        lobby.setExhibit(mkShow("Second"));      // 同一事件轮重建 → 上一批卡已被同步 delete
+
+        const auto centerIsMark = [&mark](QWidget* w) {
+            if (!w) return false;
+            const QImage shot = w->grab().toImage();
+            if (shot.isNull()) return false;
+            const QRgb c = shot.pixel(shot.width() / 2, shot.height() / 2);
+            return qAbs(qRed(c) - mark.red()) <= 2 && qAbs(qGreen(c) - mark.green()) <= 2
+                && qAbs(qBlue(c) - mark.blue()) <= 2;
+        };
+        QWidget* hero = lobby.findChild<QWidget*>(QStringLiteral("curateHero"));
+        QElapsedTimer et; et.start();
+        while (et.elapsed() < 3000 && !centerIsMark(hero))
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+        // 存活卡着色后再排空一轮：另一个文件的 finish 也要走到「守卫仍在、卡片已死」那批回调。
+        for (int i = 0; i < 30; ++i) QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+
+        chk(centerIsMark(hero), "K_live_card_painted");
+        chk(true, "K_dead_card_no_crash");       // 活到这一行就是绿（崩溃即整门无 PASS 行）
+
+        QString src;
+        {
+            QFile f(QCoreApplication::applicationDirPath()
+                    + QStringLiteral("/../src/ui/LobbyPage.cpp"));
+            if (f.open(QIODevice::ReadOnly)) src = QString::fromUtf8(f.readAll());
+        }
+        const int at = src.indexOf(QStringLiteral("QWidget* LobbyPage::makeThumbCard("));
+        const int end = at < 0 ? -1 : src.indexOf(QStringLiteral("\n}"), at);
+        const QString body = (at >= 0 && end > at) ? src.mid(at, end - at) : QString();
+        chk(!body.isEmpty(), "K_thumb_card_source_scanned");   // fail-open：源没读到就红
+        chk(body.count(QStringLiteral("cache_->request(")) == 1
+            && body.contains(QStringLiteral("cache_->request(thumb, card,")),
+            "K_request_ctx_is_widget");
+    }
+
     const bool pass = (checks > 0) && (fails == 0);
     std::fprintf(stderr, "LA_LOBBY_QA %s checks=%d failed=%d broken=%d\n",
                  pass ? "PASS" : "FAIL", checks, fails, broken ? 1 : 0);
@@ -1715,6 +1790,21 @@ int runPeopleQa()
         const Room* a = findRoom(rs, kALan);
         chk(x && x->count == 2, "E_trim_same_room");
         chk(a && a->count == 1, "E_trim_csv_split");
+    }
+
+    // —— F 组：缩略回调的生命守卫生者 = 被解引用的控件（与 LA_LOBBY_QA K 组同一缺陷类）——
+    // request(tf, guard, cb) 的守卫若是**页面**，而 cb 里解引用的是局部控件（封面 / 胶片按钮），
+    // 那么页面重建（先删控件、后回灌 finish）就会把像素赋给已释放对象。源扫钉死该口径，
+    // 不去赌「这一轮恰好没段错误」——UAF 的运行时腿可以白过，形状腿不行。
+    {
+        QString raw;
+        {
+            QFile f(QCoreApplication::applicationDirPath()
+                    + QStringLiteral("/../src/ui/PeoplePage.cpp"));
+            if (f.open(QIODevice::ReadOnly)) raw = QString::fromUtf8(f.readAll());
+        }
+        chk(raw.count(QStringLiteral("cache_->request(")) >= 2, "F_request_sites_scanned");
+        chk(!raw.contains(QStringLiteral("cache_->request(tf, this, [")), "F_guard_is_widget");
     }
 
     const bool pass = (checks > 0) && (fails == 0);
@@ -3320,17 +3410,20 @@ int runCurateQa()
         QString code = raw;
         code.remove(QRegularExpression(QStringLiteral("//[^\n]*")));
         report("M_source_scanned", text.size() > 4000);   // fail-open 守卫：空扫描不算绿
+        // 必须钉「connect 形状 + 逗号收尾」而不是只 contains 信号名：反例臂把 token 改成
+        // `&LobbyPage::muteTemplateX` 时，纯前缀 contains 照样绿（证伪器跑过了断言）。
+        // 逗号 = token 边界，改名必须同时改腿才过得去。
         report("M_wires_three_gestures",
-               text.contains(QStringLiteral("&LobbyPage::keepExhibit"))
-                   && text.contains(QStringLiteral("&LobbyPage::swapExhibit"))
-                   && text.contains(QStringLiteral("&LobbyPage::muteTemplate")));
+               text.contains(QStringLiteral("connect(lobby_, &LobbyPage::keepExhibit, this"))
+                   && text.contains(QStringLiteral("connect(lobby_, &LobbyPage::swapExhibit, this"))
+                   && text.contains(QStringLiteral("connect(lobby_, &LobbyPage::muteTemplate, this")));
         report("M_wires_keep_swap_mute_calls",
                text.contains(QStringLiteral("keepExhibit("))
                    && text.contains(QStringLiteral("markSwapped("))
                    && text.contains(QStringLiteral("muteExhibit(")));
         report("M_hero_opens_curation",
-               text.contains(QStringLiteral("&LobbyPage::openCuration"))
-                   && text.contains(QStringLiteral("setCuration(")));
+               text.contains(QStringLiteral("connect(lobby_, &LobbyPage::openCuration, this"))
+                   && text.contains(QStringLiteral("&MainWindow::openCuration")));
         {   // 顺序事实：enter() 会 interruptCuration()，故 openCuration 体内必须先 enter 再
             // setCuration。切片到**定义体**比较（锚 "void MainWindow::openCuration" 只在定义处
             // 出现，connect 里是 &MainWindow::openCuration），绝不吃全文件首个 ->enter( 的位置巧合。
