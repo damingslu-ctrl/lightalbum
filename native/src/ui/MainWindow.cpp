@@ -7,6 +7,7 @@
 #include "MapPage.h"
 #include "LogPage.h"
 #include "PeoplePage.h"     // 2.41.0 spec §2.3：人物馆（接管选片导航位）
+#include "CollectionPage.h"  // 2.43.0 波4：典藏（合集 / 展览史 / 静音选题）
 #include "CmdKPanel.h"      // 2.41.0 spec §2.4：⌘K 检索面板
 #include "RetouchPage.h"
 #include "VideoLightbox.h"
@@ -113,7 +114,7 @@ struct NavItem { const char* label; const char* phase; };
 // 2.41.0 spec §2.6：前厅/人物馆接管 0/3 两行（HomePage/CullPage 已于 T9 退役）。
 // 分组：浏览(前厅/足迹/图库) | 人物·修图 | 工具(日志/关于)。
 const NavItem kNav[] = {
-    {"前厅", "P1"}, {"足迹", "P2"}, {"图库", "P1"},
+    {"前厅", "P1"}, {"足迹", "P2"}, {"图库", "P1"}, {"典藏", "P1"},
     {"人物馆", "P3"}, {"修图", "P3"},
     {"日志", "P2"}, {"关于", "P3"},
 };
@@ -122,17 +123,19 @@ const NavItem kNav[] = {
 // 「跟随空间」模式下 resolveLamp 据此选灯，故这张表也是灯色的路由真源。
 const Lumen::Hall kNavHall[] = {
     Lumen::Hall::Lobby,  Lumen::Hall::Gallery, Lumen::Hall::Gallery,
+    Lumen::Hall::Collection,
     Lumen::Hall::People, Lumen::Hall::Studio,
     Lumen::Hall::Common, Lumen::Hall::Common,
 };
 
 // 导航图标名（与 kNav 一一对应；历史映射：日志→enhance、关于→log，勿重排）
 // P24 A 抛光图标轨：激活态在 updateNavActive 用金色重绘同一图标。
-const char* kNavIcons[] = { "lobby", "map", "gallery", "people", "retouch", "enhance", "log" };
+const char* kNavIcons[] = { "lobby", "map", "gallery", "curate",
+                            "people", "retouch", "enhance", "log" };
 
 // 波4 §9：导航行序单点真源。kNav 增删行时只改这里；static_assert 拦住「改了表忘了改常量」。
 enum NavRow {
-    kRowLobby = 0, kRowMap, kRowGallery, kRowPeople,
+    kRowLobby = 0, kRowMap, kRowGallery, kRowCollection, kRowPeople,
     kRowStudio, kRowLog, kRowAbout, kRowCount
 };
 static_assert(int(kRowCount) == int(sizeof(kNav) / sizeof(kNav[0])),
@@ -501,6 +504,29 @@ void MainWindow::buildUi()
     stack_->addWidget(map_);
     gallery_ = new GalleryPage(&lib_->photos(), thumbsDir_, stack_);
     stack_->addWidget(gallery_);
+    // 2.43.0 波4 §2.1：典藏。只读库；写下单在 curator_（回执文案归 T5 的诚实翻转）。
+    collection_ = new CollectionPage(lib_, thumbsDir_, stack_);
+    collection_->setHidePrivate(!vaultUnlocked_);
+    // 合集/展史回放 = 复用凝视档唯一入场函数 openGaze（它内部 setScope 先于 enter；
+    // spec §2.2 零新播放器，也不在这里复制一份入场序）。
+    connect(collection_, &CollectionPage::openAlbum, this, [this](const QStringList& paths) {
+        if (paths.isEmpty()) return;
+        openGaze(paths.first(), paths);
+    });
+    connect(collection_, &CollectionPage::openExhibit, this,
+            [this](const QStringList& paths, const QString&, const QString&) {
+        if (paths.isEmpty()) return;
+        openGaze(paths.first(), paths);
+    });
+    // 唤醒 = 反悔入口（B2）。写库仍只经 curator_；本窗只刷新与换展。
+    connect(collection_, &CollectionPage::unmuteRequested, this, [this](const QString& tmpl) {
+        if (!curator_->unmuteExhibit(tmpl)) return;
+        collection_->refresh();
+        if (lobby_) lobby_->refresh();
+        curator_->maybeGenerate(lib_->photos(), !vaultUnlocked_, thumbsDir_,
+                                CurateScheduler::wallNow(), /*force=*/true);
+    });
+    stack_->addWidget(collection_);
     people_ = new PeoplePage(&lib_->photos(), thumbsDir_, stack_);
     people_->setHidePrivate(!vaultUnlocked_);
     // 展室缩略点击 → 凝视档，翻图作用域 = 那一间的全部路径（看得见什么就走什么）
@@ -712,6 +738,7 @@ void MainWindow::rethemeAll(int row)
     winMin_ = nullptr; winMax_ = nullptr; winClose_ = nullptr;
     searchToggle_ = nullptr; vaultBtn_ = nullptr; lampBtn_ = nullptr;
     lobby_ = nullptr; people_ = nullptr; gallery_ = nullptr; map_ = nullptr;
+    collection_ = nullptr;
     retouch_ = nullptr; log_ = nullptr; aboutPg_ = nullptr; cmdk_ = nullptr;
 
     QWidget* old = takeCentralWidget();
@@ -846,6 +873,7 @@ void MainWindow::refreshExhibits()
         lobby_->refresh();
     }
     if (people_)  people_->refresh();
+    if (collection_) collection_->refresh();   // 2.43.0：新合集/新展/静音变化同批可见
 }
 
 // ---- 2.41.0 §2.6 门禁探针（整帧重建是纯 UI 路径，五道新门都只测纯函数，够不着它）----
@@ -1117,6 +1145,7 @@ void MainWindow::refreshPrivateState()
     if (map_) map_->setHidePrivate(hide);
     if (log_) log_->setHidePrivate(hide);
     if (people_) people_->setHidePrivate(hide);   // 2.33.0 补漏原话：选片页此前从不收到隐私门
+    if (collection_) collection_->setHidePrivate(hide);   // 2.43.0：合集计数同吃隐私门
     if (lobby_) lobby_->setHidePrivate(hide);
     if (cmdk_) cmdk_->setHidePrivate(hide);
     if (lightbox_ && lightbox_->isVisible())

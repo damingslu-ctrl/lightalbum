@@ -23,6 +23,7 @@ class GalleryPage;
 class MapPage;
 class LobbyPage;       // 2.41.0 spec §2.2：前厅（接替已退役的 HomePage 导航位）
 class PeoplePage;      // 2.41.0 spec §2.3：人物馆（接替已退役的 CullPage 导航位）
+class CollectionPage;  // 2.43.0 波4：典藏（合集 / 展览史 / 静音选题）
 class CmdKPanel;       // 2.41.0 spec §2.4：⌘K 检索面板
 class RetouchPage;
 class LogPage;
@@ -202,6 +203,7 @@ private:
     GalleryPage*    gallery_ = nullptr;
     MapPage*        map_ = nullptr;
     PeoplePage*     people_ = nullptr;
+    CollectionPage* collection_ = nullptr;   // 2.43.0：典藏（只读库，写下单经 curator_）
     RetouchPage*     retouch_ = nullptr;
     LogPage*        log_ = nullptr;
     CmdKPanel*      cmdk_ = nullptr;        // 2.41.0：⌘K 检索面板（随整帧重建）

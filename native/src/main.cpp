@@ -11,6 +11,7 @@
 #include <QTimer>
 #include <QDateTime>
 #include <QDir>
+#include <QDirIterator>   // 2.43.0 LA_COLLECTION_QA D1：目录级单实例扫描
 #include <QMenu>              // 缺陷②回归：LA_SMOKE 断言导入下拉菜单带暗色 QSS
 #include <QFile>
 #include <QFileDevice>
@@ -3645,6 +3646,54 @@ int runCollectionQa()
     {
         chk("C1_collection_jade", Lumen::lampFor(Lumen::Hall::Collection) == Lumen::Lamp::Jade);
         chk("C4_oob_fallback", Lumen::lampFor(Lumen::Hall(99)) == Lumen::Lamp::Nocturne);
+
+        const QString mw = readSrc("src/ui/MainWindow.cpp");
+        chk("C2_no_bare_setCurrentRow",
+            !QRegularExpression(QStringLiteral("setCurrentRow\\(\\s*\\d+")).match(mw).hasMatch());
+        // 数元素而不是数花括号：kNavHall 的行是裸枚举值、kNavIcons 是裸字符串，
+        // 「块内 { 的个数」对这两张表恒为 0（表自身的 { 已被 head 吃掉），无法当行数用。
+        const auto countRows = [&](const QString& head, const QRegularExpression& row) {
+            const int a = mw.indexOf(head);
+            const int b = a < 0 ? -1 : mw.indexOf(QStringLiteral("};"), a);
+            if (a < 0 || b < 0) return -1;
+            int n = 0;
+            auto it = row.globalMatch(mw.mid(a + head.size(), b - a - head.size()));
+            while (it.hasNext()) { it.next(); ++n; }
+            return n;
+        };
+        chk("C3_nav_tables_len8",
+            countRows(QStringLiteral("kNav[] = {"), QRegularExpression(QStringLiteral("\\{\\s*\""))) == 8
+            && countRows(QStringLiteral("kNavHall[] = {"), QRegularExpression(QStringLiteral("Lumen::Hall::"))) == 8
+            && countRows(QStringLiteral("kNavIcons[] = {"), QRegularExpression(QStringLiteral("\"[a-z]+\""))) == 8);
+    }
+
+    // ---- D 组：播放同源（合集不得复刻第二份播放器）----
+    {
+        // D1：整站只有一处构造凝视灯箱（MainWindow::ensureLightbox）。典藏页只发信号。
+        int ctors = 0, scanned = 0;
+        QDirIterator it(QStringLiteral("src/ui"), {QStringLiteral("*.cpp")}, QDir::Files);
+        while (it.hasNext()) {
+            const QFileInfo fi(it.next());
+            QFile f(fi.filePath());
+            if (!f.open(QIODevice::ReadOnly)) continue;
+            ++scanned;
+            ctors += int(QString::fromUtf8(f.readAll()).count(QStringLiteral("new GazeLightbox")));
+        }
+        chk("D1_single_lightbox_ctor", scanned > 10 && ctors == 1);   // 空扫描不算绿
+        const QString mw = readSrc("src/ui/MainWindow.cpp");
+        const int a = mw.indexOf(QStringLiteral("connect(collection_, &CollectionPage::openAlbum"));
+        const QString body = a < 0 ? QString()
+                                   : mw.mid(a, mw.indexOf(QStringLiteral("});"), a) - a);
+        // D2：回放只许走唯一入场函数 openGaze，且 lambda 内不得自建第二套入场序。
+        chk("D2_album_replay_via_openGaze",
+            a >= 0 && body.contains(QStringLiteral("openGaze("))
+                && !body.contains(QStringLiteral("enter(")));
+        // D3：该唯一入场函数里，作用域必须先于入场（否则第一帧的 ←/→ 是全库而非本合集）。
+        const int f = mw.indexOf(QStringLiteral("void MainWindow::openGaze("));
+        const QString fn = f < 0 ? QString() : mw.mid(f, mw.indexOf(QStringLiteral("\n}"), f) - f);
+        const int scope = fn.indexOf(QStringLiteral("setScope("));
+        const int enter = fn.indexOf(QStringLiteral("enter("));
+        chk("D3_scope_before_enter_in_gaze", f >= 0 && scope >= 0 && enter > scope);
     }
 
     // ---- G 组：网格算术（纯函数，spec §3.3 + R11）----

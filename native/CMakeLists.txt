@@ -90,6 +90,8 @@ set(LA_SOURCES
     src/ui/LobbyPage.cpp
     src/ui/PeoplePage.h
     src/ui/PeoplePage.cpp
+    src/ui/CollectionPage.h
+    src/ui/CollectionPage.cpp
     src/ui/CmdKPanel.h
     src/ui/CmdKPanel.cpp
     src/ui/Splash.h
