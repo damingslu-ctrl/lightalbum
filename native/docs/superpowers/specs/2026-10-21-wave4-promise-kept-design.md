@@ -54,6 +54,7 @@
 | **R5** | 导航插行 vs 6 处裸行号 | `MainWindow.cpp` 现有 `setCurrentRow` 字面量 `:219/507/526/531/537/543/641/1129`，动效预设谓词 `:1265-1267` 用 `row == 0 / row == 3` | **先归一为具名常量，再插行**（顺序不可换）。且新增一条源扫腿禁止 `setCurrentRow(` 后跟数字字面量——魔数不除净，下一次插行还会错位（详见 §9）。 |
 | **R6** | `Layout.h` 要不要单开一道门 | 名册已到 80 门，纯算术函数单开门会让名册虚胖（本项目记过「门数膨胀但牙齿没变」的判例类型） | **不单开门**，`gridCols` 的腿并入 `LA_COLLECTION_QA` 的 G 组（§4）。 |
 | **R7** | ⌘K「暂存为合集」怎么兑现 | 按钮是 `setEnabled(false)` 占位（`CmdKPanel.cpp:388`），而写入方 `Library::createAlbum(name, paths, source)` 已存在且被策展轨用着（`CurateScheduler.cpp:198`） | **本波点亮它**：有选中项时可点，走 `CurateScheduler` 侧新增的 `keepSelection(name, paths)`（同一写入路径，`source='cmdk'`），落库后回执并让典藏页 tab1 立刻可见；无选中项时**禁用但不写「下轮」**，tooltip 改说清缺什么（「先在结果里勾选照片」）。若不做，§6.3「`下轮` 0 命中」这条硬腿过不去。 |
+| **R8** | 索引谓词与内存谓词的**可证等价性** | 内存里 `tokenPlace` 匹配 `city OR prov OR region`（大小写不敏感 contains，`GalleryModel.cpp:82-87`）；DB 侧只会有一列 `city`，`city = ?` 会漏掉 prov/region 命中。且 spec 原稿把消费方记成 `CmdKPanel::candidatesFor`（`:463`），而它只产出人/地/风格词典名、**不做照片遍历**——真实遍历在 `GalleryModel::rebuild()`（`GalleryModel.cpp:44-93`） | **只索引可证明等价的两个谓词**：年份区间 → `shot_year BETWEEN ? AND ?`（`shot_year` 与 `Photo::year` 同取 EXIF `y`，parity 由构造保证）；月/季 → `shot_month IN (…)`（两侧同用 `photoDateOf`，解不出日期的行 `shot_month=0` 天然落在 `1..12` 之外，与内存「有时间谓词时无日期即落选」同义）。**日号留在内存**（SQLite `strftime`/localtime 时区口径不可证）；**`city` 列 + `idx_photos_city` + `pathsForCity` 整体撤销**——没有等价 SQL 的调用方就是投机代码。`shot_ts` 仍落列（wave5 长廊地基，§0.3），但本波**不建索引、不出查询**，避免「建了索引没有腿」的假绿。 |
 
 ### 0.3 明确不做（写清以免越界）
 
@@ -78,14 +79,14 @@
 │   └ tab3 安静下来的选题：Library::listMutes() → 逐条唤醒 ★新 API │
 │ LobbyPage：生成期骨架（Pending 态 + 呼吸字）                     │
 │ GazeLightbox：常驻键位带（legend strip）                        │
-│ CmdKPanel：空解析必须有话说 + 时间筛选改走索引                   │
+│ CmdKPanel：空解析必须有话说；GalleryModel：时间筛选改走索引（R8） │
 │ 四页空态：Gallery / Retouch / Log / Map（前厅语气）              │
 └────────────────────────────────────────────────────────────────┘
         ▲ 只读查询（GUI 线程）           │ 唤醒/回看 → 意图
         │                               ▼
 ┌ 持久层（SQLite）──────────────────────────────────────────────┐
 │ Library：+unmuteTemplate() +listMutes()          （A 轨）      │
-│ photos：+shot_ts +shot_year +shot_month +city 四列 +三索引（B 轨）│
+│ photos：+shot_ts +shot_year +shot_month 三列 +一年月索引（B 轨·R8）│
 │ Scanner：EXIF 解析同处写四列（唯一写点）                        │
 └────────────────────────────────────────────────────────────────┘
 
@@ -106,11 +107,12 @@
 | 新建 | `src/ui/CollectionPage.{h,cpp}` | 典藏三 tab；只读 `Library`，零写库（唤醒除外，见 §2.3 走 Scheduler） |
 | 改 | `src/ui/MainWindow.cpp` | 导航第 8 行、栈第 8 页、`kRow*` 常量归一、§2.5 pending 接线 |
 | 改 | `src/ui/Theme.h` | `Hall::Collection` + `follow[]` 扩一格；画布层 4 个访问器 |
-| 改 | `src/core/Library.{h,cpp}` | `unmuteTemplate` / `listMutes` / `MuteRow` / **`albumPaths`（合集取路径，现无读口）**；四列迁移 + 三索引 + 一次性回填；`pathsForShotRange` / `pathsForCity` |
+| 改 | `src/core/Library.{h,cpp}` | `unmuteTemplate` / `listMutes` / `MuteRow` / **`albumPaths`（合集取路径，现无读口）**；三列迁移 + 年月索引 + 一次性回填；`pathsForShotYears` / `pathsForShotMonths`（R8） |
 | 改 | `src/core/Scanner.cpp` | 解析处（`:412-450` 同批）写四列 |
 | 改 | `src/core/CurateScheduler.{h,cpp}` | `unmuteExhibit()` + `keepSelection()` + 三条 ack 文案改线 |
 | 改 | `src/ui/GazeLightbox.cpp` | 键位带；cinema 层随灯 |
-| 改 | `src/ui/CmdKPanel.cpp` | 空态文案 + 索引化候选源 |
+| 改 | `src/ui/CmdKPanel.cpp` | 空态文案三样例（§2.6） |
+| 改 | `src/ui/GalleryModel.{h,cpp}` | `setShotSource(const Library*)` + 年/月/季走索引集合预过滤（§3.2，R8） |
 | 改 | `src/ui/LobbyPage.cpp` | Pending 骨架 |
 | 改 | 5 个自绘 widget + 4 个页面空态 | §3.4 / §2.9 |
 | 改 | `src/main.cpp` | 新门 `runCollectionQa()` + 各门改线/加腿 |
@@ -265,20 +267,20 @@ MainWindow 只接线、不直写：`M_no_direct_window_writes`（`main.cpp:3550-
 
 ## 3 · B 轨详设
 
-### 3.1 时间地点落列 + 索引（audit-34）
+### 3.1 时间落列 + 年月索引（audit-34，R8 收缩）
 
 现状：`exif_json` 是唯一时间/地点载体，`Library::open` 每行做一次 `QJsonDocument::fromJson`
 （`Library.cpp:108-132` 单点解析），SQL 侧无年/月/城市列 ⇒ 任何时间维度查询必须先全表载入再解析。
 
-**新增列**（`photos`）：`shot_ts REAL NOT NULL DEFAULT 0`（拍摄时刻 epoch 秒，date+time 合成，无时间分量则取当日 00:00）、
-`shot_year INTEGER NOT NULL DEFAULT 0`、`shot_month INTEGER NOT NULL DEFAULT 0`（1–12）、`city TEXT`。
+**新增列**（`photos`）：`shot_ts REAL NOT NULL DEFAULT 0`（拍摄时刻 epoch 秒，date+time 合成，无时间分量则取当日 00:00；**本波只落列，wave5 长廊才消费**）、
+`shot_year INTEGER NOT NULL DEFAULT 0`（取 EXIF `y`，与 `Photo::year` 同源）、`shot_month INTEGER NOT NULL DEFAULT 0`（1–12，取 `photoDateOf(date).month()`）。
 `NOT NULL DEFAULT` 形状照抄 `seen_at` 的既有先例（`Library.cpp:49`）——无 EXIF 的老库行必须落 0 而不是 NULL，
-否则索引查询与 `= 0` 谓词两套语义会分叉。
+否则索引查询与 `= 0` 谓词两套语义会分叉。**`city` 列不落**（R8：内存 `tokenPlace` 还匹配 prov/region，SQL 无等价形式）。
 
-**三条索引**：`idx_photos_shot_ts`、`idx_photos_year_month (shot_year, shot_month)`、`idx_photos_city`。
+**一条索引**：`idx_photos_year_month (shot_year, shot_month)`（R8：年单独查走复合索引最左列；`shot_ts` 本波无查询，不建索引）。
 
 **写入点唯一**：`Scanner.cpp` 已在 `:412-450` 写 `d/tm/y/ct` 进 `exif_json`，并在 `:292-299` upsert——
-四列在同一处绑定写入，**不允许**出现第二处写点（否则回填与新扫描分叉）。
+三列在同一处绑定写入（年月一律经 `photoDateOf`/`y` 派生，与内存谓词同一真源），**不允许**出现第二处写点（否则回填与新扫描分叉）。
 
 **迁移范式**（逐字照抄 `Library.cpp:30-70` 的既有 `la_mig` 独立连接写法）：
 - 用**独立连接** `la_mig`，`ALTER TABLE photos ADD COLUMN …`，**返回值丢弃**（重复 ADD 报错无害）；
@@ -292,18 +294,21 @@ MainWindow 只接线、不直写：`M_no_direct_window_writes`（`main.cpp:3550-
 
 ### 3.2 唯一消费方 = ⌘K 时间筛选（B4 的诚实性所在）
 
-只落地基、没有调用方 = 投机代码。本波给它的调用方是 `CmdKPanel`：
-`candidatesFor(chip, f)`（`CmdKPanel.cpp:463`）与筛选谓词（`:559/562` 一带）现在遍历全量 `QVector<Photo>`。
+只落地基、没有调用方 = 投机代码。本波给它的调用方是 **`GalleryModel::rebuild()`**（`GalleryModel.cpp:44-93`）——
+⌘K 的年/月/日/季谓词真正在这条遍历里逐张判（`:58-75`）。`CmdKPanel::candidatesFor`（`CmdKPanel.cpp:463`）
+只产出人/地/风格词典名，**不做照片遍历**（spec 首稿记错，已按 R8 订正）。
 
-改造：当 filter 含 `yearMin/yearMax/month/day` 或城市时，先向 `Library` 取**索引化的 path 集合**，再只对命中的
-`Photo` 做其余谓词：
+改造：`GalleryModel` 增 `void setShotSource(const Library* lib)`（可空）。当 `cmd_` 含 `yearMin/yearMax/month/season`
+时，`rebuild()` 先向 `Library` 取**索引化的 path 集合**（`QSet<QString>`），再只对命中的 `Photo` 做其余谓词
+（复用 `storyFilter_` 的成员预过滤形状，`GalleryModel.cpp:59`）。日号与其余谓词仍走内存。
 
 ```cpp
-QVector<QString> Library::pathsForShotRange(qint64 fromTs, qint64 toTs, bool hidePrivate) const;  // BETWEEN shot_ts
-QVector<QString> Library::pathsForCity(const QString& city, bool hidePrivate) const;              // = city
+QVector<QString> Library::pathsForShotYears(int yearMin, int yearMax, bool hidePrivate) const;  // shot_year BETWEEN
+QVector<QString> Library::pathsForShotMonths(const QVector<int>& months, bool hidePrivate) const; // shot_month IN
 ```
 
-`CmdKPanel` 增 `void setTimeSource(Library*)`（可空；为空 → 走原全量路径，门禁两种形态都要绿，且**结果必须逐字节相同**）。
+季 → 月份集合用 `seasonNameOf` 反查（1..12 全扫，唯一真源在 `CmdFilter.h`，不许复刻）。
+`lib` 为空 → 走原全量路径；门禁两种形态都要绿，且**结果必须逐字节相同**。
 
 **隐私门不许被索引绕过**（本波唯一的越权风险）：两个查询带 `hidePrivate` 谓词，未解锁时 SQL 里就必须
 `AND private = 0`（列名核实为 `private`，`Library.cpp:39`），**不允许**「先全取再在 UI 过滤」——
@@ -313,7 +318,7 @@ QVector<QString> Library::pathsForCity(const QString& city, bool hidePrivate) co
 
 **两条硬腿**（§4）：① **parity**——一组查询在「索引源」与「全量源」下的结果集必须完全一致
 （沿用 `clip-parity-tolerance-contract` 的对称篡改做法：每个判定分支配自己的反例）；
-② **EXPLAIN**——对两条查询跑 `EXPLAIN QUERY PLAN`，断言输出含 `USING INDEX`，且**无** `SCAN photos`
+② **EXPLAIN**——对 `pathsForShotYears` / `pathsForShotMonths` 跑 `EXPLAIN QUERY PLAN`，断言输出含 `USING INDEX idx_photos_year_month`，且**无** `SCAN photos`
 （若优化器选全表扫，这条腿必须红，而不是静默退化）。
 
 ### 3.3 列数函数三网格共用（audit-31）
@@ -380,9 +385,10 @@ QA 钉 `resize(1440, 900)`（`:1397`）。窄窗时 230px 卡宽 × 最少 3 列
 | F 死代码 | `makePlaceholder` 在 `ui/` 0 命中 |
 | G 网格算术 | `gridCols(960)==3`、`(1440)==5`、`(2560)==5`（封顶）、`targetPx` 非正数回退默认（§3.3） |
 | H 承诺清零 | 全仓 `src/`（去注释后）`下轮` 0 命中；`stash->setEnabled(false)` 段内 tooltip 不含「下轮」（§2.8 R7） |
+| I 时间地基 | `pathsForShotYears/Months` 的 **parity**（索引源 vs 全量源逐条相同）+ **EXPLAIN**（含 `USING INDEX idx_photos_year_month`、无 `SCAN photos`）+ 隐私（`hidePrivate=true` 不含 `private=1` 行）；R8 谓词边界的篡改反例 |
 
 **改线/加腿的既有门**：`LA_CURATE_QA`（R2 两条翻转 + B 组扩项 + 139 腿数变化需在名册/文档同步）、
-`LA_LAMP_QA`（+`B8_collection_jade`；A 组扩 4 列）、`LA_CMDK_QA`（空态文案 3 样例可解析 + parity + EXPLAIN）、
+`LA_LAMP_QA`（+`B8_collection_jade`；A 组扩 4 列）、`LA_CMDK_QA`（空态文案 3 样例可解析；索引腿在 `LA_COLLECTION_QA` I 组，不让纯解析门背 DB 夹具）、
 `LA_MOTION_QA`（**只加不改**：stagger 接线腿；断言一律不动，见 R4）、`LA_LOBBY_QA`（pending 骨架 + 减动效下仍出现）、
 `LA_GAZE_QA`（legend 存在 + legend 上每枚键实测有效）、`LA_PALETTE_QA`/ratchet（C6 + C3）、
 `LA_I18N_QA`（entries 34 → 34+新增串；.ts 与 .qm 同提交）、`LA_LAYOUT`（新 `gridCols` 纯函数腿并入 `LA_LOBBY_QA`
