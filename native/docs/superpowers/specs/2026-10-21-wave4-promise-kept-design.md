@@ -55,6 +55,8 @@
 | **R6** | `Layout.h` 要不要单开一道门 | 名册已到 80 门，纯算术函数单开门会让名册虚胖（本项目记过「门数膨胀但牙齿没变」的判例类型） | **不单开门**，`gridCols` 的腿并入 `LA_COLLECTION_QA` 的 G 组（§4）。 |
 | **R7** | ⌘K「暂存为合集」怎么兑现 | 按钮是 `setEnabled(false)` 占位（`CmdKPanel.cpp:388`），而写入方 `Library::createAlbum(name, paths, source)` 已存在且被策展轨用着（`CurateScheduler.cpp:198`） | **本波点亮它**：有选中项时可点，走 `CurateScheduler` 侧新增的 `keepSelection(name, paths)`（同一写入路径，`source='cmdk'`），落库后回执并让典藏页 tab1 立刻可见；无选中项时**禁用但不写「下轮」**，tooltip 改说清缺什么（「先在结果里勾选照片」）。若不做，§6.3「`下轮` 0 命中」这条硬腿过不去。 |
 | **R8** | 索引谓词与内存谓词的**可证等价性** | 内存里 `tokenPlace` 匹配 `city OR prov OR region`（大小写不敏感 contains，`GalleryModel.cpp:82-87`）；DB 侧只会有一列 `city`，`city = ?` 会漏掉 prov/region 命中。且 spec 原稿把消费方记成 `CmdKPanel::candidatesFor`（`:463`），而它只产出人/地/风格词典名、**不做照片遍历**——真实遍历在 `GalleryModel::rebuild()`（`GalleryModel.cpp:44-93`） | **只索引可证明等价的两个谓词**：年份区间 → `shot_year BETWEEN ? AND ?`（`shot_year` 与 `Photo::year` 同取 EXIF `y`，parity 由构造保证）；月/季 → `shot_month IN (…)`（两侧同用 `photoDateOf`，解不出日期的行 `shot_month=0` 天然落在 `1..12` 之外，与内存「有时间谓词时无日期即落选」同义）。**日号留在内存**（SQLite `strftime`/localtime 时区口径不可证）；**`city` 列 + `idx_photos_city` + `pathsForCity` 整体撤销**——没有等价 SQL 的调用方就是投机代码。`shot_ts` 仍落列（wave5 长廊地基，§0.3），但本波**不建索引、不出查询**，避免「建了索引没有腿」的假绿。 |
+| **R10** | 画布 token 命名撞上既有 API | `Theme.h:517` 已有 `Lumen::focusRing(const QColor& c = EMERALD_HI)`，返回的是 **QSS 片段**；§3.4 原稿要加零参 `focusRing()` 返回色值——同名不同义，且零参调用会产生重载歧义 | 新访问器定名 **`focusRingColor()`**（色值）；既有 `focusRing(QColor)` 一字不动。`canvasBg/canvasLine/maskColor` 无冲突，按原稿。 |
+| **R11** | `gridCols` 的分母与 §4 G 组断言自相矛盾 | §3.3 原稿写 `gridCols` 的口径沿用 `EditorialView` 的 `int(W/230)`，则 `gridCols(960) == 4`；而 §3.7 与 §4 G 组要求 **960 宽 → 3 列**（960 恰是「3 列 + chrome」的最小窗宽下界）。两处不可能同时成立 | **分母含卡片间距**：`pitch = targetPx + 12`（与 `EditorialView` 的实际栅格 gutter 同值），`gridCols(960)=3`、`(1440)=5`、`(2560)=5`（hi 封顶）。§3.3 按此改写；G 组断言不变。这条同时说明 §3.7 的 960 下界是从**三列**反算出来的，不是拍的。 |
 
 ### 0.3 明确不做（写清以免越界）
 
@@ -328,6 +330,8 @@ QVector<QString> Library::pathsForShotMonths(const QVector<int>& months, bool hi
 
 **新增** `src/ui/Layout.h`：`inline int gridCols(int widthPx, int targetPx = 230, int lo = 3, int hi = 5)`
 （纯函数、无 Qt 依赖、门禁直测）。三处消费：`EditorialView`、`PeoplePage`、`CollectionPage`。
+**栅距含 gutter（R11）**：`pitch = targetPx + 12`，`cols = widthPx / pitch` 再 `qBound(lo, n, hi)`。
+`EditorialView` 原式 `int(W/230)` 一并改走本函数（同一算术只留一处），其 60ms 防抖保留在页面侧。
 **防抖只在一处**：`Layout.h` 只做算术，resize 节流归各页既有机制，工具函数不许长出状态。
 
 ### 3.4 画布层 lamp token（audit-15/16，B3）
@@ -336,7 +340,8 @@ QVector<QString> Library::pathsForShotMonths(const QVector<int>& months, bool hi
 `Theme.h` 无 canvas / mask / focus-ring token（0 命中）。
 
 `Lumen` 新增 4 个访问器（读活跃灯表，与既有 11 个同族）：
-`canvasBg()`（比 `bg()` 深一档的工作区）、`canvasLine()`、`maskColor()`（半透明遮罩基色）、`focusRing()`。
+`canvasBg()`（比 `bg()` 深一档的工作区）、`canvasLine()`、`maskColor()`（半透明遮罩基色）、`focusRingColor()`（R10：既有
+`focusRing(QColor)` 是 QSS 片段，不可同名）。
 `LampTokens` 扩 4 字段 × 4 灯定值，**两两任列相异**由 `LA_LAMP_QA` A 组既有口径覆盖（扩列后必须重跑）。
 
 逐点替换（行号为核实值）：`CropCanvas.cpp:21,42,45,101,105`、`MaskCanvas.cpp:10`
