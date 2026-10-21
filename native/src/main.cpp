@@ -2357,6 +2357,44 @@ int runGazeQa()
         chk(body.count(QStringLiteral("Motion::kExhibitBreath")) == 1
             && !body.contains(QRegularExpression(QStringLiteral("start\\(\\s*2400"))),
             "seq_dwell_wired_to_preset");
+
+        // —— L 组：键位带（波4 §2.7）—— legend 上写出来的每一枚键都必须真有效。
+        // 键事件直发灯箱本体（= 用户未点任何子控件的初始态），不借子控件转发。
+        {
+            lb.enter(GazeLightbox::Mode::Browse, QString());
+            const Photo* ph = lib.find(order.at(0));
+            chk(ph != nullptr, "L0_photo_found");
+            if (ph) lb.setPhoto(ph, QString());
+            chk(lb.focusPolicy() != Qt::NoFocus, "L1_initial_focus");
+
+            int marks = 0;
+            QString markPath, markVal;
+            const auto conn = QObject::connect(
+                &lb, &GazeLightbox::markRequested,
+                [&](const QString& p, const QString& m) { ++marks; markPath = p; markVal = m; });
+
+            QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+            QApplication::sendEvent(&lb, &enter);
+            chk(marks == 1 && ph && markPath == ph->path
+                && markVal == QStringLiteral("like"), "L2_enter_marks_like");
+
+            QKeyEvent space(QEvent::KeyPress, Qt::Key_Space, Qt::NoModifier);
+            QApplication::sendEvent(&lb, &space);
+            chk(lb.mode() == GazeLightbox::Mode::Gaze, "L3_space_enters_gaze");
+            QApplication::sendEvent(&lb, &space);   // 已在凝视：接受但不动作
+            chk(lb.mode() == GazeLightbox::Mode::Gaze, "L4_space_in_gaze_noop");
+
+            QKeyEvent esc(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+            QApplication::sendEvent(&lb, &esc);
+            chk(!lb.isVisible(), "L5_esc_closes");
+
+            const QString legend = lb.legendText();
+            chk(legend.contains(QString::fromUtf8("←")) && legend.contains(QString::fromUtf8("→"))
+                && legend.contains(QString::fromUtf8("空格"))
+                && legend.contains(QStringLiteral("Enter"))
+                && legend.contains(QStringLiteral("Esc")), "L6_legend_keys");
+            QObject::disconnect(conn);
+        }
     }
 
     const bool pass = (checks > 0) && (fails == 0);

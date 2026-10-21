@@ -74,6 +74,10 @@ public:
     // 2.41.0 §2.5：入馆（Browse 保零行为 / Gaze 上光晕与凝视键位）。
     void enter(Mode m, const QString& startPath);
 
+    // 2.43.0 波4 §2.7：键位带的每一枚键都必须是实装行为（先实现、后写 legend）。
+    Mode mode() const { return mode_; }
+    QString legendText() const;
+
     // P16：灯箱内改动过评分/私密 → 关闭后由 MainWindow 刷新图库
     bool hasChanges() const;
     void clearChanges();
@@ -146,6 +150,8 @@ private:
     // —— 2.41.0 §2.5 凝视模式私有面 ——
     // 环境光晕：把窗口自身的影院黑幕换成「主色四缘淡晕」（Lumen::glowCss）。
     void applyGlow(const QColor& c);
+    // 档位切换的唯一真源：enter() 与 Space 共用（光晕/黑幕复位不许有第二份实现）。
+    void setGazeMode(bool gaze);
     // 换展动画：旧画淡出 120ms（const）+ 新画 Motion::Driver(kLightbox) 入画。
     // ≤2 并发：起新前若已有 2 个活跃 Driver，先停最旧（删 Driver = 停其子动画）。
     void startExhibitAnim();
@@ -188,6 +194,7 @@ private:
 
     // —— 2.41.0 §2.5 Gaze 档状态 ——
     Mode     mode_ = Mode::Browse;
+    QLabel*  legend_ = nullptr;   // 常驻键位带（bottom_ 布局内，不受 setPhoto 重建 ctl_ 影响）
     QLabel*  toast_ = nullptr;
     QTimer*  toastTimer_ = nullptr;
     QString  pendingMark_;        // 撤销窗口内的「已发过的 mark」

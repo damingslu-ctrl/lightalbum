@@ -155,6 +155,18 @@ GazeLightbox::GazeLightbox(Library* lib, QWidget* parent)
     cl->setContentsMargins(0, 0, 0, 0); cl->setSpacing(Lumen::Space::M);
     bl->addWidget(ctl_);
 
+    // 波4 §2.7：常驻键位带。放 bottom_ 布局（不是 ctl_）——setPhoto 每次重建 ctl_ 的子项，
+    // 放进去换图就消失。每一枚键都已在 keyPressEvent 实装（LA_GAZE_QA L 组逐键实测）。
+    legend_ = new QLabel(QCoreApplication::translate(
+        "GazeLightbox", "← → 翻｜空格 凝视｜Enter 收藏｜Esc 退出"), bottom_);
+    legend_->setObjectName(QStringLiteral("gazeLegend"));
+    legend_->setAccessibleName(legend_->text());
+    legend_->setFocusPolicy(Qt::NoFocus);     // 不可点 → 不进 Tab 序
+    legend_->setFont(Lumen::Type::smallText());
+    legend_->setStyleSheet(QStringLiteral("color:%1;background:transparent;border:none;")
+                               .arg(Lumen::hex(Lumen::faint())));
+    bl->addWidget(legend_, 0, Qt::AlignRight);
+
     bottom_->installEventFilter(this);
     bottom_->raise();                          // 黑幕浮于 img_ 之上
     bottomEff_ = new QGraphicsOpacityEffect(bottom_);
@@ -269,19 +281,31 @@ void GazeLightbox::enter(Mode m, const QString& startPath)
     if (qEnvironmentVariableIsSet("LA_LIGHTBOX_GAZE")) m = Mode::Gaze;
     // T10：入馆即退展 —— 上一次会话的自动逐帧不得跨 enter 残留（调用方须先 enter 再 setCuration）。
     interruptCuration();
-    const bool wasGaze = (mode_ == Mode::Gaze);
-    mode_ = m;
-    if (m == Mode::Gaze && !wasGaze) {
-        // 主色由 setPhoto 算（此处仅在已有图时补算一次，防 enter 先于 setPhoto）
-        if (!orig_.isNull()) applyGlow(dominantColor(orig_.toImage()));
-    } else if (m == Mode::Browse && wasGaze) {
-        // 退回浏览：黑幕复位，光晕撤场
-        setStyleSheet(QStringLiteral("QWidget#photoLightbox{background:rgba(6,8,6,0.97);}"));
-    }
+    setGazeMode(m == Mode::Gaze);
     if (!startPath.isEmpty() && lib_) {
         const Photo* ph = lib_->find(startPath);
         if (ph && startPath != path_) setPhoto(ph, thumbsDir_);
     }
+}
+
+// 波4 §2.7：档位切换唯一真源。Space 进凝视与 enter(Gaze) 走同一份副作用
+// （环境光晕 / 退浏览时黑幕复位），不允许第二份「只改 mode_」的快捷实现。
+void GazeLightbox::setGazeMode(bool gaze)
+{
+    const bool wasGaze = (mode_ == Mode::Gaze);
+    mode_ = gaze ? Mode::Gaze : Mode::Browse;
+    if (gaze && !wasGaze) {
+        // 主色由 setPhoto 算（此处仅在已有图时补算一次，防 enter 先于 setPhoto）
+        if (!orig_.isNull()) applyGlow(dominantColor(orig_.toImage()));
+    } else if (!gaze && wasGaze) {
+        // 退回浏览：黑幕复位，光晕撤场
+        setStyleSheet(QStringLiteral("QWidget#photoLightbox{background:rgba(6,8,6,0.97);}"));
+    }
+}
+
+QString GazeLightbox::legendText() const
+{
+    return legend_ ? legend_->text() : QString();
 }
 
 void GazeLightbox::showEvent(QShowEvent* e) {
@@ -294,10 +318,13 @@ void GazeLightbox::keyPressEvent(QKeyEvent* e) {
     // T10 打断面（裁决 R-T10a）：标注键 S/A/L 之外的一切按键都等于「用户把控制权拿回来」
     // → 退展，此后 ←/→ 回到手动翻图语义、字幕交还照片自身元信息。标注键**不**打断：
     // 它们是序列内的既定手势（边看边标），若把它们也算作打断，策展序列就根本没法标注。
+    const bool enterKey = (e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter);
+    const bool spaceKey = (e->key() == Qt::Key_Space);
     const bool markKey = (mode_ == Mode::Gaze)
-        && (e->key() == Qt::Key_S || e->key() == Qt::Key_A
+        && (enterKey || e->key() == Qt::Key_S || e->key() == Qt::Key_A
             || e->key() == Qt::Key_Delete || e->key() == Qt::Key_L);
-    if (!markKey) interruptCuration();
+    // Space 是「进入凝视」本身，不算夺权；其余非标注键才退展（裁决 R-T10a 的延伸）。
+    if (!markKey && !spaceKey) interruptCuration();
     if (e->key() == Qt::Key_Escape) { e->accept(); close(); }
     else if (e->key() == Qt::Key_Left)  { navigate(-1); e->accept(); }
     else if (e->key() == Qt::Key_Right) { navigate( 1); e->accept(); }
@@ -307,6 +334,12 @@ void GazeLightbox::keyPressEvent(QKeyEvent* e) {
     else if (mode_ == Mode::Gaze
              && (e->key() == Qt::Key_A || e->key() == Qt::Key_Delete)) { handleGazeMark(QStringLiteral("skip")); e->accept(); }
     else if (mode_ == Mode::Gaze && e->key() == Qt::Key_L) { handleGazeMark(QStringLiteral("lock")); e->accept(); }
+    // 波4 §2.7：Space 进凝视（已在凝视则接受不动作）；Enter 收藏（与 S 同义）。
+    else if (spaceKey) {
+        if (mode_ == Mode::Browse) setGazeMode(true);
+        e->accept();
+    }
+    else if (enterKey) { handleGazeMark(QStringLiteral("like")); e->accept(); }
     else QWidget::keyPressEvent(e);
 }
 
