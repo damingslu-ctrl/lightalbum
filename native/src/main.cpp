@@ -3463,16 +3463,14 @@ int runCurateQa()
     {
         const QString m = CurateScheduler::muteAck();
         report("M_ack_mute_honest",
-               m.contains(QStringLiteral("反悔")) && m.contains(QStringLiteral("下轮")));
+               m.contains(QStringLiteral("唤醒")) && !m.contains(QStringLiteral("下轮")));
         const QString k = CurateScheduler::keepAck(QStringLiteral("Three Winters"), 7);
         report("M_ack_keep_names_show",
                k.contains(QStringLiteral("Three Winters")) && k.contains(QLatin1String("7")));
-        // ★同一把尺子量 keep：合集**数据**本版已落库，但**页面没有**（`listAlbums()` 只有
-        //   门禁在调 ⇒ 「随时能再看」是空头承诺）。牙齿 = 必须自带未上线披露，且不许出现
-        //   可回看字样。变异证明：把文案改回旧句 → 本腿红（ledger T12 电池 R6）。
+        // ★波4 R2 方向翻转：典藏页已能列合集、静音页已能唤醒——回执必须指回真入口，
+        //   不许再留「下轮」。变异证明：把文案改回旧句 → 本腿红。
         report("M_ack_keep_honest",
-               k.contains(QStringLiteral("下轮")) && !k.contains(QStringLiteral("随时"))
-                   && !k.contains(QStringLiteral("再看")));
+               k.contains(QStringLiteral("典藏")) && !k.contains(QStringLiteral("下轮")));
         // 建合集失败支路也要有牙：不许把「没能」写成「已收进」（铁律 21 的文案侧镜像）。
         report("M_ack_keep_denied_differs",
                CurateScheduler::keepAck(QStringLiteral("Three Winters"), 7, false) != k
@@ -3529,9 +3527,11 @@ int runCurateQa()
             const int b = body.indexOf(QStringLiteral("->setCuration("));
             report("M_enter_before_setcuration", !body.isEmpty() && a >= 0 && b >= 0 && a < b);
         }
+        // 2.43.0：唤醒（反悔）与换一展/别再这类同权——三处都必须强制重生成，
+        // 否则叫醒的选题要等下一轮节流才回到台面。
         report("M_forced_swap_regenerates",
                code.contains(QStringLiteral("markSwapped("))
-                   && code.count(QStringLiteral("/*force=*/true")) == 2);   // 换一展 + 别再这类 各一次
+                   && code.count(QStringLiteral("/*force=*/true")) == 3);   // 换一展 + 别再这类 + 唤醒
         // 后两条同样切片到各自函数体：buildUi 里也有一行 `lobby_->setExhibit(curator_->...)`
         // 与两处 `curator_->maybeGenerate(`，全文件 contains 会让「摘掉接线」照样绿。
         {
@@ -3694,6 +3694,16 @@ int runCollectionQa()
         const int scope = fn.indexOf(QStringLiteral("setScope("));
         const int enter = fn.indexOf(QStringLiteral("enter("));
         chk("D3_scope_before_enter_in_gaze", f >= 0 && scope >= 0 && enter > scope);
+    }
+
+    // ---- E 组：文案诚实（R2；方向随兑现翻转：入口已存在，不许再标「下轮」）----
+    {
+        const QString keep = CurateScheduler::keepAck(QStringLiteral("西湖"), 3, true);
+        const QString mute = CurateScheduler::muteAck();
+        chk("E1_keep_points_to_collection",
+            keep.contains(QStringLiteral("典藏")) && !keep.contains(QStringLiteral("下轮")));
+        chk("E2_mute_points_to_wake",
+            mute.contains(QStringLiteral("唤醒")) && !mute.contains(QStringLiteral("下轮")));
     }
 
     // ---- G 组：网格算术（纯函数，spec §3.3 + R11）----
@@ -10825,12 +10835,12 @@ int main(int argc, char *argv[])
         i18nCheck("收进合集", QStringLiteral("Add to Album"));
         i18nCheck("换一展", QStringLiteral("Next Exhibit"));
         i18nCheck("别再这类", QStringLiteral("Mute This Kind"));
-        ctxCheck("CurateScheduler", "已把《%1》的 %2 张存为永久合集，合集浏览下轮上线。",
-                 QStringLiteral("Kept %2 photos from \"%1\" as a permanent album — the album browser arrives next round."));
+        ctxCheck("CurateScheduler", "已把《%1》的 %2 张存为永久合集，可在典藏里再看。",
+                 QStringLiteral("Kept %2 photos from \"%1\" as a permanent album — find it under Collection."));
         ctxCheck("CurateScheduler", "没能收进合集，库里没多出一份空壳。",
                  QStringLiteral("Not kept: the library gained no empty album."));
-        ctxCheck("CurateScheduler", "这类展已安静下来。反悔入口下轮上线。",
-                 QStringLiteral("This kind of exhibit has gone quiet. An undo entry arrives next round."));
+        ctxCheck("CurateScheduler", "这类展已安静下来。可在典藏 · 安静下来的选题里唤醒。",
+                 QStringLiteral("This kind of exhibit has gone quiet. Wake it up under Collection · Quieted picks."));
         ctxCheck("CurateScheduler", "已换一展。", QStringLiteral("A new exhibit is up."));
         ctxCheck("CurateScheduler", "暂无更多可展的照片，先补几张进来。",
                  QStringLiteral("No more photos left to exhibit — add a few first."));

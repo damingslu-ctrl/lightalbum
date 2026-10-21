@@ -1773,16 +1773,16 @@ Errors: %1 — %2</translation>
 <context>
     <name>CurateScheduler</name>
     <message>
-        <source>已把《%1》的 %2 张存为永久合集，合集浏览下轮上线。</source>
-        <translation>Kept %2 photos from &quot;%1&quot; as a permanent album — the album browser arrives next round.</translation>
+        <source>已把《%1》的 %2 张存为永久合集，可在典藏里再看。</source>
+        <translation>Kept %2 photos from &quot;%1&quot; as a permanent album — find it under Collection.</translation>
     </message>
     <message>
         <source>没能收进合集，库里没多出一份空壳。</source>
         <translation>Not kept: the library gained no empty album.</translation>
     </message>
     <message>
-        <source>这类展已安静下来。反悔入口下轮上线。</source>
-        <translation>This kind of exhibit has gone quiet. An undo entry arrives next round.</translation>
+        <source>这类展已安静下来。可在典藏 · 安静下来的选题里唤醒。</source>
+        <translation>This kind of exhibit has gone quiet. Wake it up under Collection · Quieted picks.</translation>
     </message>
     <message>
         <source>已换一展。</source>

@@ -227,19 +227,19 @@ bool CurateScheduler::unmuteExhibit(const QString& token)
 
 QString CurateScheduler::keepAck(const QString& title, int n, bool ok)
 {
+    // 2.43.0 波4 R2：典藏页已列合集（CollectionPage「合集」tab），回执从「下轮上线」
+    //   翻成指回真入口。界面上写出来的每一句都是承诺——入口不在就不许写入口。
     return ok
-        // ★文案纪律：界面上写出来的每一句都是承诺。合集**数据**本版已真落库（`albums`/
-        //   `album_items`，跨重启可回读），但**没有任何页面列它**（`Library::listAlbums()`
-        //   本版只有门禁在调）——故此处只报已成立的事实 + 如实标未上线，不许承诺可回看。
-        ? QCoreApplication::translate("CurateScheduler", "已把《%1》的 %2 张存为永久合集，合集浏览下轮上线。")
+        ? QCoreApplication::translate("CurateScheduler", "已把《%1》的 %2 张存为永久合集，可在典藏里再看。")
               .arg(title).arg(n)
         : QCoreApplication::translate("CurateScheduler", "没能收进合集，库里没多出一份空壳。");
 }
 
 QString CurateScheduler::muteAck()
 {
+    // 2.43.0 波4 R2：「安静下来的选题」tab 已有「唤醒」，回执指向该入口。
     return QCoreApplication::translate("CurateScheduler",
-                                       "这类展已安静下来。反悔入口下轮上线。");
+                                       "这类展已安静下来。可在典藏 · 安静下来的选题里唤醒。");
 }
 
 QString CurateScheduler::swapAck(bool swapped)
