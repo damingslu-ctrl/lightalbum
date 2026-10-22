@@ -86,7 +86,7 @@ protected:
                                 g_skelPhase, g_skelReduceMotion, isVideo, durSec);
         // F3 a11y: 自定义自绘控件需手动绘制焦点环（原生焦点框不显示）
         if (hasFocus()) {
-            QPen fp(QColor(0xd9, 0xa9, 0x4e), 2);
+            QPen fp(Lumen::focusRingColor(), 2);
             p.setPen(fp);
             p.setBrush(Qt::NoBrush);
             p.drawRoundedRect(rect().adjusted(1, 1, -1, -1), 6, 6);

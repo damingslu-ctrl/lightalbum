@@ -37,6 +37,14 @@ constexpr int kExhibitFadeMs = 120;
 constexpr int    kDominantSamplePx  = 64;
 constexpr double kDominantSatMin    = 0.25;
 constexpr double kDominantFallbackL = 0.90;   // 低饱和回退 = emerald 亮度 -10%
+
+// T12：影院幕/底幕一律走画布遮罩角色（HexArgb 保留 alpha，QSS 认 #aarrggbb）。
+QString veilArgb(double a)
+{
+    QColor c = Lumen::maskColor();
+    c.setAlphaF(a);
+    return c.name(QColor::HexArgb);
+}
 } // namespace
 
 // 2.41.0 §2.5 主色纯函数（铁律 20：产品光晕与 LA_GAZE_QA 同一实现）。
@@ -101,7 +109,8 @@ GazeLightbox::GazeLightbox(Library* lib, QWidget* parent)
 {
     setObjectName(QStringLiteral("photoLightbox"));
     setAttribute(Qt::WA_StyledBackground, true);
-    setStyleSheet(QStringLiteral("QWidget#photoLightbox{background:rgba(6,8,6,0.97);}"));
+    setStyleSheet(QStringLiteral("QWidget#photoLightbox{background:%1;}")
+                      .arg(veilArgb(0.97)));
     setFocusPolicy(Qt::StrongFocus);   // F3 a11y：灯箱可键盘聚焦（←/→ 翻图）
 
     // P20：无布局——img_/bottom_ 全走手动 geometry（见 resizeEvent）
@@ -122,7 +131,8 @@ GazeLightbox::GazeLightbox(Library* lib, QWidget* parent)
     bottom_->setObjectName(QStringLiteral("lbBottom"));
     bottom_->setStyleSheet(QStringLiteral(
         "QFrame#lbBottom{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-        "stop:0 rgba(4,6,4,0), stop:0.45 rgba(4,6,4,0.55), stop:1 rgba(4,6,4,0.94));}"));
+        "stop:0 %1, stop:0.45 %2, stop:1 %3);}")
+        .arg(veilArgb(0.0), veilArgb(0.55), veilArgb(0.94)));
     auto* bl = new QHBoxLayout(bottom_);
     bl->setContentsMargins(Lumen::Space::Xxl, Lumen::Space::S, Lumen::Space::Xl, Lumen::Space::L);
     bl->setSpacing(16);
@@ -299,7 +309,8 @@ void GazeLightbox::setGazeMode(bool gaze)
         if (!orig_.isNull()) applyGlow(dominantColor(orig_.toImage()));
     } else if (!gaze && wasGaze) {
         // 退回浏览：黑幕复位，光晕撤场
-        setStyleSheet(QStringLiteral("QWidget#photoLightbox{background:rgba(6,8,6,0.97);}"));
+        setStyleSheet(QStringLiteral("QWidget#photoLightbox{background:%1;}")
+                          .arg(veilArgb(0.97)));
     }
 }
 
@@ -376,8 +387,9 @@ void GazeLightbox::showToast(const QString& text)
         toast_->setObjectName(QStringLiteral("gazeToast"));
         toast_->setAlignment(Qt::AlignCenter);
         toast_->setStyleSheet(QString::fromUtf8(
-            "QLabel#gazeToast{background:rgba(6,8,6,0.86);"
-            "border:1px solid %1;color:%2;border-radius:%3;padding:8px 16px;}")
+            "QLabel#gazeToast{background:%1;"
+            "border:1px solid %2;color:%3;border-radius:%4;padding:8px 16px;}")
+            .arg(veilArgb(0.86))
             .arg(Lumen::hex(Lumen::line()))
             .arg(Lumen::hex(Lumen::ink()))
             .arg(Lumen::Radius::Pill)

@@ -1219,25 +1219,31 @@ static int runLampQa()
 
     // ================= A 表值钉死 =================
     {
-        static const char* kCols[8] = { "bg", "surface", "inset", "ink",
-                                        "muted", "line", "gold", "emerald" };
+        static const char* kCols[12] = { "bg", "surface", "inset", "ink",
+                                         "muted", "line", "gold", "emerald",
+                                         "canvasBg", "canvasLine", "mask", "focusRing" };
         static const Lamp kLamps[4] = { Lamp::Nocturne, Lamp::Jade,
                                         Lamp::Gekkan,   Lamp::Dusk };
-        static const char* kWant[4][8] = {
+        static const char* kWant[4][12] = {
             { "#141b16", "#1d2a22", "#0e1410", "#e8e4d8",
-              "#8da396", "#26312a", "#d8a657", "#4fc08a" },   // L1 夜展
+              "#8da396", "#26312a", "#d8a657", "#4fc08a",
+              "#0b100d", "#1a231d", "#070a08", "#4fc08a" },   // L1 夜展
             { "#f2efe6", "#ffffff", "#e9e5d9", "#2b2b28",
-              "#6d675c", "#e2ded3", "#b98a2f", "#3f6b52" },   // L2 玉照
+              "#6d675c", "#e2ded3", "#b98a2f", "#3f6b52",
+              "#e7e3d7", "#d6d1c4", "#1c1a16", "#3f6b52" },   // L2 玉照
             { "#fafafa", "#ffffff", "#efefec", "#111111",
-              "#8a8a85", "#e4e4e0", "#b98a2f", "#b98a2f" },   // L3 素印
+              "#8a8a85", "#e4e4e0", "#b98a2f", "#b98a2f",
+              "#efefec", "#ddddd8", "#111111", "#b98a2f" },   // L3 素印
             { "#241a10", "#33241a", "#2a1e14", "#f2e4ce",
-              "#a8896b", "#4a3320", "#e2a95c", "#b98a2f" },   // L4 暮金
+              "#a8896b", "#4a3320", "#e2a95c", "#b98a2f",
+              "#1a120c", "#3a2819", "#0d0906", "#e2a95c" },   // L4 暮金
         };
         for (int i = 0; i < 4; ++i) {
             const Lumen::LampTokens& t = readLamp(kLamps[i]);
-            const QColor cols[8] = { t.bg, t.surface, t.inset, t.ink,
-                                     t.muted, t.line, t.gold, t.emerald };
-            for (int c = 0; c < 8; ++c) {
+            const QColor cols[12] = { t.bg, t.surface, t.inset, t.ink,
+                                      t.muted, t.line, t.gold, t.emerald,
+                                      t.canvasBg, t.canvasLine, t.mask, t.focusRing };
+            for (int c = 0; c < 12; ++c) {
                 const QString tag = QStringLiteral("A_L%1_%2")
                                         .arg(i + 1).arg(QLatin1String(kCols[c]));
                 chk(cols[c].isValid()
@@ -1245,19 +1251,37 @@ static int runLampQa()
                     qPrintable(tag));
             }
         }
+        // A2 访问器腿：四条画布访问器必须真的读活跃灯表（只钉 token 表测不到接线）。
+        const Lamp prev = Lumen::activeLamp();
+        for (int i = 0; i < 4; ++i) {
+            Lumen::setActiveLamp(kLamps[i]);
+            const QColor got[4] = { Lumen::canvasBg(), Lumen::canvasLine(),
+                                    Lumen::maskColor(), Lumen::focusRingColor() };
+            for (int c = 0; c < 4; ++c) {
+                const QString tag = QStringLiteral("A_L%1_acc_%2")
+                                        .arg(i + 1).arg(QLatin1String(kCols[c + 8]));
+                chk(got[c].isValid() && got[c].name() == QLatin1String(kWant[i][c + 8]),
+                    qPrintable(tag));
+            }
+        }
+        Lumen::setActiveLamp(prev);
         // 四行两两相异：至少一列不同，否则「第 N 灯」是空气
         for (int i = 0; i < 4; ++i) {
             for (int j = i + 1; j < 4; ++j) {
-                const QColor a[8] = { readLamp(kLamps[i]).bg, readLamp(kLamps[i]).surface,
+                const QColor a[12] = { readLamp(kLamps[i]).bg, readLamp(kLamps[i]).surface,
                                       readLamp(kLamps[i]).inset, readLamp(kLamps[i]).ink,
                                       readLamp(kLamps[i]).muted, readLamp(kLamps[i]).line,
-                                      readLamp(kLamps[i]).gold, readLamp(kLamps[i]).emerald };
-                const QColor b[8] = { readLamp(kLamps[j]).bg, readLamp(kLamps[j]).surface,
+                                      readLamp(kLamps[i]).gold, readLamp(kLamps[i]).emerald,
+                                      readLamp(kLamps[i]).canvasBg, readLamp(kLamps[i]).canvasLine,
+                                      readLamp(kLamps[i]).mask, readLamp(kLamps[i]).focusRing };
+                const QColor b[12] = { readLamp(kLamps[j]).bg, readLamp(kLamps[j]).surface,
                                       readLamp(kLamps[j]).inset, readLamp(kLamps[j]).ink,
                                       readLamp(kLamps[j]).muted, readLamp(kLamps[j]).line,
-                                      readLamp(kLamps[j]).gold, readLamp(kLamps[j]).emerald };
+                                      readLamp(kLamps[j]).gold, readLamp(kLamps[j]).emerald,
+                                      readLamp(kLamps[j]).canvasBg, readLamp(kLamps[j]).canvasLine,
+                                      readLamp(kLamps[j]).mask, readLamp(kLamps[j]).focusRing };
                 bool differ = false;
-                for (int c = 0; c < 8; ++c)
+                for (int c = 0; c < 12; ++c)
                     if (a[c] != b[c]) { differ = true; break; }
                 chk(differ, qPrintable(QStringLiteral("A_distinct_L%1L%2")
                                            .arg(i + 1).arg(j + 1)));

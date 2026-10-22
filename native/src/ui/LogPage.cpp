@@ -154,13 +154,15 @@ LogPage::LogPage(const QVector<Photo>* photos, QWidget* parent)
     auto* scroll = new QScrollArea(this);
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
-    // P30-C：淡网格底
+    // P30-C：淡网格底（T12：网格线走画布描线角色，随灯换）
+    QColor gridLine = Lumen::canvasLine();
+    gridLine.setAlphaF(0.35);
     scroll->setStyleSheet(QString::fromUtf8(
         "QScrollArea{background:"
-        "repeating-linear-gradient(0deg, rgba(255,255,255,0.02) 0 1px, transparent 1px 26px),"
-        "repeating-linear-gradient(90deg, rgba(255,255,255,0.02) 0 1px, transparent 1px 26px),"
-        "%1;border:none;}")
-        .arg(Lumen::hex(Lumen::bg())));
+        "repeating-linear-gradient(0deg, %1 0 1px, transparent 1px 26px),"
+        "repeating-linear-gradient(90deg, %1 0 1px, transparent 1px 26px),"
+        "%2;border:none;}")
+        .arg(gridLine.name(QColor::HexArgb), Lumen::hex(Lumen::canvasBg())));
     outer->addWidget(scroll);
 
     auto* root = new QWidget(scroll);
@@ -365,15 +367,16 @@ void LogPage::rebuildFilterChips()
     if (!lay) return;
     const QString chipCss = QString::fromUtf8(   // §1.7：0f1512→INSET；hover 边 3a4a40→FAINT；checked 底文字 06130c→PANEL（e27f6a3 判例）
         "QPushButton{background:%1;color:%2;border:1px solid %3;"
-        "border-radius:999px;padding:0 14px;%8min-height:24px;}"
+        "border-radius:%10;padding:0 14px;%8min-height:24px;}"
         "QPushButton:hover{color:%4;border-color:%5;}"
         "QPushButton:checked{background:%6;color:%7;border:1px solid %6;"
-        "border-radius:999px;padding:0 14px;%9font-weight:bold;}")   // T8：两处 12px=T5 原位；700 归一 bold（§2.4）
+        "border-radius:%10;padding:0 14px;%9font-weight:bold;}")   // T8：两处 12px=T5 原位；700 归一 bold（§2.4）
         .arg(Lumen::hex(Lumen::inset()), Lumen::hex(Lumen::muted()), Lumen::hex(Lumen::line()),
              Lumen::hex(Lumen::ink()), Lumen::hex(Lumen::faint()),
              Lumen::hex(Lumen::emerald()), Lumen::hex(Lumen::panel()))
         .arg(Lumen::Type::css(Lumen::Type::Tier::Small))
-        .arg(Lumen::Type::css(Lumen::Type::Tier::Small));
+        .arg(Lumen::Type::css(Lumen::Type::Tier::Small))
+        .arg(Lumen::Radius::Pill);
 
     QVector<Lumen::ChipDef> defs;
     defs.append(Lumen::chipDef(QString(),

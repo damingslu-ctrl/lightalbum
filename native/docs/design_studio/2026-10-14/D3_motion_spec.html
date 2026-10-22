@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>D3 · 动效规范 · 美术馆的节拍</title>
+<style>
+:root{--ink:#171d19;--paper:#EFEDE4;--jade:#8DA996;--gold:#C9A85C;--mut:#96a29a;--line:#2A352C}
+*{box-sizing:border-box;margin:0}body{background:#10150F;color:var(--paper);font-family:"Source Han Serif SC",Georgia,serif;padding:44px clamp(20px,5vw,64px);line-height:1.7}
+h1{font-size:28px}h1 b{color:var(--gold);font-weight:400}.sub{color:var(--mut);font-size:13px;margin:8px 0 28px}
+section{border:1px solid var(--line);border-radius:12px;padding:22px 26px;margin-bottom:18px;background:#171D19}
+h2{font-size:14px;color:var(--jade);letter-spacing:.3em;margin-bottom:12px}
+table{width:100%;border-collapse:collapse;font-size:13.5px}
+th{color:var(--mut);font-weight:400;text-align:left;border-bottom:1px solid var(--line);padding:8px 10px;font-size:12px;letter-spacing:.1em}
+td{border-bottom:1px dashed #222d25;padding:9px 10px;vertical-align:top}
+td b{color:var(--gold);font-weight:400}code{font-family:ui-monospace,Consolas,monospace;font-size:12.5px;color:#BCD3C4}
+.note{font-size:12.5px;color:var(--mut);margin-top:10px}
+.sig::first-letter{color:var(--gold)}
+</style>
+</head>
+<body>
+<h1>动效规范 · <b>美术馆的节拍</b></h1>
+<p class="sub">D3 ｜ 2026-10-14 ｜ Personality 锚点 = <b>Premium-Calm</b>（沉稳的仪式感）｜ 全部条目映射既有 MotionKit 引擎曲线/预设表，零新引擎、零第三方库 ｜ 减动效模式全条回落</p>
+
+<section><h2>原则</h2>
+<table>
+<tr><td style="border:none;width:33%"><b>光先行，形后随</b><br>峰值时刻入场顺序恒为：光晕/背景(0ms) → 容器(80ms) → 内容(160ms)。观众先感到「灯亮了」，再看到「作品」。</td>
+<td style="border:none"><b>一次只讲一件事</b><br>同屏并发动画组 ≤2；批量网格入场用 stagger 而非各自为政。</td>
+<td style="border:none"><b>物理感=阻尼，不是弹跳</b><br>全站禁用 spring/overshoot>2%；收尾一律减速曲线（expo-out / quint-out 家族）。</td></tr></table></section>
+<p class="note"><b>例外白名单</b>：<code>kStarBounce</code>（加星）与 <code>kHeartBurst</code>（收藏心跳）属庆祝动作，允许 overshoot ≤8%，必须吃 reduced-motion；除此之外任何 bounce/elastic 仍禁用。</p>
+
+<section><h2>签名缓动 + 时长调色板</h2>
+<table><tr><th>档位</th><th>时长</th><th>缓动（MotionKit 预设）</th><th>用途</th></tr>
+<tr><td><b>instant</b></td><td>120ms</td><td>ease-out cubic</td><td>hover 微反馈、chip 选中描边</td></tr>
+<tr><td><b>quick</b></td><td>220ms</td><td>expo-out</td><td>菜单/弹层出入、tooltip</td></tr>
+<tr><td><b>standard</b></td><td>360ms</td><td>quint-out</td><td>页面切换、面板展开、灯箱开</td></tr>
+<tr><td><b>slow</b></td><td>640ms</td><td>expo-out + 光晕 alpha 双通道</td><td>开屏 iris、灯箱 zoom 入场、人物墙聚焦</td></tr>
+</table>
+<p class="note">呼吸类（光晕脉动/加载微光）不设时长上限，但周期恒为 2400ms 且 alpha 摆幅 ≤8%，避免视觉疲劳。所有数值入预设表，棘轮门断言。</p></section>
+
+<section><h2>逐页编排</h2>
+<table><tr><th>时刻</th><th>编排（签名动作）</th><th>档位</th><th>减动效回落</th></tr>
+<tr><td>灯箱打开</td><td>黑场 240ms 沉底 → 照片自缩略图位置 rect 展开 + 顶灯光晕 radial 渐显（滞后 80ms）→ 金装裱线 opacity 收尾</td><td>slow 640ms</td><td>直接切换 + 静态黑场</td></tr>
+<tr><td>灯箱翻页</td><td>旧照横移 −24px 同时 opacity 0-200ms，新照自 +24px 滑入；光晕不重打（光源恒定，展品更替）</td><td>quick 220ms</td><td>无位移纯切换</td></tr>
+<tr><td>人物墙进人</td><td>头像圆形 scale 0.96→1 + 名字 40ms 后浮现；同批 stagger 28ms/个，上限 12 个后不再 stagger</td><td>standard 360ms</td><td>整批直接显示</td></tr>
+<tr><td>AI 进度（识别人物/分类）</td><td>玉绿进度线匀速行进 + 末端 8% alpha 呼吸微光；完成瞬间进度线 0.2s 收束成一条金线再隐（「装裱完成」隐喻）</td><td>常驻+220ms</td><td>静态进度条无呼吸</td></tr>
+<tr><td>画廊网格批量入场</td><td>首屏卡片按阅读序 stagger 18ms、行内位移 10px 上浮；滚动加载批次减半 stagger（9ms）防拖沓</td><td>instant 120ms</td><td>直接显示</td></tr>
+<tr><td>删除/移出相册</td><td>卡片 0.96 缩 + 下坠 12px + opacity 0（240ms），余位补位走 220ms expo-out——「取走展品，灯光归位」</td><td>quick 220ms</td><td>即时移除</td></tr>
+<tr><td>去重对比</td><td>两张候选自两侧 28px 会拢（镜像对称=天平隐喻），差异区域 0.4s 后玉绿描边点亮</td><td>standard 360ms</td><td>并排静态</td></tr>
+</table></section>
+
+<section><h2>禁则</h2>
+<table><tr><td style="border:none" class="note">旋转>90°入场 ｜ 任何 bounce/elastic ｜ 照片内容色随动效变色（照片色准是底线）｜ 音效 ｜ 视差层>2 ｜ 循环强调动效（页面停留期间装饰动效只许出现一次）｜ 动效期间拦截输入。</td></tr></table></section>
+<p class="note"><b>例外白名单</b>：<code>kStarBounce</code>（加星）与 <code>kHeartBurst</code>（收藏心跳）属庆祝动作，允许 overshoot ≤8%，必须吃 reduced-motion；除此之外任何 bounce/elastic 仍禁用。</p>
+</body>
+</html>

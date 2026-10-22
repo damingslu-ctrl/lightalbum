@@ -48,6 +48,11 @@
                               "label":  "hex",
                               "current":  0,
                               "ceiling":  0
+                          },
+                   "C6":  {
+                              "label":  "canvas-raw",
+                              "current":  16,
+                              "ceiling":  16
                           }
                }
 }

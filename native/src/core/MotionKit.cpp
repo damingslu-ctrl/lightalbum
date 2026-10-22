@@ -149,6 +149,8 @@ static QVector<Preset> makeTable()
         };
         t.append(p);
     }
+    // D3 例外白名单（docs/design_studio/2026-10-14/D3_motion_spec.html 原则/禁则两处）：
+    // kStarBounce / kHeartBurst 属庆祝动作，允许 overshoot ≤8%，必须吃 reduced-motion。
     // StarBounce：字号 12→过冲 15→回 12（OutElastic 尾振），弹性手感全由曲线给；
     // glow 键供 CSS 固定字号的按钮走「调色板辉光」通道（同曲线同时序）。
     {

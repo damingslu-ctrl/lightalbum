@@ -232,14 +232,14 @@ void VideoPlayerWidget::tick() { /* -re 已负责节奏，这里仅保底刷新 
 void VideoPlayerWidget::paintEvent(QPaintEvent*)
 {
     QPainter p(this);
-    p.fillRect(rect(), QColor(0x0d, 0x0f, 0x0e));   // 深底，突出画面
+    p.fillRect(rect(), Lumen::canvasBg());   // 深底，突出画面
 
     const QImage* src = nullptr;
     if (!m_curFrame.isNull())      src = &m_curFrame;
     else if (!m_poster.isNull())   src = &m_poster;
 
     if (!src) {
-        p.setPen(QColor(0xbf, 0xc8, 0xc2));
+        p.setPen(Lumen::muted());
         p.drawText(rect(), Qt::AlignCenter, tr("▶ 加载中…"));
         return;
     }

@@ -34,9 +34,9 @@ QRect CompareWidget::dispRect() const
 void CompareWidget::paintEvent(QPaintEvent*)
 {
     QPainter p(this);
-    p.fillRect(rect(), QColor(0x06, 0x08, 0x06));
+    p.fillRect(rect(), Lumen::canvasBg());
     if (before_.isNull()) {
-        p.setPen(QColor(0x8d, 0xa3, 0x96));
+        p.setPen(Lumen::muted());
         p.drawText(rect(), Qt::AlignCenter, QCoreApplication::translate("LightAlbum", "无图像"));
         return;
     }
@@ -54,10 +54,10 @@ void CompareWidget::paintEvent(QPaintEvent*)
     p.drawImage(d, before_);
     p.restore();
     // 分割线
-    p.setPen(QPen(QColor(0xd9, 0xa9, 0x4e), 2));
+    p.setPen(QPen(Lumen::focusRingColor(), 2));
     p.drawLine(splitX, d.top(), splitX, d.bottom());
     // 角标
-    p.setPen(QColor(0xf4, 0xf7, 0xf4));
+    p.setPen(Lumen::ink());
     p.setFont(Lumen::Type::smallText());   // T8：10pt 角标归 T5 smallText（9pt）
     p.drawText(QRect(d.left() + 8, d.top() + 6, 80, 20), Qt::AlignLeft, QCoreApplication::translate("LightAlbum", "原图"));
     p.drawText(QRect(d.right() - 88, d.top() + 6, 80, 20), Qt::AlignRight, QCoreApplication::translate("LightAlbum", "修后"));

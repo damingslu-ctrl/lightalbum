@@ -481,9 +481,11 @@ void GalleryPage::buildChips()
         // §1.7：token 值字面量归引用（f4f7f4→INK、4fc08a→EMERALD，色不变）。
         // 用拼接而非链式 .arg：fillChipRow 只对模板做一次 .arg(d.bg)，%1 占位必须保持唯一最低标号
         //（多参数 .arg 会先吃掉 %1，令彩色底失效——占位符纪律，勿改成 arg 链）。
-        const QString personCssTpl = QStringLiteral(
-            "QPushButton{background:%1;border:none;border-radius:10px;"   // T9：11→Radius::Ctl 值归格（%1 彩色底模板纪律：拼接式不换插值形态，只换值）
-            "padding:4px 12px;color:") + Lumen::hex(Lumen::panel()) + QStringLiteral(";")
+        const QString personCssTpl =
+            QStringLiteral("QPushButton{background:%1;border:none;border-radius:")
+            + QString::number(Lumen::Radius::Ctl)
+            + QStringLiteral("px;padding:4px 12px;color:")
+            + Lumen::hex(Lumen::panel()) + QStringLiteral(";")
             + Lumen::Type::css(Lumen::Type::Tier::Small)   // T8：12px=T5 原位（输出无 % 标号，模板纪律不破坏）
             + QStringLiteral(
             "font-weight:bold;}"

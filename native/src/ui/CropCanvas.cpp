@@ -1,4 +1,5 @@
 #include "CropCanvas.h"
+#include "Theme.h"
 #include <QMouseEvent>
 #include <QGraphicsPixmapItem>
 #include <QGraphicsScene>
@@ -18,7 +19,7 @@ CropCanvas::CropCanvas(QWidget* parent)
     : QGraphicsView(parent)
 {
     setScene(new QGraphicsScene(this));
-    setBackgroundBrush(QColor(0x06, 0x08, 0x06));
+    setBackgroundBrush(Lumen::canvasBg());
     setFrameShape(QFrame::NoFrame);
     setRenderHint(QPainter::Antialiasing, true);
     setRenderHint(QPainter::SmoothPixmapTransform, true);
@@ -39,10 +40,12 @@ void CropCanvas::setBase(const QImage& img)
     shadeItem_ = scene()->addPixmap(QPixmap());
     shadeItem_->setZValue(1);
 
-    borderItem_ = scene()->addRect(QRectF(), QPen(QColor(0xd9, 0xa9, 0x4e), 2), Qt::NoBrush);
+    borderItem_ = scene()->addRect(QRectF(), QPen(Lumen::focusRingColor(), 2), Qt::NoBrush);
     borderItem_->setZValue(2);
 
-    QPen dash(QColor(255, 255, 255, 90), 1, Qt::DashLine);
+    QColor dashInk = Lumen::ink();
+    dashInk.setAlpha(90);
+    QPen dash(dashInk, 1, Qt::DashLine);
     v1_ = scene()->addLine(0, 0, 0, 0, dash); v2_ = scene()->addLine(0, 0, 0, 0, dash);
     h1_ = scene()->addLine(0, 0, 0, 0, dash); h2_ = scene()->addLine(0, 0, 0, 0, dash);
     for (QGraphicsLineItem* l : {v1_, v2_, h1_, h2_}) l->setZValue(2);
@@ -98,7 +101,9 @@ void CropCanvas::syncOverlay()
 {
     if (base_.isNull() || !shadeItem_) return;
     QImage shade(base_.size(), QImage::Format_ARGB32);
-    shade.fill(QColor(0, 0, 0, 150));
+    QColor shadeMask = Lumen::maskColor();
+    shadeMask.setAlpha(150);
+    shade.fill(shadeMask);
     if (!rect_.isNull()) {
         QPainter p(&shade);
         p.setCompositionMode(QPainter::CompositionMode_Clear);

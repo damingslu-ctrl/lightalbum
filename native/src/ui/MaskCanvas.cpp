@@ -1,4 +1,5 @@
 #include "MaskCanvas.h"
+#include "Theme.h"
 #include <QMouseEvent>
 #include <QGraphicsPixmapItem>
 #include <QGraphicsScene>
@@ -6,14 +7,11 @@
 #include <QPen>
 #include <QPixmap>
 
-// 「雾隐·墨韵」翡翠语义色（与 DarkPalette 一致）
-namespace { constexpr QColor kMaskColor = QColor(0x5a, 0x8f, 0x6b); }
-
 MaskCanvas::MaskCanvas(QWidget* parent)
     : QGraphicsView(parent)
 {
     setScene(new QGraphicsScene(this));
-    setBackgroundBrush(QColor(0x06, 0x08, 0x06));
+    setBackgroundBrush(Lumen::canvasBg());
     setFrameShape(QFrame::NoFrame);
     setRenderHint(QPainter::Antialiasing, true);
     setRenderHint(QPainter::SmoothPixmapTransform, true);
@@ -54,14 +52,18 @@ void MaskCanvas::drawStroke(const QPointF& from, const QPointF& to)
     {
         QPainter pm(&mask_);
         pm.setRenderHint(QPainter::Antialiasing, true);
-        QPen pen(QColor(255, 255, 255, 210), brush_, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+        QColor strokeInk = Lumen::ink();
+        strokeInk.setAlpha(210);
+        QPen pen(strokeInk, brush_, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
         pm.setPen(pen);
         pm.drawLine(from, to);
     }
     {
         QPainter pm(&overlay_);
         pm.setRenderHint(QPainter::Antialiasing, true);
-        QPen pen(QColor(kMaskColor.red(), kMaskColor.green(), kMaskColor.blue(), 130),
+        QColor overlayMask = Lumen::maskColor();
+        overlayMask.setAlpha(130);
+        QPen pen(overlayMask,
                  brush_, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
         pm.setPen(pen);
         pm.drawLine(from, to);

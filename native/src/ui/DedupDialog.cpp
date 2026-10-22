@@ -60,8 +60,9 @@ DedupDialog::DedupDialog(const QVector<Photo>* photos, const QString& thumbsDir,
     sa->setWidgetResizable(true);
     // §1.7：滚动区盘底（原值 060806） 即 BG token 值字面量→归引用；私有描边 1c2620→LINE（回家，微亮授权内）
     sa->setStyleSheet(QString::fromUtf8(
-        "background:%1;border:1px solid %2;border-radius:10px;")
-        .arg(Lumen::hex(Lumen::bg()), Lumen::hex(Lumen::line())));
+        "background:%1;border:1px solid %2;border-radius:%3;")
+        .arg(Lumen::hex(Lumen::bg()), Lumen::hex(Lumen::line()))
+        .arg(Lumen::Radius::Ctl));
     auto* list = new QWidget(sa);
     listLay_ = new QVBoxLayout(list);
     listLay_->setContentsMargins(12, 12, 12, 12);
@@ -176,8 +177,9 @@ void DedupDialog::buildGroup(const DupGroup& g, QVBoxLayout* parent)
     auto* w = new QWidget(this);
     // §1.7：组卡内嵌底（原值 0e1410） 即 INSET token 值字面量→归引用；描边 1c2620→LINE（回家）
     w->setStyleSheet(QString::fromUtf8(
-        "background:%1;border:1px solid %2;border-radius:10px;")
-        .arg(Lumen::hex(Lumen::inset()), Lumen::hex(Lumen::line())));
+        "background:%1;border:1px solid %2;border-radius:%3;")
+        .arg(Lumen::hex(Lumen::inset()), Lumen::hex(Lumen::line()))
+        .arg(Lumen::Radius::Ctl));
     auto* lay = new QHBoxLayout(w);
     lay->setContentsMargins(Lumen::Space::M, Lumen::Space::M, Lumen::Space::M, Lumen::Space::M);
     lay->setSpacing(12);

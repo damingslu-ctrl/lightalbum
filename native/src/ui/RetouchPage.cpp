@@ -1559,10 +1559,11 @@ void RetouchPage::refreshChips()
     for (const QString& c : s.chips) {
         auto* b = new QPushButton(c, chipRow_);
         b->setStyleSheet(QString::fromUtf8(
-            "QPushButton{background:%1;border:1px solid %2;border-radius:14px;"
+            "QPushButton{background:%1;border:1px solid %2;border-radius:%5;"
             "padding:4px 12px;color:%3;%4}")
             .arg(Lumen::hex(Lumen::card()), Lumen::hex(Lumen::emerald()), Lumen::hex(Lumen::INK_IMG))
-            .arg(Lumen::Type::css(Lumen::Type::Tier::Small)));   // T8：12px=T5 原位
+            .arg(Lumen::Type::css(Lumen::Type::Tier::Small))
+            .arg(Lumen::Radius::Card));   // T8：12px=T5 原位
             // 旧 d2f0e0 → INK_IMG：建议芯片浮于影像工作区之上，属影像叠加层（spec §1.7）
         connect(b, &QPushButton::clicked, this, &RetouchPage::onAutoEnhance);
         hl->addWidget(b);

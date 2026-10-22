@@ -228,6 +228,7 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
     });
 
     buildUi();
+    setMinimumSize(960, 640);   // 波4 §3.7：3 列 + chrome 的实测下界；「支持任意窄」不成立故不承诺
     nav_->setCurrentRow(kRowLobby);   // 默认落在前厅
     // 冷启动接回后若还要新开一版：先立骨架再开跑（生成本身仍在后台；节流时同步收尾）。
     if (lobby_) lobby_->setPending(true);
@@ -1381,10 +1382,11 @@ QWidget* MainWindow::makePlaceholder(const QString& secName, const QString& icon
 
     auto* chip = new QLabel(QCoreApplication::translate("LightAlbum", "即将推出"), w);
     chip->setStyleSheet(QString::fromUtf8(   // chip 工厂未出生（已知缺口）：本地 token-only 配方，逐值=INSET/EMERALD_DK/EMERALD
-        "QLabel{background:%1;border:1px solid %2;border-radius:999px;"
+        "QLabel{background:%1;border:1px solid %2;border-radius:%4;"
         "padding:3px 14px;color:%3;}")
         .arg(Lumen::hex(Lumen::inset()), Lumen::hex(Lumen::EMERALD_DK),
              Lumen::hex(Lumen::emerald()))
+        .arg(Lumen::Radius::Pill)
         + Lumen::Type::css(Lumen::Type::Tier::Small));   // T8：11px→T5(12px)
 
     auto* s = new QLabel(desc, w);
@@ -1408,8 +1410,9 @@ QWidget* MainWindow::makeAbout() const
     auto* card = new QWidget(w);
     card->setMaximumWidth(620);
     card->setStyleSheet(QString::fromUtf8(
-        "QWidget{background:%1;border:1px solid %2;border-radius:14px;}")
-        .arg(Lumen::hex(Lumen::card()), Lumen::hex(Lumen::line())));   // token 值字面量归引用（色不变）
+        "QWidget{background:%1;border:1px solid %2;border-radius:%3;}")
+        .arg(Lumen::hex(Lumen::card()), Lumen::hex(Lumen::line()))
+        .arg(Lumen::Radius::Card));   // token 值字面量归引用（色不变）
     auto* cl = new QVBoxLayout(card);
     cl->setContentsMargins(Lumen::Space::Xl, Lumen::Space::Xl, Lumen::Space::Xl, Lumen::Space::Xl);
     cl->setSpacing(12);
