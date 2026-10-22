@@ -30,6 +30,11 @@ public:
     // （冷启动 <50 / 缺源 / 被频控）时**整卡不出现**，不渲染空壳、不编造文案。
     void setExhibit(const Curate::Exhibit& e);
 
+    // 2.43.0 波4 §2.5：生成期骨架。pending 期间「今日一展」槽位换成骨架卡（等待可见），
+    // 收尾恒由 CurateScheduler::generated 触发——节流/无候选也要收，不许只挂成功分支。
+    bool setPending(bool on);
+    bool pendingSkeletonVisible() const;
+
     // —— 纯函数（LA_LOBBY_QA 直调；确定性、不读写任何全局状态）——
     //
     // 卡片文案（展名 + 小记）**只由 Curate 模板产出的 theme 字段拼接**（spec §3 J：
@@ -69,6 +74,7 @@ private:
     void rebuild();
     QWidget* makeHeroCard();
     QWidget* makeCurateCard();
+    QWidget* makePendingCard();
     QWidget* makeThumbStrip();
     QWidget* makeThumbCard(const Photo& p, int sidePx, bool feature,
                            std::function<void()> onActivated = nullptr);
@@ -85,5 +91,7 @@ private:
     QWidget* recentStrip_ = nullptr;
     QWidget* emptyGuide_ = nullptr;
     QWidget* curateCard_ = nullptr;
+    QWidget* skeleton_ = nullptr;
+    bool pending_ = false;
     Curate::Exhibit exhibit_;
 };

@@ -15,6 +15,7 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QMouseEvent>
+#include <QGraphicsOpacityEffect>
 #include <QPainter>
 #include <QPainterPath>
 #include <QtGlobal>
@@ -168,6 +169,22 @@ void LobbyPage::setHidePrivate(bool hide)
 
 void LobbyPage::refresh() { rebuild(); }
 
+// 2.43.0 波4 §2.5：pending 只换「今日一展」槽位；hero/最近到馆保留（大厅其余内容不是等待对象）。
+bool LobbyPage::setPending(bool on)
+{
+    if (pending_ == on) return pending_;
+    pending_ = on;
+    rebuild();
+    return pending_;
+}
+
+// isVisibleTo：本页未 show 时 isVisible() 恒 false（门禁构造的就是未上屏的页），
+// 而「骨架在不在槽位上」与页面是否已上屏无关——用 isVisibleTo 读同一事实。
+bool LobbyPage::pendingSkeletonVisible() const
+{
+    return pending_ && skeleton_ && skeleton_->isVisibleTo(this);
+}
+
 QString LobbyPage::buildCardText(const Curate::Exhibit& e)
 {
     if (!e.valid) return QString();
@@ -258,6 +275,7 @@ QVector<const Photo*> LobbyPage::recent(const QVector<Photo>& in,
 
 void LobbyPage::rebuild()
 {
+    skeleton_ = nullptr;   // 随 content_ 一起销毁；pendingSkeletonVisible 读它，绝不留悬垂
     delete content_;
     content_ = new QWidget(this);
     content_->setAutoFillBackground(true);
@@ -278,14 +296,20 @@ void LobbyPage::rebuild()
                             Lumen::Space::Xxl, Lumen::Space::Xl);
     col->setSpacing(Lumen::Space::Xl);
 
+    if (pending_) {
+        skeleton_ = makePendingCard();       // 生成期骨架占住「今日一展」槽位
+        col->addWidget(skeleton_);
+    }
     if (photos_ && !photos_->isEmpty()) {
-        curateCard_ = makeCurateCard();      // 无展（冷启动/缺源/频控）→ 整卡不出现
-        if (curateCard_) col->addWidget(curateCard_);
+        if (!pending_) {
+            curateCard_ = makeCurateCard();  // 无展（冷启动/缺源/频控）→ 整卡不出现
+            if (curateCard_) col->addWidget(curateCard_);
+        }
         heroCard_ = makeHeroCard();
         col->addWidget(heroCard_);
         recentStrip_ = makeThumbStrip();
         col->addWidget(recentStrip_);
-    } else {
+    } else if (!pending_) {
         emptyGuide_ = makeEmptyGuide();
         col->addWidget(emptyGuide_, 0, Qt::AlignTop);
     }
@@ -399,6 +423,52 @@ QWidget* LobbyPage::makeCurateCard()
     auto* drv = new Motion::Driver(Motion::kExhibitBreath, !anim, card);
     connect(drv, &Motion::Driver::valueFor, card, [card](const QByteArray& prop, double v) {
         if (prop == Motion::kPropGlow) card->setBreath(v);
+    });
+    drv->start();
+    return card;
+}
+
+QWidget* LobbyPage::makePendingCard()
+{
+    // 生成期骨架：与「今日一展」同槽位、同呼吸档（kExhibitBreath 2400ms，不新增时长档）。
+    // 底/描边取既有 INSET + LINE token；文案只说正在做什么，不预支结果（铁律 21）。
+    auto* card = new QFrame(content_);
+    card->setObjectName(QStringLiteral("lobbyPending"));
+    card->setAccessibleName(
+        QCoreApplication::translate("LightAlbum", "正在为本机选展…"));
+    card->setAttribute(Qt::WA_StyledBackground, true);
+    card->setStyleSheet(QStringLiteral(
+        "QFrame#lobbyPending{background:%1;border:1px solid %2;border-radius:%3px;}")
+        .arg(Lumen::hex(Lumen::inset()), Lumen::hex(Lumen::line()))
+        .arg(Lumen::Radius::Feature));
+    card->setMinimumHeight(168 + Lumen::Space::Xl * 2);   // 与策展卡主图+内边距同高，收起时不塌
+
+    auto* v = new QVBoxLayout(card);
+    v->setContentsMargins(Lumen::Space::Xl, Lumen::Space::Xl,
+                          Lumen::Space::Xl, Lumen::Space::Xl);
+    v->addStretch(1);
+    auto* hint = new QLabel(
+        QCoreApplication::translate("LightAlbum", "正在为本机选展…"), card);
+    hint->setObjectName(QStringLiteral("lobbyPendingHint"));
+    hint->setAlignment(Qt::AlignCenter);
+    hint->setFont(Lumen::Type::body());
+    hint->setStyleSheet(QStringLiteral("color:%1;background:transparent;border:none;")
+                            .arg(Lumen::hex(Lumen::muted())));
+    v->addWidget(hint);
+    v->addStretch(1);
+
+    // QLabel 没有 ExhibitCard::setBreath，故把引擎的 glow 通道映射成透明度。
+    // Pulse 静止位 0.25，直映会淡到读不出；把可读区间压在 0.6–1.0。
+    // LA_GATE / 截图 / 系统减动效 → Driver 走终帧支路：0.7 静置，像素门确定性。
+    auto* fade = new QGraphicsOpacityEffect(hint);
+    fade->setOpacity(0.7);
+    hint->setGraphicsEffect(fade);
+    const bool anim = qEnvironmentVariableIsEmpty("LA_GATE")
+                      && qEnvironmentVariableIsEmpty("LA_UI_SHOT")
+                      && !Lumen::systemReducedMotion();
+    auto* drv = new Motion::Driver(Motion::kExhibitBreath, !anim, card);
+    connect(drv, &Motion::Driver::valueFor, fade, [fade](const QByteArray& prop, double v) {
+        if (prop == Motion::kPropGlow) fade->setOpacity(0.6 + 0.4 * qBound(0.0, v, 1.0));
     });
     drv->start();
     return card;

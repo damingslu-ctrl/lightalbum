@@ -1673,6 +1673,30 @@ int runLobbyQa()
             "K_request_ctx_is_widget");
     }
 
+    // —— P 组：生成期骨架（波4 §2.5）——
+    {
+        LobbyPage lp(nullptr, QString());
+        lp.setPending(true);
+        chk(lp.pendingSkeletonVisible(), "P1_pending_skeleton");
+        lp.setPending(false);
+        chk(!lp.pendingSkeletonVisible(), "P2_pending_cleared");
+
+        // 骨架呼吸必须来自引擎既有预设（不新增时长档），且不得写死毫秒数。
+        QString src;
+        {
+            QFile f(QCoreApplication::applicationDirPath()
+                    + QStringLiteral("/../src/ui/LobbyPage.cpp"));
+            if (f.open(QIODevice::ReadOnly)) src = QString::fromUtf8(f.readAll());
+        }
+        const int at = src.indexOf(QStringLiteral("QWidget* LobbyPage::makePendingCard("));
+        const int end = at < 0 ? -1 : src.indexOf(QStringLiteral("\n}"), at);
+        const QString body = (at >= 0 && end > at) ? src.mid(at, end - at) : QString();
+        chk(!body.isEmpty(), "P3_skeleton_source_scanned");   // fail-open：源没读到就红
+        chk(body.count(QStringLiteral("Motion::kExhibitBreath")) == 1
+            && !body.contains(QRegularExpression(QStringLiteral("start\\s*\\(\\s*\\d{3,}"))),
+            "P4_breath_wired_to_preset");
+    }
+
     const bool pass = (checks > 0) && (fails == 0);
     std::fprintf(stderr, "LA_LOBBY_QA %s checks=%d failed=%d broken=%d\n",
                  pass ? "PASS" : "FAIL", checks, fails, broken ? 1 : 0);

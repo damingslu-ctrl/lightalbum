@@ -216,10 +216,11 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
     //   （>7 天才真跑，spec R3 懒生成）。生成在后台，落库经 QueuedConnection 回到这里。
     curator_ = new CurateScheduler(lib_, this);
     curator_->restoreLast();
-    curator_->maybeGenerate(lib_->photos(), !vaultUnlocked_, thumbsDir_,
-                            CurateScheduler::wallNow());
     connect(curator_, &CurateScheduler::generated, this, [this](qint64 id) {
+        // 先挂新展（此刻骨架还在，画面不会闪回旧展），再收骨架。
         refreshExhibits();   // 新展落地 → 墙面重挂（invalid 时整卡不出现，不渲染空壳）
+        // 骨架收尾挂在 generated 上，不挂成功分支：节流/无候选的同步 generated(0) 也必须收。
+        if (lobby_) lobby_->setPending(false);
         if (swapPending_) {
             swapPending_ = false;
             showAck(CurateScheduler::swapAck(id > 0));   // 结果到了才说出口（不提前许愿）
@@ -228,6 +229,10 @@ MainWindow::MainWindow(Library* lib, const QString& thumbsDir,
 
     buildUi();
     nav_->setCurrentRow(kRowLobby);   // 默认落在前厅
+    // 冷启动接回后若还要新开一版：先立骨架再开跑（生成本身仍在后台；节流时同步收尾）。
+    if (lobby_) lobby_->setPending(true);
+    curator_->maybeGenerate(lib_->photos(), !vaultUnlocked_, thumbsDir_,
+                            CurateScheduler::wallNow());
 }
 
 // 2.41.0 spec §2.6：整帧建 UI。灯色在构造期就烘进各控件的 QSS（不是运行期可改的
@@ -486,6 +491,7 @@ void MainWindow::buildUi()
     connect(lobby_, &LobbyPage::swapExhibit, this, [this] {
         curator_->markSwapped();      // 只记意图（连续 3 次隐式降权留波 5）
         swapPending_ = true;          // 回执等 generated 带来（异步结果不许提前宣布）
+        lobby_->setPending(true);     // 生成期骨架：等待可见，收尾走 generated（含失败）
         // 用户按下的「换一展」不受周节流约束（裁决 R-T11b）：节流管自动推送。
         curator_->maybeGenerate(lib_->photos(), !vaultUnlocked_, thumbsDir_,
                                 CurateScheduler::wallNow(), /*force=*/true);
@@ -493,6 +499,7 @@ void MainWindow::buildUi()
     connect(lobby_, &LobbyPage::muteTemplate, this, [this](const QString& token) {
         if (!curator_->muteExhibit(token)) return;   // 没落成就不许报「已安静」
         showAck(CurateScheduler::muteAck());
+        lobby_->setPending(true);
         // 「别再这类」当场撤下这一展：立刻换一版，且新选必不含被静音的模板。
         curator_->maybeGenerate(lib_->photos(), !vaultUnlocked_, thumbsDir_,
                                 CurateScheduler::wallNow(), /*force=*/true);
@@ -523,6 +530,7 @@ void MainWindow::buildUi()
         if (!curator_->unmuteExhibit(tmpl)) return;
         collection_->refresh();
         if (lobby_) lobby_->refresh();
+        if (lobby_) lobby_->setPending(true);   // 唤醒后同样要等一版新展（同一等待语义）
         curator_->maybeGenerate(lib_->photos(), !vaultUnlocked_, thumbsDir_,
                                 CurateScheduler::wallNow(), /*force=*/true);
     });
