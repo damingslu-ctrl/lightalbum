@@ -24,6 +24,7 @@ public:
     void applyCmdFilter(const CmdFilter& f);                             // 2.41.0 ⌘K 过滤袋
     void applyPersonFilter(const QString& name);                         // 2.41.0 T8：人物馆「在图库中看」
     void setHidePrivate(bool hide);                                      // P16 隐私门（重建 chips 计数）
+    void setShotSource(const Library* lib) { model_.setShotSource(lib); }  // 波4 R8：时间索引预过滤
     void refresh();                                                      // 灯箱改评分/私密后刷新
     int  qaShootE(const QString& png);   // P23 E 像素/几何 + 缺陷① reflow 自测（offscreen），返回 0=绿
     QScrollBar* qaScrollBar() const;   // 方向 D2：offscreen 性能门访问 EditorialView 滚动条

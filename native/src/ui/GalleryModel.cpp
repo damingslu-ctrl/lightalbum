@@ -41,9 +41,33 @@ void GalleryModel::rebuild()
         const bool hasCmd = !cmd_.empty();
         const QString region = regionFilter_.toLower();
         const QString prov   = provFilter_.toLower();
+        // 波4 R8：年/月/季先取索引集合（与内存谓词等价）；日号与其余谓词仍在内存。
+        QSet<QString> shotAllow;
+        bool hasShot = false;
+        if (shotLib_) {
+            if (cmd_.yearMin != 0 || cmd_.yearMax != 0) {
+                const QVector<QString> v =
+                    shotLib_->pathsForShotYears(cmd_.yearMin, cmd_.yearMax, hidePrivate_);
+                shotAllow = QSet<QString>(v.begin(), v.end());
+                hasShot = true;
+            }
+            if (!cmd_.season.isEmpty() || cmd_.month != 0) {
+                QVector<int> months;
+                if (cmd_.month != 0) months << cmd_.month;
+                else
+                    for (int m = 1; m <= 12; ++m)
+                        if (seasonNameOf(m) == cmd_.season) months << m;   // 四季唯一真源
+                const QVector<QString> v =
+                    shotLib_->pathsForShotMonths(months, hidePrivate_);
+                const QSet<QString> s(v.begin(), v.end());
+                shotAllow = hasShot ? (shotAllow & s) : s;
+                hasShot = true;
+            }
+        }
         for (int i = 0; i < all_->size(); ++i) {
             const Photo& p = (*all_)[i];
             if (hidePrivate_ && p.priv) continue;               // P16 隐私门
+            if (hasShot && !shotAllow.contains(p.path)) continue;
             if (hasRegion && p.region.toLower() != region) continue;
             if (hasProv   && p.prov.toLower()   != prov)   continue;
             if (hasCat) {                                       // P16 分类

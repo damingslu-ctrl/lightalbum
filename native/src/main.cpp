@@ -3978,6 +3978,136 @@ int runCollectionQa()
         chk("I9_scanner_ts", qAbs(sTs - wantTs) < 1.0);
     }
 
+    // ---- I 组（T11）：索引源 vs 全量内存源 parity + EXPLAIN + 隐私 ----
+    // 注意：上面 I3~I5 的 fixture 全部落在 2019（回填计数），这里另建跨年库，
+    // 让年范围查询有选择性（EXPLAIN 才可能真的选索引）。
+    {
+        const QString qdb = dir.filePath(QStringLiteral("collection_i_query.db"));
+        QVector<Library::SynthRow> rows;
+        const int n = 36;
+        for (int i = 0; i < n; ++i) {
+            Library::SynthRow r;
+            r.path = QStringLiteral("s%1.jpg").arg(i);
+            r.year = 2015 + (i % 8);
+            r.date = QStringLiteral("%1-%2-10")
+                         .arg(r.year)
+                         .arg(1 + (i % 12), 2, 10, QLatin1Char('0'));
+            rows << r;
+        }
+        rows[3].date = QStringLiteral("2019-04-10");   // 落 2019 且置私密（隐私腿）
+        rows[3].year = 2019;
+        rows[3].priv = true;
+        QString err;
+        chk("I10_query_synth_db", Library::makeSyntheticDb(qdb, rows, &err));
+
+        Library lib;
+        chk("I11_query_open", lib.open(qdb, &err));
+
+        auto memYears = [&](int y0, int y1) {
+            QStringList v;
+            for (const Photo& p : lib.photos())
+                if (p.year >= y0 && p.year <= y1) v << p.path;
+            v.sort();
+            return v;
+        };
+        auto idxYears = [&](int y0, int y1, bool hide) {
+            QStringList v = lib.pathsForShotYears(y0, y1, hide);
+            v.sort();
+            return v;
+        };
+        chk("I12_parity_years_2019", idxYears(2019, 2019, false) == memYears(2019, 2019));
+        chk("I13_parity_years_span", idxYears(2017, 2021, false) == memYears(2017, 2021));
+
+        // 季节反查用 CmdFilter.h 的唯一真源，不在门里复刻月份表。
+        auto seasonMonths = [&](const QString& s) {
+            QVector<int> ms;
+            for (int m = 1; m <= 12; ++m)
+                if (seasonNameOf(m) == s) ms << m;
+            return ms;
+        };
+        auto memMonths = [&](const QVector<int>& ms) {
+            QStringList v;
+            for (const Photo& p : lib.photos()) {
+                const QDate d = photoDateOf(p.date);
+                if (d.isValid() && ms.contains(d.month())) v << p.path;
+            }
+            v.sort();
+            return v;
+        };
+        auto idxMonths = [&](const QVector<int>& ms, bool hide) {
+            QStringList v = lib.pathsForShotMonths(ms, hide);
+            v.sort();
+            return v;
+        };
+        chk("I14_parity_season_spring",
+            idxMonths(seasonMonths(QStringLiteral("春")), false)
+                == memMonths(seasonMonths(QStringLiteral("春"))));
+        chk("I15_parity_season_winter",
+            idxMonths(seasonMonths(QStringLiteral("冬")), false)
+                == memMonths(seasonMonths(QStringLiteral("冬"))));
+        chk("I16_parity_empty_input", lib.pathsForShotMonths({}, false).isEmpty());
+
+        chk("I17_privacy_years",
+            !idxYears(2019, 2019, true).contains(QStringLiteral("s3.jpg"))
+                && idxYears(2019, 2019, false).contains(QStringLiteral("s3.jpg")));
+        QVector<int> allMonths;
+        for (int m = 1; m <= 12; ++m) allMonths << m;
+        chk("I18_privacy_months",
+            !idxMonths(allMonths, true).contains(QStringLiteral("s3.jpg"))
+                && idxMonths(allMonths, false).contains(QStringLiteral("s3.jpg")));
+
+        // EXPLAIN：先 ANALYZE 稳定统计，断言走复合索引且不整表扫。
+        QSqlQuery an(QSqlDatabase::database(QStringLiteral("la_lib")));
+        an.exec(QStringLiteral("ANALYZE"));
+        QSqlQuery ex(QSqlDatabase::database(QStringLiteral("la_lib")));
+        ex.prepare(QStringLiteral(
+            "EXPLAIN QUERY PLAN SELECT path FROM photos WHERE shot_year BETWEEN ? AND ? AND private = 0"));
+        ex.addBindValue(2019);
+        ex.addBindValue(2019);
+        QString plan;
+        if (ex.exec())
+            while (ex.next()) plan += ex.value(3).toString() + QLatin1Char('\n');
+        chk("I19_explain_uses_index",
+            plan.contains(QStringLiteral("USING INDEX idx_photos_year_month")));
+        chk("I20_explain_no_full_scan", !plan.contains(QStringLiteral("SCAN photos")));
+        if (!plan.isEmpty()) std::fprintf(stderr, "  I_plan=%s", qPrintable(plan));
+
+        // 端到端：生产消费方 GalleryModel 的索引预过滤 vs 同谓词全量内存路径。
+        // 两条腿都必须非空，避免「索引路整体失效但两边恰好都空」的假绿。
+        {
+            const QVector<Photo>& all = lib.photos();
+            auto modelPaths = [&](bool useIdx, const CmdFilter& f, bool hidePriv) {
+                GalleryModel m;
+                m.setSource(&all);
+                m.setHidePrivate(hidePriv);
+                if (useIdx) m.setShotSource(&lib);
+                m.setCmdFilter(f);
+                return m.visiblePaths();
+            };
+            CmdFilter fy;
+            fy.yearMin = 2019;
+            fy.yearMax = 2019;
+            const QStringList yIdx = modelPaths(true, fy, false);
+            chk("I21_model_parity_year",
+                yIdx == modelPaths(false, fy, false) && !yIdx.isEmpty());
+            CmdFilter fs;
+            fs.season = QStringLiteral("夏");
+            const QStringList sIdx = modelPaths(true, fs, false);
+            chk("I22_model_parity_season",
+                sIdx == modelPaths(false, fs, false) && !sIdx.isEmpty());
+            CmdFilter fm;
+            fm.yearMin = 2019;
+            fm.yearMax = 2019;
+            fm.month = 4;   // 该月只有 s3.jpg（私密）：隐藏臂必空，开放臂必含它
+            const QStringList mHidden = modelPaths(true, fm, true);
+            const QStringList mOpen   = modelPaths(true, fm, false);
+            chk("I23_model_privacy_and_cross",
+                mHidden == modelPaths(false, fm, true) && mHidden.isEmpty()
+                    && mOpen == modelPaths(false, fm, false)
+                    && mOpen.contains(QStringLiteral("s3.jpg")));
+        }
+    }
+
     const bool pass = (checks > 0) && (fails == 0);
     std::fprintf(stderr, "LA_COLLECTION_QA %s checks=%d failed=%d\n",
                  pass ? "PASS" : "FAIL", checks, fails);

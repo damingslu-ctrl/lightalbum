@@ -694,6 +694,37 @@ bool Library::setMetaValue(const QString& key, const QString& value)
     return q.exec();
 }
 
+// 年/月区间查询：与 GalleryModel 内存谓词同语义（BETWEEN 含端点；年 0 不是缺省值）。
+QVector<QString> Library::pathsForShotYears(int yearMin, int yearMax, bool hidePrivate) const
+{
+    QVector<QString> out;
+    if (!QSqlDatabase::contains(QStringLiteral("la_lib")) || yearMin > yearMax) return out;
+    QSqlQuery q(QSqlDatabase::database(QStringLiteral("la_lib")));
+    q.prepare(QStringLiteral("SELECT path FROM photos WHERE shot_year BETWEEN ? AND ?")
+              + (hidePrivate ? QStringLiteral(" AND private = 0") : QString()));
+    q.addBindValue(yearMin);
+    q.addBindValue(yearMax);
+    if (!q.exec()) return out;
+    while (q.next()) out << q.value(0).toString();
+    return out;
+}
+
+QVector<QString> Library::pathsForShotMonths(const QVector<int>& months, bool hidePrivate) const
+{
+    QVector<QString> out;
+    if (!QSqlDatabase::contains(QStringLiteral("la_lib")) || months.isEmpty()) return out;
+    QStringList ph;
+    for (int i = 0; i < months.size(); ++i) ph << QStringLiteral("?");
+    QSqlQuery q(QSqlDatabase::database(QStringLiteral("la_lib")));
+    q.prepare(QStringLiteral("SELECT path FROM photos WHERE shot_month IN (")
+              + ph.join(QLatin1Char(',')) + QLatin1Char(')')
+              + (hidePrivate ? QStringLiteral(" AND private = 0") : QString()));
+    for (int m : months) q.addBindValue(m);
+    if (!q.exec()) return out;
+    while (q.next()) out << q.value(0).toString();
+    return out;
+}
+
 // ================= 波3 curate「常设展」持久层 =================
 // 写：走 rw()（GUI 线程唯一写者，见 open() 上方约束）；读：走只读 la_lib。
 

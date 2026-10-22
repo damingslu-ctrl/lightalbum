@@ -510,6 +510,7 @@ void MainWindow::buildUi()
     map_ = new MapPage(&lib_->photos(), thumbsDir_, stack_);
     stack_->addWidget(map_);
     gallery_ = new GalleryPage(&lib_->photos(), thumbsDir_, stack_);
+    gallery_->setShotSource(lib_);   // 波4 R8：年/月/季走 photos 年月索引
     stack_->addWidget(gallery_);
     // 2.43.0 波4 §2.1：典藏。只读库；写下单在 curator_（回执文案归 T5 的诚实翻转）。
     collection_ = new CollectionPage(lib_, thumbsDir_, stack_);

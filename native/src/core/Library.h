@@ -179,6 +179,11 @@ public:
     QVector<MuteRow> listMutes(qint64 now) const;       // WHERE until > ? ORDER BY until DESC
     bool unmuteTemplate(const QString& tmpl);           // 删行；未静音 token 返回 false（不假 true）
 
+    // ---- 波4 R8：⌘K 年/月/季预过滤（走 idx_photos_year_month；日号仍留内存）----
+    // 顺序无契约（调用方按集合消费）；无 la_lib 连接或区间非法返回空。
+    QVector<QString> pathsForShotYears(int yearMin, int yearMax, bool hidePrivate) const;
+    QVector<QString> pathsForShotMonths(const QVector<int>& months, bool hidePrivate) const;
+
     // ---- QA 合成库辅助（仅门禁用；生产零调用）----
     // 建最小 schema（photos 含全列 + meta）并插入合成行，供 LA_CURATE_QA 等在临时目录
     // 构造确定性库（R-06：仓库零真实照片）。date/year/GPS 经 exif_json 还原，与真实扫描同格式。

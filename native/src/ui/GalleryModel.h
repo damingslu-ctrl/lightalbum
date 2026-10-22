@@ -49,6 +49,8 @@ public:
     void clearCmdFilter();
     bool hasCmdFilter() const { return !cmd_.empty(); }
     void setHidePrivate(bool hide);                // P16 隐私库锁定时隐藏私密照片
+    // 波4 R8：时间谓词先走 photos 索引集合（可空 = 走全量内存路径）。
+    void setShotSource(const Library* lib) { shotLib_ = lib; }
     const Photo* photoAt(int row) const;           // 行 → Photo*（供点击跳转修图）
     // 隐私门（2.33.0）：当前过滤后可见的行序路径集。
     // 灯箱据此把 ←/→ 限定在用户实际看得见的范围内，越界/私密行不得跳入。
@@ -83,5 +85,6 @@ private:
     int    clusterDim_  = -1;      // 方向 C：聚类维度（-1=未启用）
     QString clusterKey_;           // 方向 C：簇键（空=不筛选）
     CmdFilter cmd_;                // 2.41.0 ⌘K：值语义过滤袋（empty()=未启用）
+    const Library* shotLib_ = nullptr;  // 波4 R8：时间索引查询源（空=纯内存）
     bool   hidePrivate_ = true;   // P16 锁定时隐藏私密照片（默认锁）
 };
