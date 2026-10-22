@@ -3879,6 +3879,105 @@ int runCollectionQa()
         chk("G5_grid_narrow_clamped", gridCols(320) == 3);
     }
 
+    // ---- I 组（T10 地基）：shot_ts/year/month 三列 + 一次性回填 + Scanner 唯一写点 ----
+    {
+        // I1~I5：老库（无三列）打开后补列并写回填标记；旧行按 exif_json 回填年月。
+        const QString db = dir.filePath(QStringLiteral("collection_i.db"));
+        const int nRows = 24;   // 50k 标定实测 1556ms（含开库全量读），远低于 3s 门槛
+        QVector<Library::SynthRow> rows;
+        for (int i = 0; i < nRows; ++i) {
+            Library::SynthRow r;
+            r.path = QStringLiteral("s%1.jpg").arg(i);
+            r.date = QStringLiteral("2019-%1-10").arg(1 + (i % 12), 2, 10, QLatin1Char('0'));
+            r.year = 2019;
+            rows << r;
+        }
+        QString err;
+        chk("I0_synth_db", Library::makeSyntheticDb(db, rows, &err));
+        QString mark1;
+        {
+            Library lib;
+            QElapsedTimer t0;
+            t0.start();
+            chk("I1_open", lib.open(db, &err));
+            std::fprintf(stderr, "  I_backfill_ms=%lld rows=%d\n",
+                         static_cast<long long>(t0.elapsed()), nRows);
+            mark1 = lib.metaValue(QStringLiteral("ex_cols_backfill"));
+            chk("I2_backfill_marked", !mark1.isEmpty());
+            int yearRows = 0, monthRows = 0, tsRows = 0;
+            {
+                QSqlDatabase p = QSqlDatabase::addDatabase(
+                    QStringLiteral("QSQLITE"), QStringLiteral("la_i_probe"));
+                p.setDatabaseName(db);
+                if (p.open()) {
+                    QSqlQuery q(p);
+                    if (q.exec(QStringLiteral(
+                            "SELECT COUNT(*) FROM photos WHERE shot_year=2019")))
+                        if (q.next()) yearRows = q.value(0).toInt();
+                    if (q.exec(QStringLiteral(
+                            "SELECT COUNT(*) FROM photos WHERE shot_month=5")))
+                        if (q.next()) monthRows = q.value(0).toInt();
+                    if (q.exec(QStringLiteral(
+                            "SELECT COUNT(*) FROM photos WHERE shot_ts>0")))
+                        if (q.next()) tsRows = q.value(0).toInt();
+                    p.close();
+                }
+                QSqlDatabase::removeDatabase(QStringLiteral("la_i_probe"));
+            }
+            chk("I3_backfill_year_rows", yearRows == nRows);
+            const int wantMonth = nRows >= 5 ? (nRows - 5) / 12 + 1 : 0;
+            chk("I4_backfill_month_rows", monthRows == wantMonth);
+            chk("I5_backfill_ts_rows", tsRows == nRows);
+        }
+        {
+            Library lib2;
+            const QString mark2 =
+                lib2.open(db, &err) ? lib2.metaValue(QStringLiteral("ex_cols_backfill"))
+                                    : QString();
+            chk("I6_reopen_keeps_mark", !mark2.isEmpty() && mark2 == mark1);
+        }
+
+        // I7~I9：Scanner 是唯一写点——真实扫描必须自己落三列（mtime 兜底决定年月）。
+        const QString root = dir.filePath(QStringLiteral("i_scan"));
+        QDir().mkpath(root);
+        const QString img = QDir(root).filePath(QStringLiteral("IMG_0001.png"));
+        {
+            QImage im(8, 8, QImage::Format_RGB32);
+            im.fill(QColor(0x40, 0x50, 0x60));
+            im.save(img);
+            QFile f(img);
+            if (f.open(QIODevice::ReadWrite))
+                f.setFileTime(QDateTime(QDate(2017, 3, 5), QTime(12, 34)),
+                              QFileDevice::FileModificationTime);
+        }
+        const QString sdb = dir.filePath(QStringLiteral("collection_i_scan.db"));
+        Scanner::syncRoot(root, sdb, dir.filePath(QStringLiteral("i_thumbs")));
+        int sYear = 0, sMonth = 0;
+        double sTs = 0;
+        {
+            QSqlDatabase p = QSqlDatabase::addDatabase(
+                QStringLiteral("QSQLITE"), QStringLiteral("la_i_scan_probe"));
+            p.setDatabaseName(sdb);
+            if (p.open()) {
+                QSqlQuery q(p);
+                if (q.exec(QStringLiteral(
+                        "SELECT shot_year, shot_month, shot_ts FROM photos")))
+                    if (q.next()) {
+                        sYear = q.value(0).toInt();
+                        sMonth = q.value(1).toInt();
+                        sTs = q.value(2).toDouble();
+                    }
+                p.close();
+            }
+            QSqlDatabase::removeDatabase(QStringLiteral("la_i_scan_probe"));
+        }
+        const double wantTs = double(QDateTime(QDate(2017, 3, 5),
+                                               QTime(12, 34)).toSecsSinceEpoch());
+        chk("I7_scanner_year", sYear == 2017);
+        chk("I8_scanner_month", sMonth == 3);
+        chk("I9_scanner_ts", qAbs(sTs - wantTs) < 1.0);
+    }
+
     const bool pass = (checks > 0) && (fails == 0);
     std::fprintf(stderr, "LA_COLLECTION_QA %s checks=%d failed=%d\n",
                  pass ? "PASS" : "FAIL", checks, fails);

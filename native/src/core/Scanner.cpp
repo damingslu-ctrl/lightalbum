@@ -1,6 +1,7 @@
 // P8-3 原生扫描/导入器实现 —— 移植自 client/lightalbum/core/{scanner,library,thumbs}.py
 #include "Scanner.h"
 #include "PathGuess.h"
+#include "CmdFilter.h"
 #include "ExifReader.h"
 #include "GeoIndex.h"
 #include "RawDecode.h"
@@ -58,6 +59,10 @@ const char* const kExtraColumns[] = {
     // dur_sec = 时长（秒，REAL，取自 ffprobe；非视频恒 0）。
     // 二者都走下方幂等 ALTER TABLE 补列机制，老库零迁移成本。
     "media_type TEXT", "dur_sec REAL",
+    // 波4 R8：时间地基。无 EXIF 的老库行落 0 而不是 NULL——索引查询与 =0 谓词同一语义。
+    "shot_ts REAL NOT NULL DEFAULT 0",       // 拍摄时刻 epoch 秒（wave5 长廊地基，本波不查询）
+    "shot_year INTEGER NOT NULL DEFAULT 0",  // EXIF y，与 Photo::year 同源
+    "shot_month INTEGER NOT NULL DEFAULT 0", // 1..12；解不出日期 = 0
 };
 
 QSqlDatabase openDb(const QString& dbPath, QString* err)
@@ -86,6 +91,8 @@ QSqlDatabase openDb(const QString& dbPath, QString* err)
     }
     q.exec(QStringLiteral("CREATE INDEX IF NOT EXISTS idx_photos_cat ON photos(category)"));
     q.exec(QStringLiteral("CREATE INDEX IF NOT EXISTS idx_photos_rating ON photos(rating)"));
+    q.exec(QStringLiteral(
+        "CREATE INDEX IF NOT EXISTS idx_photos_year_month ON photos(shot_year, shot_month)"));
     return db;
 }
 
@@ -275,6 +282,10 @@ ScanResult Scanner::syncRoot(const QString& rootIn, const QString& dbPathIn,
         // 2.28.0 视频：mediaType = "image" | "video"；durSec = 时长（秒，非视频 0）
         QString mediaType = QStringLiteral("image");
         double  durSec = 0;
+        // 波4 R8：时间地基三列（与 exif_json 同源，见下方派生处）
+        double shotTs = 0;
+        int    shotYear = 0;
+        int    shotMonth = 0;
     };
     QVector<Rec> pending;
     QSet<QString> seen;
@@ -291,12 +302,14 @@ ScanResult Scanner::syncRoot(const QString& rootIn, const QString& dbPathIn,
         db.transaction();
         q.prepare(QStringLiteral(
             "INSERT INTO photos(path,root,rel,src,size,mtime,thumb,exif_json,missing,seen_at,rating,"
-            "media_type,dur_sec)"
-            " VALUES(?,?,?,?,?,?,?,?,0,?,0,?,?)"
+            "media_type,dur_sec,shot_ts,shot_year,shot_month)"
+            " VALUES(?,?,?,?,?,?,?,?,0,?,0,?,?,?,?,?)"
             " ON CONFLICT(path) DO UPDATE SET size=excluded.size, mtime=excluded.mtime,"
             " thumb=excluded.thumb, exif_json=excluded.exif_json, rel=excluded.rel,"
             " src=excluded.src, missing=0, seen_at=excluded.seen_at,"
-            " media_type=excluded.media_type, dur_sec=excluded.dur_sec"));
+            " media_type=excluded.media_type, dur_sec=excluded.dur_sec,"
+            " shot_ts=excluded.shot_ts, shot_year=excluded.shot_year,"
+            " shot_month=excluded.shot_month"));
         for (const Rec& r : pending) {
             q.addBindValue(r.path);
             q.addBindValue(rootNative);
@@ -310,6 +323,9 @@ ScanResult Scanner::syncRoot(const QString& rootIn, const QString& dbPathIn,
             q.addBindValue(now);
             q.addBindValue(r.mediaType);
             q.addBindValue(r.durSec);
+            q.addBindValue(r.shotTs);
+            q.addBindValue(r.shotYear);
+            q.addBindValue(r.shotMonth);
             if (!q.exec()) {
                 ++res.errorCount;
                 if (res.errors.size() < 5)
@@ -362,6 +378,18 @@ ScanResult Scanner::syncRoot(const QString& rootIn, const QString& dbPathIn,
         const int y = (d.size() >= 4 && d.left(4).at(0).isDigit()
                        && d.left(4).toInt() > 0)
                           ? d.left(4).toInt() : 0;
+
+        // 波4 R8：三列与内存谓词同一真源（photoDateOf / y），这里唯一写点。
+        const QDate shotDate = photoDateOf(d);
+        r.shotYear  = y > 0 ? y : (shotDate.isValid() ? shotDate.year() : 0);
+        r.shotMonth = shotDate.isValid() ? shotDate.month() : 0;
+        {
+            QTime t = QTime::fromString(ex.tm, QStringLiteral("HH:mm:ss"));
+            if (!t.isValid()) t = QTime::fromString(ex.tm, QStringLiteral("HH:mm"));
+            r.shotTs = shotDate.isValid()
+                ? double(QDateTime(shotDate, t.isValid() ? t : QTime(0, 0)).toSecsSinceEpoch())
+                : 0.0;
+        }
 
         // ★ 2.28.0 RAW 尺寸补齐：ExifReader 的 out.dim 走 QImageReader::size()，
         //   对 RAW 恒为 invalid（QImageReader 打不开 RAW）→ 实测 DNG 行 dim 为空。

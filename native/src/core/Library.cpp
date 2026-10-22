@@ -1,5 +1,6 @@
 #include "Library.h"
 #include "GeoIndex.h"
+#include "CmdFilter.h"
 #include <QSqlDatabase>
 #include <QSqlQuery>
 #include <QSqlError>
@@ -49,6 +50,66 @@ bool Library::open(const QString& dbPath, QString* err)
                 "ALTER TABLE photos ADD COLUMN seen_at REAL NOT NULL DEFAULT 0"));
             m.exec(QStringLiteral(
                 "CREATE INDEX IF NOT EXISTS idx_photos_cat ON photos(category)"));
+            // 波4 R8：时间地基三列（Scanner 是唯一写点；旧库在这里一次性回填）。
+            m.exec(QStringLiteral(
+                "ALTER TABLE photos ADD COLUMN shot_ts REAL NOT NULL DEFAULT 0"));
+            m.exec(QStringLiteral(
+                "ALTER TABLE photos ADD COLUMN shot_year INTEGER NOT NULL DEFAULT 0"));
+            m.exec(QStringLiteral(
+                "ALTER TABLE photos ADD COLUMN shot_month INTEGER NOT NULL DEFAULT 0"));
+            m.exec(QStringLiteral(
+                "CREATE INDEX IF NOT EXISTS idx_photos_year_month "
+                "ON photos(shot_year, shot_month)"));
+
+            // 波4 §3.1：一次性回填（meta 标记幂等；单事务、GUI 线程：open() 只在 GUI 线程调）。
+            // fail-open：任何一步失败都静默——老库照旧能打开，只是查询走全量源。
+            m.exec(QStringLiteral(
+                "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)"));
+            QSqlQuery has(mig);
+            has.prepare(QStringLiteral(
+                "SELECT value FROM meta WHERE key='ex_cols_backfill'"));
+            const bool done = has.exec() && has.next();
+            has.finish();
+            if (!done) {
+                QVector<QPair<QString, QString>> all;
+                QSqlQuery sel(mig);
+                if (sel.exec(QStringLiteral("SELECT path, exif_json FROM photos"))) {
+                    while (sel.next())
+                        all.append({sel.value(0).toString(), sel.value(1).toString()});
+                }
+                sel.finish();
+                if (!all.isEmpty() && mig.transaction()) {
+                    QSqlQuery up(mig);
+                    up.prepare(QStringLiteral(
+                        "UPDATE photos SET shot_ts=?, shot_year=?, shot_month=? WHERE path=?"));
+                    for (const auto& row : all) {
+                        const QJsonObject o =
+                            QJsonDocument::fromJson(row.second.toUtf8()).object();
+                        const QString d = o.value(QLatin1String("d")).toString();
+                        const QString tm = o.value(QLatin1String("tm")).toString();
+                        const int y = o.value(QLatin1String("y")).toInt();
+                        const QDate sd = photoDateOf(d);
+                        QTime t = QTime::fromString(tm, QStringLiteral("HH:mm:ss"));
+                        if (!t.isValid()) t = QTime::fromString(tm, QStringLiteral("HH:mm"));
+                        const double ts = sd.isValid()
+                            ? double(QDateTime(sd, t.isValid() ? t : QTime(0, 0))
+                                         .toSecsSinceEpoch())
+                            : 0.0;
+                        up.addBindValue(ts);
+                        up.addBindValue(y > 0 ? y : (sd.isValid() ? sd.year() : 0));
+                        up.addBindValue(sd.isValid() ? sd.month() : 0);
+                        up.addBindValue(row.first);
+                        up.exec();          // 单行失败也只是少回填一行，不阻断 open
+                    }
+                    mig.commit();
+                }
+                QSqlQuery markQ(mig);
+                markQ.prepare(QStringLiteral(
+                    "INSERT INTO meta(key,value) VALUES('ex_cols_backfill',?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value"));
+                markQ.addBindValue(QString::number(QDateTime::currentMSecsSinceEpoch()));
+                markQ.exec();
+            }
             // 波3 curate「常设展」：展历史 / 合集 / 模板冷却（spec §4，幂等）
             m.exec(QStringLiteral(
                 "CREATE TABLE IF NOT EXISTS exhibits ("
