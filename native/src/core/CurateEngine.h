@@ -36,6 +36,14 @@ Buckets bucket(const QVector<const Photo*>& pool);
 // 模板 id 的稳定 token（键空间与 i18n 映射用），如 "OnThisDay"。
 const char* templateIdToken(TemplateId id);
 
+// token → 模板 id（静音表回读用）。未知 token 返回 false，**不**回落到任一模板：
+// 静音行宁可如实显示原 token，也不冒充某一类展（铁律 21）。
+bool templateIdFromToken(const QString& token, TemplateId* out);
+
+// 静音行的模板可读名：取展名模板「 · 」之前的本地化部分（12 条译文共用同一分隔符），
+// 不另建第二份名字表——展名只此一处真源。
+QString templateLabelFor(TemplateId id);
+
 // 冷启动策略（G，spec §3）：入库 <50 → 无展；<200 → 仅 NewIntake/HiddenReunion；否则全 12。
 QVector<TemplateId> coldStartTemplates(int totalCount);
 

@@ -14,6 +14,9 @@
 #include "../core/Library.h"
 
 class ThumbCache;
+class QResizeEvent;
+class QShowEvent;
+class QGridLayout;
 
 struct Room {
     QString name;
@@ -46,8 +49,13 @@ signals:
     void filterGallery(const QString& person);
     void clusteringRequested();
 
+protected:
+    void resizeEvent(QResizeEvent* e) override;
+    void showEvent(QShowEvent* e) override;
+
 private:
     void rebuild();
+    void animateWallIn();
     QWidget* makeRoomBlock(int idx);
     QWidget* makeThumbRow(const Room& r);
     QWidget* makeEmptyCard();
@@ -59,4 +67,7 @@ private:
     QWidget* content_ = nullptr;
     QVector<Room> rooms_;
     int expanded_ = -1;                   // 展开的展室下标（-1 = 全收起）
+    int lastCols_ = 0;                    // 波4 §3.3：上次建墙用的列数（宽度跨档才重建）
+    QVector<QWidget*> wallCards_;         // 波4 §3.6：本次建墙的展室卡（animateWallIn 唯一取用点）
+    bool wallAnimPending_ = true;         // 波4 §3.6：建墙后还没「进过人」→ 下次 showEvent 补编排
 };

@@ -179,6 +179,26 @@ const char* templateIdToken(TemplateId id)
     return "Unknown";
 }
 
+bool templateIdFromToken(const QString& token, TemplateId* out)
+{
+    for (const TemplateSpec& s : templateTable()) {
+        if (token == QLatin1String(templateIdToken(s.id))) {
+            if (out) *out = s.id;
+            return true;
+        }
+    }
+    return false;
+}
+
+QString templateLabelFor(TemplateId id)
+{
+    const QString tmpl = nameTmplFor(id);
+    if (tmpl.isEmpty()) return QString();
+    // 先整条查目录再取首段：直接对首段查会查不到（`.ts` 的 source 是带张数的整条展名）。
+    const QString localized = QCoreApplication::translate("LightAlbum", tmpl.toUtf8().constData());
+    return localized.section(QStringLiteral(" · "), 0, 0);
+}
+
 QVector<TemplateId> coldStartTemplates(int totalCount)
 {
     if (totalCount < 50) return {};                 // 冷库：不成展（Exhibit::valid 由调用方置 false）

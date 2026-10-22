@@ -1769,6 +1769,179 @@ Errors: %1 — %2</translation>
         <source>搁下两年 · %1 张</source>
         <translation>Shelved Two Years · %1 photos</translation>
     </message>
+    <!-- 2.43.0 波4（T13）：本波新增的 LightAlbum context 串——典藏入口 tooltip、
+         四页空态标题/正文、前厅骨架文案、凝视/⌘K 提示。逐条与源码
+         translate("LightAlbum", ...) 实参逐字对齐（LA_I18N_QA 每条有孪生断言）。 -->
+    <message>
+        <source>先在结果里勾选照片</source>
+        <translation>Select photos in the results first</translation>
+    </message>
+    <message>
+        <source>把勾选的照片存进典藏</source>
+        <translation>Save selected photos to Collection</translation>
+    </message>
+    <message>
+        <source>没听懂这个词。可以试：2019 / 夏天 / 去年</source>
+        <translation>Didn't catch that. Try: 2019 / summer / last year</translation>
+    </message>
+    <message>
+        <source>正在为本机选展…</source>
+        <translation>Choosing an exhibit for this machine…</translation>
+    </message>
+    <message>
+        <source>馆内还没有照片。</source>
+        <translation>The museum has no photos yet.</translation>
+    </message>
+    <message>
+        <source>回到前厅导入一个目录，这里就会挂满你的作品。</source>
+        <translation>Import a folder from the Lobby and your work will fill these walls.</translation>
+    </message>
+    <message>
+        <source>当前没有可显示的照片。</source>
+        <translation>No photos to show right now.</translation>
+    </message>
+    <message>
+        <source>这里没有符合条件的照片。</source>
+        <translation>No photos match here.</translation>
+    </message>
+    <message>
+        <source>清掉筛选，或按 ⌘K 换个说法再找。</source>
+        <translation>Clear the filters, or press ⌘K and try different words.</translation>
+    </message>
+    <message>
+        <source>其中可能有私密照片：点顶栏的「隐私库」解锁后就能看到。</source>
+        <translation>Some may be private: unlock “Private Vault” in the top bar to see them.</translation>
+    </message>
+    <message>
+        <source>日志还是空的。</source>
+        <translation>The log is still empty.</translation>
+    </message>
+    <message>
+        <source>导入、分类、修图之后，这里会记下每一步。</source>
+        <translation>Importing, classifying and editing will each be logged here.</translation>
+    </message>
+    <message>
+        <source>当前没有可统计的照片。</source>
+        <translation>No photos to count right now.</translation>
+    </message>
+    <message>
+        <source>私密照片被隐私门挡住了：点顶栏的「隐私库」解锁后，这里会重新统计。</source>
+        <translation>Private photos are behind the vault door: unlock “Private Vault” in the top bar and this will recount.</translation>
+    </message>
+    <message>
+        <source>相机开 GPS 拍的照片，会在这里落到地图上。</source>
+        <translation>Photos taken with GPS on will land on this map.</translation>
+    </message>
+    <message>
+        <source>带位置的照片都在隐私库里。</source>
+        <translation>All photos with locations are in the private vault.</translation>
+    </message>
+    <message>
+        <source>点顶栏的「隐私库」解锁后，地图上就会出现足迹。</source>
+        <translation>Unlock “Private Vault” in the top bar and your footprints will appear on the map.</translation>
+    </message>
+    <message>
+        <source>这批照片没有位置信息。</source>
+        <translation>These photos have no location data.</translation>
+    </message>
+    <message>
+        <source>这一年没有带位置信息的照片。</source>
+        <translation>No photos with location data in this year.</translation>
+    </message>
+    <message>
+        <source>换个年份，或选「全部年份」再看看。</source>
+        <translation>Try another year, or choose “All Years”.</translation>
+    </message>
+    <message>
+        <source>在图库或典藏里双击一张，就能进这里修。</source>
+        <translation>Double-click a photo in the Gallery or Collection to edit it here.</translation>
+    </message>
+    <message>
+        <source>还没有选中的照片。</source>
+        <translation>No photo selected yet.</translation>
+    </message>
+    <!-- 2.43.0 波4（T13）顺带补齐：修图页操作回执与下拉提示 20 条历史遗留
+         （英文界面下一直漏中文，不属本波新增但同属「界面承诺」缺口）。 -->
+    <message>
+        <source>一键增强</source>
+        <translation>One-Tap Enhance</translation>
+    </message>
+    <message>
+        <source>一键增强 · %1 · 零云端</source>
+        <translation>One-Tap Enhance · %1 · Zero Cloud</translation>
+    </message>
+    <message>
+        <source>一键增强处理中…（本地计算，零云端）</source>
+        <translation>Enhancing… (computed locally, zero cloud)</translation>
+    </message>
+    <message>
+        <source>倾斜过小(&lt;0.5°) · 未改动</source>
+        <translation>Tilt too small (&lt;0.5°) · Unchanged</translation>
+    </message>
+    <message>
+        <source>取消任务</source>
+        <translation>Cancel Task</translation>
+    </message>
+    <message>
+        <source>取消已受理 · 本地执行器正在复位</source>
+        <translation>Cancellation accepted · the local executor is resetting</translation>
+    </message>
+    <message>
+        <source>影调</source>
+        <translation>Tone</translation>
+    </message>
+    <message>
+        <source>暗角校正 · 强度 %1%</source>
+        <translation>Vignette · Strength %1%</translation>
+    </message>
+    <message>
+        <source>未检测到红眼 · 未改动</source>
+        <translation>No red eye detected · Unchanged</translation>
+    </message>
+    <message>
+        <source>未检测到肤色区域 · 未改动</source>
+        <translation>No skin area detected · Unchanged</translation>
+    </message>
+    <message>
+        <source>未见明显暗角 · 未改动</source>
+        <translation>No obvious vignette · Unchanged</translation>
+    </message>
+    <message>
+        <source>校正</source>
+        <translation>Straighten</translation>
+    </message>
+    <message>
+        <source>水平校正 %1°</source>
+        <translation>Level %1°</translation>
+    </message>
+    <message>
+        <source>红眼已修 %1 点</source>
+        <translation>Red eye fixed · %1 spots</translation>
+    </message>
+    <message>
+        <source>美颜 · 肤色占比 %1%</source>
+        <translation>Skin · %1% skin tone</translation>
+    </message>
+    <message>
+        <source>该操作未产生改动</source>
+        <translation>No change from this operation</translation>
+    </message>
+    <message>
+        <source>… 其余 %1 个未列出</source>
+        <translation>… %1 more not listed</translation>
+    </message>
+    <message>
+        <source>展开其余 %1 个选项</source>
+        <translation>Show %1 more options</translation>
+    </message>
+    <message>
+        <source>▾ %1</source>
+        <translation>▾ %1</translation>
+    </message>
+    <message>
+        <source>✓ %1</source>
+        <translation>✓ %1</translation>
+    </message>
 </context>
 <context>
     <name>CurateScheduler</name>
@@ -1791,6 +1964,102 @@ Errors: %1 — %2</translation>
     <message>
         <source>暂无更多可展的照片，先补几张进来。</source>
         <translation>No more photos left to exhibit — add a few first.</translation>
+    </message>
+</context>
+<context>
+    <name>CollectionPage</name>
+    <!-- 2.43.0 波4（T13）：典藏页三 tab（合集 / 展览史 / 安静下来的选题）此前整页
+         无翻译条目——英文界面会直接漏中文。整页入册，逐条对应源码 translate() 实参。 -->
+    <message>
+        <source>典藏</source>
+        <translation>Collection</translation>
+    </message>
+    <message>
+        <source>合集</source>
+        <translation>Albums</translation>
+    </message>
+    <message>
+        <source>展览史</source>
+        <translation>Exhibit History</translation>
+    </message>
+    <message>
+        <source>安静下来的选题</source>
+        <translation>Quieted Picks</translation>
+    </message>
+    <message>
+        <source>还没有合集</source>
+        <translation>No albums yet</translation>
+    </message>
+    <message>
+        <source>还没有展览</source>
+        <translation>No exhibits yet</translation>
+    </message>
+    <message>
+        <source>没有被静音的选题</source>
+        <translation>No muted picks</translation>
+    </message>
+    <message>
+        <source>在前厅按『收进合集』，或在 ⌘K 里勾选照片后按『暂存为合集』。</source>
+        <translation>Press “Add to Album” in the Lobby, or select photos in ⌘K and press “Save as Collection”.</translation>
+    </message>
+    <message>
+        <source>前厅要距上一版超过 7 天才会自动再挑一展（重开应用时生效）；按『换一展』可随时换，记录都留在这里。</source>
+        <translation>The Lobby only picks a new exhibit automatically once the last one is over 7 days old (applied when the app reopens); press “Next Exhibit” anytime — every pick is recorded here.</translation>
+    </message>
+    <message>
+        <source>在前厅按『别再这类』，会让这类安静下来。</source>
+        <translation>Press “Mute This Kind” in the Lobby to quiet this kind.</translation>
+    </message>
+    <message>
+        <source>已收进</source>
+        <translation>Kept</translation>
+    </message>
+    <message>
+        <source>已换走</source>
+        <translation>Swapped Out</translation>
+    </message>
+    <message>
+        <source>已静音</source>
+        <translation>Muted</translation>
+    </message>
+    <message>
+        <source>策展收入</source>
+        <translation>From Curation</translation>
+    </message>
+    <message>
+        <source>检索收入</source>
+        <translation>From Search</translation>
+    </message>
+    <message>
+        <source>未命名展</source>
+        <translation>Untitled Exhibit</translation>
+    </message>
+    <message>
+        <source>%1 张</source>
+        <translation>%1 photos</translation>
+    </message>
+    <message>
+        <source>%1 帧</source>
+        <translation>%1 frames</translation>
+    </message>
+    <message>
+        <source>永久安静</source>
+        <translation>Quiet Forever</translation>
+    </message>
+    <message>
+        <source>安静至 %1</source>
+        <translation>Quiet until %1</translation>
+    </message>
+    <message>
+        <source>唤醒</source>
+        <translation>Wake Up</translation>
+    </message>
+</context>
+<context>
+    <name>GazeLightbox</name>
+    <message>
+        <source>← → 翻｜空格 凝视｜Enter 收藏｜Esc 退出</source>
+        <translation>← → Browse | Space Gaze | Enter Save | Esc Exit</translation>
     </message>
 </context>
 </TS>

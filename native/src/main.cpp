@@ -1858,6 +1858,46 @@ int runPeopleQa()
         chk(!raw.contains(QStringLiteral("cache_->request(tf, this, [")), "F_guard_is_widget");
     }
 
+    // —— G 组：波4 §3.6「人物墙接 stagger」——宪章 D3:43 的编排数值必须真的长在人物馆页上，
+    // 且走引擎纯函数（铁律 20）。只在预设表里加一档、页面 0 引用 = 又一处「函数存在但没人调」
+    // 的假绿，所以这里扫源钉形状，再用同一套参数调同一函数钉算术。
+    {
+        QString raw;
+        {
+            QFile f(QCoreApplication::applicationDirPath()
+                    + QStringLiteral("/../src/ui/PeoplePage.cpp"));
+            if (f.open(QIODevice::ReadOnly)) raw = QString::fromUtf8(f.readAll());
+        }
+        chk(raw.contains(QStringLiteral("Motion::staggerStart(")), "G_stagger_called");
+        chk(raw.contains(QStringLiteral("Motion::Driver(Motion::kPushDoor")), "G_pushdoor_driver");
+        chk(raw.contains(QStringLiteral("kStaggerStepMs = 28")), "G_step_28ms");
+        chk(raw.contains(QStringLiteral("kStaggerCap = 12")), "G_cap_12");
+        // 确定性：门禁 / 截图 / 系统减动效 → 整墙静置即终态，像素门不会拍到半透明卡。
+        chk(raw.contains(QStringLiteral("LA_GATE"))
+            && raw.contains(QStringLiteral("LA_UI_SHOT"))
+            && raw.contains(QStringLiteral("systemReducedMotion")), "G_deterministic_bailout");
+        // 延后落位的回灌守卫 = 卡本身。挂到页面上就等于：重建人物墙时旧卡先死，
+        // 计时器照发——ThumbCache 那轮 0xC0000005 是同一个形状。
+        chk(raw.contains(QStringLiteral("QTimer::singleShot(delayMs, card,")), "G_timer_guard_is_card");
+        chk(!raw.contains(QStringLiteral("QTimer::singleShot(delayMs, this,")), "G_timer_guard_not_page");
+
+        const int durMs = Motion::preset(Motion::kPushDoor).durationMs;
+        const int cap = 12, count = 15;
+        const double step = (cap - 1) * 28.0 / durMs;
+        int prev = -1;
+        bool mono = true, slope = true, tail = true;
+        for (int i = 0; i < count; ++i) {
+            const int d = qRound(Motion::staggerStart(qMin(i, cap - 1), cap, step) * durMs);
+            mono &= (d >= prev);
+            prev = d;
+            if (i < cap) slope &= (d == i * 28);   // 前 12 张：每张晚 28ms
+            else tail &= (d == (cap - 1) * 28);    // 第 13 张起：不再延后（同批落位）
+        }
+        chk(mono, "G_stagger_monotonic");
+        chk(slope, "G_stagger_28ms_per_card");
+        chk(tail, "G_stagger_cap_308ms");
+    }
+
     const bool pass = (checks > 0) && (fails == 0);
     std::fprintf(stderr, "LA_PEOPLE_QA %s checks=%d failed=%d broken=%d\n",
                  pass ? "PASS" : "FAIL", checks, fails, broken ? 1 : 0);
@@ -3811,6 +3851,25 @@ int runCollectionQa()
         chk("A6_unmute_removes", lib.unmuteTemplate(QStringLiteral("tmpl-1"))
             && lib.listMutes(1000).isEmpty());
         chk("A7_unmute_twice_false", !lib.unmuteTemplate(QStringLiteral("tmpl-1")));
+
+        // A8（spec §2.2）：静音行要显示**模板可读名**，内部 token（如 NewIntake）不许当标题漏到界面上。
+        const QString cp = readSrc("src/ui/CollectionPage.cpp");
+        chk("A8_guarded_source_scanned", cp.size() > 2000);   // 空扫描不算绿
+        chk("A8_mute_row_no_raw_token", cp.size() > 2000
+            && !cp.contains(QStringLiteral("inkLabel(m.tmpl")));
+
+        // A9：12 个模板 token 逐条能映射到可读名（无 %1、不等于 token）；未知 token 不冒充。
+        int labelOk = 0;
+        for (const Curate::TemplateSpec& s : Curate::templateTable()) {
+            const QString label = Curate::templateLabelFor(s.id);
+            if (!label.isEmpty() && !label.contains(QStringLiteral("%1"))
+                && label != QLatin1String(Curate::templateIdToken(s.id)))
+                ++labelOk;
+        }
+        chk("A9_all_templates_readable", labelOk == Curate::kTemplateCount);
+        Curate::TemplateId unmapped = Curate::TemplateId::OnThisDay;
+        chk("A9_unknown_token_not_mapped",
+            !Curate::templateIdFromToken(QStringLiteral("tmpl-1"), &unmapped));
     }
 
     // ---- B 组：唯一写者 ----
@@ -3853,6 +3912,52 @@ int runCollectionQa()
             countRows(QStringLiteral("kNav[] = {"), QRegularExpression(QStringLiteral("\\{\\s*\""))) == 8
             && countRows(QStringLiteral("kNavHall[] = {"), QRegularExpression(QStringLiteral("Lumen::Hall::"))) == 8
             && countRows(QStringLiteral("kNavIcons[] = {"), QRegularExpression(QStringLiteral("\"[a-z]+\""))) == 8);
+
+        // C5（收口实测抓到的缺陷）：典藏页也是「非前厅页」，54px 顶栏悬浮在它上面。
+        // P19 的让位循环建页时就写死了七个成员，新页漏加 → 页面自己的 32px 上边距被顶栏压住。
+        // 断言「两条循环的列表都含 collection_」（==2 而不是 >=1）：让位与滚动渐显必须同列表，
+        // 只补一条会留下「标题不被压、但顶栏永不渐显」的半套形状。
+        chk("C5_chrome_lists_include_collection",
+            mw.count(QStringLiteral(
+                "QList<QWidget*>{ map_, gallery_, collection_, people_, retouch_, log_, aboutPg_ }")) == 2);
+
+        // C6（收口抓到的同族第二处）：导航分组分割线 delegate 原先写在 kNav 表**上面**，
+        // 行号只能写死 → 典藏插到 row 3 后，分割线静默画到「典藏」和「修图」头上
+        // （C2 只拦 setCurrentRow(<数字>），这类「比较」形态它是瞎的）。
+        // 类已挪到表之后，谓词只认 kRow* 常量。两条腿都要：反例字面量 0 命中 + 常量式 1 命中，
+        // 单靠前者会放过「整段被删掉」的形状。
+        chk("C6_nav_sep_rows_not_bare_literals",
+            !QRegularExpression(QStringLiteral("ix\\.row\\(\\)\\s*==\\s*\\d")).match(mw).hasMatch()
+            && mw.contains(QStringLiteral("ix.row() == kRowPeople || ix.row() == kRowLog")));
+
+        // C7（收口实测抓到的第三处，像素级）：浮岛高度由 QListView 的 sizeHint 决定，
+        // 而那个 sizeHint 与**行数无关**（实测恒 ~202px），滚动条又是 AlwaysOff
+        // → 1440×900 下只画得出 4.6 行，人物馆以下三行既看不见也点不到。
+        // 门全绿抓不到它：几何不变量只能钉源码形状——行距一个常量、高度按 count 长。
+        chk("C7_nav_island_height_from_count",
+            mw.contains(QStringLiteral("nav_->setGridSize(QSize(68, kNavRowPitch))"))
+            && mw.contains(QStringLiteral("nav_->setFixedHeight(nav_->count() * kNavRowPitch)"))
+            && mw.count(QStringLiteral("kNavRowPitch")) >= 3);   // 声明 + 两处消费，缺一个就是漂移
+
+        // C8（收口逐句实测抓到的最后一处：文案过度承诺）：tab2 空态原写「前厅每天会挑一展」，
+        // 而引擎实测节流窗是 **>7 天**（kWeekSec），且非 force 调用只发生在冷启动一处
+        // → 天天开着也不会天天换展。plan 里就写着这句，故按 spec「界面上的每句话实测」推翻计划。
+        // 文案与常量同钉一条腿：任一边漂（文案回「每天」/ 节流改成按天）都会变红。
+        {
+            const QString cpRaw = readSrc("src/ui/CollectionPage.cpp");
+            const QString cs = readSrc("src/core/CurateScheduler.cpp");
+            chk("C8_source_scanned", cpRaw.size() > 2000 && cs.size() > 2000);   // 空扫描不算绿
+            // 去注释再断言：本页注释里就写着被禁的旧文案（解释为什么禁），吃原文会让这条腿
+            // 永远红；反过来只查正向串，注释里的「7 天」又能把它骗绿。两头都要堵。
+            QString cp = cpRaw;
+            cp.remove(QRegularExpression(QStringLiteral("/\\*.*?\\*/"),
+                QRegularExpression::DotMatchesEverythingOption));
+            cp.remove(QRegularExpression(QStringLiteral("//[^\n]*")));
+            chk("C8_exhibit_cadence_copy_matches_throttle",
+                !cp.contains(QStringLiteral("每天会挑一展"))
+                && cp.contains(QStringLiteral("7 天"))
+                && cs.contains(QStringLiteral("kWeekSec = 7LL * 86400")));
+        }
     }
 
     // ---- D 组：播放同源（合集不得复刻第二份播放器）----
@@ -3901,6 +4006,16 @@ int runCollectionQa()
         chk("G3_grid_2560", gridCols(2560) == 5);
         chk("G4_grid_target_fallback", gridCols(960, 0) == gridCols(960));
         chk("G5_grid_narrow_clamped", gridCols(320) == 3);
+        // G6/G7：唯一真源必须被生产页真正消费。只让门禁直调、页面各留一份旧算术 = 假绿
+        // （spec §3.3 的立项理由正是「两套列数」；函数存在但没人用等于没改）。
+        const QString ev = readSrc("src/ui/EditorialView.cpp");
+        chk("G6_editorial_uses_gridCols",
+            ev.contains(QStringLiteral("gridCols("))
+            && !ev.contains(QStringLiteral("int(W / 230)")));
+        const QString pp = readSrc("src/ui/PeoplePage.cpp");
+        chk("G7_people_uses_gridCols",
+            pp.contains(QStringLiteral("gridCols("))
+            && !pp.contains(QStringLiteral("const int cols = 4")));
     }
 
     // ---- I 组（T10 地基）：shot_ts/year/month 三列 + 一次性回填 + Scanner 唯一写点 ----
@@ -11261,6 +11376,94 @@ int main(int argc, char *argv[])
         ctxCheck("CurateScheduler", "已换一展。", QStringLiteral("A new exhibit is up."));
         ctxCheck("CurateScheduler", "暂无更多可展的照片，先补几张进来。",
                  QStringLiteral("No more photos left to exhibit — add a few first."));
+        // 2.43.0 波4 T13：本波新增串全量入册（44 条），context 按 translate() 第一实参。
+        //   典藏页此前整页零条目（英文界面漏中文），故 21 条全部逐字钉住；
+        //   凝视键位条与四页空态同理。缺译 → Qt 回落源码 → 三态判别破 ①② → 变红。
+        ctxCheck("CollectionPage", "典藏", QStringLiteral("Collection"));
+        ctxCheck("CollectionPage", "合集", QStringLiteral("Albums"));
+        ctxCheck("CollectionPage", "展览史", QStringLiteral("Exhibit History"));
+        ctxCheck("CollectionPage", "安静下来的选题", QStringLiteral("Quieted Picks"));
+        ctxCheck("CollectionPage", "还没有合集", QStringLiteral("No albums yet"));
+        ctxCheck("CollectionPage", "还没有展览", QStringLiteral("No exhibits yet"));
+        ctxCheck("CollectionPage", "没有被静音的选题", QStringLiteral("No muted picks"));
+        ctxCheck("CollectionPage",
+                 "在前厅按『收进合集』，或在 ⌘K 里勾选照片后按『暂存为合集』。",
+                 QStringLiteral("Press \u201cAdd to Album\u201d in the Lobby, or select photos in ⌘K and press \u201cSave as Collection\u201d."));
+        ctxCheck("CollectionPage",
+                 "前厅要距上一版超过 7 天才会自动再挑一展（重开应用时生效）；按『换一展』可随时换，记录都留在这里。",
+                 QStringLiteral("The Lobby only picks a new exhibit automatically once the last one is over 7 days old (applied when the app reopens); press \u201cNext Exhibit\u201d anytime \u2014 every pick is recorded here."));
+        ctxCheck("CollectionPage",
+                 "在前厅按『别再这类』，会让这类安静下来。",
+                 QStringLiteral("Press \u201cMute This Kind\u201d in the Lobby to quiet this kind."));
+        ctxCheck("CollectionPage", "已收进", QStringLiteral("Kept"));
+        ctxCheck("CollectionPage", "已换走", QStringLiteral("Swapped Out"));
+        ctxCheck("CollectionPage", "已静音", QStringLiteral("Muted"));
+        ctxCheck("CollectionPage", "策展收入", QStringLiteral("From Curation"));
+        ctxCheck("CollectionPage", "检索收入", QStringLiteral("From Search"));
+        ctxCheck("CollectionPage", "未命名展", QStringLiteral("Untitled Exhibit"));
+        ctxCheck("CollectionPage", "%1 张", QStringLiteral("%1 photos"));
+        ctxCheck("CollectionPage", "%1 帧", QStringLiteral("%1 frames"));
+        ctxCheck("CollectionPage", "永久安静", QStringLiteral("Quiet Forever"));
+        ctxCheck("CollectionPage", "安静至 %1", QStringLiteral("Quiet until %1"));
+        ctxCheck("CollectionPage", "唤醒", QStringLiteral("Wake Up"));
+        ctxCheck("GazeLightbox", "← → 翻｜空格 凝视｜Enter 收藏｜Esc 退出",
+                 QStringLiteral("← → Browse | Space Gaze | Enter Save | Esc Exit"));
+        i18nCheck("先在结果里勾选照片", QStringLiteral("Select photos in the results first"));
+        i18nCheck("把勾选的照片存进典藏", QStringLiteral("Save selected photos to Collection"));
+        i18nCheck("没听懂这个词。可以试：2019 / 夏天 / 去年",
+                  QStringLiteral("Didn't catch that. Try: 2019 / summer / last year"));
+        i18nCheck("正在为本机选展…", QStringLiteral("Choosing an exhibit for this machine…"));
+        i18nCheck("馆内还没有照片。", QStringLiteral("The museum has no photos yet."));
+        i18nCheck("回到前厅导入一个目录，这里就会挂满你的作品。",
+                  QStringLiteral("Import a folder from the Lobby and your work will fill these walls."));
+        i18nCheck("当前没有可显示的照片。", QStringLiteral("No photos to show right now."));
+        i18nCheck("这里没有符合条件的照片。", QStringLiteral("No photos match here."));
+        i18nCheck("清掉筛选，或按 ⌘K 换个说法再找。",
+                  QStringLiteral("Clear the filters, or press ⌘K and try different words."));
+        i18nCheck("其中可能有私密照片：点顶栏的「隐私库」解锁后就能看到。",
+                  QStringLiteral("Some may be private: unlock \u201cPrivate Vault\u201d in the top bar to see them."));
+        i18nCheck("日志还是空的。", QStringLiteral("The log is still empty."));
+        i18nCheck("导入、分类、修图之后，这里会记下每一步。",
+                  QStringLiteral("Importing, classifying and editing will each be logged here."));
+        i18nCheck("当前没有可统计的照片。", QStringLiteral("No photos to count right now."));
+        i18nCheck("私密照片被隐私门挡住了：点顶栏的「隐私库」解锁后，这里会重新统计。",
+                  QStringLiteral("Private photos are behind the vault door: unlock \u201cPrivate Vault\u201d in the top bar and this will recount."));
+        i18nCheck("相机开 GPS 拍的照片，会在这里落到地图上。",
+                  QStringLiteral("Photos taken with GPS on will land on this map."));
+        i18nCheck("带位置的照片都在隐私库里。",
+                  QStringLiteral("All photos with locations are in the private vault."));
+        i18nCheck("点顶栏的「隐私库」解锁后，地图上就会出现足迹。",
+                  QStringLiteral("Unlock \u201cPrivate Vault\u201d in the top bar and your footprints will appear on the map."));
+        i18nCheck("这批照片没有位置信息。", QStringLiteral("These photos have no location data."));
+        i18nCheck("这一年没有带位置信息的照片。",
+                  QStringLiteral("No photos with location data in this year."));
+        i18nCheck("换个年份，或选「全部年份」再看看。",
+                  QStringLiteral("Try another year, or choose \u201cAll Years\u201d."));
+        i18nCheck("在图库或典藏里双击一张，就能进这里修。",
+                  QStringLiteral("Double-click a photo in the Gallery or Collection to edit it here."));
+        i18nCheck("还没有选中的照片。", QStringLiteral("No photo selected yet."));
+        // 同一批顺带补齐的历史遗留（修图页操作回执 / 下拉提示）：18 条带语义词钉住；
+        //   `▾ %1` 与 `✓ %1` 只有符号+数字，语言中性，不设断言（译文与源码同形）。
+        i18nCheck("一键增强", QStringLiteral("One-Tap Enhance"));
+        i18nCheck("一键增强 · %1 · 零云端", QStringLiteral("One-Tap Enhance · %1 · Zero Cloud"));
+        i18nCheck("一键增强处理中…（本地计算，零云端）",
+                  QStringLiteral("Enhancing… (computed locally, zero cloud)"));
+        i18nCheck("倾斜过小(<0.5°) · 未改动", QStringLiteral("Tilt too small (<0.5°) · Unchanged"));
+        i18nCheck("取消任务", QStringLiteral("Cancel Task"));
+        i18nCheck("取消已受理 · 本地执行器正在复位",
+                  QStringLiteral("Cancellation accepted · the local executor is resetting"));
+        i18nCheck("影调", QStringLiteral("Tone"));
+        i18nCheck("暗角校正 · 强度 %1%", QStringLiteral("Vignette · Strength %1%"));
+        i18nCheck("未检测到红眼 · 未改动", QStringLiteral("No red eye detected · Unchanged"));
+        i18nCheck("未检测到肤色区域 · 未改动", QStringLiteral("No skin area detected · Unchanged"));
+        i18nCheck("未见明显暗角 · 未改动", QStringLiteral("No obvious vignette · Unchanged"));
+        i18nCheck("校正", QStringLiteral("Straighten"));
+        i18nCheck("水平校正 %1°", QStringLiteral("Level %1°"));
+        i18nCheck("红眼已修 %1 点", QStringLiteral("Red eye fixed · %1 spots"));
+        i18nCheck("美颜 · 肤色占比 %1%", QStringLiteral("Skin · %1% skin tone"));
+        i18nCheck("该操作未产生改动", QStringLiteral("No change from this operation"));
+        i18nCheck("… 其余 %1 个未列出", QStringLiteral("… %1 more not listed"));
+        i18nCheck("展开其余 %1 个选项", QStringLiteral("Show %1 more options"));
         // 默认路径语言决策断言（2.11.1）：构造 locale 跨机确定性——
         // zh 系显示语言必须不加载 en（本事故根因）；en 系必须加载；forced 覆盖优先。
         struct I18nDecisionCase { const char* forced; const char* locName; bool expectLoad; };

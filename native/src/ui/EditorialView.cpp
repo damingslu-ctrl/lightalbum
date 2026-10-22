@@ -1,4 +1,5 @@
 #include "EditorialView.h"
+#include "Layout.h"   // 波4 §3.3：列数唯一算术（本页防抖保留在 resizeEvent）
 
 // 2.22.0 骨架屏相位：TU 内静态（GalleryTile 是本文件的局部类，无处安放成员）。
 // 只保存"相位"这一个数，绘制仍把它当**显式参数**传给 paintGalleryCard → 可被门禁复现。
@@ -151,7 +152,7 @@ void EditorialView::computeLayout()
 {
     const int W = viewport()->width();
     if (W <= 0) return;
-    cols_ = qBound(3, int(W / 230), 5);
+    cols_ = gridCols(W);   // 960→3 / 1440→5 / 封顶 5（spec R11；旧式 W/230 在 960 会得 4）
     const int innerW = W - 2 * margin_;
     cellW_ = (innerW - (cols_ - 1) * spacing_) / cols_;
     cellH_ = qRound(cellW_ * 240.0 / 216.0);     // 维持原 sizeHint 比例 216×240

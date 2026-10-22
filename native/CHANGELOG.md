@@ -3,6 +3,134 @@
 遵循 SemVer：新功能 = MINOR，修复 = PATCH，破坏性 = MAJOR。
 版本号单一真源：`CMakeLists.txt` 的 `project(... VERSION)`（打包脚本从此处解析）。
 
+## [2.43.0] - 2026-10-22
+
+体验升级第七轮（波 4「兑现」）：**先把上两轮界面上说出口的话兑现成真的，再给下一轮长廊铺数据地基**。
+三条 blocker（合集无处可看 / 静音无反悔 / ⌘K 暂存死键）全部落地；面向用户串里「下轮」**0 命中**
+（腿 H1 固化，只剩注释里的历史叙述）。
+
+spec：`docs/superpowers/specs/2026-10-21-wave4-promise-kept-design.md`；
+计划：`docs/superpowers/plans/2026-10-21-wave4-promise-kept.md`。
+
+### A 轨 · 三条承诺兑现（用户可见）
+- **典藏页 `CollectionPage`**（导航第 4 项；`kNav` 扩到 8 行，行序单点真源 `kRow*` 常量，源扫腿禁止
+  `setCurrentRow(` 后跟裸数字）：三个 tab——**合集**（`Library::listAlbums()` 首次在 `ui/` 有消费方，
+  点进 = 复用凝视序列，`ui/` 内 `new GazeLightbox` 仍只有 1 处）、**展览史**
+  （`loadExhibitHistory()`，逐展可回看）、**安静下来的选题**（`listMutes()` → 逐条「唤醒」）。
+- **反悔入口**：新增 `Library::unmuteTemplate` / `listMutes`；对未静音 token 调 unmute 返回**语义如实**的
+  false（A 组断言，不假 true）；写入仍在 GUI 线程（B 组复用 `lastWriteThreadId()` 取证形状）。
+- **⌘K「暂存为合集」点亮**：有选中项可点 → `CurateScheduler::keepSelection(name, paths)` 走同一写入路径
+  （`source='cmdk'`）→ 回执指向典藏；无选中项禁用，tooltip 只说实话（「先在结果里勾选照片」）。
+- **长操作与空态**：生成期骨架 + 呼吸字（减动效下仍出现）；⌘K 空解析给可解析样例；四页空态
+  （图库 / 日志 / 地图 / 修图）改成「说清为什么空 + 下一步去哪」；凝视底部常驻键位带，五键逐条实测。
+
+### B 轨 · 地基与治理
+- **时间落列**：`photos.shot_year` / `shot_month` / `shot_ts` + `idx_photos_year_month`，迁移 fail-open
+  （老库打不开就什么都不动）。唯一消费方 = ⌘K 年份/季节筛选 `pathsForShotYears/Months`；parity（索引源 vs
+  全量源逐条相同）与 `EXPLAIN`（`USING INDEX`、无 `SCAN photos`）+ 隐私三组腿钉住。按 R8 **撤销**
+  `city` 列与索引——没有可证等价 SQL 的调用方就是投机代码；`shot_ts` 落列但本波不建索引、不出查询。
+- **画布层四 token**：`canvasBg` / `canvasLine` / `maskColor` / `focusRingColor` × 四灯；
+  CropCanvas / MaskCanvas / EditorialView / CompareWidget / VideoPlayerWidget 等画布面全部改走访问器
+  （`focusRing()` 返回 QSS 片段的既有 API 一字未动，R10）。
+- **棘轮**：新增 **C6 canvas-raw**（裸 `QColor(0x` / `rgba(`）16/16；**C3 收紧**为「任何数字 radius 都计数」，
+  严格执行「先清零、后改定义」（R3，禁止先抬上限）。C1–C4 维持 0，C5 28/30（余量为已登记例外）。
+- **网格**：`Layout::gridCols` 纯函数（`pitch = targetPx + 12`）→ 960=3 / 1440=5 / 2560=5（封顶）；
+  实测下界 `setMinimumSize(960, 640)`——「支持任意窄」不成立，故不承诺（§3.7）。**收口时补线**：
+  `EditorialView`（原 `int(W/230)`，960 下会得 4）与 `PeoplePage`（原死写 4 列，现按宽度跨档重建）
+  真正改走 `gridCols`——spec §3.3 写「三处共用」，实际只有这两个页面有列数算术（`CollectionPage` 是
+  三 tab 列表，无网格），`Layout.h` 注释已按实况订正；G 组加 **G6/G7** 源扫腿，钉住「函数存在且
+  生产页确实在调、旧算术 0 命中」，避免「门禁直调、页面不用」的假绿。
+- **动效宪章与代码对齐**：D3 增补**例外白名单**（`kStarBounce` / `kHeartBurst`，overshoot ≤8% 且必须吃
+  reduced-motion），`LA_MOTION_QA` 断言**一字未动**（R4：不为配合文档弄红一道已绿的门）。
+- **人物墙接 stagger（宪章 D3:43，收口时补的第二处偏差）**：计划 T12 把 §3.6 这条漏了，落地后
+  `PeoplePage` 仍是 0 Motion 引用——「预设表里有 `kPushDoor`、页面里没人调」正是本轮要根治的假绿形状。
+  现按 D3 接上：展室卡进馆时逐个亮起，**28ms/个、第 12 个之后不再延后**（数值写在页内常量，G 组扫源钉字面值），
+  时长与曲线仍只从 `MotionKit::preset(kPushDoor)` + `staggerStart` 取（铁律 20，门禁与页面同一函数）；
+  编排挂在 **showEvent** 而不是建墙时——构造期页面还藏在栈里，那时烧掉 360ms 等于用户永远看不到人。
+  **两处如实降级**：① 预设的 `scale 1.02→1.00` 没接（Qt Widgets 无控件级缩放原语，一控件只能挂一个
+  QGraphicsEffect，已被透明度占了），故为 opacity-only 推门；② D3 的「名字 40ms 后浮现」未做，
+  宪章预算「≤1 个驱动器/卡」不足以再铺第二路时序。`LA_GATE` / `LA_UI_SHOT` / 系统减动效 → 完全不挂效果，
+  整墙静置即终态（像素门不会拍到半透明卡）。延后落位的回灌守卫 = 卡本身（旧卡先死则计时器随之取消），
+  与 ThumbCache 那轮 UAF 同一形状。
+
+### 门禁与 i18n（全部为实测读数）
+- 名册 **80 → 81 = fast 22 + full 59**（`-SelfTest` 实测 `E1 gates=81 fast=22 full=59 errs=0`、
+  `E11 nonAsciiBytes=0`、`E12 textual=81 parsed=81`）。新门 `LA_COLLECTION_QA`（A–I 组）
+  `checks=60 failed=0`，`measuredMs=700`（2026-10-22 `qa_runner -Timing x5` 暖样本 617 / 581 / 551 / 567 / 574 ms，
+  取暖最大 + 余量）落 **full 层**（E6 判层吃实测成本，不吃意愿）。★诚实记一次**抄来的读数**：登记时写的 `3171`
+  **不是这道门测的**——它与名册里 `LA_SMOKE` 的 `measuredMs` **逐字节相同**，与 2.42.0 那个没测过的 `measuredMs=300`
+  同形（占位值长得像实测值，只有第二把尺能拆开）；本次收口用与 `LA_CURATE_QA` 同一口径重测并署名测法 + 腿数。
+  `LA_CURATE_QA` `checks=139 failed=0`——139 在名册注释 / CHANGELOG / 指导书三处同一数字。
+  spec §4/§6.1 预测的是 fast 23 + full 58；实测把 `LA_COLLECTION_QA` 判进 full（700 ms 仍超 500 ms 快门预算，
+  fast 条目会撞 E9c/E6），按「不为凑预测数字放宽门禁」原样接受，差异在此署名。
+- `LA_PEOPLE_QA` 接 stagger 后 **21 → 30 checks**（`failed=0`，`-Timing` 直连 183ms，名册字段按同口径回填）。
+  新 G 组九腿分两类：扫源腿钉「页面真的调 `Motion::staggerStart` / 真的挂 `kPushDoor` 驱动器 / 字面 28 与 12 /
+  确定性豁免三条件齐 / 计时器守卫是卡不是页」，算术腿用**同一纯函数**复算延迟序列（前 12 张 0,28,…,308，
+  第 13 张起恒 308，单调不减）。反例各自独立成立：把页内 `kStaggerStepMs` 改 30 → 仅 `G_step_28ms` 红
+  （实测 `checks=30 failed=1`）；把 `kPushDoor` 时长改 300（装不下 308ms 错峰窗）→ 仅
+  `G_stagger_28ms_per_card` + `G_stagger_cap_308ms` 红（实测 `failed=2`）；两处均已还原。
+- **收口时抓到并修掉的一处 spec 偏差**：典藏 tab3 的静音行原先把内部 token（`NewIntake` 之类）当标题显示，
+  而 spec §2.2 要求「模板可读名」。改为 `CurateEngine::templateIdFromToken` + `templateLabelFor`
+  （取展名模板本地化后「 · 」之前的首段，**不另建第二份名字表**）；对不上表的 token 如实显示原 token，不冒充。
+  新增腿 A8（源扫：`inkLabel(m.tmpl` 0 命中）+ A9（12 个 token 逐条可读、未知 token 不映射），
+  先红（`checks=51 failed=1`）后绿（`checks=53 failed=0`）。
+- **收口时抓到的第二处缺陷（新增页面漏接既有全局 chrome）**：P19 的悬浮顶栏给非前厅页让出 54px，
+  靠 `MainWindow.cpp` 里两条**建页时写死成员清单**的循环（一条设上边距、一条 hook 滚动渐显）。
+  典藏页是新加的，两条循环都没带上它——页面自己的上边距只有 `Xxl=32`，于是**展示标题被顶栏压住**。
+  两道门禁全绿也抓不到它（纯几何、无断言覆盖），是逐页读代码 + 截图才对上。修复 = 两条列表同批补
+  `collection_`；新增腿 **C5**：断言订正后的列表字面量在源里出现**恰好 2 次**（`>=1` 会放过「只补一条」的
+  半套形状——标题不压了但顶栏永不渐显）。新增腿 **C5**，`checks=53 → 56`（C5 + G6/G7），`failed=0`。
+  这条偏差记为**下波纪律**：新增导航页必须同时过 §2.9 空态、P19 chrome 让位两处，光加页不算接完。
+- **收口时抓到的第三、四处缺陷是同一族：导航插了行，别处写死的数字没跟着改**（前两类都覆盖不到）。
+  ① **分组分割线错位**：`NavGroupDelegate` 原先写在 `kNav` 表**上面**，行号只能写死 `row()==3||row()==5`；
+  典藏插到 row 3 后，两条线静默画到了「典藏」和「修图」头上。既有腿 C2 只拦 `setCurrentRow(<数字>)`，
+  对这种「比较」形态是瞎的。修法 = 类挪到表与 `static_assert` 之后、谓词只认 `kRowPeople`/`kRowLog`；
+  新腿 **C6** 双向断言（裸数字 0 命中 **且** 常量式恰 1 命中——只写前半会放过「整段被删掉」）。`checks=56 → 57`。
+  ② **浮岛把三行吞了**：导航是 `ScrollBarAlwaysOff` 的 `QListWidget`，高度却由 `QListView::sizeHint` 决定，
+  而那个 sizeHint **不随行数增长**——1440×900 实测只画到第 4.6 行，人物馆以下**既看不见也点不到**
+  （几何代码自 `b75c7de`（2.33.0 浮岛重构）未改动，本波第 8 行只是又往下埋了一行；本机无旧发行包可做对照跑，
+  故只登记「不晚于本波」）。修法 = 行距收成单一常量 `kNavRowPitch`，同时喂 `setGridSize` 与
+  `setFixedHeight(nav_->count() * kNavRowPitch)`；新腿 **C7** 钉这两处消费 + 常量出现次数 ≥3。`checks=57 → 58`。
+  两处反例均实测：分割线谓词改回 `4||6` → 仅 `C6` 红；高度写成 `6 * kNavRowPitch` → 仅 `C7` 红；均已还原。
+- **收口时抓到的最后一处缺陷换了性质（腿 C8）：界面文案过度承诺**（前面几类都抓不到，因为它不是几何、不是接线，
+  而是一句读起来很顺的话）。典藏 tab2 空态写「前厅**每天**会挑一展」，而引擎实测：节流窗 `kWeekSec = 7 * 86400`
+  且**严格逾 7 天**才再生成，非 `force` 的调用点只有冷启动一处（没有定时器）⇒ 天天打开也不会天天换展。
+  这句文案是**计划 T4（`plans/…wave4-promise-kept.md:632`）原文写进去的**，即计划本身撒了谎——
+  按 spec §6.7「界面上的每句话实测」推翻计划。
+  改为「前厅要距上一版超过 7 天才会自动再挑一展（重开应用时生效）；按『换一展』可随时换，记录都留在这里。」
+  新腿 **C8** 把**文案与引擎常量钉在同一条腿**：文案回「每天」→ 红；有人把节流改成按天 → 也红（两条反例各自
+  实测单腿咬合，`checks=60 failed=1`，均已还原）。扫源前先剥注释：本页注释里就写着被禁的旧文案（解释为什么禁），
+  吃原文会让这条腿恒红；反之只查正向串，注释里的「7 天」又能骗绿——两头都要堵。
+  `checks=58 → 60`（C8 两条：源扫描守卫 + 承诺↔节流同钉）。
+  **纪律升级**：新增导航页要同过五处——空态（§2.9）、chrome 让位（P19）、灯接线、**导航浮岛几何**、
+  **空态与回执里每一句承诺逐句对引擎**（第五处正是 C8 那一类：几何与接线全对，文案仍在吹）。
+  五处中三处本轮有了腿（chrome 让位 = C5、浮岛几何 = C7、文案承诺 = C8 且**只覆盖典藏 tab2 这一句**）；
+  空态是否每页都有、其余页面的承诺文案仍无断言，只能靠人读代码 + 逐页截图，**「门全绿 ≠ 新页接完」**。
+- `LA_I18N_QA` entries **34 → 96**；`.ts` 增量 44 条本波新增串（`CollectionPage` 21 + `GazeLightbox` 1 +
+  `LightAlbum` 22），另顺带补齐修图页操作回执与下拉提示 20 条历史遗留；`lrelease` 报
+  `432 translation(s) (432 finished and 0 unfinished)`，`.ts` 与 `.qm` 同提交（禁 `lupdate`）。
+- 反例诚实：`LA_I18N_QA_FORCE_BROKEN=1` 实测转红（`COUNTEREXAMPLE_RED_OK`）。
+- 文档：新建 `docs/LightAlbum-2.43.0-使用说明书.md`（2.42.0 手册基础上补典藏三 tab / 凝视键位表 /
+  ⌘K 暂存 / 960×640 下界，**删掉全部「下轮上线」措辞**）。手册落仓库根 `docs/`——`release.ps1`
+  的 C2 只在 `..\docs` 找 `LightAlbum-<Version>-*.md`，放 `native/docs/` 会被打包脚本拒收。
+
+### FINDING（§6 人工验收时如实登记，本波不修）
+- **图库卡片标题与副标题重叠**（真缺陷，**非本波引入**）：`GalleryCardPainter.cpp:198` 标题带
+  `c.adjusted(pad, c.height()-40, -pad, -12)`、`:204` 副标题带 `c.adjusted(pad, c.height()-22, -pad, -10)`，
+  两条都 `AlignBottom` → 两个文字带的矩形本身相交 **10px**（`height-22 … height-12`），放大裁图确认
+  「IMG_5630」的笔画压在「2026-10-05」上。与卡片高度无关（比例式几何），2.42.0 的同一段代码同形，
+  故不是波 4 的回归；81 门全绿也抓不到它——像素门只比色板/暗底比例，没有「两行不得相交」的断言。
+  **修法留给下一轮**：副标题带上沿改成从底栏总高反推（单一 `kCardCaptionBlockH`），而不是两个魔法数各自往下挪。
+- **取证探针漏等典藏页的异步封面**（不是产品缺陷，是**验收工具的洞**）：`MainWindow::shootPages`
+  第 1480-1481 行的 ThumbCache 长等待白名单只有「图库 / 前厅 / 人物馆」，典藏页是本轮新增的、没进名单；
+  而「西湖之夏」合集的前几条是 HEIC，`photos.thumb` 为空，封面必须等 ThumbCache 现生成才能画出来
+  （对照证据：同一批快照里有封面的合集，其首条 `thumb` 已在盘上）。所以「典藏合集封面空白」
+  **只在 offscreen 取证里成立，人手上点开不成立**。下一轮要么把名单改成「吃 ThumbCache 的页自动登记」，
+  要么在 `shootPages` 里按页问一次「还有没有 in-flight 请求」。
+- 两条**候选缺陷经查为虚**，同样登记以免下次重复追：① 展览史里的「当年的今天」展名不是硬编码——
+  该串只存在于夹具 DB 的行内，`src/` 全库 0 命中，属 fixture artifact；② 截图上读到的「检素收入」
+  是我看错字形，`CollectionPage.cpp:27/:29` 源串为「检索收入」。
+
 ## [2.42.0] - 2026-10-21
 
 体验升级第六轮（波 3「主动」）：**智能策展系统 v1「常设展」+ 废片巡检**。把第四轮落地的全本机 AI

@@ -1,17 +1,24 @@
 #include "PeoplePage.h"
+#include "Layout.h"   // 波4 §3.3：列数唯一算术（旧实现死写 4 列）
 #include "ThumbCache.h"
 #include "Theme.h"
+#include "../core/MotionDriver.h"   // 波4 §3.6：人物墙进人（预设 + staggerStart 唯一真源）
+#include "../core/MotionPref.h"     // Lumen::systemReducedMotion
 
 #include <QCoreApplication>
 #include <QFrame>
 #include <QGridLayout>
+#include <QGraphicsOpacityEffect>
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QIcon>
 #include <QLabel>
 #include <QPushButton>
+#include <QShowEvent>
+#include <QTimer>
 #include <QToolButton>
 #include <QMouseEvent>
+#include <QResizeEvent>
 #include <QtGlobal>
 #include <algorithm>
 #include <functional>
@@ -42,6 +49,11 @@ QString yearSpan(const Room& r)
     return QStringLiteral("%1–%2").arg(r.yearMin).arg(r.yearMax);
 }
 
+// 宪章 D3:43「人物墙进人」的编排参数（动效宪章唯一数值出处，页面不得他处另写）。
+// 门禁 LA_PEOPLE_QA G 组按这两个字面值扫源：改了这里，G 组立刻红，逼人来承认动过宪章数值。
+constexpr int kStaggerStepMs = 28;   // 每个展室卡晚进 28ms
+constexpr int kStaggerCap = 12;      // 第 12 个之后不再延后（同批落位，墙再长也不拖到一秒开外）
+
 } // namespace
 
 PeoplePage::PeoplePage(const QVector<Photo>* photos, const QString& thumbsDir, QWidget* parent)
@@ -63,6 +75,14 @@ void PeoplePage::setHidePrivate(bool hide)
 }
 
 void PeoplePage::refresh() { rebuild(); }
+
+// 波4 §3.3：宽度跨列档才重建（3/4/5 三档之间；同档 resize 不重建，免拖拽窗口时反复拆墙）。
+// 列数由 Layout::gridCols 唯一裁决——旧实现死写 4 列，960 宽窗口会挤到卡宽不足 230。
+void PeoplePage::resizeEvent(QResizeEvent* e)
+{
+    QWidget::resizeEvent(e);
+    if (gridCols(width() > 0 ? width() : 960) != lastCols_) rebuild();
+}
 
 // 2.41.0 T8：⌘K 人名高置信 → 直接推门进那间展室。rooms_ 由 buildRooms 纯函数聚合
 // （与门禁同源，铁律 20），故按名定位不重算全库；找不到则保持原展开态重建（不猜房）。
@@ -139,6 +159,8 @@ QVector<Room> PeoplePage::buildRooms(const QVector<Photo>& in, bool hidePrivate)
 void PeoplePage::rebuild()
 {
     delete content_;
+    wallCards_.clear();        // 旧墙的卡随 content_ 一起死，指针表立刻清空（防悬垂）
+    wallAnimPending_ = true;   // 新墙尚未「进过人」
     content_ = new QWidget(this);
     content_->setAutoFillBackground(true);
     {
@@ -171,13 +193,66 @@ void PeoplePage::rebuild()
 
     auto* grid = new QGridLayout();
     grid->setSpacing(Lumen::Space::M);
-    const int cols = 4;
-    for (int i = 0; i < rooms_.size(); ++i)
-        grid->addWidget(makeRoomBlock(i), i / cols, i % cols, Qt::AlignTop);
+    const int cols = gridCols(width() > 0 ? width() : 960);
+    lastCols_ = cols;
+    for (int i = 0; i < rooms_.size(); ++i) {
+        auto* block = makeRoomBlock(i);
+        grid->addWidget(block, i / cols, i % cols, Qt::AlignTop);
+        wallCards_ << block;   // 波4 §3.6：进人编排按建墙顺序逐个亮起
+    }
     for (int c = 0; c < cols; ++c) grid->setColumnStretch(c, 1);
     col->addLayout(grid);
     col->addStretch(1);
     content_->show();
+}
+
+// 波4 §3.6：人物墙「进人」的一刻是进馆，不是建墙。构造期/展开期建的墙只挂账（pending），
+// 编排留给 showEvent 兑现——否则启动时页面还藏在栈里就把 360ms 烧完，用户推门永远看不到人。
+void PeoplePage::showEvent(QShowEvent* e)
+{
+    QWidget::showEvent(e);
+    if (!wallAnimPending_) return;
+    wallAnimPending_ = false;
+    animateWallIn();
+}
+
+// 展室卡逐个亮起：预设数值一律出自 MotionKit（推门 360ms），页内只留宪章 D3:43 的错峰步长与上限。
+// 诚实注记：预设的 scale 键（1.02→1.00）与「名字 40ms 后浮现」这条没接——Qt Widgets 没有控件级缩放
+// 原语，一个控件也只能挂一个 QGraphicsEffect（已被透明度占了），而宪章预算是「≤1 个驱动器/卡」，
+// 不足以再铺第二路时序。所以这里是 opacity-only 的推门。
+void PeoplePage::animateWallIn()
+{
+    // 像素门 / 截图 / 系统减动效 → 一律不接效果：整墙静置即终态（宪章「减动效=整批直接显示」，
+    // 也是门禁确定性的前提——半透明卡片进不了逐像素比对）。
+    const bool anim = qEnvironmentVariableIsEmpty("LA_GATE")
+                      && qEnvironmentVariableIsEmpty("LA_UI_SHOT")
+                      && !Lumen::systemReducedMotion();
+    if (!anim) return;
+
+    const int durMs = Motion::preset(Motion::kPushDoor).durationMs;
+    const int n = qMin(wallCards_.size(), kStaggerCap);   // 只有前 12 张参与错峰，其余同批落位
+    const double step = (n - 1) * double(kStaggerStepMs) / durMs;
+    for (int i = 0; i < wallCards_.size(); ++i) {
+        QWidget* card = wallCards_[i];
+        if (!card) continue;
+        const int delayMs = qRound(Motion::staggerStart(qMin(i, n - 1), n, step) * durMs);
+        auto* fade = new QGraphicsOpacityEffect(card);
+        fade->setOpacity(0.0);
+        card->setGraphicsEffect(fade);
+        // 守卫 = 卡本身：重建人物墙时旧卡先死，挂到已释放控件上的回灌就是 ThumbCache 那个崩溃类。
+        QTimer::singleShot(delayMs, card, [card, fade] {
+            auto* drv = new Motion::Driver(Motion::kPushDoor, false, card);
+            QObject::connect(drv, &Motion::Driver::valueFor, fade, [fade](const QByteArray& prop, double v) {
+                if (prop == Motion::kPropOpacity) fade->setOpacity(qBound(0.0, v, 1.0));
+            });
+            QObject::connect(drv, &Motion::Driver::finishedSignal, fade, [fade, drv] {
+                fade->setOpacity(1.0);
+                fade->setEnabled(false);   // 静置恢复无损原生渲染
+                drv->deleteLater();
+            });
+            drv->start();
+        });
+    }
 }
 
 QWidget* PeoplePage::makeRoomBlock(int idx)

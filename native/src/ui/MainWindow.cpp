@@ -89,30 +89,9 @@ int countLabeled(const QVector<Photo>& photos, const QString Photo::*field)
     return n;
 }
 
-// 2.33 浮岛分组分割线 delegate：在分组首项（row 3=人物馆, row 5=日志）顶部画细线。
-// 不加假 item，保持 QListWidget row 索引与 stack_ 索引一一对应。
-class NavGroupDelegate : public QStyledItemDelegate {
-public:
-    using QStyledItemDelegate::QStyledItemDelegate;
-    void paint(QPainter* p, const QStyleOptionViewItem& opt,
-               const QModelIndex& ix) const override
-    {
-        QStyledItemDelegate::paint(p, opt, ix);
-        // 分组分割线：row 3（人物组首项）和 row 5（工具组首项）顶部
-        if (ix.row() == 3 || ix.row() == 5) {
-            p->save();
-            QPen sep(QColor(0x1a, 0x23, 0x1d), 1);
-            p->setPen(sep);
-            const int mx = 16;   // 线不拉满宽度，左右各留 16px（浮岛呼吸感）
-            p->drawLine(QPointF(opt.rect.left() + mx, opt.rect.top() + 1),
-                        QPointF(opt.rect.right() - mx, opt.rect.top() + 1));
-            p->restore();
-        }
-    }
-};
 struct NavItem { const char* label; const char* phase; };
 // 2.41.0 spec §2.6：前厅/人物馆接管 0/3 两行（HomePage/CullPage 已于 T9 退役）。
-// 分组：浏览(前厅/足迹/图库) | 人物·修图 | 工具(日志/关于)。
+// 分组：浏览(前厅/足迹/图库/典藏) | 人物·修图 | 工具(日志/关于)。
 const NavItem kNav[] = {
     {"前厅", "P1"}, {"足迹", "P2"}, {"图库", "P1"}, {"典藏", "P1"},
     {"人物馆", "P3"}, {"修图", "P3"},
@@ -140,6 +119,36 @@ enum NavRow {
 };
 static_assert(int(kRowCount) == int(sizeof(kNav) / sizeof(kNav[0])),
               "kNav rows and NavRow constants drifted");
+
+// 波4 收口：导航行距的唯一真源。它同时喂 gridSize 与浮岛高度——
+// 原先高度由 QListView 的 sizeHint 决定，而那个 sizeHint 不随**行数**增长，
+// 滚动条又是 AlwaysOff ⇒ 8 行只画得出 4.6 行，下面三行既看不见也点不到（C7 钉住）。
+constexpr int kNavRowPitch = 44;
+
+// 2.33 浮岛分组分割线 delegate：在分组首项顶部画细线。
+// 不加假 item，保持 QListWidget row 索引与 stack_ 索引一一对应。
+// 波4 收口：本类必须排在 kNav/NavRow 之后——它原先写在导航表**上面**，行号只能写死，
+// 插进行就静默错位（典藏插到 row 3 后，分割线画在了「典藏」和「修图」头上）。
+// 现在谓词只认 kRow* 常量，增删行时表与线同处可对齐，且有门禁腿钉住不许回退为裸数字。
+class NavGroupDelegate : public QStyledItemDelegate {
+public:
+    using QStyledItemDelegate::QStyledItemDelegate;
+    void paint(QPainter* p, const QStyleOptionViewItem& opt,
+               const QModelIndex& ix) const override
+    {
+        QStyledItemDelegate::paint(p, opt, ix);
+        // 分组分割线：浏览组之后（人物组首项）与 人物·修图 组之后（工具组首项）
+        if (ix.row() == kRowPeople || ix.row() == kRowLog) {
+            p->save();
+            QPen sep(QColor(0x1a, 0x23, 0x1d), 1);
+            p->setPen(sep);
+            const int mx = 16;   // 线不拉满宽度，左右各留 16px（浮岛呼吸感）
+            p->drawLine(QPointF(opt.rect.left() + mx, opt.rect.top() + 1),
+                        QPointF(opt.rect.right() - mx, opt.rect.top() + 1));
+            p->restore();
+        }
+    }
+};
 
 // P29 无标题栏：判定某点下的控件是否「交互型」（按钮/输入/列表/滚动等）→
 // 命中交互控件时不抢作窗口拖拽区（WM_NCHITTEST 用）。
@@ -283,7 +292,7 @@ void MainWindow::buildUi()
     nav_->setFlow(QListView::TopToBottom);
     nav_->setWrapping(false);
     nav_->setMovement(QListView::Static);
-    nav_->setGridSize(QSize(68, 44));
+    nav_->setGridSize(QSize(68, kNavRowPitch));
     nav_->setUniformItemSizes(true);
     nav_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     nav_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -298,8 +307,8 @@ void MainWindow::buildUi()
         "stop:1 rgba(217,169,78,8));}")
         .arg(Lumen::Radius::Card));   // T9 C3: 12px->Radius::Card 14（§3.1 归并 12/14/16）
     nav_->setIconSize(QSize(22, 22));
-    // 三组：浏览(前厅/足迹/图库) | 人物·修图 | 工具(日志/关于)
-    // 分割线由 delegate 在 row 3/5 顶部绘制（不加假 item，保持 row→stack 索引一致）
+    // 三组：浏览(前厅/足迹/图库/典藏) | 人物·修图 | 工具(日志/关于)
+    // 分割线由 delegate 画在两个人组首项（kRowPeople/kRowLog）顶部（不加假 item，保持 row→stack 索引一致）
     for (int i = 0; i < int(sizeof(kNavIcons) / sizeof(kNavIcons[0])); ++i) {
         auto* it = new QListWidgetItem;
         it->setSizeHint(QSize(68, 42));
@@ -309,7 +318,9 @@ void MainWindow::buildUi()
         nav_->addItem(it);
         navItems_.append(it);
     }
-    // 分组分割线 delegate：在 row 3（选片）和 row 5（日志）顶部画细线
+    // 浮岛按行数长高：滚动条 AlwaysOff，任何「装不下」都会变成「那几行永远点不到」。
+    nav_->setFixedHeight(nav_->count() * kNavRowPitch);
+    // 分组分割线：delegate 只认 kRow* 常量（见类注释），行序变了线跟着走
     nav_->setItemDelegate(new NavGroupDelegate(nav_));
     // 浮岛模式取消左缘金条；选中态由 QSS 径向渐变光晕 + 图标转金表达
     navBar_ = nullptr;
@@ -603,14 +614,14 @@ void MainWindow::buildUi()
 
     // P19：非前厅给悬浮顶栏让出 54px 顶部空间（前厅零 chrome，自带让位不参与）；
     // 内容满铺到 right 顶部，顶栏透明悬浮其上，滚动后底色渐显。
-    for (QWidget* pg : QList<QWidget*>{ map_, gallery_, people_, retouch_, log_, aboutPg_ }) {
+    for (QWidget* pg : QList<QWidget*>{ map_, gallery_, collection_, people_, retouch_, log_, aboutPg_ }) {
         QMargins m = pg->contentsMargins();
         m.setTop(qMax(m.top(), 54));
         pg->setContentsMargins(m);
     }
     // P19：滚动渐显 hook——各页所有 QScrollArea 的垂直偏移>12 → 顶栏实底。
     // 无 QScrollArea 的页（地图/前厅）只由 hover 触发。
-    for (QWidget* pg : QList<QWidget*>{ map_, gallery_, people_, retouch_, log_, aboutPg_ }) {
+    for (QWidget* pg : QList<QWidget*>{ map_, gallery_, collection_, people_, retouch_, log_, aboutPg_ }) {
         const auto sas = pg->findChildren<QScrollArea*>();
         for (QScrollArea* sa : sas)
             connect(sa->verticalScrollBar(), &QScrollBar::valueChanged, this,

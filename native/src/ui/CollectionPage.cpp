@@ -1,6 +1,7 @@
 #include "CollectionPage.h"
 #include "ThumbCache.h"
 #include "Theme.h"
+#include "../core/CurateEngine.h"   // templateLabelFor：静音行显示可读名（token 只是键）
 
 #include <QCoreApplication>
 #include <QDateTime>
@@ -27,6 +28,17 @@ QString sourceLabel(const QString& src)
     if (src == QLatin1String("cmdk"))
         return QCoreApplication::translate("CollectionPage", "检索收入");
     return src;
+}
+
+// 静音行标题：token 只是键。能对上表 → 本地化可读名；对不上 → 如实显示原 token，不编名字。
+QString muteTitle(const QString& token)
+{
+    Curate::TemplateId id;
+    if (Curate::templateIdFromToken(token, &id)) {
+        const QString label = Curate::templateLabelFor(id);
+        if (!label.isEmpty()) return label;
+    }
+    return token;
 }
 
 QString feedbackLabel(const QString& f)
@@ -148,8 +160,11 @@ CollectionPage::CollectionPage(Library* lib, const QString& thumbsDir, QWidget* 
                 "在前厅按『收进合集』，或在 ⌘K 里勾选照片后按『暂存为合集』。"));
     makeTab(QCoreApplication::translate("CollectionPage", "展览史"), &exhibits_, &exhibitsEmpty_,
             QCoreApplication::translate("CollectionPage", "还没有展览"),
+            // 文案是承诺：CurateScheduler 的节流窗实测 >7 天，且非 force 调用只发生在冷启动
+            // 一处，「每天会挑一展」不成立（C8 与 kWeekSec 同钉，漂边即红）。
             QCoreApplication::translate("CollectionPage",
-                "前厅每天会挑一展；『换一展』的记录也会留在这里。"));
+                "前厅要距上一版超过 7 天才会自动再挑一展（重开应用时生效）；"
+                "按『换一展』可随时换，记录都留在这里。"));
     makeTab(QCoreApplication::translate("CollectionPage", "安静下来的选题"), &mutes_, &mutesEmpty_,
             QCoreApplication::translate("CollectionPage", "没有被静音的选题"),
             QCoreApplication::translate("CollectionPage",
@@ -369,7 +384,7 @@ QWidget* CollectionPage::makeMuteRow(int i)
 
     auto* col = new QVBoxLayout();
     col->setSpacing(Lumen::Space::Xs);
-    col->addWidget(inkLabel(m.tmpl, row, Lumen::Type::label(false)));
+    col->addWidget(inkLabel(muteTitle(m.tmpl), row, Lumen::Type::label(false)));
     const QString until = m.until >= kForeverSecs
         ? QCoreApplication::translate("CollectionPage", "永久安静")
         : QCoreApplication::translate("CollectionPage", "安静至 %1")

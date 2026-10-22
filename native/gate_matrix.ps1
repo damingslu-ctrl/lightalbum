@@ -366,7 +366,7 @@ $GateTable = @(
   # pixel assert reads the delivered bitmap, not merely "some image"). LA_PEOPLE_QA F
   # (2 asserts) pins the same shape for both PeoplePage sites (cover / film button).
   @{n="LA_LOBBY_QA";  png=$false; tier="fast"; measuredMs=281},
-  @{n="LA_PEOPLE_QA"; png=$false; tier="fast"; measuredMs=132},
+  @{n="LA_PEOPLE_QA"; png=$false; tier="fast"; measuredMs=183},   # 2026-10-22 -Timing (30 checks, wave4 G group added)
   @{n="LA_CMDK_QA";   png=$false; tier="fast"; measuredMs=385},
   @{n="LA_GAZE_QA";   png=$false; tier="fast"; measuredMs=331},
   @{n="LA_LAMP_QA";   png=$false; tier="fast"; measuredMs=281},
@@ -410,7 +410,14 @@ $GateTable = @(
   # unmute symmetry, single writer (GUI thread + source scan), nav completeness, gaze same-source,
   # ack honesty, dead code, grid arithmetic, zero "next round" promises, time-column
   # parity/EXPLAIN/privacy. Absent tier = full (fail-safe until -Timing proves the budget).
-  @{n="LA_COLLECTION_QA"; png=$false; measuredMs=320},
+  # Tier: FULL. qa_runner -Timing x5 warm samples (ms) 617 581 551 567 574 at checks=60 failed=0,
+  # so max-of-warm 617 + headroom = 700. Still above the 500 ms fast budget (E6) => strict layer
+  # unchanged. The earlier 3171 was not a measurement of THIS gate at all: it is byte-identical
+  # to the measuredMs of LA_SMOKE elsewhere in this roster, i.e. a value copied from another
+  # gate's field (same shape as the unmeasured measuredMs=300 that LA_CURATE_QA shipped with).
+  # Deliberately not reused: a number must name the method and the leg count it was taken with,
+  # or the next honest backfill cannot compare it.
+  @{n="LA_COLLECTION_QA"; png=$false; measuredMs=700},
   # 2.29.0 RAW/video retouch pipeline gate (LA_EDIT_RAW_QA). The retouch page used to read the
   # original straight through QImage(ph.path), which measured 0x0 null=1 for RAW -> RAW could
   # never reach the retouch page at all (2.28.0 missed this entry point). Photo, RAW and video
