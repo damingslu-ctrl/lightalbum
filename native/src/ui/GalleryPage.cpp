@@ -18,6 +18,7 @@
 #include <QImage>
 #include <QLineEdit>
 #include <QInputDialog>
+#include <QFrame>
 #include <algorithm>
 
 // P16 分类固定次序（单一事实源 = clipinfer/rules.cpp:17 kLabels[8]，其行序即
@@ -243,6 +244,40 @@ GalleryPage::GalleryPage(const QVector<Photo>* photos, const QString& thumbsDir,
     model_.setThumbCache(&cache_);
     view_ = new EditorialView(&model_, this);
     lay->addWidget(view_, 1);
+
+    // wave4 §2.9：过滤到 0 行时不能只剩一片空白——说清「为什么是空的 + 往哪走」。
+    // 与 view_ 同槽位互斥显隐（隐藏项不占布局空间），筛选条/搜索框保持可用。
+    empty_ = new QWidget(this);
+    auto* ewl = new QVBoxLayout(empty_);
+    ewl->setContentsMargins(Lumen::Space::Xxl, Lumen::Space::Xxl,
+                            Lumen::Space::Xxl, Lumen::Space::Xxl);
+    ewl->addStretch(1);
+    auto* emptyCard = new QFrame(empty_);
+    emptyCard->setObjectName(QStringLiteral("galleryEmpty"));
+    emptyCard->setMaximumWidth(560);
+    emptyCard->setStyleSheet(QString::fromUtf8(
+        "#galleryEmpty{background:%1;border:1px solid %2;border-radius:%3px;}")
+        .arg(Lumen::hex(Lumen::inset()), Lumen::hex(Lumen::line()))
+        .arg(Lumen::Radius::Card));
+    auto* ev = new QVBoxLayout(emptyCard);
+    ev->setContentsMargins(Lumen::Space::Xl, Lumen::Space::L,
+                           Lumen::Space::Xl, Lumen::Space::L);
+    ev->setSpacing(Lumen::Space::S);
+    emptyTitle_ = new QLabel(emptyCard);
+    emptyTitle_->setFont(Lumen::Type::title(false));
+    emptyTitle_->setStyleSheet(QStringLiteral(
+        "color:%1;background:transparent;border:none;").arg(Lumen::hex(Lumen::ink())));
+    emptyBody_ = new QLabel(emptyCard);
+    emptyBody_->setFont(Lumen::Type::body());
+    emptyBody_->setWordWrap(true);
+    emptyBody_->setStyleSheet(QStringLiteral(
+        "color:%1;background:transparent;border:none;").arg(Lumen::hex(Lumen::muted())));
+    ev->addWidget(emptyTitle_);
+    ev->addWidget(emptyBody_);
+    ewl->addWidget(emptyCard, 0, Qt::AlignHCenter);
+    ewl->addStretch(2);
+    empty_->hide();
+    lay->addWidget(empty_, 1);
 
     // 缩略图预取节流：滚动停止 120ms 后，对可见区间前后各扩 6/24 行触发后台加载
     prefetchTimer_ = new QTimer(this);
@@ -675,6 +710,37 @@ void GalleryPage::updateCount()
     count_->setText(n == total && notes.isEmpty()
         ? QCoreApplication::translate("LightAlbum", "显示 <b>%1</b> / %2 幅").arg(n).arg(total)
         : QCoreApplication::translate("LightAlbum", "显示 <b>%1</b> / %2 幅%3").arg(n).arg(total).arg(suffix));
+    syncEmptyState();
+}
+
+// wave4 §2.9：空态三态（库空 / 筛选无果 / 被隐私门挡光），只写本波真实存在的入口。
+void GalleryPage::syncEmptyState()
+{
+    if (!empty_ || !view_) return;
+    if (model_.rowCount() > 0) {
+        empty_->hide();
+        view_->show();
+        return;
+    }
+    const int total = photos_ ? photos_->size() : 0;
+    const bool filtering = !searchText_.trimmed().isEmpty() || !cmdNote_.isEmpty()
+        || !activeCat_.isEmpty() || !activePerson_.isEmpty()
+        || !activeClusterKey_.isEmpty() || !activeStoryId_.isEmpty();
+    if (total == 0) {
+        emptyTitle_->setText(QCoreApplication::translate("LightAlbum", "馆内还没有照片。"));
+        emptyBody_->setText(QCoreApplication::translate(
+            "LightAlbum", "回到前厅导入一个目录，这里就会挂满你的作品。"));
+    } else if (filtering) {
+        emptyTitle_->setText(QCoreApplication::translate("LightAlbum", "这里没有符合条件的照片。"));
+        emptyBody_->setText(QCoreApplication::translate(
+            "LightAlbum", "清掉筛选，或按 ⌘K 换个说法再找。"));
+    } else {
+        emptyTitle_->setText(QCoreApplication::translate("LightAlbum", "当前没有可显示的照片。"));
+        emptyBody_->setText(QCoreApplication::translate(
+            "LightAlbum", "其中可能有私密照片：点顶栏的「隐私库」解锁后就能看到。"));
+    }
+    view_->hide();
+    empty_->show();
 }
 
 void GalleryPage::applyFilter(const QString& q)

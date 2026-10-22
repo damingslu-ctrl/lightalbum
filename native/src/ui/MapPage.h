@@ -39,11 +39,15 @@ private:
     // 铁律：任何改变可见足迹集合的操作（年份切换 / 隐私门）都必须走这里，
     // 否则三者的下标对齐与缓存失效会各自漂移。
     void syncFootData();
+    void syncEmptyState(int visiblePts);   // wave4 §2.9：无足迹时与 view_ 互斥显隐的空态
     // 方向 C·联动：依据当前层级 + 隐私门重算地理热点并回灌 MapView（与足迹同源刷新）
     void syncGeoHotspots();
 
 private:
     MapView* view_ = nullptr;
+    QWidget* empty_ = nullptr;   // wave4 §2.9：无足迹空态（与 view_ 互斥显隐）
+    QLabel*  emptyTitle_ = nullptr;
+    QLabel*  emptyBody_ = nullptr;
     QLabel*  crumb_ = nullptr;
     QPushButton* back_ = nullptr;
     QPushButton* recenterBtn_ = nullptr;   // 迭代 1：世界层「⌂ 回到中国」

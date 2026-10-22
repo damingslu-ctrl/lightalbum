@@ -17,6 +17,7 @@
 #include <QFileInfo>
 #include <QDateTime>
 #include <QSet>
+#include <QFrame>
 #include <algorithm>
 #include <cmath>
 
@@ -185,6 +186,43 @@ LogPage::LogPage(const QVector<Photo>* photos, QWidget* parent)
     hl->addWidget(sub);
     lay->addWidget(head);
 
+    // wave4 §2.9：没有可统计的照片时，图表区不是一排 0 值空图表，而是「为什么空 + 往哪走」。
+    empty_ = new QWidget(root);
+    auto* ewl = new QVBoxLayout(empty_);
+    ewl->setContentsMargins(0, Lumen::Space::L, 0, 0);
+    auto* emptyCard = new QFrame(empty_);
+    emptyCard->setObjectName(QStringLiteral("logEmpty"));
+    emptyCard->setMaximumWidth(620);
+    emptyCard->setStyleSheet(QString::fromUtf8(
+        "#logEmpty{background:%1;border:1px solid %2;border-radius:%3px;}")
+        .arg(Lumen::hex(Lumen::inset()), Lumen::hex(Lumen::line()))
+        .arg(Lumen::Radius::Card));
+    auto* ev = new QVBoxLayout(emptyCard);
+    ev->setContentsMargins(Lumen::Space::Xl, Lumen::Space::L,
+                           Lumen::Space::Xl, Lumen::Space::L);
+    ev->setSpacing(Lumen::Space::S);
+    emptyTitle_ = new QLabel(emptyCard);
+    emptyTitle_->setFont(Lumen::Type::title(false));
+    emptyTitle_->setStyleSheet(QStringLiteral(
+        "color:%1;background:transparent;border:none;").arg(Lumen::hex(Lumen::ink())));
+    emptyBody_ = new QLabel(emptyCard);
+    emptyBody_->setFont(Lumen::Type::body());
+    emptyBody_->setWordWrap(true);
+    emptyBody_->setStyleSheet(QStringLiteral(
+        "color:%1;background:transparent;border:none;").arg(Lumen::hex(Lumen::muted())));
+    ev->addWidget(emptyTitle_);
+    ev->addWidget(emptyBody_);
+    ewl->addWidget(emptyCard, 0, Qt::AlignLeft);
+    empty_->hide();
+    lay->addWidget(empty_);
+
+    // 分析区（工具栏/KPI/洞察/六图/页脚）整体收进 body_，空态时一次显隐。
+    body_ = new QWidget(root);
+    auto* bodyLay = new QVBoxLayout(body_);
+    bodyLay->setContentsMargins(0, 0, 0, 0);
+    bodyLay->setSpacing(12);
+    lay->addWidget(body_);
+
     // —— P30-C 顶栏：筛选 chips（年份 / 机身）+ 导出 CSV ——
     // 2.33 收纳：不再横向滚动，统一「前 8 平铺 + ▾ 溢出下拉」（Lumen::fillChipRow）
     toolbar_ = new QWidget(root);
@@ -221,7 +259,7 @@ LogPage::LogPage(const QVector<Photo>* photos, QWidget* parent)
 
     rebuildFilterChips();
     connect(exportBtn_, &QPushButton::clicked, this, &LogPage::exportCsv);
-    lay->addWidget(toolbar_);
+    bodyLay->addWidget(toolbar_);
 
     // —— KPI 条 ——
     kpiRow_ = new QWidget(root);
@@ -233,7 +271,7 @@ LogPage::LogPage(const QVector<Photo>* photos, QWidget* parent)
         khl->addWidget(lb);
     }
     khl->addStretch(1);
-    lay->addWidget(kpiRow_);
+    bodyLay->addWidget(kpiRow_);
 
     // —— 洞察卡（等宽终端风）——
     insight_ = new QLabel(root);
@@ -246,7 +284,7 @@ LogPage::LogPage(const QVector<Photo>* photos, QWidget* parent)
              Lumen::hex(Lumen::ink()))                 // 终端体 cfe6d8→INK（§1.7 承载面判例：UI 表面非照片面）
         .arg(Lumen::Type::css(Lumen::Type::Tier::Small))
         .arg(Lumen::Radius::Ctl));   // T9 C3: 8px->Radius::Ctl 10. T8：12px=T5 原位（终端面族留串，mono 收编判例见报告）
-    lay->addWidget(insight_);
+    bodyLay->addWidget(insight_);
 
     // —— 图表网格（3 列 × 2 行）——
     auto* grid = new QGridLayout();
@@ -302,14 +340,14 @@ LogPage::LogPage(const QVector<Photo>* photos, QWidget* parent)
     grid->addWidget(makeCard(QCoreApplication::translate("LightAlbum", "器材使用"),   QCoreApplication::translate("LightAlbum", "机身 / 镜头出勤率"),   gearChart_, gearLegend_), 1, 1);
     grid->addWidget(makeCard(QCoreApplication::translate("LightAlbum", "按月的拍摄活跃度"), QCoreApplication::translate("LightAlbum", "一年里的创作节律"), monthChart_), 1, 2);
 
-    lay->addLayout(grid);
+    bodyLay->addLayout(grid);
 
     // —— 页脚快照 ——
     foot_ = new QLabel(root);
     foot_->setFont(Lumen::Type::mono());   // T8 §2.2：页脚等宽收编 mono()（原 QSS 11px→9.5pt≈13px）
     foot_->setStyleSheet(QString::fromUtf8("color:%1;")
         .arg(Lumen::hex(Lumen::muted())));
-    lay->addWidget(foot_);
+    bodyLay->addWidget(foot_);
 
     lay->addStretch(1);
     scroll->setWidget(root);
@@ -555,6 +593,22 @@ void LogPage::recompute()
     foot_->setText(QString::fromUtf8("SNAPSHOT @ %1  ·  scope: %2  ·  %3 frames")
         .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm")),
              scopeStr, QString::number(total)));
+
+    // wave4 §2.9：无可统计照片时分析区整体让位给空态（只写本波真实存在的入口）。
+    const bool noRows = total == 0;
+    body_->setVisible(!noRows);
+    empty_->setVisible(noRows);
+    if (noRows) {
+        if (ps.isEmpty()) {
+            emptyTitle_->setText(QCoreApplication::translate("LightAlbum", "日志还是空的。"));
+            emptyBody_->setText(QCoreApplication::translate(
+                "LightAlbum", "导入、分类、修图之后，这里会记下每一步。"));
+        } else {
+            emptyTitle_->setText(QCoreApplication::translate("LightAlbum", "当前没有可统计的照片。"));
+            emptyBody_->setText(QCoreApplication::translate(
+                "LightAlbum", "私密照片被隐私门挡住了：点顶栏的「隐私库」解锁后，这里会重新统计。"));
+        }
+    }
 }
 
 void LogPage::exportCsv()

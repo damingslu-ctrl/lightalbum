@@ -14,6 +14,7 @@
 #include <QLineEdit>
 #include <QDoubleValidator>
 #include <QDialogButtonBox>
+#include <QFrame>
 #include <QDate>
 #include <QButtonGroup>
 #include <QComboBox>
@@ -163,9 +164,41 @@ MapPage::MapPage(const QVector<Photo>* photos, const QString& thumbsDir,
     ll->addWidget(bar);
 
     view_ = new MapView(left);
+    // wave4 §2.9：无 GPS 时地图不是一张空海图，而是「为什么空 + 往哪走」。
+    empty_ = new QWidget(left);
+    auto* ewl = new QVBoxLayout(empty_);
+    ewl->setContentsMargins(Lumen::Space::Xxl, Lumen::Space::Xxl,
+                            Lumen::Space::Xxl, Lumen::Space::Xxl);
+    ewl->addStretch(1);
+    auto* emptyCard = new QFrame(empty_);
+    emptyCard->setObjectName(QStringLiteral("mapEmpty"));
+    emptyCard->setMaximumWidth(560);
+    emptyCard->setStyleSheet(QString::fromUtf8(
+        "#mapEmpty{background:%1;border:1px solid %2;border-radius:%3px;}")
+        .arg(Lumen::hex(Lumen::inset()), Lumen::hex(Lumen::line()))
+        .arg(Lumen::Radius::Card));
+    auto* ev = new QVBoxLayout(emptyCard);
+    ev->setContentsMargins(Lumen::Space::Xl, Lumen::Space::L,
+                           Lumen::Space::Xl, Lumen::Space::L);
+    ev->setSpacing(Lumen::Space::S);
+    emptyTitle_ = new QLabel(emptyCard);
+    emptyTitle_->setFont(Lumen::Type::title(false));
+    emptyTitle_->setStyleSheet(QStringLiteral(
+        "color:%1;background:transparent;border:none;").arg(Lumen::hex(Lumen::ink())));
+    emptyBody_ = new QLabel(emptyCard);
+    emptyBody_->setFont(Lumen::Type::body());
+    emptyBody_->setWordWrap(true);
+    emptyBody_->setStyleSheet(QStringLiteral(
+        "color:%1;background:transparent;border:none;").arg(Lumen::hex(Lumen::muted())));
+    ev->addWidget(emptyTitle_);
+    ev->addWidget(emptyBody_);
+    ewl->addWidget(emptyCard, 0, Qt::AlignHCenter);
+    ewl->addStretch(2);
+    empty_->hide();
+    ll->addWidget(view_, 1);
+    ll->addWidget(empty_, 1);
     syncFootData();   // A 方向第三步：足迹数据同步统一入口（含 pts/dates/paths/计数）
     view_->setArcRegionIds(computeArcRegionIds()); // P16.4.2：有作品大区 → 航线目标
-    ll->addWidget(view_, 1);
     lay->addWidget(left, 1);
 
     // ---- 右侧：统计侧栏 ----
@@ -268,11 +301,48 @@ void MapPage::syncFootData()
     view_->setGpsCount(computeGpsCount());
     QStringList gpsPaths;
     QVector<QDate> gpsDates;
-    view_->setGpsPoints(computeGpsPoints(&gpsPaths, &gpsDates));
+    const QVector<QPointF> pts = computeGpsPoints(&gpsPaths, &gpsDates);
+    view_->setGpsPoints(pts);
     view_->setGpsPaths(gpsPaths);
     view_->setGpsDates(gpsDates);
     view_->setFootYearFilter(footYear_);
     syncGeoHotspots();                          // 方向 C·联动：足迹集合变化 → 热点同步刷新
+    syncEmptyState(pts.size());                 // wave4 §2.9：无足迹 → 空态
+}
+
+// wave4 §2.9：空态三态（全库无有效 GPS / 当年无 GPS / 被隐私门挡光）。
+// 只写本波真实存在的入口；地图本身留一个真实出口（年份下拉 / 顶栏隐私库）。
+void MapPage::syncEmptyState(int visiblePts)
+{
+    if (!empty_ || !view_) return;
+    if (visiblePts > 0) {
+        empty_->hide();
+        view_->show();
+        return;
+    }
+    bool anyGps = false, yearGps = false;
+    if (photos_) {
+        for (const Photo& p : *photos_) {
+            if (!p.hasGps || (p.la == 0.0 && p.lo == 0.0)) continue;
+            anyGps = true;
+            if (footYear_ == 0 || p.year == footYear_) { yearGps = true; break; }
+        }
+    }
+    if (!anyGps) {
+        emptyTitle_->setText(QCoreApplication::translate("LightAlbum", "这批照片没有位置信息。"));
+        emptyBody_->setText(QCoreApplication::translate(
+            "LightAlbum", "相机开 GPS 拍的照片，会在这里落到地图上。"));
+    } else if (!yearGps) {
+        emptyTitle_->setText(QCoreApplication::translate("LightAlbum", "这一年没有带位置信息的照片。"));
+        emptyBody_->setText(QCoreApplication::translate(
+            "LightAlbum", "换个年份，或选「全部年份」再看看。"));
+    } else {
+        emptyTitle_->setText(QCoreApplication::translate("LightAlbum", "带位置的照片都在隐私库里。"));
+        emptyBody_->setText(QCoreApplication::translate(
+            "LightAlbum", "点顶栏的「隐私库」解锁后，地图上就会出现足迹。"));
+    }
+    view_->hide();
+    empty_->show();
 }
 
 // 方向 C·联动：依据当前层级 + 隐私门重算地理热点并回灌 MapView。

@@ -62,6 +62,7 @@ signals:
 private:
     void buildChips();          // P16：按当前数据 + 隐私门状态重建分类/人物 chips
     void updateCount();         // 统一计数文案（含各筛选状态注记）
+    void syncEmptyState();      // wave4 §2.9：0 行时与 view_ 互斥显隐的空态（库空/筛选/隐私三态）
     void buildClusterBar();     // 方向 C：按当前维度重建聚类条（维度切换 + 簇 chips）
     void buildStoryBar();       // 人物故事方向·B：按 StoryGen 聚合结果重建故事入口条
     // 2.33 收纳：四条选项条统一走 Lumen::fillChipRow（前 8 平铺 + 「▾ N」溢出下拉），
@@ -72,6 +73,9 @@ private:
     GalleryModel model_;
     ThumbCache   cache_;
     EditorialView* view_ = nullptr;  // P23：原 QListView(IconMode) 均匀网格 -> 杂志拼贴
+    QWidget*     empty_ = nullptr;   // wave4 §2.9：0 行空态（与 view_ 互斥显隐）
+    QLabel*      emptyTitle_ = nullptr;
+    QLabel*      emptyBody_ = nullptr;
     QLabel*      count_ = nullptr;
     QTimer*      prefetchTimer_ = nullptr;
     QWidget*     chipsBar_ = nullptr;         // P16 分类 chips（无分类数据时整条隐藏）

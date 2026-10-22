@@ -73,6 +73,7 @@ private slots:
     void onCardClicked(int i);
     void refreshGallery();
     void setMode(int m);
+    void showPreviewPage(int page);   // wave4 §2.9：无可用照片时恒停空态页
 
     // P4-1 几何
     void onGeoRotate(bool left);
@@ -182,7 +183,8 @@ QImage        geoSrc_;                    // 几何源（载入的缩略图，�
     int       opGen_ = 0;                    // 换图/重置代次（丢弃跨代飞行结果）
 
     // P4-2 蒙版
-    QStackedLayout* midStack_ = nullptr;     // 0=预览 1=蒙版画布 2=裁剪画布 3=对比视图
+    QStackedLayout* midStack_ = nullptr;     // 0=预览 1=蒙版画布 2=裁剪画布 3=对比视图 4=空态
+    QWidget*      emptyPreview_ = nullptr;   // wave4 §2.9：无可用照片时的预览区空态
     MaskCanvas*   canvas_ = nullptr;
     QPushButton*  maskBtn_ = nullptr;
     QPushButton*  maskClearBtn_ = nullptr;

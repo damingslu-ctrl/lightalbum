@@ -332,6 +332,41 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
     midStack_->addWidget(canvas_);      // 1
     midStack_->addWidget(cropCanvas_);  // 2
     midStack_->addWidget(compareW_);    // 3
+    // wave4 §2.9：无可用照片时预览区不是两块黑底，而是「为什么空 + 往哪走」。
+    // 单独一页（indexOf 定位，不写死页号），由 showPreviewPage 统一路由。
+    auto* emptyWrap = new QWidget(this);
+    emptyPreview_ = emptyWrap;
+    auto* ewl = new QVBoxLayout(emptyWrap);
+    ewl->setContentsMargins(Lumen::Space::Xxl, Lumen::Space::Xxl,
+                            Lumen::Space::Xxl, Lumen::Space::Xxl);
+    ewl->addStretch(1);
+    auto* emptyCard = new QFrame(emptyWrap);
+    emptyCard->setObjectName(QStringLiteral("retouchEmpty"));
+    emptyCard->setMaximumWidth(560);
+    emptyCard->setStyleSheet(QString::fromUtf8(
+        "#retouchEmpty{background:%1;border:1px solid %2;border-radius:%3px;}")
+        .arg(Lumen::hex(Lumen::card()), Lumen::hex(Lumen::line()))
+        .arg(Lumen::Radius::Card));
+    auto* ev = new QVBoxLayout(emptyCard);
+    ev->setContentsMargins(Lumen::Space::Xl, Lumen::Space::L,
+                           Lumen::Space::Xl, Lumen::Space::L);
+    ev->setSpacing(Lumen::Space::S);
+    auto* et = new QLabel(QCoreApplication::translate(
+        "LightAlbum", "还没有选中的照片。"), emptyCard);
+    et->setFont(Lumen::Type::title(false));
+    et->setStyleSheet(QStringLiteral(
+        "color:%1;background:transparent;border:none;").arg(Lumen::hex(Lumen::ink())));
+    auto* eb = new QLabel(QCoreApplication::translate(
+        "LightAlbum", "在图库或典藏里双击一张，就能进这里修。"), emptyCard);
+    eb->setFont(Lumen::Type::body());
+    eb->setWordWrap(true);
+    eb->setStyleSheet(QStringLiteral(
+        "color:%1;background:transparent;border:none;").arg(Lumen::hex(Lumen::muted())));
+    ev->addWidget(et);
+    ev->addWidget(eb);
+    ewl->addWidget(emptyCard, 0, Qt::AlignHCenter);
+    ewl->addStretch(2);
+    midStack_->addWidget(emptyWrap);    // 4（空态）
     midStack_->setCurrentIndex(0);
     root->addLayout(midStack_, 1);
 
@@ -731,6 +766,17 @@ RetouchPage::RetouchPage(const QVector<Photo>* photos, const QString& thumbsDir,
     }
 }
 
+void RetouchPage::showPreviewPage(int page)
+{
+    if (!midStack_) return;
+    if (usableIdx_.isEmpty() && emptyPreview_) {
+        // 无可用照片：蒙版/裁剪/对比也停在空态，不让人对空画布操作。
+        const int emptyPage = midStack_->indexOf(emptyPreview_);
+        if (emptyPage >= 0) { midStack_->setCurrentIndex(emptyPage); return; }
+    }
+    midStack_->setCurrentIndex(page);
+}
+
 void RetouchPage::setMode(int m)
 {
     for (int i = 0; i < modeBtns_.size(); ++i)
@@ -743,9 +789,8 @@ void RetouchPage::setMode(int m)
     if (m != 2 && cropBtn_ && cropBtn_->isChecked())   cropBtn_->setChecked(false);
     if (m == 3 && maskBtn_ && !maskBtn_->isChecked())   maskBtn_->setChecked(true);
     if (m == 4 && compareBtn_ && !compareBtn_->isChecked()) compareBtn_->setChecked(true);
-    if (m == 0 || m == 1 || m == 5) {
-        if (midStack_ && midStack_->currentIndex() != 0) midStack_->setCurrentIndex(0);
-    }
+    if (m == 0 || m == 1 || m == 5)
+        showPreviewPage(0);
 }
 
 void RetouchPage::qaShootA(const QString& png)
@@ -1105,13 +1150,12 @@ void RetouchPage::onMaskToggle(bool on)
         if (cropBtn_->isChecked())    cropBtn_->setChecked(false);     // 三模式互斥
         if (compareBtn_->isChecked()) compareBtn_->setChecked(false);
     }
-    midStack_->setCurrentIndex(on ? 1 : 0);
+    showPreviewPage(on ? 1 : 0);
     badge_->setText(on ? QCoreApplication::translate("LightAlbum", "涂抹要调整的区域 · 零云端")
                        : QCoreApplication::translate("LightAlbum", "退出蒙版 · 蒙版保留可再局部应用"));
 }
 
-void RetouchPage::onMaskClear()
-{
+void RetouchPage::onMaskClear(){
     canvas_->clearMask();
     badge_->setText(QCoreApplication::translate("LightAlbum", "蒙版已清除 · 零云端"));
 }
@@ -1148,7 +1192,7 @@ void RetouchPage::onCropToggle(bool on)
         cropCanvas_->setAspect(aspect_);
         badge_->setText(QCoreApplication::translate("LightAlbum", "拖角缩放 / 框内拖移，「应用裁剪」提交 · 零云端"));
     }
-    midStack_->setCurrentIndex(on ? 2 : 0);
+    showPreviewPage(on ? 2 : 0);
 }
 
 void RetouchPage::onCompareToggle(bool on)
@@ -1160,7 +1204,7 @@ void RetouchPage::onCompareToggle(bool on)
         compareW_->setImages(geoImg_, afterImg_);
         badge_->setText(QCoreApplication::translate("LightAlbum", "拖动金色分割线对比 · 零云端"));
     }
-    midStack_->setCurrentIndex(on ? 3 : 0);
+    showPreviewPage(on ? 3 : 0);
 }
 
 // ----------------------------------------------------------------- P4-4 AI 消除桥

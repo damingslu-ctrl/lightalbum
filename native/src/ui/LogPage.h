@@ -55,6 +55,10 @@ private:
     bool    hidePrivate_ = true;      // P16 隐私门（默认锁）
 
     QWidget*  kpiRow_    = nullptr;
+    QWidget*  body_      = nullptr;   // wave4 §2.9：工具栏/KPI/洞察/六图/页脚的整体容器
+    QWidget*  empty_     = nullptr;   // wave4 §2.9：无可统计照片时的空态
+    QLabel*   emptyTitle_= nullptr;
+    QLabel*   emptyBody_ = nullptr;
     QLabel*   insight_   = nullptr;
     BarChart* apChart_   = nullptr;
     BarChart* shChart_   = nullptr;
